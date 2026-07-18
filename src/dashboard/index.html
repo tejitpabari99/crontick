@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>crontick</title>
+  <link rel="stylesheet" href="/dashboard/dashboard.css">
+</head>
+<body>
+  <header>
+    <h1>⏱ crontick</h1>
+    <div id="version-info"></div>
+    <div id="health-badge" class="badge badge-unknown">checking…</div>
+  </header>
+  <nav>
+    <button class="nav-btn active" data-page="jobs">Jobs</button>
+    <button class="nav-btn" data-page="runs">Runs</button>
+  </nav>
+  <main>
+    <section id="page-jobs" class="page active">
+      <div class="toolbar">
+        <button id="btn-create-job" class="btn btn-primary">+ New Job</button>
+        <button id="btn-refresh" class="btn">↻ Refresh</button>
+      </div>
+      <table id="jobs-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Description</th>
+            <th>Schedule</th>
+            <th>Enabled</th>
+            <th>Last Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="jobs-tbody"></tbody>
+      </table>
+    </section>
+
+    <section id="page-runs" class="page">
+      <div class="toolbar">
+        <label>Filter by job: <input id="runs-filter" type="text" placeholder="job ID…"></label>
+        <select id="runs-status-filter">
+          <option value="">All statuses</option>
+          <option value="success">success</option>
+          <option value="failed">failed</option>
+          <option value="running">running</option>
+          <option value="canceled">canceled</option>
+        </select>
+      </div>
+      <table id="runs-table">
+        <thead>
+          <tr>
+            <th>Run ID</th>
+            <th>Job</th>
+            <th>Status</th>
+            <th>Started</th>
+            <th>Duration</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="runs-tbody"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <div id="drawer" class="drawer">
+    <div class="drawer-header">
+      <h2 id="drawer-title">Job Detail</h2>
+      <button id="drawer-close" class="btn">✕</button>
+    </div>
+    <div id="drawer-content" class="drawer-content"></div>
+  </div>
+  <div id="overlay" class="overlay"></div>
+
+  <div id="modal-create" class="modal">
+    <div class="modal-box">
+      <h2>Create New Job</h2>
+      <form id="form-create">
+        <label>ID (kebab-case): <input name="id" required pattern="[a-z0-9]+(-[a-z0-9]+)*"></label>
+        <label>Description: <input name="description"></label>
+        <label>Cron expression: <input name="cron" placeholder="0 9 * * * or @daily"></label>
+        <label>Script: <textarea name="script" rows="6" placeholder="#!/usr/bin/env bash&#10;echo hello"></textarea></label>
+        <label>Shell: <select name="shell">
+          <option value="auto">auto</option>
+          <option value="bash">bash</option>
+          <option value="pwsh">pwsh</option>
+          <option value="cmd">cmd</option>
+        </select></label>
+        <label>Timeout (sec): <input name="timeout" type="number" min="1"></label>
+        <label>Overlap: <select name="overlap">
+          <option value="skip">skip</option>
+          <option value="queue">queue</option>
+          <option value="cancel-previous">cancel-previous</option>
+        </select></label>
+        <label>Retry count: <input name="retry" type="number" min="0" value="0"></label>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Create</button>
+          <button type="button" id="modal-cancel" class="btn">Cancel</button>
+        </div>
+        <p id="form-error" class="error"></p>
+      </form>
+    </div>
+  </div>
+
+  <script src="/dashboard/dashboard.js"></script>
+</body>
+</html>
