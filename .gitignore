@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+npm-debug.log*
+.DS_Store
+*.tsbuildinfo
+
+# crontick runtime data dirs (local dev)
+.crontick/
+.dev/
