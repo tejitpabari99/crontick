@@ -21,8 +21,9 @@ declare module 'registry-js' {
     valueData: string,
   ): boolean;
 
+  export const createKey: ((key: string, subkey: string) => boolean) | undefined;
+
   export function enumerateValues(key: string, subkey: string): ReadonlyArray<RegistryValue>;
 
   export const deleteValue: ((key: string, subkey: string, valueName: string) => boolean) | undefined;
 }
-

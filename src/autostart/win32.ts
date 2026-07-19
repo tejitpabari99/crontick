@@ -37,6 +37,7 @@ type RegistryJsModule = {
     valueType: string,
     valueData: string,
   ) => boolean;
+  readonly createKey?: (key: string, subkey: string) => boolean;
   readonly deleteValue?: (key: string, subkey: string, valueName: string) => boolean;
   readonly enumerateValues: (key: string, subkey: string) => ReadonlyArray<RegistryValue>;
 };
@@ -112,14 +113,20 @@ function getRunKey(registry: RegistryJsModule): string {
 
 async function registryQuery(valueName: string): Promise<string | null> {
   const registry = await loadRegistryJs();
-  const entry = registry
-    .enumerateValues(getRunKey(registry), RUN_KEY)
-    .find((value) => value.name.toLowerCase() === valueName.toLowerCase());
+  let values: ReadonlyArray<RegistryValue>;
+  try {
+    values = registry.enumerateValues(getRunKey(registry), RUN_KEY);
+  } catch (error) {
+    if (isMissingRegistryValueError(error)) return null;
+    throw error;
+  }
+  const entry = values.find((value) => value.name.toLowerCase() === valueName.toLowerCase());
   return typeof entry?.data === 'string' ? entry.data : null;
 }
 
 async function registryWrite(valueName: string, data: string): Promise<void> {
   const registry = await loadRegistryJs();
+  registry.createKey?.(getRunKey(registry), RUN_KEY);
   const ok = registry.setValue(
     getRunKey(registry),
     RUN_KEY,

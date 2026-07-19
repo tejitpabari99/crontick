@@ -12,6 +12,7 @@ import { join } from 'node:path';
 
 const registryMock = vi.hoisted(() => ({
   values: [] as Array<{ name: string; type: string | number; data: string }>,
+  createKey: vi.fn(),
   setValue: vi.fn(),
   deleteValue: vi.fn(),
   enumerateValues: vi.fn(),
@@ -22,6 +23,7 @@ const registryMock = vi.hoisted(() => ({
 type RegistryGlobal = typeof globalThis & { __crontickRegistryJs?: typeof registryMock };
 
 vi.mock('registry-js', () => ({
+  createKey: registryMock.createKey,
   setValue: registryMock.setValue,
   deleteValue: registryMock.deleteValue,
   enumerateValues: registryMock.enumerateValues,
@@ -106,10 +108,12 @@ describe('Win32Autostart', () => {
   beforeEach(() => {
     testHome = mkdtempSync(join(tmpdir(), 'crontick-autostart-unit-'));
     registryMock.values = [];
+    registryMock.createKey.mockReset();
     registryMock.setValue.mockReset();
     registryMock.deleteValue.mockReset();
     registryMock.enumerateValues.mockReset();
     registryMock.enumerateValues.mockImplementation(() => registryMock.values);
+    registryMock.createKey.mockImplementation(() => true);
     registryMock.setValue.mockImplementation((_: string, __: string, name: string, type: string | number, data: string) => {
       registryMock.values = registryMock.values.filter((value) => value.name !== name);
       registryMock.values.push({ name, type, data });
@@ -154,6 +158,10 @@ describe('Win32Autostart', () => {
 
     const installResult = await as.install();
     expect(installResult).toEqual({ ok: true });
+    expect(registryMock.createKey).toHaveBeenCalledWith(
+      'HKCU',
+      'Software\\Microsoft\\Windows\\CurrentVersion\\Run',
+    );
     expect(registryMock.setValue).toHaveBeenCalledWith(
       'HKCU',
       'Software\\Microsoft\\Windows\\CurrentVersion\\Run',
@@ -197,5 +205,13 @@ describe('Win32Autostart', () => {
     });
     const as = createAutostart({ backend: 'win32' });
     await expect(as.remove()).resolves.toEqual({ ok: true });
+  });
+
+  it('status treats missing Run key as not installed', async () => {
+    registryMock.enumerateValues.mockImplementation(() => {
+      throw new Error('The system cannot find the file specified. ERROR_FILE_NOT_FOUND');
+    });
+    const as = createAutostart({ backend: 'win32' });
+    await expect(as.status()).resolves.toMatchObject({ installed: false, backend: 'win32' });
   });
 });
