@@ -136,7 +136,7 @@ function runPowerShellRegistryScript(script: string): string {
 function queryWithPowerShellRegistryApi(valueName: string): string | null {
   const literalPath = `Registry::HKEY_CURRENT_USER\\${RUN_KEY}`;
   const script = [
-    '$ErrorActionPreference = "Stop"',
+    '$ErrorActionPreference = "Stop";',
     `try { $item = Get-ItemProperty -LiteralPath ${quotePowerShellLiteral(literalPath)} -Name ${quotePowerShellLiteral(valueName)};`,
     `$value = $item.${quotePowerShellLiteral(valueName)};`,
     'if ($null -ne $value) { [Console]::Out.Write([string]$value) } }',
