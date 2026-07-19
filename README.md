@@ -1,7 +1,7 @@
 # crontick
 
-[![CI](https://github.com/crontick/crontick/actions/workflows/ci.yml/badge.svg)](https://github.com/crontick/crontick/actions/workflows/ci.yml)
-[![Release](https://github.com/crontick/crontick/actions/workflows/release.yml/badge.svg)](https://github.com/crontick/crontick/actions/workflows/release.yml)
+[![CI](https://github.com/tejitpabari99/crontick/actions/workflows/ci.yml/badge.svg)](https://github.com/tejitpabari99/crontick/actions/workflows/ci.yml)
+[![Release](https://github.com/tejitpabari99/crontick/actions/workflows/release.yml/badge.svg)](https://github.com/tejitpabari99/crontick/actions/workflows/release.yml)
 [![npm version](https://img.shields.io/npm/v/crontick)](https://www.npmjs.com/package/crontick)
 
 **crontick** is a standalone cron daemon, CLI, dashboard, and stdio MCP server for running local

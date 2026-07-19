@@ -6,13 +6,13 @@
   "license": "MIT",
   "private": false,
   "author": "crontick contributors",
-  "homepage": "https://github.com/crontick/crontick",
+  "homepage": "https://github.com/tejitpabari99/crontick",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/crontick/crontick.git"
+    "url": "git+https://github.com/tejitpabari99/crontick.git"
   },
   "bugs": {
-    "url": "https://github.com/crontick/crontick/issues"
+    "url": "https://github.com/tejitpabari99/crontick/issues"
   },
   "engines": {
     "node": ">=22.5"

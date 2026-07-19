@@ -17,7 +17,7 @@ Add crontick — local cron daemon + scheduler MCP server
 
 ## Repository / package
 
-- Repo: `https://github.com/crontick/crontick`
+- Repo: `https://github.com/tejitpabari99/crontick`
 - npm: `https://www.npmjs.com/package/crontick`
 
 ## Quick config snippet
