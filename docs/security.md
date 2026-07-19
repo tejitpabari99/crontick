@@ -39,6 +39,8 @@ On corp-managed devices with aggressive EDR, unsigned first-run of any new binar
 
 Users can inspect or remove the entry manually with `reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v crontick-daemon` and `crontick autostart remove`.
 
+The crontick test suite mocks the registry API by default and does not touch the real HKCU\Run key. A separate set of end-to-end tests that DO write to the real registry (under a scratch value name) is gated behind `CI=true` / `CRONTICK_RUN_REGISTRY_TESTS=1`, so `npm test` on a developer machine will not trigger EDR persistence alerts.
+
 ## Operational guidance
 
 - keep jobs self-contained

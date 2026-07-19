@@ -27,6 +27,17 @@ Include a changeset for user-facing changes.
 3. Run `npm run typecheck && npm run lint && npm run build && npm test`
 4. Open a PR against `main`
 
+### Registry-touching tests
+
+A small number of Windows autostart tests write to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` under a scratch value name to verify the real registration path end-to-end. These are gated behind `CI` and skipped on local machines by default, because the write pattern can trigger EDR alerts on corp-managed devices.
+
+- CI runs them automatically (GitHub Actions sets `CI=true`).
+- To run them locally, set `CRONTICK_RUN_REGISTRY_TESTS=1` before invoking `npm test`.
+
+```powershell
+$env:CRONTICK_RUN_REGISTRY_TESTS = '1'; npm test
+```
+
 ## Changesets
 
 We use [Changesets](https://github.com/changesets/changesets).
