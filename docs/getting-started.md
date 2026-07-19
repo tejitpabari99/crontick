@@ -13,6 +13,8 @@ npm install -g crontick
 crontick doctor
 ```
 
+If `npm install` fails with an SSL handshake error, see the [troubleshooting guide](./troubleshooting.md#npm-install-fails).
+
 ## Start the daemon
 
 ```sh

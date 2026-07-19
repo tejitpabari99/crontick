@@ -4,6 +4,11 @@
  *
  * - crontick_autostart_status: always works (returns manual or win32)
  * - crontick_autostart_install / remove: win32 only; skip on other platforms
+ *
+ * This file writes to the real HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+ * under a scratch value name. It is gated to CI (process.env.CI) or
+ * CRONTICK_RUN_REGISTRY_TESTS=1 so local `npm test` runs do not trigger EDR/MDE
+ * persistence alerts on developer machines. GitHub Actions sets CI=true automatically.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
@@ -22,6 +27,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 const DAEMON_SCRIPT = resolve('dist/daemon/index.js');
 const MCP_SCRIPT = resolve('dist/mcp/index.js');
 const TIMEOUT_MS = 60_000;
+const runRealRegistryTests = !!process.env['CI'] || process.env['CRONTICK_RUN_REGISTRY_TESTS'] === '1';
 
 interface ToolResult {
   content: Array<{ type: string; text?: string }>;
@@ -109,7 +115,7 @@ describe('MCP autostart tools', () => {
     expect(typeof d['installed']).toBe('boolean');
   });
 
-  describe.skipIf(process.platform !== 'win32')('win32 install/remove (Windows only)', () => {
+  describe.skipIf(process.platform !== 'win32' || !runRealRegistryTests)('win32 install/remove (real registry)', () => {
     it('install → status (installed) → remove round-trip', async () => {
       const install = await callTool(client, 'crontick_autostart_install');
       expect(install.isError).toBe(false);

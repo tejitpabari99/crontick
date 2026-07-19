@@ -16,6 +16,7 @@ export default defineConfig({
   clean: true,
   target: 'node22',
   platform: 'node',
+  external: ['registry-js'],
   banner: { js: '#!/usr/bin/env node' },
   define: {
     __CRONTICK_VERSION__: JSON.stringify(version),

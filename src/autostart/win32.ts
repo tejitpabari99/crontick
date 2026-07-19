@@ -18,7 +18,42 @@ import { dirname, join } from 'node:path';
 import { autostartDir } from '../paths.js';
 import type { AutostartStatus } from './index.js';
 
-const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+const RUN_KEY = 'Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+
+type RegistryValue = {
+  readonly name: string;
+  readonly type: string;
+  readonly data: string | number;
+};
+
+type RegistryJsModule = {
+  readonly HKEY: { readonly HKEY_CURRENT_USER: string };
+  readonly RegistryValueType: { readonly REG_SZ: string };
+  readonly setValue: (
+    key: string,
+    subkey: string,
+    valueName: string,
+    valueType: string,
+    valueData: string,
+  ) => boolean;
+  readonly createKey?: (key: string, subkey: string) => boolean;
+  readonly deleteValue?: (key: string, subkey: string, valueName: string) => boolean;
+  readonly enumerateValues: (key: string, subkey: string) => ReadonlyArray<RegistryValue>;
+};
+
+let registryJs: RegistryJsModule | null = null;
+
+type RegistryGlobal = typeof globalThis & { __crontickRegistryJs?: RegistryJsModule };
+
+async function loadRegistryJs(): Promise<RegistryJsModule> {
+  const testRegistryJs = (globalThis as RegistryGlobal).__crontickRegistryJs;
+  if (testRegistryJs) return testRegistryJs;
+  if (!registryJs) {
+    const imported = await import('registry-js') as RegistryJsModule & { default?: RegistryJsModule };
+    registryJs = imported.default ?? imported;
+  }
+  return registryJs;
+}
 
 function getValueName(): string {
   return process.env['CRONTICK_AUTOSTART_TEST_VALUE'] ?? 'crontick-daemon';
@@ -71,38 +106,129 @@ function buildVbsContent(daemonPath: string): string {
   ].join('\r\n');
 }
 
-function regQuery(valueName: string): string | null {
-  const result = spawnSync(
-    'reg',
-    ['query', RUN_KEY, '/v', valueName],
-    { encoding: 'utf-8', timeout: 5_000, windowsHide: true },
-  );
-  if (result.status !== 0 || !result.stdout) return null;
-  // Output format: "    valueName    REG_SZ    <data>"
-  const match = result.stdout.match(/REG_SZ\s+(.+)/i);
-  return match?.[1]?.trim() ?? null;
+function getRunKey(registry: RegistryJsModule): string {
+  return registry.HKEY.HKEY_CURRENT_USER;
 }
 
-function regWrite(valueName: string, data: string): void {
+function isMissingRegistryValueError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /not found|cannot find|file not found|ERROR_FILE_NOT_FOUND|ENOENT/i.test(error.message);
+}
+
+function quotePowerShellLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function runPowerShellRegistryScript(script: string): string {
   const result = spawnSync(
-    'reg',
-    ['add', RUN_KEY, '/v', valueName, '/t', 'REG_SZ', '/d', data, '/f'],
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-Command', script],
     { encoding: 'utf-8', timeout: 5_000, windowsHide: true },
   );
   if (result.status !== 0) {
     throw new Error(
-      `reg.exe add failed (exit ${result.status ?? '?'}): ${result.stderr?.trim() ?? 'unknown error'}`,
+      `PowerShell registry operation failed (exit ${result.status ?? '?'}): ${result.stderr?.trim() ?? 'unknown error'}`,
     );
+  }
+  return result.stdout;
+}
+
+function queryWithPowerShellRegistryApi(valueName: string): string | null {
+  const literalPath = `Registry::HKEY_CURRENT_USER\\${RUN_KEY}`;
+  const script = [
+    '$ErrorActionPreference = "Stop";',
+    `try { $item = Get-ItemProperty -LiteralPath ${quotePowerShellLiteral(literalPath)} -Name ${quotePowerShellLiteral(valueName)};`,
+    `$value = $item.${quotePowerShellLiteral(valueName)};`,
+    'if ($null -ne $value) { [Console]::Out.Write([string]$value) } }',
+    'catch [System.Management.Automation.ItemNotFoundException] { exit 2 }',
+    'catch [System.Management.Automation.PSArgumentException] { exit 2 }',
+    'catch { throw }',
+  ].join(' ');
+
+  try {
+    const stdout = runPowerShellRegistryScript(script);
+    return stdout.length > 0 ? stdout : null;
+  } catch (error) {
+    if (error instanceof Error && /exit 2/.test(error.message)) return null;
+    throw error;
   }
 }
 
-function regDelete(valueName: string): void {
-  spawnSync(
-    'reg',
-    ['delete', RUN_KEY, '/v', valueName, '/f'],
-    { encoding: 'utf-8', timeout: 5_000, windowsHide: true },
-  );
-  // Ignore errors (value may not exist)
+function writeWithPowerShellRegistryApi(valueName: string, data: string): void {
+  const literalPath = `Registry::HKEY_CURRENT_USER\\${RUN_KEY}`;
+  const script = [
+    '$ErrorActionPreference = "Stop"',
+    `New-Item -Path ${quotePowerShellLiteral(literalPath)} -Force | Out-Null`,
+    `New-ItemProperty -LiteralPath ${quotePowerShellLiteral(literalPath)} -Name ${quotePowerShellLiteral(valueName)} -Value ${quotePowerShellLiteral(data)} -PropertyType String -Force | Out-Null`,
+  ].join('; ');
+  runPowerShellRegistryScript(script);
+}
+
+function deleteWithPowerShellRegistryApi(valueName: string): void {
+  const literalPath = `Registry::HKEY_CURRENT_USER\\${RUN_KEY}`;
+  const script = [
+    'Remove-ItemProperty',
+    '-LiteralPath', quotePowerShellLiteral(literalPath),
+    '-Name', quotePowerShellLiteral(valueName),
+    '-ErrorAction', 'SilentlyContinue',
+  ].join(' ');
+  runPowerShellRegistryScript(script);
+}
+
+async function registryQuery(valueName: string): Promise<string | null> {
+  try {
+    const registry = await loadRegistryJs();
+    let values: ReadonlyArray<RegistryValue>;
+    try {
+      values = registry.enumerateValues(getRunKey(registry), RUN_KEY);
+    } catch (error) {
+      if (isMissingRegistryValueError(error)) return null;
+      throw error;
+    }
+    const entry = values.find((value) => value.name.toLowerCase() === valueName.toLowerCase());
+    return typeof entry?.data === 'string' ? entry.data : null;
+  } catch {
+    return queryWithPowerShellRegistryApi(valueName);
+  }
+}
+
+async function registryWrite(valueName: string, data: string): Promise<void> {
+  try {
+    const registry = await loadRegistryJs();
+    registry.createKey?.(getRunKey(registry), RUN_KEY);
+    const ok = registry.setValue(
+      getRunKey(registry),
+      RUN_KEY,
+      valueName,
+      registry.RegistryValueType.REG_SZ,
+      data,
+    );
+    if (ok) return;
+  } catch {
+    // Fallback below.
+  }
+  writeWithPowerShellRegistryApi(valueName, data);
+}
+
+async function registryDelete(valueName: string): Promise<void> {
+  let registry: RegistryJsModule;
+  try {
+    registry = await loadRegistryJs();
+  } catch {
+    deleteWithPowerShellRegistryApi(valueName);
+    return;
+  }
+
+  try {
+    if (typeof registry.deleteValue !== 'function') {
+      deleteWithPowerShellRegistryApi(valueName);
+      return;
+    }
+    registry.deleteValue(getRunKey(registry), RUN_KEY, valueName);
+  } catch (error) {
+    if (isMissingRegistryValueError(error)) return;
+    deleteWithPowerShellRegistryApi(valueName);
+  }
 }
 
 export class Win32Autostart {
@@ -121,16 +247,14 @@ export class Win32Autostart {
     mkdirSync(autostartDir(), { recursive: true });
     writeFileSync(vbsPath, buildVbsContent(daemonPath), 'utf-8');
 
-    // Idempotent: remove previous value before writing
-    regDelete(valueName);
-    regWrite(valueName, `wscript.exe "${vbsPath}"`);
+    await registryWrite(valueName, `wscript.exe "${vbsPath}"`);
 
     return { ok: true };
   }
 
   async remove(): Promise<{ ok: true }> {
     const valueName = getValueName();
-    regDelete(valueName);
+    await registryDelete(valueName);
 
     // Remove VBS shim if it exists
     const vbsPath = getVbsPath();
@@ -143,7 +267,7 @@ export class Win32Autostart {
 
   async status(): Promise<AutostartStatus> {
     const valueName = getValueName();
-    const data = regQuery(valueName);
+    const data = await registryQuery(valueName);
     const installed = data !== null;
     return {
       installed,
