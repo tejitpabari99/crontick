@@ -1,6 +1,6 @@
 {
   "name": "crontick",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A standalone cron daemon, CLI, and MCP server for local scheduled jobs.",
   "type": "module",
   "license": "MIT",
