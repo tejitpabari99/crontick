@@ -20,7 +20,7 @@ scheduled jobs on Windows, macOS, and Linux.
 - `action.kind: "script"` and `action.kind: "exec"`
 - cron, interval, and one-shot schedules
 - stdio MCP transport only
-- Windows autostart via `HKCU\Run`; macOS/Linux provide manual guidance for now
+- Windows autostart via API-based `HKCU\Run` registration; macOS/Linux provide manual guidance for now
 
 ## Quick start
 

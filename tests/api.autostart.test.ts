@@ -5,6 +5,11 @@
  *   POST /api/autostart/install
  *   POST /api/autostart/remove
  *   HTTP 501 for darwin/linux backends
+ *
+ * This file writes to the real HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+ * under a scratch value name. It is gated to CI (process.env.CI) or
+ * CRONTICK_RUN_REGISTRY_TESTS=1 so local `npm test` runs do not trigger EDR/MDE
+ * persistence alerts on developer machines. GitHub Actions sets CI=true automatically.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync } from 'node:fs';
@@ -14,6 +19,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 
 const DAEMON_SCRIPT = resolve('dist/daemon/index.js');
 const TIMEOUT_MS = 30_000;
+const runRealRegistryTests = !!process.env['CI'] || process.env['CRONTICK_RUN_REGISTRY_TESTS'] === '1';
 
 function makeTmpDir(): string {
   const d = mkdtempSync(join(tmpdir(), 'crontick-autost-'));
@@ -88,7 +94,7 @@ describe('Daemon autostart API', () => {
 
   afterAll(async () => {
     // Cleanup win32 registry test value
-    if (process.platform === 'win32') {
+    if (process.platform === 'win32' && runRealRegistryTests) {
       try {
         await apiCall(port, 'POST', '/api/autostart/remove', {});
       } catch { /* ignore */ }
@@ -135,7 +141,7 @@ describe('Daemon autostart API', () => {
 
   // ── win32 round-trip (Windows only) ──────────────────────────────────────
 
-  describe.skipIf(process.platform !== 'win32')('win32 round-trip', () => {
+  describe.skipIf(process.platform !== 'win32' || !runRealRegistryTests)('win32 round-trip (real registry)', () => {
     it('status → install → status (installed) → remove → status (not installed)', async () => {
       const s1 = await apiCall(port, 'GET', `/api/autostart/status?backend=win32`);
       expect((s1.data as Record<string, unknown>)['installed']).toBe(false);
