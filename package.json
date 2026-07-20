@@ -54,7 +54,7 @@
     "@modelcontextprotocol/sdk": "^1.17.0",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
-    "commander": "^12.1.0",
+    "commander": "^15.0.0",
     "croner": "^9.0.0",
     "env-paths": "^3.0.0",
     "pino": "^9.4.0",
