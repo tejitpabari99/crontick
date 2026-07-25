@@ -472,7 +472,6 @@ export function createMcpServer(): McpServer {
     },
     async () => {
       const checks: Array<{ name: string; ok: boolean; note?: string }> = [];
-      let daemonReachable = false;
 
       // Node version
       const major = parseInt(process.versions.node.split('.')[0], 10);
@@ -508,7 +507,6 @@ export function createMcpServer(): McpServer {
         const base = await resolveDaemonBaseUrl();
         const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(2000) });
         if (res.ok) {
-          daemonReachable = true;
           checks.push({ name: 'daemon reachable', ok: true });
         } else {
           checks.push({ name: 'daemon reachable', ok: false, note: `HTTP ${res.status}` });

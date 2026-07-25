@@ -12,34 +12,35 @@ Usage: crontick [options] [command]
 A standalone cron daemon, CLI, and MCP server for local scheduled jobs.
 
 Options:
-  -V, --version           output the version number
-  --json                  Output as JSON
-  -h, --help              display help for command
+  -V, --version                       output the version number
+  --json                              Output as JSON
+  -h, --help                          display help for command
 
 Commands:
-  new [options] <id>      Create a new job
-  list                    List all jobs
-  get <id>                Get a job by ID
-  enable <id>             Enable a job
-  disable <id>            Disable a job
-  delete <id>             Delete a job
-  run-now <id>            Trigger an immediate run of a job
-  logs [options] <runId>  Get logs for a run
-  export [options]        Export all jobs
-  import <file>           Import jobs from a JSON file
-  doctor                  Check system health
-  daemon                  Manage the crontick daemon
-                          crontick data
-  dashboard [options]     Open the crontick dashboard in a browser
-  mcp [options]           Start the crontick MCP server on stdio (for use with
-                          Claude Desktop, Copilot, Cursor, etc.)
-  help [command]          display help for command
+  new [options] <id> [engineArgs...]  Create a new job
+  list                                List all jobs
+  get <id>                            Get a job by ID
+  enable <id>                         Enable a job
+  disable <id>                        Disable a job
+  delete <id>                         Delete a job
+  run-now <id>                        Trigger an immediate run of a job
+  logs [options] <runId>              Get logs for a run
+  export [options]                    Export all jobs
+  import <file>                       Import jobs from a JSON file
+  doctor                              Check system health
+  daemon                              Manage the crontick daemon
+  uninstall [options]                 Optionally delete all crontick data
+  dashboard [options]                 Open the crontick dashboard in a browser
+  mcp [options]                       Start the crontick MCP server on stdio
+                                      (for use with Claude Desktop, Copilot,
+                                      Cursor, etc.)
+  help [command]                      display help for command
 ```
 
 ## new
 
 ```text
-Usage: crontick new [options] <id>
+Usage: crontick new [options] <id> [engineArgs...]
 
 Create a new job
 
@@ -50,6 +51,12 @@ Options:
   --tz <tz>             Timezone for cron schedule
   --script <body>       Inline script body
   --exec <cmd>          Command to exec (use -- for args)
+  --prompt <text>       Prompt text for a prompt action
+  --prompt-file <path>  UTF-8 .txt file to read into the prompt
+  --engine <engine>     Prompt engine: copilot|agency (default: copilot)
+  --session-id <id>     Reuse this prompt engine session every run
+  --reuse-session       Capture the first successful run session id and reuse
+                        it
   --file <path>         Load full job from JSON file
   --shell <shell>       Shell: auto|bash|pwsh|cmd (default: "auto")
   --env-file <path>     Load extra environment variables from a .env file
@@ -249,54 +256,6 @@ Options:
   -h, --help  display help for command
 ```
 
-
-```text
-
-
-Options:
-  -h, --help         display help for command
-
-Commands:
-  install [options]  Register the daemon to start automatically at login
-  remove [options]   Remove the daemon from automatic startup
-  status [options]   Check whether the daemon is registered for automatic
-                     startup
-  help [command]     display help for command
-```
-
-
-```text
-
-Register the daemon to start automatically at login
-
-Options:
-  --backend <backend>  Backend: win32|darwin|linux|manual (default:
-                       auto-detect)
-  -h, --help           display help for command
-```
-
-
-```text
-
-Remove the daemon from automatic startup
-
-Options:
-  --backend <backend>  Backend: win32|darwin|linux|manual (default:
-                       auto-detect)
-  -h, --help           display help for command
-```
-
-
-```text
-
-Check whether the daemon is registered for automatic startup
-
-Options:
-  --backend <backend>  Backend: win32|darwin|linux|manual (default:
-                       auto-detect)
-  -h, --help           display help for command
-```
-
 ## dashboard
 
 ```text
@@ -314,6 +273,7 @@ Options:
 ```text
 Usage: crontick uninstall [options]
 
+Optionally delete all crontick data
 
 Options:
   --purge     Also delete the data directory (jobs, runs, config)
@@ -330,12 +290,14 @@ Start the crontick MCP server on stdio (for use with Claude Desktop, Copilot,
 Cursor, etc.)
 
 Options:
+  --no-daemon-start   Do not start the daemon if it is not already running
   --daemon-url <url>  Override the daemon URL (default: resolved from port
                       file)
   -h, --help          display help for command
 
 Transport:    stdio (JSON-RPC 2.0 over stdin/stdout)
 Tool prefix:  crontick_
+Daemon start: Daemon is started unless --no-daemon-start or CRONTICK_MCP_NO_DAEMON_START=1 is set
 
 Example MCP host config (Claude Desktop):
   {

@@ -78,5 +78,4 @@ const schema = zodToJsonSchema(JobSchema, {
 });
 
 writeFileSync('./src/schemas/job.schema.json', JSON.stringify(schema, null, 2));
-// eslint-disable-next-line no-undef -- Node.js script running in CJS context
 console.log('Generated src/schemas/job.schema.json');

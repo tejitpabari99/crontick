@@ -36,6 +36,39 @@ Direct process execution with `shell=false`.
 
 Use `exec` for safer argv-based invocation when you do not need a shell.
 
+## `prompt`
+
+First-class prompt execution through Copilot or Agency. Prompt actions are spawned with
+`shell=false` and raw engine args are passed as argv elements without parsing.
+
+```json
+{
+  "kind": "prompt",
+  "prompt": "Summarize repository status and write a concise report",
+  "engine": "copilot",
+  "args": ["--silent", "--add-dir", "Q:\\Repos\\crontick"],
+  "reuseSession": true,
+  "cwd": "Q:\\Repos\\crontick",
+  "timeoutSec": 600
+}
+```
+
+Fields:
+
+- `prompt` — required persisted prompt text
+- `engine` — `copilot` or `agency`; defaults to `copilot`
+- `args` — raw engine arguments preserved in order, including duplicates
+- `sessionId` — explicit engine session id to pass every run
+- `reuseSession` — capture the first successful run's session id, persist it, then reuse it
+
+CLI and programmatic client input may use `promptFile` as creation sugar. It must point to a UTF-8
+`.txt` file; the file is read before persistence and exports contain only `prompt`.
+
+Command lines produced by the runner:
+
+- Copilot: `copilot -p <prompt> <args...> [--session-id <id>]`
+- Agency: `agency cp -p <prompt> <args...> [--session-id <id>]`
+
 ## Environment
 
 - `env` adds explicit key/value pairs

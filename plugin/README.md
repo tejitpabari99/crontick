@@ -38,7 +38,8 @@ crontick uninstall --purge
 
 ## After Installation
 
-1. Schedule a job: `crontick new my-job --cron "0 9 * * *" --script "echo hello"`
-2. Configure your MCP host to use `crontick mcp` as an MCP server
+1. Schedule a script job: `crontick new my-job --cron "0 9 * * *" --script "echo hello"`
+2. Schedule a prompt job: `crontick new daily-summary --cron "0 9 * * *" --prompt "Summarize repo status" -- --silent`
+3. Configure your MCP host to use `crontick mcp` as an MCP server
 
 See the [README](../README.md) for full documentation.

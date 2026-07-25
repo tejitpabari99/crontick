@@ -15,14 +15,16 @@ crontick doctor
 
 If `npm install` fails with an SSL handshake error, see the [troubleshooting guide](./troubleshooting.md#npm-install-fails).
 
-## Start the daemon
+## Daemon lifecycle
 
 ```sh
 crontick daemon start
 crontick daemon status
 ```
 
-The daemon writes its port and pid files into the crontick data directory and serves the local dashboard on `127.0.0.1` only.
+Most daemon-backed commands also start the daemon on demand, so an explicit `daemon start` is
+optional. The daemon writes its port and pid files into the crontick data directory and serves the
+local dashboard on `127.0.0.1` only.
 
 ## Create your first job
 
@@ -40,17 +42,26 @@ crontick new cleanup-temp `
   --shell pwsh
 ```
 
+Prompt job example:
+
+```powershell
+crontick new daily-summary `
+  --cron "0 9 * * *" `
+  --prompt "Summarize repository status and mention risky changes" `
+  --engine copilot `
+  --reuse-session `
+  -- --silent --add-dir Q:\Repos\crontick
+```
+
+Use `--prompt-file .\prompt.txt` for UTF-8 `.txt` prompts. Everything after `--` is stored as raw
+engine arguments.
+
 ## View runs and logs
 
 ```sh
 crontick run-now hello-every-5m
 crontick logs <run-id> --tail 50
 crontick dashboard
-```
-
-
-
-```powershell
 ```
 
 
@@ -71,4 +82,3 @@ Example MCP host config:
   }
 }
 ```
-

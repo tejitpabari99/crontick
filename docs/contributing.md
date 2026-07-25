@@ -27,16 +27,6 @@ Include a changeset for user-facing changes.
 3. Run `npm run typecheck && npm run lint && npm run build && npm test`
 4. Open a PR against `main`
 
-### Registry-touching tests
-
-
-- CI runs them automatically (GitHub Actions sets `CI=true`).
-- To run them locally, set `CRONTICK_RUN_REGISTRY_TESTS=1` before invoking `npm test`.
-
-```powershell
-$env:CRONTICK_RUN_REGISTRY_TESTS = '1'; npm test
-```
-
 ## Changesets
 
 We use [Changesets](https://github.com/changesets/changesets).

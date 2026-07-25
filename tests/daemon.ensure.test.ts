@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import http from 'node:http';
 import {
-  appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -17,7 +16,7 @@ const scratchRoot = resolve('.crontick', 'ensure-tests');
 let previousHome: string | undefined;
 let previousUrl: string | undefined;
 let currentHome: string | undefined;
-let cleanupFns: Array<() => void | Promise<void>> = [];
+const cleanupFns: Array<() => void | Promise<void>> = [];
 
 function makeHome(): string {
   mkdirSync(scratchRoot, { recursive: true });

@@ -14,6 +14,7 @@ crontick is designed for **local-user automation**. The daemon API listens on `1
 ## Process execution
 
 - `exec` actions always use `shell=false`
+- `prompt` actions always use `shell=false` and pass prompt/engine args as argv elements
 - `script` actions execute through an explicit shell choice
 - job definitions are validated by Zod before persistence or execution
 
@@ -27,14 +28,9 @@ Run logs are redacted for common secrets before they are stored or returned:
 
 Binary output is preserved without lossy text redaction.
 
-
-
-
-
-On corp-managed devices with aggressive EDR, unsigned first-run of any new binary may still trigger reputation-based alerts until Microsoft's Intelligent Security Graph classifies the file. Submit `crontick.exe` to https://www.microsoft.com/en-us/wdsi/filesubmission for known-good scoring if needed.
-
-
-The crontick test suite mocks the registry API by default and does not touch the real HKCU\Run key. A separate set of end-to-end tests that DO write to the real registry (under a scratch value name) is gated behind `CI=true` / `CRONTICK_RUN_REGISTRY_TESTS=1`, so `npm test` on a developer machine will not trigger EDR persistence alerts.
+Prompt text and raw prompt engine arguments are stored in job JSON and may be visible to local
+process inspection while a run is active. Do not put secrets in prompts or args; use `env`/`envFile`
+for secret material when a job needs it.
 
 ## Operational guidance
 

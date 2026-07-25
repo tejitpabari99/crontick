@@ -11,7 +11,7 @@ const scratchRoot = resolve('.crontick', 'client-tests');
 let previousHome: string | undefined;
 let previousUrl: string | undefined;
 let currentHome: string | undefined;
-let cleanupFns: Array<() => Promise<void> | void> = [];
+const cleanupFns: Array<() => Promise<void> | void> = [];
 
 const testJob = {
   id: 'client-test-job',

@@ -11,10 +11,12 @@ crontick mcp
 Helpful flags:
 
 - `--daemon-url <url>` — override the daemon base URL
+- `--no-daemon-start` — do not start the daemon if it is not already running
 
 Environment variables:
 
 - `CRONTICK_DAEMON_URL=http://127.0.0.1:<port>`
+- `CRONTICK_MCP_NO_DAEMON_START=1`
 
 ## Tool groups
 
@@ -29,6 +31,10 @@ Environment variables:
 - `crontick_job_disable`
 - `crontick_job_run_now`
 - `crontick_job_cancel_run`
+
+`crontick_job_create` and `crontick_job_update` accept action kinds `script`, `exec`, and `prompt`.
+Prompt actions use `prompt`, optional `engine` (`copilot` or `agency`), raw `args`, and either
+`sessionId` or `reuseSession`.
 
 ### Runs
 
@@ -69,5 +75,4 @@ Environment variables:
 ## Validation model
 
 Tool input is validated with Zod before daemon calls are made. Invalid inputs return structured MCP tool errors instead of crashing the server.
-
 

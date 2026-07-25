@@ -15,10 +15,8 @@ import { existsSync, mkdirSync, copyFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { createInterface } from 'node:readline';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const nonInteractive = process.env['CRONTICK_PLUGIN_NONINTERACTIVE'] === '1';
 const skipNpm = process.env['CRONTICK_PLUGIN_SKIP_NPM'] === '1';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -46,17 +44,6 @@ function binaryExists(name) {
   const which = process.platform === 'win32' ? 'where.exe' : 'which';
   const result = runCapture(which, [name]);
   return result.status === 0 && result.stdout.trim().length > 0;
-}
-
-async function prompt(question) {
-  if (nonInteractive) return '';
-  return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
 }
 
 // ── Step 1: Ensure crontick is installed ─────────────────────────────────────

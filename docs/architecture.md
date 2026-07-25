@@ -26,18 +26,22 @@
 - `src/cli/index.ts` — Commander CLI and daemon client helpers
 - `src/daemon/index.ts` — daemon startup, single-instance guard, reload, signal handling
 - `src/daemon/api.ts` — loopback-only HTTP API and dashboard serving
+- `src/daemon/ensure.ts` — shared on-demand daemon start/probe logic for CLI, MCP, and client
+- `src/daemon/prompt-session.ts` — prompt-engine session id extraction helpers
 - `src/daemon/scheduler.ts` — cron/interval/one-shot scheduling, preview, validation, catchup
 - `src/daemon/runner.ts` — process execution, overlap, retry, timeout, budgets, log redaction
 - `src/daemon/store.ts` — SQLite-backed runs/logs + JSON job persistence
+- `src/job-input.ts` — CLI/client prompt-file normalization and create input validation
+- `src/client.ts` — exported programmatic client over the daemon HTTP API
 - `src/mcp/index.ts` — MCP tool/resource/prompt layer over the local daemon API
 
 ## Data flow
 
-1. Job is created through CLI, API, or MCP.
-2. `JobSchema` validates the payload.
+1. Job is created through CLI, client, API, or MCP.
+2. CLI/client inputs are normalized (`promptFile` is read into `prompt`); persisted payloads are validated by `JobSchema`.
 3. Store persists the job as JSON and mirrors it into SQLite metadata.
 4. Scheduler registers cron/interval/one-shot timers.
-5. On tick, daemon inserts a queued run and Runner executes the action.
+5. On tick, daemon inserts a queued run and Runner executes a `script`, `exec`, or `prompt` action.
 6. Runner appends redacted stdout/stderr chunks to SQLite.
 7. API and MCP expose run state, logs, stats, and health.
 
