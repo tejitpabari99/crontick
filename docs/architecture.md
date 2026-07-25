@@ -34,7 +34,7 @@
 - `src/logger.ts` — shared structured logger, level filtering, and redaction
 - `src/doctor.ts` — shared structured health checks for CLI/MCP/client
 - `src/dashboard.ts` — shared dashboard status/data model and asset resolution
-- `src/schema-json.ts` — shared JSON Schema generation for job resources
+- `src/schema-json.ts` — shared JSON Schema generation for job sidecars and MCP schema resource
 - `src/daemon/index.ts` — daemon startup, single-instance guard, reload, signal handling
 - `src/daemon/api.ts` — loopback-only HTTP API and dashboard serving
 - `src/daemon/ensure.ts` — shared on-demand daemon start/probe logic for CLI, MCP, and client
@@ -44,7 +44,7 @@
 - `src/daemon/runner.ts` — process execution, overlap, retry, timeout, budgets, log redaction
 - `src/daemon/store.ts` — SQLite-backed runs/logs + JSON job persistence
 - `src/job-input.ts` — shared create/update/import normalization and prompt-file handling
-- `src/mcp/index.ts` — MCP tool/resource/prompt adapter over `CrontickClient`
+- `src/mcp/index.ts` — MCP tools and job-schema resource over `CrontickClient`
 
 ## Daemon lifecycle
 

@@ -24,7 +24,7 @@ export type {
   NormalizeJobInputOptions,
   PromptActionInput,
 } from './job-input.js';
-export { configJsonSchema, configJsonSchemaText, jobJsonSchema, jobJsonSchemaText } from './schema-json.js';
+export { jobJsonSchema, jobJsonSchemaText } from './schema-json.js';
 export {
   BUILT_IN_CONFIG,
   addEngine,
@@ -64,6 +64,5 @@ export type {
 } from './dashboard.js';
 export { SURFACE_CAPABILITIES } from './surface.js';
 export type { SurfaceCapability } from './surface.js';
-export type { UninstallResult, UninstallOptions } from './uninstall.js';
 export { createLogger, isVerboseEnv, nullLogger, redactText, redactValue, sanitizeLogEvent } from './logger.js';
 export type { LogEvent, Logger, LoggerOptions, LogLevel, LogSink } from './logger.js';

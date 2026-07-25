@@ -25,9 +25,9 @@ CRONTICK_PLUGIN_NONINTERACTIVE=1 node plugin/install.mjs
 
 ```sh
 node plugin/uninstall.mjs
-# Also delete all data:
-crontick uninstall --purge
 ```
+
+The plugin uninstall keeps crontick data. Delete your crontick data directory manually if you want a full reset.
 
 ## Environment Variables
 

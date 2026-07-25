@@ -5,13 +5,13 @@ Date: 2026-07-25
 
 ## Current baseline
 
-crontick now ships a local daemon, CLI, dashboard, programmatic client, and stdio MCP server from one npm package (`package.json:20-34`). The recent branch made prompt jobs first-class: persisted jobs can use `action.kind: "prompt"` with `engine`, raw `args`, `sessionId`, and `reuseSession` (`src\schemas\job.ts:52-72`), and CLI creation supports `--prompt`, `--prompt-file`, `--engine`, session flags, and raw passthrough args (`src\cli\index.ts:164-185`, `src\cli\index.ts:224-285`). The runner currently spawns only `copilot` or `agency cp` with `shell:false`, captures bounded transcripts for session reuse, and appends `--session-id` when present (`src\daemon\runner.ts:251-259`, `src\daemon\runner.ts:293-390`).
+crontick now ships a local daemon, CLI, dashboard, programmatic client, and stdio MCP server from one npm package (`package.json:20-34`). Prompt jobs are first-class: persisted jobs can use `action.kind: "prompt"` with `engine`, raw `args`, `sessionId`, and `reuseSession`, and CLI creation supports `--prompt`, `--prompt-file`, `--engine`, session flags, and raw passthrough args. The runner is config-driven with `shell:false`, captures bounded transcripts for session reuse, and appends `--session-id` when present.
 
 The public edge surfaces are already multi-modal:
 
 - CLI: human/shell UX, including daemon lifecycle, job CRUD, logs, import/export, dashboard, and MCP launch (`docs\cli.md:19-38`).
 - Programmatic client: `createClient()` / `CrontickClient` over daemon HTTP with shared ensure and normalization (`src\client.ts:20-188`).
-- MCP: AI-native tool/resource/prompt adapter, but it still owns a duplicate HTTP wrapper rather than using the client (`src\mcp\index.ts:40-60`; see `docs\architecture\api-vs-cli-analysis.md:128-176`).
+- MCP: AI-native tool adapter plus a job-schema resource, backed by the shared client.
 - Daemon HTTP API: loopback-only internal transport and dashboard backend (`src\daemon\api.ts:46-55`, `docs\architecture\api-vs-cli-analysis.md:50-59`).
 
 For public release, keep the product message from the API-vs-CLI analysis: CLI for humans and scripts, MCP for AI hosts, and `createClient()` for Node/TypeScript embedders; do not advertise the loopback HTTP daemon as a stable integration contract (`docs\architecture\api-vs-cli-analysis.md:139-195`).
@@ -52,7 +52,7 @@ reuse behavior, and token-budget field removal.
 | Session lifecycle management        | Users can set/capture a session id but cannot list, inspect, rename, expire, or rotate sessions (`src\schemas\job.ts:71-72`, `src\daemon\store.ts:138-153`).                                                    | Add `crontick sessions list                                                                                                                                                                                                                               |    get | expire                                       | attach | detach`, MCP tools/resources, per-engine session metadata, TTL, last-used timestamp, and explicit rotation. | M   | Engine registry session strategy |
 | Cost and rate limits                | `maxRunsPerDay` is enforced per job, but multiple prompt jobs can still stampede an engine account.                                                                    | Add global and per-engine concurrency/rate limits, daily/monthly cost budgets, backpressure policies (`queue`, `skip`, `fail`), and budget alerts after structured engine accounting exists.                                                                |      M | Cost observability                          |
 | Agent-aware retries/backoff         | Generic retry exists (`src\daemon\runner.ts:167-190`) but treats prompt engine failures like any other process.                                                                                                 | Add retry classifiers for rate limit, auth, network, tool approval, and deterministic prompt errors. Support exponential backoff/jitter and max wall-clock per run.                                                                                       |      M | Observability/error taxonomy                 |
-| AI-first dashboard and MCP prompts  | Dashboard is now core-owned and basic/read-only, but it does not yet show prompt-specific result summaries, sessions, or repair workflows. MCP prompts still include script-first `create-scheduled-script` (`src\mcp\index.ts:721-783`). | Add rendered prompt preview, result cards, session views, and MCP prompts for `create-scheduled-prompt`, `summarize-last-run`, and `repair-failed-agent-job` after result capture exists. |      M | Config + prompt template + results           |
+| AI-first dashboard and MCP workflows | Dashboard is now core-owned and basic/read-only, but it does not yet show prompt-specific result summaries, sessions, or repair workflows. MCP currently stays tool-first; no bundled prompt templates ship. | Add rendered prompt preview, result cards, session views, and only then consider MCP prompt templates such as `create-scheduled-prompt`, `summarize-last-run`, and `repair-failed-agent-job`. |      M | Config + prompt template + results           |
 
 ### P2 — later expansion
 
@@ -172,7 +172,7 @@ Add `crontick config` subcommands:
 | `crontick config validate [path]`                | Validate a config file and print actionable errors.                                                                |
 | `crontick config doctor`                         | Check engine commands, prompt delivery capability, telemetry setting, data-dir writability, and security warnings. |
 
-MCP should expose read-only config resources first (`crontick://config/effective`, `crontick_config_validate`) before mutating config tools, because config mutation affects future jobs globally.
+MCP should stay tool-first for config (`crontick_config_get`, `crontick_config_validate`, and the mutation tools) so the config surface remains aligned with the client and CLI.
 
 ### Per-job override model
 
@@ -193,7 +193,7 @@ MCP should expose read-only config resources first (`crontick://config/effective
 
 ### Product/API contracts
 
-- [ ] Declare semver policy for CLI flags/output, MCP tool/resource/prompt schemas, `createClient()` exports, and persisted job JSON (`docs\architecture\api-vs-cli-analysis.md:180-195`).
+- [ ] Declare semver policy for CLI flags/output, MCP tool schemas, the job schema resource, `createClient()` exports, and persisted job JSON (`docs\architecture\api-vs-cli-analysis.md:180-195`).
 - [ ] Mark daemon HTTP endpoints, pid/port files, and low-level path helpers as internal/advanced unless intentionally stabilized.
 - [ ] Add client/MCP parity tests so CLI/client/MCP create/update/import produce equivalent normalized jobs.
 - [ ] Add and verify a generated job JSON schema before publishing schema docs.

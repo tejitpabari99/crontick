@@ -3,7 +3,6 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { createInterface } from 'node:readline';
 import { VERSION } from '../version.js';
 import { CrontickError } from '../errors.js';
 import { createClient, type CrontickClient } from '../client.js';
@@ -361,10 +360,9 @@ runs.command('get <runId>').description('Get a run by ID').action(async (runId: 
 program.command('logs <runId>')
   .description('Get logs for a run')
   .option('--tail <n>', 'Show last N lines', parseInteger)
-  .option('--lines <n>', 'Show last N lines', parseInteger)
   .action(async (runId: string, opts) => {
     try {
-      const result = await client().getLogs(runId, { lines: (opts.tail ?? opts.lines) as number | undefined });
+      const result = await client().getLogs(runId, { lines: opts.tail as number | undefined });
       if (useJson()) {
         stdout(JSON.stringify(result, null, 2));
       } else {
@@ -379,10 +377,10 @@ schedule.command('validate <scheduleJson>').description('Validate a schedule JSO
 });
 schedule.command('preview <scheduleJson>')
   .description('Preview upcoming fire times for a schedule JSON object')
-  .option('-n, --lines <n>', 'Number of fire times to return', parseInteger)
+  .option('--limit <n>', 'Number of fire times to return', parseInteger)
   .option('--tz <tz>', 'Timezone override')
   .action(async (scheduleJson: string, opts) => {
-    try { print(await client().previewSchedule({ schedule: parseScheduleJson(scheduleJson), n: opts.lines as number | undefined, tz: opts.tz as string | undefined })); } catch (err) { handleError(err); }
+    try { print(await client().previewSchedule({ schedule: parseScheduleJson(scheduleJson), n: opts.limit as number | undefined, tz: opts.tz as string | undefined })); } catch (err) { handleError(err); }
   });
 
 const stats = program.command('stats').description('Show job/run statistics');
@@ -503,36 +501,6 @@ daemon.command('restart').description('Restart the daemon').action(async () => {
     stdout(`Daemon restarted on port ${String(result.port ?? '')}`);
   } catch (err) { handleError(err); }
 });
-
-program.command('uninstall')
-  .description('Optionally delete all crontick data')
-  .option('--purge', 'Also delete the data directory (jobs, runs, config)')
-  .option('--yes', 'Skip confirmation prompts')
-  .action(async (opts) => {
-    const c = client(false);
-    try {
-      if (opts.purge as boolean) {
-        let confirmed = opts.yes as boolean;
-        if (!confirmed) {
-          confirmed = await new Promise<boolean>((resolveAnswer) => {
-            const rl = createInterface({ input: process.stdin, output: process.stdout });
-            rl.question('Delete all crontick data? [y/N] ', (answer) => {
-              rl.close();
-              resolveAnswer(answer.trim().toLowerCase() === 'y');
-            });
-          });
-        }
-        if (confirmed) {
-          const result = await c.uninstall({ purge: true });
-          stdout(`✓ ${result.message}`);
-        } else {
-          stdout('Skipped data directory deletion.');
-        }
-      } else {
-        stdout((await c.uninstall()).message);
-      }
-    } catch (err) { handleError(err); }
-  });
 
 const dashboard = program.command('dashboard').description('Manage the crontick dashboard');
 dashboard.command('start')

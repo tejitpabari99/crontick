@@ -19,7 +19,7 @@ flowchart TD
 
   CLI -->|parse args + render| Client
   CLI -->|mcp launcher, browser open, import/export files| CLILocal[CLI-local UX helpers]
-  MCP -->|tool schemas + resources + prompts| Client
+  MCP -->|tool schemas + job schema resource| Client
   Client --> Ensure[src\daemon\ensure.ts]
   Client --> Lifecycle[src\daemon\lifecycle.ts]
   Client --> Doctor[src\doctor.ts]
@@ -44,7 +44,7 @@ Current real layering:
 - The client is the daemon-aware source of truth: it normalizes create/update/import inputs, owns all daemon endpoint calls, ensures or controls daemon lifecycle, runs doctor checks, serves schema generation, and maps daemon errors to `CrontickError`.
 - The daemon HTTP API is the actual process boundary. `src\daemon\api.ts` accepts loopback-only requests, validates persisted job JSON, then calls Store/Scheduler/Runner (`src\daemon\api.ts:46-55`, `98-170`, `223-317`).
 - The daemon process owns durable state and execution: it opens the store, loads jobs, schedules enabled jobs, listens on an ephemeral `127.0.0.1` port, and writes the port file (`src\daemon\index.ts:98-154`).
-- The MCP server uses `CrontickClient` for daemon-backed tools, resources, doctor checks, dashboard lifecycle/data, lifecycle operations, and shared job schema generation. It keeps only MCP-specific tool schemas, resources, prompts, redaction, and JSON formatting.
+- The MCP server uses `CrontickClient` for daemon-backed tools, doctor checks, dashboard lifecycle/data, lifecycle operations, and shared job schema generation. It keeps only MCP-specific tool schemas, the job schema resource, redaction, and JSON formatting.
 
 ## HTTP daemon API as a third surface
 
@@ -64,7 +64,7 @@ This makes the client more, not less, important. The client hides daemon start/p
 | Human at terminal | CLI | Dashboard, MCP via host config | Discover commands, create jobs quickly, inspect runs/logs, explicit daemon lifecycle, copy/paste examples | CLI is the lowest-friction public UX and works after `npm install -g crontick`. It can present friendly errors and table/JSON output. |
 | Shell scripts / CI / dotfiles | CLI with `--json` | Programmatic API for richer scripts | Stable process exit codes, JSON output, no TypeScript setup | CLI is scriptable and language-agnostic, but should stay thin to avoid divergent behavior. |
 | Node/TypeScript embedding app | Programmatic API (`createClient`) | None, unless spawning MCP for AI hosts | Typed methods, exceptions, no shell quoting, daemon on-demand, direct objects | The client avoids fragile stdout parsing and can evolve with TypeScript types and semver. |
-| AI agent / MCP client | MCP tools/resources/prompts | CLI fallback when MCP unavailable | Tool schemas, confirmable destructive actions, schedule preview, resources/logs, prompt workflows | MCP is the native AI surface. It exposes intent-specific tools and resources rather than asking an LLM to synthesize shell commands. |
+| AI agent / MCP client | MCP tools | CLI fallback when MCP unavailable | Tool schemas, confirmable destructive actions, schedule preview, logs, and job schema discovery | MCP is the native AI surface. It exposes intent-specific tools rather than asking an LLM to synthesize shell commands. |
 | Bundled skill / Copilot plugin | MCP first; CLI fallback/install/doctor | Programmatic API if future extension code embeds crontick | Install verification, teach LLM workflow, validate/preview before creation | `plugin\install.mjs` uses `crontick doctor`; `src\skill\SKILL.md` prefers MCP tools and uses CLI examples/fallback (`plugin\install.mjs:73-74`, `src\skill\SKILL.md:95-108`, `254-286`). |
 | Daemon process | Internal HTTP handlers + Store/Scheduler/Runner | None | Local process boundary, durable state, scheduling, run execution | The daemon should not call the CLI or public client; it owns the authoritative state machine. |
 | Dashboard/static UI | Core dashboard model via daemon endpoint | Public client dashboardStart/status/data/stop | Read the shared dashboard model from the local daemon | The dashboard is served by the daemon, but data aggregation lives in src\dashboard.ts and is exposed consistently through client, CLI, and MCP. |
@@ -130,7 +130,7 @@ Both is the right product architecture, but only if the implementation keeps one
 |---|---|---|---|
 | CLI create/update normalization | Resolved into shared `src\job-input.ts` builders and `CrontickClient.createJobFromCliOptions()` / `updateJob()`. | CLI no longer owns domain validation or prompt-file normalization. | Keep CLI as parse/render only. |
 | JSON-file-relative `promptFile` | Resolved with per-call normalization options for create/update/import. | CLI, client, and MCP can share prompt-file semantics. | Keep prompt file reads in core/client helpers. |
-| MCP daemon transport | Resolved: MCP tools/resources call `CrontickClient` instead of a local HTTP wrapper. | Endpoint/default/error behavior has one source. | Maintain drift tests for tool/client parity. |
+| MCP daemon transport | Resolved: MCP tools call `CrontickClient` instead of a local HTTP wrapper. | Endpoint/default/error behavior has one source. | Maintain drift tests for tool/client parity. |
 | Client capability gaps | Resolved: client exposes cancel, stats, doctor, daemon lifecycle, logs options, and schema generation. | Embedders can use every public daemon-backed capability without raw HTTP. | Add client methods before new CLI/MCP tools. |
 | Doctor duplication | Resolved in `src\doctor.ts`. | Health semantics and check names are shared. | Shims only render structured checks. |
 | Daemon lifecycle duplication | Resolved in `src\daemon\lifecycle.ts`. | Explicit start/stop/restart reuse shared core behavior. | Shims only call lifecycle methods and print results. |
@@ -155,7 +155,7 @@ More concretely:
 
 1. The stable behavioral source should be a public client/core layer, not CLI command handlers and not raw HTTP.
 2. CLI should parse arguments, handle files/stdin/stdout, render human output, and call the client/core.
-3. MCP should define AI-friendly tool schemas/resources/prompts, enforce confirmation/redaction conventions, and call the same client/core.
+3. MCP should define AI-friendly tool schemas, expose only the shared job schema resource, enforce confirmation/redaction conventions, and call the same client/core.
 4. HTTP should remain the process-local transport between client/core and daemon. It should be tested, but not promoted as the supported integration API.
 5. The daemon should stay independent of public adapters and own state, scheduling, and execution.
 
@@ -167,7 +167,7 @@ Do not start by deleting surfaces. Instead, reduce drift in small, behavior-pres
 
 1. Add client methods first for any new public capability.
 2. Add shared core validation/builders before adding CLI flags or MCP schemas.
-3. Keep MCP tools/resources on `CrontickClient`; do not add raw daemon endpoint calls.
+3. Keep MCP tools on `CrontickClient`; do not add raw daemon endpoint calls.
 4. Keep CLI commands as argument parsing, local file/stdout UX, and client calls.
 5. Extend the surface drift test whenever a capability is intentionally added or removed.
 
@@ -178,7 +178,7 @@ For a public release, explicitly separate stable public contracts from internal 
 Stable/public documentation should cover:
 
 - CLI commands, flags, exit behavior, and `--json` output compatibility expectations.
-- MCP tool/resource/prompt names and input schemas, because agents and skills will depend on them.
+- MCP tool names/input schemas and the job schema resource, because agents and skills will depend on them.
 - Package root API: `createClient()`, `CrontickClient`, job/schedule/action types, and supported errors.
 - Persisted normalized job JSON enough for export/import and backup/restore.
 
@@ -194,7 +194,7 @@ The public-release message should be: use the CLI if you are a human or shell sc
 
 An AI-first cron needs surfaces that are both agent-friendly and safe:
 
-- MCP is essential because AI hosts need declarative tools, schemas, resources, prompts, and confirmation guidance. It is the best surface for scheduling prompts/agents.
+- MCP is essential because AI hosts need declarative tools, schemas, and confirmation guidance. It is the best surface for scheduling prompts/agents.
 - The programmatic API is essential because future Copilot extensions, desktop apps, web dashboards, or agent runtimes may want to create jobs without an MCP round trip or shell command.
 - The CLI remains essential because agents often need to show users an exact fallback command, plugin installers need a simple `doctor`, and humans need to inspect or repair state outside an AI host.
 - The daemon HTTP API is necessary for process isolation, but making it the public contract would push AI clients toward low-level transport details rather than intent-level operations.

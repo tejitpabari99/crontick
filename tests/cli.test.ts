@@ -164,7 +164,6 @@ describe('CLI binary (dist/cli/index.js)', () => {
       expect(cli(['--help'], { CRONTICK_HOME: tmp }).status).toBe(0);
       expect(cli(['--version'], { CRONTICK_HOME: tmp }).status).toBe(0);
       expect(cli(['daemon', 'status'], { CRONTICK_HOME: tmp }).stdout).toContain('not running');
-      expect(cli(['uninstall', '--yes'], { CRONTICK_HOME: tmp }).status).toBe(0);
       expect(existsSync(join(tmp, 'daemon.port'))).toBe(false);
       expect(existsSync(join(tmp, 'daemon.pid'))).toBe(false);
       expect(existsSync(join(tmp, 'daemon.ensure.lock'))).toBe(false);
@@ -204,17 +203,10 @@ describe('CLI binary (dist/cli/index.js)', () => {
     }
   });
 
-  it('uninstall --purge refuses to delete data while daemon pid is alive', () => {
-    const tmp = makeTmpDir();
-    try {
-      writeFileSync(join(tmp, 'daemon.pid'), String(process.pid), 'utf-8');
-      const result = cli(['uninstall', '--purge', '--yes'], { CRONTICK_HOME: tmp });
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain('crontick daemon stop');
-      expect(existsSync(tmp)).toBe(true);
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+  it('uninstall command is not available', () => {
+    const result = cli(['--help']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain('uninstall');
   });
 });
 
@@ -474,7 +466,7 @@ describe('CLI e2e with daemon', () => {
     const runData = JSON.parse(runR.stdout) as { runId: string };
     const runId = runData.runId;
     await new Promise((r) => setTimeout(r, 2000));
-    const r = cli(['--json', 'logs', runId, '--lines', '5'], env());
+    const r = cli(['--json', 'logs', runId, '--tail', '5'], env());
     expect(r.status).toBe(0);
     const data = JSON.parse(r.stdout);
     expect(data).toMatchObject({ runId, lines: expect.any(Array) });
@@ -500,7 +492,7 @@ describe('CLI e2e with daemon', () => {
     expect(validate.status, validate.stderr).toBe(0);
     expect(JSON.parse(validate.stdout)).toMatchObject({ ok: true });
 
-    const preview = cli(['--json', 'schedule', 'preview', scheduleJson, '--lines', '2'], env());
+    const preview = cli(['--json', 'schedule', 'preview', scheduleJson, '--limit', '2'], env());
     expect(preview.status, preview.stderr).toBe(0);
     expect(JSON.parse(preview.stdout).next).toHaveLength(2);
 

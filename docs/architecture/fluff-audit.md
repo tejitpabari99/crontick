@@ -1,7 +1,7 @@
 # Fluff audit
 
 Date: 2026-07-25
-Branch: users/tejitpabari/prompt-cron-daemon-autostart
+Branch: users/tejitpabari/prompt-cron-daemon-startup
 
 Owner intent: start with strong basics; less surface means less to test. Architecture constraint: one core with thin CLI/MCP/client shims, no drift between surfaces.
 

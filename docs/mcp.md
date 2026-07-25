@@ -91,17 +91,7 @@ is resolved and read by the shared client/core before the normalized job is pers
 
 ## Resources
 
-- `crontick://jobs`
-- `crontick://jobs/{id}`
-- `crontick://runs/{id}`
-- `crontick://runs/{id}/log`
-- `crontick://config/effective`
 - `crontick://schemas/job`
-
-## Prompts
-
-- `create-scheduled-script`
-- `investigate-failed-run`
 
 ## Validation model
 

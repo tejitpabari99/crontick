@@ -18,7 +18,6 @@ import {
 } from './job-input.js';
 import { runDoctorChecks, type DoctorOptions, type DoctorResult } from './doctor.js';
 import { jobJsonSchema } from './schema-json.js';
-import { uninstall, type UninstallResult } from './uninstall.js';
 import {
   dashboardDaemonDownError,
   type DashboardData,
@@ -317,10 +316,6 @@ export class CrontickClient {
 
   validateConfig(path?: string): ConfigValidationResult {
     return validateConfigFile({ env: this.effectiveEnv(), logger: this.logger.child('config'), path });
-  }
-
-  async uninstall(options: { purge?: boolean } = {}): Promise<UninstallResult> {
-    return uninstall({ purge: options.purge, env: this.effectiveEnv() });
   }
 
   drainNotices(): string[] {

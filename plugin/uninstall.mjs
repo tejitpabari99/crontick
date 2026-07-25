@@ -3,7 +3,7 @@
  * crontick Copilot marketplace plugin — uninstall script.
  *
  * Steps:
- *   1. Remove ~/.copilot/skills/crontick/SKILL.md (always). *   3. Data directory is preserved by default — hint at `crontick uninstall --purge`.
+ *   1. Remove ~/.copilot/skills/crontick/SKILL.md.
  *
  */
 
@@ -40,6 +40,5 @@ for (const step of steps) {
   console.log(`  ✓ ${step}`);
 }
 console.log(
-  '\nData directory preserved. To delete ALL crontick data, run:\n' +
-  '  crontick uninstall --purge\n',
+  '\nData directory preserved. Delete the crontick data directory manually if you want a full reset.\n',
 );

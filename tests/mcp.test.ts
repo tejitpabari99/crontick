@@ -139,11 +139,10 @@ describe('MCP server — full contract', () => {
     expect(typeof info?.version).toBe('string');
   });
 
-  it('capabilities include tools, resources, prompts', () => {
+  it('capabilities include tools and resources', () => {
     const caps = client.getServerCapabilities();
     expect(caps?.tools).toBeDefined();
     expect(caps?.resources).toBeDefined();
-    expect(caps?.prompts).toBeDefined();
   });
 
   // ── Tools list ──────────────────────────────────────────────────────────────
@@ -453,18 +452,7 @@ describe('MCP server — full contract', () => {
     const result = await client.listResources();
     expect(result.resources.length).toBeGreaterThan(0);
     const uris = result.resources.map((r) => r.uri);
-    expect(uris).toContain('crontick://jobs');
-    expect(uris).toContain('crontick://config/effective');
     expect(uris).toContain('crontick://schemas/job');
-  });
-
-  it('resources/read crontick://jobs returns job ID list', async () => {
-    const result = await client.readResource({ uri: 'crontick://jobs' });
-    expect(result.contents.length).toBeGreaterThanOrEqual(1);
-    const item = result.contents[0] as { uri: string; text?: string; mimeType?: string };
-    const text = item.text ?? '';
-    const data = JSON.parse(text) as { jobIds: string[] };
-    expect(Array.isArray(data.jobIds)).toBe(true);
   });
 
   it('resources/read crontick://schemas/job returns valid JSON schema', async () => {
@@ -475,51 +463,6 @@ describe('MCP server — full contract', () => {
     expect(text.length).toBeGreaterThan(10);
     const schema = JSON.parse(text) as Record<string, unknown>;
     expect(schema).toBeDefined();
-  });
-
-  it('resources/read crontick://config/effective returns config JSON', async () => {
-    const result = await client.readResource({ uri: 'crontick://config/effective' });
-    const item = result.contents[0] as { text?: string };
-    expect(JSON.parse(item.text ?? '{}')).toHaveProperty('engines');
-  });
-
-  // ── Prompts ─────────────────────────────────────────────────────────────────
-
-  it('prompts/list returns both prompts', async () => {
-    const result = await client.listPrompts();
-    const names = result.prompts.map((p) => p.name);
-    expect(names).toContain('create-scheduled-script');
-    expect(names).toContain('investigate-failed-run');
-  });
-
-  it('prompts/get create-scheduled-script returns template mentioning action.kind', async () => {
-    const result = await client.getPrompt({
-      name: 'create-scheduled-script',
-      arguments: { intent: 'back up my home folder every night at 2am', os: 'unix' },
-    });
-    expect(result.messages.length).toBeGreaterThan(0);
-    const msg = result.messages[0];
-    const contentText =
-      msg.content.type === 'text'
-        ? (msg.content as { type: string; text: string }).text
-        : '';
-    expect(contentText).toContain('action.kind');
-    expect(contentText).toContain('crontick_job_create');
-  });
-
-  it('prompts/get investigate-failed-run returns diagnostic template', async () => {
-    const result = await client.getPrompt({
-      name: 'investigate-failed-run',
-      arguments: { runId: 'nonexistent-run-id' },
-    });
-    expect(result.messages.length).toBeGreaterThan(0);
-    const msg = result.messages[0];
-    const contentText =
-      msg.content.type === 'text'
-        ? (msg.content as { type: string; text: string }).text
-        : '';
-    expect(contentText).toContain('nonexistent-run-id');
-    expect(contentText.toLowerCase()).toContain('diagnos');
   });
 
   // ── Error paths ─────────────────────────────────────────────────────────────
@@ -586,7 +529,7 @@ describe('MCP server — CRONTICK_MCP_START_DAEMON path', () => {
     }
   }, TIMEOUT_MS);
 
-  it('resource reads report not running without starting the daemon', async () => {
+  it('tool calls report not running without starting the daemon', async () => {
     const isolatedDir = makeTmpDir();
     let isolatedTransport: StdioClientTransport | undefined;
     let isolatedClient: Client | undefined;
@@ -604,13 +547,14 @@ describe('MCP server — CRONTICK_MCP_START_DAEMON path', () => {
         stderr: 'pipe',
       });
       isolatedClient = new Client(
-        { name: 'test-client-resource-nostart', version: '0.0.0' },
+        { name: 'test-client-tool-nostart', version: '0.0.0' },
         { capabilities: {} },
       );
       await isolatedClient.connect(isolatedTransport);
 
-      const result = await isolatedClient.readResource({ uri: 'crontick://jobs' });
-      const item = result.contents[0] as { text?: string };
+      const result = await isolatedClient.callTool({ name: 'crontick_job_list', arguments: {} });
+      const content = (result as { content: Array<{ text?: string }> }).content;
+      const item = content[0];
       const data = JSON.parse(item.text ?? '{}') as { error?: string };
       expect(data.error).toContain('Daemon is not reachable');
       expect(data.error).toContain('<daemon-addr>');

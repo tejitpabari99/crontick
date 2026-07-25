@@ -11,7 +11,7 @@ running local scheduled jobs on Windows, macOS, and Linux.
 
 - `crontick` — CLI for jobs, daemon control, logs, doctor, dashboard, and MCP launch
 - `crontick-daemon` — loopback-only local scheduler + runner + HTTP API
-- `crontick-mcp` — stdio MCP server with job, run, schedule, stats, and doctor tools
+- `crontick-mcp` — stdio MCP server with job, run, schedule, stats, config, dashboard, and doctor tools plus the job schema resource
 - `createClient()` — programmatic client/core used by the CLI, MCP server, tests, and embedders
 - `plugin/install.mjs` — Copilot plugin installer that installs the package and bundled skill
 

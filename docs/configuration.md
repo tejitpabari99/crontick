@@ -128,5 +128,3 @@ The MCP server exposes matching tools:
 - `crontick_config_engine_remove`
 - `crontick_config_init`
 - `crontick_config_validate`
-
-It also exposes `crontick://config/effective`.

@@ -4,7 +4,7 @@ import { join, relative, resolve } from 'node:path';
 
 const root = resolve('.');
 const removed = 'auto' + 'start';
-const ignoredDirs = new Set(['.git', '.dev', 'dist', 'node_modules', 'coverage']);
+const ignoredDirs = new Set(['.git', '.dev', '.crontick', 'dist', 'node_modules', 'coverage']);
 
 function walk(dir: string): string[] {
   const out: string[] = [];

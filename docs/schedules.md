@@ -11,19 +11,9 @@ crontick supports three schedule kinds through the CLI, daemon API, and MCP serv
 Notes:
 
 - Standard 5-field cron expressions are expected for user-facing configuration.
-- Croner parsing is used under the hood, so aliases and some extended forms are accepted.
+- Croner parsing is used under the hood, so its standard aliases and extended forms are accepted.
 - Use `crontick_schedule_validate` or `POST /api/schedules/validate` before creating jobs.
 - Use preview to confirm the next fire times.
-
-### Supported aliases
-
-- `@yearly`, `@annually`
-- `@monthly`
-- `@weekly`
-- `@daily`, `@midnight`
-- `@noon`
-- `@hourly`
-- `@every_minute`
 
 ## `interval`
 

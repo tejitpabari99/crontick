@@ -4,25 +4,6 @@ import type { Job, Schedule } from '../schemas/job.js';
 import type { Store } from './store.js';
 import { nullLogger, type Logger } from '../logger.js';
 
-// ── Cron alias expansion ──────────────────────────────────────────────────────
-
-const CRON_ALIASES: Record<string, string> = {
-  '@yearly': '0 0 1 1 *',
-  '@annually': '0 0 1 1 *',
-  '@monthly': '0 0 1 * *',
-  '@weekly': '0 0 * * 0',
-  '@daily': '0 0 * * *',
-  '@midnight': '0 0 * * *',
-  '@noon': '0 12 * * *',
-  '@hourly': '0 * * * *',
-  '@every_minute': '* * * * *',
-};
-
-/** Expand a cron alias like @daily → '0 0 * * *', or return expr unchanged. */
-export function expandCronAlias(expr: string): string {
-  return CRON_ALIASES[expr.toLowerCase()] ?? expr;
-}
-
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface TickEvent {
@@ -69,7 +50,7 @@ export class Scheduler extends EventEmitter {
 
     if (schedule.kind === 'cron') {
       this.logger.debug('Scheduling cron job', { jobId: job.id, cron: schedule.cron, tz: schedule.tz });
-      this.scheduleCron(job, expandCronAlias(schedule.cron), schedule.tz, lastRunAt);
+      this.scheduleCron(job, schedule.cron, schedule.tz, lastRunAt);
     } else if (schedule.kind === 'interval') {
       this.logger.debug('Scheduling interval job', { jobId: job.id, everySec: schedule.everySec, startAt: schedule.startAt });
       this.scheduleInterval(job, schedule.everySec, schedule.startAt, lastRunAt);
@@ -100,7 +81,7 @@ export class Scheduler extends EventEmitter {
     const n = opts.n ?? 5;
 
     if (schedule.kind === 'cron') {
-      return cronNextN(expandCronAlias(schedule.cron), opts.tz ?? schedule.tz, n);
+      return cronNextN(schedule.cron, opts.tz ?? schedule.tz, n);
     }
 
     if (schedule.kind === 'interval') {
@@ -125,7 +106,7 @@ export class Scheduler extends EventEmitter {
   validateSchedule(schedule: Schedule): ValidateResult {
     if (schedule.kind === 'cron') {
       try {
-        const cron = new Cron(expandCronAlias(schedule.cron), { paused: true });
+        const cron = new Cron(schedule.cron, { paused: true });
         cron.stop();
         return { ok: true };
       } catch (err) {
