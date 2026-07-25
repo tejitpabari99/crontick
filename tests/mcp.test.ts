@@ -206,6 +206,22 @@ describe('MCP server — full contract', () => {
     expect((json as { id: string }).id).toBe(testJobId);
   });
 
+  it('crontick_job_create accepts prompt actions', async () => {
+    const { json, isError } = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-prompt-job',
+      description: 'MCP prompt job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'prompt', prompt: 'hello', engine: 'copilot', args: ['--silent'] },
+    });
+    expect(isError).toBe(false);
+    expect((json as { action: unknown }).action).toMatchObject({
+      kind: 'prompt',
+      prompt: 'hello',
+      engine: 'copilot',
+      args: ['--silent'],
+    });
+  });
+
   it('crontick_job_list returns the created job', async () => {
     const { json, isError } = await callTool(client, 'crontick_job_list');
     expect(isError).toBe(false);

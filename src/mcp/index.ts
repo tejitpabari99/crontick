@@ -109,7 +109,7 @@ export function createMcpServer(): McpServer {
     'crontick_job_create',
     {
       description:
-        'Create and schedule a new cron job. Provide the full job definition including id, schedule (kind: cron|interval|one-shot), and action (kind: script|exec). Validate the schedule first with crontick_schedule_validate.',
+        'Create and schedule a new cron job. Provide the full job definition including id, schedule (kind: cron|interval|one-shot), and action (kind: script|exec|prompt). Prompt actions use prompt, optional engine (copilot|agency), args, sessionId, or reuseSession. Validate the schedule first with crontick_schedule_validate.',
       inputSchema: {
         id: z.string().regex(kebabCase, 'Job ID must be kebab-case (e.g. "my-job")'),
         description: z.string().optional(),
@@ -155,7 +155,7 @@ export function createMcpServer(): McpServer {
     'crontick_job_update',
     {
       description:
-        'Update an existing job. Provide the job ID and any fields to change (partial update is merged with existing definition).',
+        'Update an existing job. Provide the job ID and any fields to change (partial update is merged with existing definition). Action can be script, exec, or prompt.',
       inputSchema: {
         id: z.string(),
         description: z.string().optional(),
@@ -856,4 +856,3 @@ main().catch((err) => {
   process.stderr.write(`[crontick-mcp] Fatal: ${err instanceof Error ? err.message : String(err)}\n`);
   process.exit(1);
 });
-

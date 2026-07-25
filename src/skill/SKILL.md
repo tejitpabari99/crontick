@@ -1,7 +1,7 @@
 # crontick — Scheduling Skill for MCP-Capable LLMs
 
 > **Version**: 1.0 (M4)
-> **Purpose**: Teach any MCP-capable LLM to schedule recurring or one-shot scripts on a local machine using the `crontick` daemon.
+> **Purpose**: Teach any MCP-capable LLM to schedule recurring or one-shot scripts, commands, and prompt jobs on a local machine using the `crontick` daemon.
 
 ---
 
@@ -11,7 +11,7 @@ Use `crontick` tools when the user asks to:
 
 - Run a script, command, or task on a schedule ("every day at 9am", "every 5 minutes", "every Monday")
 - Back up files, clean up directories, or run maintenance automatically
-- Trigger a CLI tool (e.g. `git push`, `copilot -p "..."`, `claude`) on a timer
+- Trigger a CLI tool (e.g. `git push`, `npm test`) or a first-class prompt job (`copilot` or `agency`) on a timer
 - Monitor a condition and take action periodically
 - Set up a one-shot delayed task ("in 30 minutes", "at midnight tonight")
 
@@ -56,7 +56,7 @@ Rules for the script:
 - **Secrets via env**: do not hardcode tokens or passwords; put them in `action.env` or reference a secrets file
 - **Timeout**: set `action.timeoutSec` to a reasonable upper bound (default: 3600 for long jobs, 60 for short ones)
 - **Concise description**: fill `description` with a one-line plain-English explanation
-- The script may shell out to other CLIs: `copilot -p "..."`, `claude`, `git`, `npm run`, etc. — those invocations happen inside the script, not in `crontick` itself
+- The script may shell out to other CLIs such as `git` or `npm run`. For Copilot/Agency prompts, prefer first-class `action.kind: "prompt"` instead of wrapping the engine in a script.
 
 ### Step 3 — Validate the Schedule
 
@@ -98,6 +98,26 @@ For a simple command (no shell), use `action.kind: "exec"`:
 ```json
 { "action": { "kind": "exec", "command": "git", "args": ["-C", "/path/to/repo", "push"] } }
 ```
+
+For scheduled LLM work, use `action.kind: "prompt"`:
+```json
+{
+  "action": {
+    "kind": "prompt",
+    "prompt": "Summarize repository status and write a concise report",
+    "engine": "copilot",
+    "args": ["--silent", "--add-dir", "Q:\\Repos\\crontick"],
+    "reuseSession": true
+  }
+}
+```
+
+Prompt action fields:
+- `prompt` — required persisted prompt text (CLI/client may read `promptFile` before creating the job)
+- `engine` — `copilot` or `agency`; default is `copilot`
+- `args` — raw engine arguments, preserved exactly
+- `sessionId` — reuse a known engine session every run
+- `reuseSession` — capture the first successful run's session id, persist it, and reuse it later
 
 ### Step 5 — Confirm and Report
 
@@ -145,7 +165,7 @@ After `crontick_job_create` returns:
 5. **Set explicit `cwd`** — never rely on the daemon's working directory
 6. **Secrets via `action.env`** — `{ "GITHUB_TOKEN": "ghp_..." }` or reference a dotenv file; never hardcode secrets in the script body
 7. **Set `timeoutSec`** — prevents runaway jobs from consuming resources
-8. **Never invent an LLM sub-runtime** — do NOT create jobs with `action.kind: "llm-prompt"` or similar; that kind does not exist. If the user wants the script to invoke an LLM CLI, put `copilot -p "..."` or `claude -p "..."` inside the script body
+8. **Use first-class prompt actions for LLM prompts** — use `action.kind: "prompt"` with `engine`, `args`, `sessionId`, or `reuseSession`; do not invent provider fields
 9. **Job IDs must be kebab-case** — e.g. `daily-backup`, `weekly-cleanup-2026`
 10. **Assume Windows if OS is unspecified** — use `shell: "pwsh"` and PowerShell syntax
 
@@ -153,7 +173,7 @@ After `crontick_job_create` returns:
 
 ## Ban List
 
-- ❌ Do NOT use `action.kind: "llm-prompt"` — this kind does not exist
+- ❌ Do NOT use `action.kind: "llm-prompt"` — use `action.kind: "prompt"`
 - ❌ Do NOT set `action.provider` — there is no provider field
 - ❌ Do NOT call `crontick_daemon_restart` without user confirmation — it interrupts running jobs
 - ❌ Do NOT call `crontick_job_delete` without explicit user confirmation ("yes, delete it")

@@ -111,6 +111,38 @@ describe('Daemon HTTP API', () => {
     expect((data as { id: string }).id).toBe('api-test-job');
   });
 
+  it('POST /api/jobs creates a normalized prompt job', async () => {
+    const { status, data } = await apiCall(port, 'POST', '/api/jobs', {
+      id: 'api-prompt-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'prompt', prompt: 'hello', engine: 'agency', args: ['--silent'] },
+    });
+    expect(status).toBe(201);
+    expect((data as { action: unknown }).action).toMatchObject({
+      kind: 'prompt',
+      prompt: 'hello',
+      engine: 'agency',
+      args: ['--silent'],
+      reuseSession: false,
+    });
+  });
+
+  it('POST /api/jobs rejects caller-only promptFile and invalid session mix', async () => {
+    const promptFile = await apiCall(port, 'POST', '/api/jobs', {
+      id: 'api-prompt-file-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'prompt', promptFile: 'prompt.txt' },
+    });
+    expect(promptFile.status).toBe(400);
+
+    const sessionMix = await apiCall(port, 'POST', '/api/jobs', {
+      id: 'api-prompt-session-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'prompt', prompt: 'x', sessionId: 'sess-12345678', reuseSession: true },
+    });
+    expect(sessionMix.status).toBe(400);
+  });
+
   it('GET /api/jobs lists jobs', async () => {
     const { status, data } = await apiCall(port, 'GET', '/api/jobs');
     expect(status).toBe(200);
@@ -206,9 +238,21 @@ describe('Daemon HTTP API', () => {
       schedule: { kind: 'cron', cron: '0 * * * *' },
       action: { kind: 'exec', command: 'echo', args: [] },
     };
-    const { status, data } = await apiCall(port, 'POST', '/api/import', { jobs: [importJob] });
+    const importPromptJob = {
+      id: 'imported-prompt-job',
+      schedule: { kind: 'cron', cron: '0 10 * * *' },
+      action: { kind: 'prompt', prompt: 'imported prompt' },
+    };
+    const { status, data } = await apiCall(port, 'POST', '/api/import', { jobs: [importJob, importPromptJob] });
     expect(status).toBe(200);
-    expect((data as { imported: number }).imported).toBe(1);
+    expect((data as { imported: number }).imported).toBe(2);
+
+    const imported = await apiCall(port, 'GET', '/api/jobs/imported-prompt-job');
+    expect(imported.status).toBe(200);
+    expect((imported.data as { action: unknown }).action).toMatchObject({
+      kind: 'prompt',
+      engine: 'copilot',
+    });
   });
 
   // ── Run logs ───────────────────────────────────────────────────────────────────

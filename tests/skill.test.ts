@@ -39,6 +39,13 @@ describe('src/skill/SKILL.md content', () => {
     expect(content).not.toContain('crontick_' + 'auto' + 'start');
   });
 
+  it('documents first-class prompt actions', () => {
+    expect(content).toContain('action.kind: "prompt"');
+    expect(content).toContain('reuseSession');
+    expect(content).toContain('sessionId');
+    expect(content).not.toContain('put `copilot -p "..."` or `claude -p "..."` inside the script body');
+  });
+
   it('does not list removed daemon startup-registration tools', () => {
     expect(content.toLowerCase()).not.toContain('auto' + 'start');
   });

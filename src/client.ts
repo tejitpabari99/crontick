@@ -6,12 +6,11 @@ import {
   type EnsureDaemonOptions,
 } from './daemon/ensure.js';
 import {
-  JobSchema,
   ScheduleSchema,
   type Job,
-  type JobInput,
   type Schedule,
 } from './schemas/job.js';
+import { normalizeJobInput, type JobCreateInput } from './job-input.js';
 
 export interface CrontickClientOptions extends EnsureDaemonOptions {
   requestTimeoutMs?: number;
@@ -39,8 +38,8 @@ export class CrontickClient {
     return this.request('GET', '/health', undefined, { ensure: options.ensure ?? false });
   }
 
-  async createJob(input: Job | JobInput): Promise<Job> {
-    const job = JobSchema.parse(input);
+  async createJob(input: Job | JobCreateInput): Promise<Job> {
+    const job = normalizeJobInput(input as JobCreateInput, { cwd: this.options.cwd });
     return this.request<Job>('POST', '/api/jobs', job);
   }
 
@@ -52,7 +51,20 @@ export class CrontickClient {
     return this.request<Job>('GET', `/api/jobs/${encodeURIComponent(id)}`);
   }
 
-  async updateJob(id: string, patch: Partial<JobInput>): Promise<Job> {
+  async updateJob(id: string, patch: Partial<JobCreateInput>): Promise<Job> {
+    if (patch.action) {
+      const existing = await this.getJob(id);
+      const normalized = normalizeJobInput(
+        {
+          ...existing,
+          ...patch,
+          id,
+          action: patch.action,
+        } as JobCreateInput,
+        { cwd: this.options.cwd },
+      );
+      return this.request<Job>('PUT', `/api/jobs/${encodeURIComponent(id)}`, normalized);
+    }
     return this.request<Job>('PUT', `/api/jobs/${encodeURIComponent(id)}`, patch);
   }
 
@@ -97,7 +109,7 @@ export class CrontickClient {
   }
 
   async importJobs(jobs: unknown[]): Promise<unknown> {
-    const normalized = jobs.map((job) => JobSchema.parse(job));
+    const normalized = jobs.map((job) => normalizeJobInput(job as JobCreateInput, { cwd: this.options.cwd }));
     return this.request('POST', '/api/import', { jobs: normalized });
   }
 

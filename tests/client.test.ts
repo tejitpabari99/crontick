@@ -230,6 +230,48 @@ describe('CrontickClient', () => {
     await expect(client.deleteJob(testJob.id)).resolves.toMatchObject({ ok: true });
   });
 
+  it('normalizes prompt jobs and promptFile before posting', async () => {
+    const home = makeHome();
+    const promptPath = join(home, 'prompt.txt');
+    writeFileSync(promptPath, 'client prompt', 'utf-8');
+    const client = createClient({
+      daemonScript: writeFakeApiDaemon(home),
+      startupTimeoutMs: 5_000,
+      cwd: home,
+    });
+
+    const created = await client.createJob({
+      id: 'client-prompt-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'prompt', promptFile: 'prompt.txt', engine: 'agency', args: ['--silent'] },
+    });
+    expect(created.action).toMatchObject({
+      kind: 'prompt',
+      prompt: 'client prompt',
+      engine: 'agency',
+      args: ['--silent'],
+    });
+    expect(created.action).not.toHaveProperty('promptFile');
+
+    await expect(
+      client.updateJob('client-prompt-job', {
+        action: { kind: 'prompt', prompt: 'updated', reuseSession: true },
+      }),
+    ).resolves.toMatchObject({
+      action: { kind: 'prompt', prompt: 'updated', reuseSession: true },
+    });
+
+    await expect(
+      client.importJobs([
+        {
+          id: 'client-import-prompt-job',
+          schedule: { kind: 'cron', cron: '0 10 * * *' },
+          action: { kind: 'prompt', promptFile: promptPath },
+        },
+      ]),
+    ).resolves.toMatchObject({ imported: 1 });
+  });
+
   it('surfaces API errors as CrontickError', async () => {
     const home = makeHome();
     const client = createClient({ daemonScript: writeFakeApiDaemon(home), startupTimeoutMs: 5_000 });
