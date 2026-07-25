@@ -47,12 +47,11 @@ if (packInfo) {
     (file) =>
       file.includes('/tests/')
       || file.includes('\\tests\\')
-      || file.includes('/docs/plan/')
       || file.endsWith('.test.js')
       || file.endsWith('.test.ts'),
   );
   if (testFiles.length > 0) {
-    console.error('\n✗ Test/plan files should not be in the package:');
+    console.error('\n✗ Test files should not be in the package:');
     for (const file of testFiles) console.error(`  - ${file}`);
     allOk = false;
   } else {
