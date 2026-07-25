@@ -106,6 +106,14 @@ Then run `crontick doctor`. If it still fails, inspect the ensure log in the cro
 `logs/daemon.ensure.log`. crontick is not a supervisor; if the daemon died while idle, scheduled jobs
 pause until you start it or run another daemon-backed command.
 
+### Need more crontick diagnostics
+
+Use `crontick --verbose ...` (or `-v`) or set `CRONTICK_VERBOSE=1`. Verbose output goes to stderr,
+so `crontick --json --verbose ...` still writes parseable JSON to stdout. Daemon logs live under the
+crontick data directory `logs/`: `daemon.ensure.log` for demand-start and `daemon-YYYY-MM-DD.log` for
+daemon lifecycle/API/scheduler diagnostics. In verbose daemon mode, run logs can also contain
+`[crontick:debug]` lines for spawn/retry/session decisions.
+
 ### `node:sqlite` import errors
 
 Use Node.js 22.5+; older Node versions may need the daemon re-exec shim or a newer runtime.

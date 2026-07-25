@@ -12,15 +12,21 @@ Helpful flags:
 
 - `--daemon-url <url>` — override the daemon base URL
 - `--no-start-daemon` — set `startDaemon=false` so tools do not demand-start the daemon
+- global `--verbose` / `-v` on `crontick mcp` — pass verbose diagnostics through to clients/daemon
 
 Environment variables:
 
 - `CRONTICK_DAEMON_URL=http://127.0.0.1:<port>`
 - `CRONTICK_MCP_START_DAEMON=0` — disable MCP demand-start
+- `CRONTICK_VERBOSE=1` — enable crontick diagnostics
 
 By default MCP tools use `startDaemon=true`: daemon-backed tools make a best-effort demand-start if
 no healthy daemon is reachable. This is not supervision; if the daemon dies while idle, it stays down
 until the next daemon-backed operation or an explicit `crontick daemon start`.
+
+Every `crontick_*` tool accepts optional `verbose: true`. When enabled, tool JSON is wrapped as
+`{ "result": ..., "diagnostics": [...] }` (or `{ "error": ..., "diagnostics": [...] }` on errors).
+Diagnostics are structured, redacted crontick events; MCP stdout remains reserved for JSON-RPC.
 
 ## Tool groups
 

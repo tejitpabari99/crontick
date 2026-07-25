@@ -42,6 +42,13 @@ at the moment it dies. If the daemon exits while idle, scheduled jobs do not run
 daemon-backed CLI/MCP/client operation starts it again. Recover with `crontick daemon start`, then
 inspect `crontick doctor` and the data-directory `logs/daemon.ensure.log` if startup fails.
 
+Need crontick diagnostics? Add global `--verbose` / `-v`, set `CRONTICK_VERBOSE=1`, or use
+`createClient({ verbose: true, onLog })`. CLI diagnostics go to stderr so `--json` stdout stays
+parseable. Daemon logs are newline-delimited JSON under the crontick data directory `logs\`
+(`daemon-YYYY-MM-DD.log` plus `daemon.ensure.log` for demand-start), and verbose daemon runs add
+concise `[crontick:debug]` lines to run logs. Diagnostics cover crontick scheduling/config/daemon
+decisions, command argv, retries, HTTP calls, and timings; they do not dump invoked model output.
+
 Prompt jobs use `--prompt <text>` or `--prompt-file <path.txt>`, optional `--engine <configured-engine>`,
 and either `--session-id <id>` or `--reuse-session` for shared context. Explicit `--session-id` wins;
 if both are supplied, crontick stores the explicit id and reports that `reuseSession` was ignored.
@@ -63,6 +70,7 @@ stats, dashboard lifecycle/data, doctor, and daemon lifecycle helpers.
 The daemon API binds only to `127.0.0.1`. There are no bearer tokens or remote listeners; the
 trust boundary is the local user session. `exec` and `prompt` actions use `shell=false`, and run
 logs are redacted for common secret patterns before they are returned by the API or MCP server.
+Structured crontick diagnostics use the same redaction rules for token/secret-shaped fields.
 
 ## Documentation
 

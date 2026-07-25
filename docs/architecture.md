@@ -31,6 +31,7 @@
 
 - `src/cli/index.ts` — Commander CLI adapter over `CrontickClient`
 - `src/client.ts` — exported programmatic client and shared daemon transport surface
+- `src/logger.ts` — shared structured logger, level filtering, and redaction
 - `src/doctor.ts` — shared structured health checks for CLI/MCP/client
 - `src/dashboard.ts` — shared dashboard status/data model and asset resolution
 - `src/schema-json.ts` — shared JSON Schema generation for job resources
@@ -60,13 +61,21 @@ scheduled jobs pause until the next daemon-backed operation or `crontick daemon 
 3. Store persists the job as JSON and mirrors it into SQLite metadata.
 4. Scheduler registers cron/interval/one-shot timers.
 5. On tick, daemon inserts a queued run and Runner executes a `script`, `exec`, or `prompt` action.
-6. Runner appends redacted stdout/stderr chunks to SQLite.
-7. Client/core exposes run state, logs, stats, health, dashboard status/data, doctor, and daemon lifecycle; CLI/MCP format those results.
+6. Runner appends redacted stdout/stderr chunks to SQLite; verbose daemon runs add concise
+   crontick diagnostic lines without dumping model output.
+7. Client/core exposes run state, logs, stats, health, dashboard status/data, doctor, and daemon lifecycle; CLI/MCP format those results and render structured log events per transport.
 
 ## Persistence
 
 - jobs: `<dataDir>/jobs/*.json`
 - runs/logs: `<dataDir>/runs.db`
-- daemon state: pid/port files and daemon ensure logs
+- daemon state: pid/port files and daemon logs in `<dataDir>/logs/`
 
 On startup the daemon reloads jobs from disk and reconciles orphaned `running` runs to `canceled` with `error = daemon-restart`.
+
+## Logging and verbose mode
+
+Core modules emit `error`, `warn`, `info`, or `debug` events through `src/logger.ts`; they do not
+write to stdout/stderr. CLI renders verbose events to stderr, MCP returns diagnostics in tool results,
+the public client exposes `verbose`/`onLog`, and the daemon writes JSON lines to
+`<dataDir>/logs/daemon-YYYY-MM-DD.log` plus demand-start output in `daemon.ensure.log`.
