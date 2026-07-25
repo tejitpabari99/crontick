@@ -27,6 +27,25 @@ function execJob(id: string): Job {
   };
 }
 
+function promptJob(id: string): Job {
+  return {
+    id,
+    enabled: true,
+    schedule: { kind: 'cron', cron: '* * * * *' },
+    action: {
+      kind: 'prompt',
+      prompt: 'Summarize status',
+      engine: 'copilot',
+      args: [],
+      reuseSession: false,
+    },
+    catchup: 'skip',
+    overlap: 'skip',
+    retry: { max: 0, backoffSec: 30 },
+    budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+  };
+}
+
 describe('Store', () => {
   let dir: string;
   let store: Store;
@@ -50,6 +69,16 @@ describe('Store', () => {
     const retrieved = store.getJob('test-job');
     expect(retrieved).toBeTruthy();
     expect(retrieved?.id).toBe('test-job');
+  });
+
+  it('upsertJob and getJob round-trips a prompt job', () => {
+    store.upsertJob(promptJob('prompt-job'));
+    const retrieved = store.getJob('prompt-job');
+    expect(retrieved?.action).toMatchObject({
+      kind: 'prompt',
+      prompt: 'Summarize status',
+      engine: 'copilot',
+    });
   });
 
   it('listJobs returns all jobs', () => {

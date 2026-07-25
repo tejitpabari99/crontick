@@ -227,9 +227,11 @@ export class Runner {
           cmd = 'bash';
           args = [tmpFile];
         }
-      } else {
+      } else if (action.kind === 'exec') {
         cmd = action.command;
         args = action.args ?? [];
+      } else {
+        return { status: 'failed', error: 'prompt action execution is not implemented' };
       }
 
       const spawnOpts: Parameters<typeof spawn>[2] = {

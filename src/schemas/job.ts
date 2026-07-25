@@ -27,28 +27,63 @@ export const ScheduleSchema = z.discriminatedUnion('kind', [
 
 // ── Action ────────────────────────────────────────────────────────────────────
 
-export const ScriptActionSchema = z.object({
-  kind: z.literal('script'),
-  script: z.string().min(1),
-  shell: z.enum(['auto', 'bash', 'pwsh', 'cmd']).default('auto'),
+const CommonActionFields = {
   cwd: z.string().optional(),
   env: z.record(z.string(), z.string()).optional(),
   envFile: z.string().optional(),
   timeoutSec: z.number().positive().optional(),
-});
+};
+
+export const ScriptActionSchema = z.object({
+  kind: z.literal('script'),
+  script: z.string().min(1),
+  shell: z.enum(['auto', 'bash', 'pwsh', 'cmd']).default('auto'),
+  ...CommonActionFields,
+}).strict();
 
 export const ExecActionSchema = z.object({
   kind: z.literal('exec'),
   command: z.string().min(1),
   args: z.array(z.string()).default([]),
-  cwd: z.string().optional(),
-  env: z.record(z.string(), z.string()).optional(),
-  envFile: z.string().optional(),
-  timeoutSec: z.number().positive().optional(),
+  ...CommonActionFields,
   // shell is intentionally absent: exec always uses shell=false to prevent injection
+}).strict();
+
+export const PromptEngineSchema = z.enum(['copilot', 'agency']);
+
+const PromptActionBaseSchema = z.object({
+  kind: z.literal('prompt'),
+  prompt: z.string().min(1),
+  engine: PromptEngineSchema.default('copilot'),
+  args: z.array(z.string()).default([]),
+  sessionId: z.string().min(1).optional(),
+  reuseSession: z.boolean().default(false),
+  ...CommonActionFields,
+}).strict();
+
+export const PromptActionSchema = PromptActionBaseSchema.superRefine((action, ctx) => {
+  if (action.sessionId && action.reuseSession) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['reuseSession'],
+      message: 'sessionId and reuseSession are mutually exclusive',
+    });
+  }
 });
 
-export const ActionSchema = z.discriminatedUnion('kind', [ScriptActionSchema, ExecActionSchema]);
+export const ActionSchema = z.discriminatedUnion('kind', [
+  ScriptActionSchema,
+  ExecActionSchema,
+  PromptActionBaseSchema,
+]).superRefine((action, ctx) => {
+  if (action.kind === 'prompt' && action.sessionId && action.reuseSession) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['reuseSession'],
+      message: 'sessionId and reuseSession are mutually exclusive',
+    });
+  }
+});
 
 // ── Supporting types ──────────────────────────────────────────────────────────
 
@@ -82,3 +117,5 @@ export type Job = z.infer<typeof JobSchema>;
 export type JobInput = z.input<typeof JobSchema>;
 export type Schedule = z.infer<typeof ScheduleSchema>;
 export type Action = z.infer<typeof ActionSchema>;
+export type PromptAction = z.infer<typeof PromptActionBaseSchema>;
+export type PromptEngine = z.infer<typeof PromptEngineSchema>;

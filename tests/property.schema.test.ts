@@ -22,11 +22,19 @@ const validJobArb = fc.record({
       everySec: fc.integer({ min: 1, max: 3600 }),
     }),
   ),
-  action: fc.record({
-    kind: fc.constant('exec' as const),
-    command: fc.constantFrom('echo', 'node', 'pwsh'),
-    args: fc.array(fc.string({ maxLength: 20 }), { maxLength: 5 }),
-  }),
+  action: fc.oneof(
+    fc.record({
+      kind: fc.constant('exec' as const),
+      command: fc.constantFrom('echo', 'node', 'pwsh'),
+      args: fc.array(fc.string({ maxLength: 20 }), { maxLength: 5 }),
+    }),
+    fc.record({
+      kind: fc.constant('prompt' as const),
+      prompt: fc.string({ minLength: 1, maxLength: 100 }),
+      engine: fc.constantFrom('copilot' as const, 'agency' as const),
+      args: fc.array(fc.string({ maxLength: 20 }), { maxLength: 5 }),
+    }),
+  ),
 });
 
 const invalidJobArb = fc.oneof(
@@ -46,6 +54,16 @@ const invalidJobArb = fc.oneof(
     id: 'valid-id',
     schedule: { kind: 'interval', everySec: -1 },
     action: { kind: 'exec', command: 'echo', args: [] },
+  }),
+  fc.constant({
+    id: 'valid-id',
+    schedule: { kind: 'cron', cron: '* * * * *' },
+    action: { kind: 'prompt', prompt: 'x', sessionId: 'sess-12345678', reuseSession: true },
+  }),
+  fc.constant({
+    id: 'valid-id',
+    schedule: { kind: 'cron', cron: '* * * * *' },
+    action: { kind: 'script', script: 'echo hi', engine: 'copilot' },
   }),
 );
 
@@ -68,5 +86,25 @@ describe('property: JobSchema', () => {
       }),
       { numRuns: 100 },
     );
+  });
+
+  it('applies prompt defaults and strict mode-specific validation', () => {
+    const parsed = JobSchema.parse({
+      id: 'valid-id',
+      schedule: { kind: 'cron', cron: '* * * * *' },
+      action: { kind: 'prompt', prompt: 'hello' },
+    });
+
+    expect(parsed.action).toMatchObject({
+      kind: 'prompt',
+      engine: 'copilot',
+      args: [],
+      reuseSession: false,
+    });
+    expect(JobSchema.safeParse({
+      id: 'valid-id',
+      schedule: { kind: 'cron', cron: '* * * * *' },
+      action: { kind: 'prompt', prompt: 'hello', promptFile: 'x.txt' },
+    }).success).toBe(false);
   });
 });
