@@ -2,6 +2,8 @@ export { VERSION } from './version.js';
 export { CrontickError } from './errors.js';
 export { ensureDaemon, resolveDaemonBaseUrl } from './daemon/ensure.js';
 export type { DaemonInfo, EnsureDaemonOptions } from './daemon/ensure.js';
+export { CrontickClient, createClient } from './client.js';
+export type { CrontickClientOptions } from './client.js';
 export {
   dataDir,
   jobsDir,
