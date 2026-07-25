@@ -116,6 +116,19 @@ describe('CLI binary (dist/cli/index.js)', () => {
       rmSync(tmp, { recursive: true, force: true });
     }
   }, 15_000);
+
+  it('uninstall --purge refuses to delete data while daemon pid is alive', () => {
+    const tmp = makeTmpDir();
+    try {
+      writeFileSync(join(tmp, 'daemon.pid'), String(process.pid), 'utf-8');
+      const result = cli(['uninstall', '--purge', '--yes'], { CRONTICK_HOME: tmp });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('crontick daemon stop');
+      expect(existsSync(tmp)).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 // ── End-to-end tests with live daemon ────────────────────────────────────────

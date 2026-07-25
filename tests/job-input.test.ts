@@ -81,6 +81,15 @@ describe('normalizeJobInput', () => {
     ).toThrow(/maxPromptFileBytes/);
   });
 
+  it('rejects prompt files that are not valid UTF-8', () => {
+    const dir = makeDir();
+    writeFileSync(join(dir, 'bad.txt'), Buffer.from([0xc3, 0x28]));
+
+    expect(() =>
+      normalizeJobInput(baseJob({ kind: 'prompt', promptFile: 'bad.txt' }), { fileBaseDir: dir }),
+    ).toThrow(/valid UTF-8/);
+  });
+
   it('enforces prompt/promptFile XOR and sessionId/reuseSession XOR', () => {
     expect(() => normalizeJobInput(baseJob({ kind: 'prompt' }))).toThrow(/exactly one/);
     expect(() =>

@@ -88,6 +88,23 @@ function fakeSpawn(outputs: Array<{ stdout?: string; stderr?: string; code?: num
   return { calls, spawnFn };
 }
 
+function fakeSpawnError(error: NodeJS.ErrnoException) {
+  const calls: SpawnCall[] = [];
+  const spawnFn = (cmd: string, args?: readonly string[], opts?: SpawnOptions): ChildProcess => {
+    calls.push({ cmd, args: [...(args ?? [])], opts });
+    const child = new EventEmitter() as ChildProcess;
+    Object.assign(child, {
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      pid: 12345,
+      kill: () => true,
+    });
+    queueMicrotask(() => child.emit('error', error));
+    return child;
+  };
+  return { calls, spawnFn };
+}
+
 describe('Runner', () => {
   let dir: string;
   let store: Store;
@@ -381,6 +398,21 @@ describe('Runner', () => {
       args: ['cp', '-p', 'hello', '--profile', 'dev'],
     });
     expect(store.getRun(run.id)?.status).toBe('success');
+  });
+
+  it('prompt: reports a helpful error when the engine binary is missing', async () => {
+    const error = Object.assign(new Error('spawn copilot ENOENT'), { code: 'ENOENT' });
+    const fake = fakeSpawnError(error);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-missing-engine');
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(store.getRun(run.id)).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('Prompt engine "copilot" was not found on PATH'),
+    });
   });
 
   it('prompt: forwards explicit session id every run after raw args', async () => {

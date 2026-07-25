@@ -213,6 +213,7 @@ export class Runner {
 
       let capturePromptSession = false;
       let promptSessionJob = job;
+      let promptEngineBinary: string | undefined;
 
       if (action.kind === 'script') {
         // Write script to temp file
@@ -247,9 +248,11 @@ export class Runner {
 
         if (action.engine === 'agency') {
           cmd = 'agency';
+          promptEngineBinary = cmd;
           args = ['cp', '-p', action.prompt, ...(action.args ?? []), ...sessionArgs];
         } else {
           cmd = 'copilot';
+          promptEngineBinary = cmd;
           args = ['-p', action.prompt, ...(action.args ?? []), ...sessionArgs];
         }
       }
@@ -354,6 +357,11 @@ export class Runner {
             resolve({ status: 'canceled', error: 'aborted' });
           } else if (err.code === 'ETIMEDOUT') {
             resolve({ status: 'timeout', error: 'timed out' });
+          } else if (err.code === 'ENOENT' && promptEngineBinary) {
+            resolve({
+              status: 'failed',
+              error: `Prompt engine "${promptEngineBinary}" was not found on PATH. Install it or update PATH before the next run.`,
+            });
           } else {
             resolve({ status: 'failed', error: err.message });
           }

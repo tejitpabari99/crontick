@@ -1,5 +1,6 @@
 import { readFileSync, statSync } from 'node:fs';
 import { extname, isAbsolute, resolve } from 'node:path';
+import { TextDecoder } from 'node:util';
 import { z } from 'zod';
 import { CrontickError } from './errors.js';
 import {
@@ -93,7 +94,12 @@ function readPromptFile(promptFile: string, options: NormalizeJobInputOptions): 
     );
   }
 
-  return readFileSync(filePath, 'utf-8');
+  const bytes = readFileSync(filePath);
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new CrontickError('VALIDATION_ERROR', 'promptFile must be valid UTF-8 text');
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

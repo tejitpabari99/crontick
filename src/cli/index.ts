@@ -30,6 +30,19 @@ function getPort(): number {
   return port;
 }
 
+function readLiveDaemonPid(): number | undefined {
+  const pidFile = pidFilePath();
+  if (!existsSync(pidFile)) return undefined;
+  const pid = parseInt(readFileSync(pidFile, 'utf-8').trim(), 10);
+  if (isNaN(pid) || pid <= 0) return undefined;
+  try {
+    process.kill(pid, 0);
+    return pid;
+  } catch {
+    return undefined;
+  }
+}
+
 function client(allowStart = true) {
   return createClient({ daemonScript: daemonScript(), allowStart });
 }
@@ -638,6 +651,14 @@ program
 
       if (opts.purge as boolean) {
         const dir = dataDir();
+        const livePid = readLiveDaemonPid();
+        if (livePid !== undefined) {
+          throw new CrontickError(
+            'DAEMON_RUNNING',
+            `Daemon appears to be running (pid ${livePid}). Run: crontick daemon stop before uninstall --purge`,
+          );
+        }
+
         let confirmed = opts.yes as boolean;
         if (!confirmed) {
           confirmed = await new Promise<boolean>((resolve) => {
