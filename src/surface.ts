@@ -29,6 +29,15 @@ export const SURFACE_CAPABILITIES = [
   { capability: 'daemon-restart', clientMethod: 'daemonRestart', cliCommand: ['daemon', 'restart'], mcpTool: 'crontick_daemon_restart' },
   { capability: 'doctor', clientMethod: 'doctor', cliCommand: ['doctor'], mcpTool: 'crontick_doctor' },
   { capability: 'dashboard', clientMethod: 'dashboardUrl', cliCommand: ['dashboard'], mcpTool: 'crontick_dashboard_open' },
+  { capability: 'config-get', clientMethod: 'getConfigValue', cliCommand: ['config', 'get'], mcpTool: 'crontick_config_get' },
+  { capability: 'config-set', clientMethod: 'setConfigValue', cliCommand: ['config', 'set'], mcpTool: 'crontick_config_set' },
+  { capability: 'config-unset', clientMethod: 'removeConfigValue', cliCommand: ['config', 'unset'], mcpTool: 'crontick_config_unset' },
+  { capability: 'config-engine-list', clientMethod: 'listEngines', cliCommand: ['config', 'engines'], mcpTool: 'crontick_config_engine_list' },
+  { capability: 'config-engine-add', clientMethod: 'addEngine', cliCommand: ['config', 'engines', 'add'], mcpTool: 'crontick_config_engine_add' },
+  { capability: 'config-engine-update', clientMethod: 'updateEngine', cliCommand: ['config', 'engines', 'update'], mcpTool: 'crontick_config_engine_update' },
+  { capability: 'config-engine-remove', clientMethod: 'removeEngine', cliCommand: ['config', 'engines', 'remove'], mcpTool: 'crontick_config_engine_remove' },
+  { capability: 'config-init', clientMethod: 'initConfig', cliCommand: ['config', 'init'], mcpTool: 'crontick_config_init' },
+  { capability: 'config-validate', clientMethod: 'validateConfig', cliCommand: ['config', 'validate'], mcpTool: 'crontick_config_validate' },
 ] as const satisfies readonly SurfaceCapability[];
 
 export const CLIENT_METHODS = SURFACE_CAPABILITIES.map((capability) => capability.clientMethod);

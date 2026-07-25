@@ -172,6 +172,15 @@ describe('MCP server — full contract', () => {
     'crontick_import',
     'crontick_dashboard_open',
     'crontick_doctor',
+    'crontick_config_get',
+    'crontick_config_set',
+    'crontick_config_unset',
+    'crontick_config_engine_list',
+    'crontick_config_engine_add',
+    'crontick_config_engine_update',
+    'crontick_config_engine_remove',
+    'crontick_config_init',
+    'crontick_config_validate',
   ];
 
   it('tools/list returns all catalog tools with crontick_ prefix', async () => {
@@ -394,6 +403,21 @@ describe('MCP server — full contract', () => {
     expect(data.checks.length).toBeGreaterThan(0);
   });
 
+  it('config tools can initialize, edit, validate, and list engines', async () => {
+    expect((await callTool(client, 'crontick_config_get')).isError).toBe(false);
+    expect((await callTool(client, 'crontick_config_init', { force: true })).isError).toBe(false);
+    expect((await callTool(client, 'crontick_config_engine_add', {
+      name: 'agency',
+      engine: { command: 'agency', args: ['cp'], env: { LOGS: 'XYZ' } },
+    })).isError).toBe(false);
+    const engines = await callTool(client, 'crontick_config_engine_list');
+    expect(engines.isError).toBe(false);
+    expect((engines.json as Record<string, unknown>)).toHaveProperty('agency');
+    expect((await callTool(client, 'crontick_config_set', { path: 'defaultEngine', value: 'agency' })).isError).toBe(false);
+    expect((await callTool(client, 'crontick_config_unset', { path: 'engines.agency.env' })).isError).toBe(false);
+    expect((await callTool(client, 'crontick_config_validate')).json).toMatchObject({ ok: true });
+  });
+
   // ── Resources ──────────────────────────────────────────────────────────────
 
   it('resources/list returns non-empty list', async () => {
@@ -401,6 +425,7 @@ describe('MCP server — full contract', () => {
     expect(result.resources.length).toBeGreaterThan(0);
     const uris = result.resources.map((r) => r.uri);
     expect(uris).toContain('crontick://jobs');
+    expect(uris).toContain('crontick://config/effective');
     expect(uris).toContain('crontick://schemas/job');
   });
 
@@ -421,6 +446,12 @@ describe('MCP server — full contract', () => {
     expect(text.length).toBeGreaterThan(10);
     const schema = JSON.parse(text) as Record<string, unknown>;
     expect(schema).toBeDefined();
+  });
+
+  it('resources/read crontick://config/effective returns config JSON', async () => {
+    const result = await client.readResource({ uri: 'crontick://config/effective' });
+    const item = result.contents[0] as { text?: string };
+    expect(JSON.parse(item.text ?? '{}')).toHaveProperty('engines');
   });
 
   // ── Prompts ─────────────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve as pathResolve } from 'node:path';
 import { VERSION } from '../version.js';
 import { ScheduleSchema } from '../schemas/job.js';
+import { EngineConfigSchema } from '../schemas/config.js';
 import { JobCreateInputSchema, JobPatchInputSchema } from '../job-input.js';
 import { createClient } from '../client.js';
 
@@ -103,7 +104,7 @@ export function createMcpServer(): McpServer {
     'crontick_job_create',
     {
       description:
-        'Create and schedule a new cron job. Provide the full job definition including id, schedule (kind: cron|interval|one-shot), and action (kind: script|exec|prompt). Prompt actions use prompt, optional engine (copilot|agency), args, sessionId, or reuseSession. Validate the schedule first with crontick_schedule_validate.',
+        'Create and schedule a new cron job. Provide the full job definition including id, schedule (kind: cron|interval|one-shot), and action (kind: script|exec|prompt). Prompt actions use prompt, optional configured engine name, args, sessionId, or reuseSession. Validate the schedule first with crontick_schedule_validate.',
       inputSchema: {
 ...JobCreateInputSchema.shape,
       },
@@ -365,7 +366,105 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     async () => toolWrap(() => mcpClient(false).doctor({ mcpScript: mcpScript() })),
   );
 
+  // ── Config ─────────────────────────────────────────────────────────────────
+
+  server.registerTool(
+    'crontick_config_get',
+    {
+      description: 'Get the effective crontick config, or a single value by dot-separated path.',
+      inputSchema: { path: z.string().optional() },
+    },
+    async (args) => toolWrap(() => Promise.resolve(mcpClient(false).getConfigValue(args.path))),
+  );
+
+  server.registerTool(
+    'crontick_config_set',
+    {
+      description: 'Set one crontick config value by dot-separated path. The updated config is validated and returned.',
+      inputSchema: { path: z.string(), value: z.unknown() },
+    },
+    async (args) => toolWrap(() => Promise.resolve(mcpClient(false).setConfigValue(args.path, args.value))),
+  );
+
+  server.registerTool(
+    'crontick_config_unset',
+    {
+      description: 'Remove one crontick config value by dot-separated path. The updated config is validated and returned.',
+      inputSchema: { path: z.string() },
+    },
+    async (args) => toolWrap(() => Promise.resolve(mcpClient(false).removeConfigValue(args.path))),
+  );
+
+  server.registerTool(
+    'crontick_config_engine_list',
+    {
+      description: 'List configured prompt engines from the effective crontick config.',
+      inputSchema: {},
+    },
+    async () => toolWrap(() => Promise.resolve(mcpClient(false).listEngines())),
+  );
+
+  server.registerTool(
+    'crontick_config_engine_add',
+    {
+      description: 'Add a prompt engine. The engine defines the command, default args, and default env used when prompt jobs run.',
+      inputSchema: { name: z.string(), engine: EngineConfigSchema },
+    },
+    async (args) => toolWrap(() => Promise.resolve(mcpClient(false).addEngine(args.name, args.engine))),
+  );
+
+  server.registerTool(
+    'crontick_config_engine_update',
+    {
+      description: 'Update a prompt engine. Provided fields replace the existing command, args, or env.',
+      inputSchema: { name: z.string(), engine: EngineConfigSchema.partial() },
+    },
+    async (args) => toolWrap(() => Promise.resolve(mcpClient(false).updateEngine(args.name, args.engine))),
+  );
+
+  server.registerTool(
+    'crontick_config_engine_remove',
+    {
+      description: 'Remove a prompt engine. You cannot remove the current defaultEngine.',
+      inputSchema: { name: z.string() },
+    },
+    async (args) => toolWrap(() => Promise.resolve(mcpClient(false).removeEngine(args.name))),
+  );
+
+  server.registerTool(
+    'crontick_config_init',
+    {
+      description: 'Create the default crontick config file. Use force:true to replace an existing file.',
+      inputSchema: { force: z.boolean().optional() },
+    },
+    async (args) => toolWrap(() => Promise.resolve(mcpClient(false).initConfig({ force: args.force }))),
+  );
+
+  server.registerTool(
+    'crontick_config_validate',
+    {
+      description: 'Validate the current crontick config file, or a specific config file path.',
+      inputSchema: { path: z.string().optional() },
+    },
+    async (args) => toolWrap(() => Promise.resolve(mcpClient(false).validateConfig(args.path))),
+  );
+
   // ── Resources ─────────────────────────────────────────────────────────────
+
+  server.resource(
+    'crontick-config-effective',
+    'crontick://config/effective',
+    { description: 'Effective merged crontick config', mimeType: 'application/json' },
+    async () => ({
+      contents: [
+        {
+          uri: 'crontick://config/effective',
+          mimeType: 'application/json',
+          text: JSON.stringify(mcpClient(false).getConfig(), null, 2),
+        },
+      ],
+    }),
+  );
 
   // crontick://jobs — list of job IDs
   server.resource(

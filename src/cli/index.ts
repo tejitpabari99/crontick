@@ -9,6 +9,7 @@ import { CrontickError } from '../errors.js';
 import { createClient, type CrontickClient } from '../client.js';
 import { buildJobPatchFromUpdateOptions, type JobCreateCliOptions, type JobPatchCliOptions } from '../job-input.js';
 import type { Schedule } from '../schemas/job.js';
+import type { EngineConfig } from '../schemas/config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -85,7 +86,7 @@ function commonJobOptions(command: Command): Command {
     .option('--exec <cmd>', 'Command to exec (use -- for args)')
     .option('--prompt <text>', 'Prompt text for a prompt action')
     .option('--prompt-file <path>', 'UTF-8 .txt file to read into the prompt')
-    .option('--engine <engine>', 'Prompt engine: copilot|agency (default: copilot)')
+    .option('--engine <engine>', 'Configured prompt engine name (default: config defaultEngine)')
     .option('--session-id <id>', 'Reuse this prompt engine session every run')
     .option('--reuse-session', 'Capture the first successful run session id and reuse it')
     .option('--file <path>', 'Load job JSON from a file')
@@ -170,6 +171,43 @@ function booleanOption(value: unknown): boolean | undefined {
 
 function parseScheduleJson(raw: string): Schedule {
   return JSON.parse(raw) as Schedule;
+}
+
+function parseJsonValue(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function collectOption(value: string, previous: string[] | undefined): string[] {
+  return [...(previous ?? []), value];
+}
+
+function parseEnvEntries(entries: string[] | undefined): Record<string, string> | undefined {
+  if (entries === undefined) return undefined;
+  const env: Record<string, string> = {};
+  for (const entry of entries) {
+    const eq = entry.indexOf('=');
+    if (eq <= 0) throw new CrontickError('VALIDATION_ERROR', `Invalid --env value "${entry}". Use KEY=VALUE.`);
+    env[entry.slice(0, eq)] = entry.slice(eq + 1);
+  }
+  return env;
+}
+
+function engineConfigFromOptions(opts: Record<string, unknown>, partial: boolean): EngineConfig | Partial<EngineConfig> {
+  const command = stringOption(opts.command);
+  const args = Array.isArray(opts.arg) ? opts.arg.filter((value): value is string => typeof value === 'string') : undefined;
+  const env = parseEnvEntries(Array.isArray(opts.env) ? opts.env.filter((value): value is string => typeof value === 'string') : undefined);
+  if (!partial && !command) {
+    throw new CrontickError('VALIDATION_ERROR', 'Provide --command <cmd> when adding an engine.');
+  }
+  const engine: Partial<EngineConfig> = {};
+  if (command !== undefined) engine.command = command;
+  if (args !== undefined) engine.args = args;
+  if (env !== undefined) engine.env = env;
+  return engine as EngineConfig | Partial<EngineConfig>;
 }
 
 const program = new Command();
@@ -287,6 +325,51 @@ stats.command('summary').description('Show aggregate statistics').action(async (
 });
 stats.command('job <id>').description('Show statistics for one job').action(async (id: string) => {
   try { print(await client().statsJob(id)); } catch (err) { handleError(err); }
+});
+
+const config = program.command('config').description('Inspect and edit crontick config');
+config.command('get [path]').description('Get the effective config or one config value').action((path?: string) => {
+  try { print(client(false).getConfigValue(path)); } catch (err) { handleError(err); }
+});
+config.command('set <path> <value>').description('Set one config value; value is JSON when possible').action((path: string, value: string) => {
+  try { print(client(false).setConfigValue(path, parseJsonValue(value))); } catch (err) { handleError(err); }
+});
+config.command('unset <path>').description('Remove one config value').action((path: string) => {
+  try { print(client(false).removeConfigValue(path)); } catch (err) { handleError(err); }
+});
+config.command('init').description('Create the default config file')
+  .option('--force', 'Replace an existing config file')
+  .action((opts) => {
+    try { print(client(false).initConfig({ force: opts.force as boolean | undefined })); } catch (err) { handleError(err); }
+  });
+config.command('validate [path]').description('Validate the config file').action((path?: string) => {
+  try {
+    const result = client(false).validateConfig(path);
+    print(result);
+    if (!result.ok) process.exit(1);
+  } catch (err) { handleError(err); }
+});
+
+const configEngines = config.command('engines').description('List and edit configured engines');
+configEngines.action(() => {
+  try { print(client(false).listEngines()); } catch (err) { handleError(err); }
+});
+configEngines.command('add <name>').description('Add an engine')
+  .requiredOption('--command <cmd>', 'Engine executable')
+  .option('--arg <arg>', 'Default engine argument; repeatable', collectOption)
+  .option('--env <KEY=VALUE>', 'Default engine environment variable; repeatable', collectOption)
+  .action((name: string, opts) => {
+    try { print(client(false).addEngine(name, engineConfigFromOptions(opts, false) as EngineConfig)); } catch (err) { handleError(err); }
+  });
+configEngines.command('update <name>').description('Update an engine')
+  .option('--command <cmd>', 'Engine executable')
+  .option('--arg <arg>', 'Default engine argument; repeatable. Replaces the current args when provided.', collectOption)
+  .option('--env <KEY=VALUE>', 'Default engine environment variable; repeatable. Replaces current env when provided.', collectOption)
+  .action((name: string, opts) => {
+    try { print(client(false).updateEngine(name, engineConfigFromOptions(opts, true) as Partial<EngineConfig>)); } catch (err) { handleError(err); }
+  });
+configEngines.command('remove <name>').description('Remove an engine').action((name: string) => {
+  try { print(client(false).removeEngine(name)); } catch (err) { handleError(err); }
 });
 
 program.command('export')

@@ -173,6 +173,37 @@ describe('CLI binary (dist/cli/index.js)', () => {
     }
   }, 15_000);
 
+  it('config commands initialize, edit, validate, and render JSON', () => {
+    const tmp = makeTmpDir();
+    try {
+      let result = cli(['--json', 'config', 'get'], { CRONTICK_HOME: tmp });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ defaultEngine: 'copilot' });
+
+      result = cli(['--json', 'config', 'init'], { CRONTICK_HOME: tmp });
+      expect(result.status, result.stderr).toBe(0);
+      expect(existsSync(join(tmp, 'config.json'))).toBe(true);
+
+      result = cli(['--json', 'config', 'engines', 'add', 'agency', '--command', 'agency', '--arg', 'cp', '--env', 'LOGS=XYZ'], { CRONTICK_HOME: tmp });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ engines: { agency: { command: 'agency', args: ['cp'], env: { LOGS: 'XYZ' } } } });
+
+      result = cli(['--json', 'config', 'set', 'defaultEngine', '"agency"'], { CRONTICK_HOME: tmp });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ defaultEngine: 'agency' });
+
+      result = cli(['--json', 'config', 'get', 'defaultEngine'], { CRONTICK_HOME: tmp });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toBe('agency');
+
+      result = cli(['--json', 'config', 'validate'], { CRONTICK_HOME: tmp });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ ok: true });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('uninstall --purge refuses to delete data while daemon pid is alive', () => {
     const tmp = makeTmpDir();
     try {
