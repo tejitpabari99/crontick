@@ -22,9 +22,17 @@ crontick daemon start
 crontick daemon status
 ```
 
-Most daemon-backed commands also start the daemon on demand, so an explicit `daemon start` is
-optional. The daemon writes its port and pid files into the crontick data directory and serves the
-local dashboard on `127.0.0.1` only.
+Most daemon-backed commands demand-start the daemon, so an explicit `daemon start` is optional.
+Demand-start means crontick tries one best-effort start/reconnect with a short bounded retry when a
+CLI/MCP/client operation needs the daemon and no healthy daemon is reachable.
+
+crontick does **not** supervise or keep alive the daemon. It does not install an OS service, login
+item, or watchdog. If the daemon dies while idle, scheduled jobs pause; the next daemon-backed
+operation will try to start it again. To recover immediately, run `crontick daemon start`, then
+`crontick doctor`. If startup fails, inspect the data-directory `logs/daemon.ensure.log`.
+
+The daemon writes its port and pid files into the crontick data directory and serves the local
+dashboard on `127.0.0.1` only.
 
 ## Create your first job
 

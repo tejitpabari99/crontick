@@ -20,7 +20,7 @@ running local scheduled jobs on Windows, macOS, and Linux.
 - `action.kind: "script"`, `"exec"`, and `"prompt"`
 - cron, interval, and one-shot schedules
 - stdio MCP transport only
-- on-demand daemon start for daemon-backed CLI, MCP, and client operations
+- demand-started daemon for daemon-backed CLI, MCP, and client operations
 
 ## Quick start
 
@@ -34,12 +34,17 @@ crontick stats summary
 crontick mcp --help
 ```
 
-Daemon-backed commands start the daemon on demand. Use `crontick daemon start|stop|status` when you
-want explicit lifecycle control; crontick does not install login/startup launch entries.
+Daemon-backed commands demand-start the daemon: if a command needs the scheduler and no healthy
+daemon is running, crontick makes one best-effort start/reconnect attempt and retries briefly. This
+is **not supervision**: crontick does not install an OS service, keep the daemon alive, or restart it
+at the moment it dies. If the daemon exits while idle, scheduled jobs do not run until your next
+daemon-backed CLI/MCP/client operation starts it again. Recover with `crontick daemon start`, then
+inspect `crontick doctor` and the data-directory `logs/daemon.ensure.log` if startup fails.
 
 Prompt jobs use `--prompt <text>` or `--prompt-file <path.txt>`, optional `--engine copilot|agency`,
-and either `--session-id <id>` or `--reuse-session` for shared context. Arguments after `--` are
-passed through verbatim to the prompt engine, for example:
+and either `--session-id <id>` or `--reuse-session` for shared context. Explicit `--session-id` wins;
+if both are supplied, crontick stores the explicit id and reports that `reuseSession` was ignored.
+Arguments after `--` are passed through verbatim to the prompt engine, for example:
 
 ```sh
 crontick new daily-summary --cron "0 9 * * *" --prompt-file .\summary.txt --engine agency --reuse-session -- --add-dir Q:\Repos\crontick --allow-all-tools

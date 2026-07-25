@@ -94,11 +94,17 @@ Do not set `NODE_TLS_REJECT_UNAUTHORIZED=0` as a workaround. It disables TLS cer
 
 ### `Daemon is not running`
 
-Start it with:
+Daemon-backed commands normally demand-start the daemon. If start/connect fails, crontick errors
+include what was attempted, the failed path/exit/stderr excerpt when available, and a next command to
+run. Start it explicitly with:
 
 ```sh
 crontick daemon start
 ```
+
+Then run `crontick doctor`. If it still fails, inspect the ensure log in the crontick data directory:
+`logs/daemon.ensure.log`. crontick is not a supervisor; if the daemon died while idle, scheduled jobs
+pause until you start it or run another daemon-backed command.
 
 ### `node:sqlite` import errors
 

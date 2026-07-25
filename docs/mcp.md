@@ -11,12 +11,16 @@ crontick mcp
 Helpful flags:
 
 - `--daemon-url <url>` — override the daemon base URL
-- `--no-daemon-start` — do not start the daemon if it is not already running
+- `--no-start-daemon` — set `startDaemon=false` so tools do not demand-start the daemon
 
 Environment variables:
 
 - `CRONTICK_DAEMON_URL=http://127.0.0.1:<port>`
-- `CRONTICK_MCP_NO_DAEMON_START=1`
+- `CRONTICK_MCP_START_DAEMON=0` — disable MCP demand-start
+
+By default MCP tools use `startDaemon=true`: daemon-backed tools make a best-effort demand-start if
+no healthy daemon is reachable. This is not supervision; if the daemon dies while idle, it stays down
+until the next daemon-backed operation or an explicit `crontick daemon start`.
 
 ## Tool groups
 
@@ -34,8 +38,9 @@ Environment variables:
 
 `crontick_job_create` and `crontick_job_update` accept action kinds `script`, `exec`, and `prompt`.
 Prompt actions use exactly one of `prompt` or `promptFile`, optional `engine` (`copilot` or
-`agency`), raw `args`, and either `sessionId` or `reuseSession`. `promptFile` is resolved and read
-by the shared client/core before the normalized job is persisted.
+`agency`), raw `args`, and session controls. Explicit `sessionId` wins over `reuseSession`; if both
+are provided, the shared client/core stores `reuseSession: false` and returns a notice. `promptFile`
+is resolved and read by the shared client/core before the normalized job is persisted.
 
 ### Runs
 

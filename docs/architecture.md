@@ -44,6 +44,14 @@
 - `src/job-input.ts` — shared create/update/import normalization and prompt-file handling
 - `src/mcp/index.ts` — MCP tool/resource/prompt adapter over `CrontickClient`
 
+## Daemon lifecycle
+
+The daemon is demand-started by daemon-backed CLI, MCP, and client operations, but it is not
+supervised. A daemon-backed operation checks for a healthy loopback daemon, makes a best-effort start
+or reconnect with bounded retry if needed, then returns an actionable error if startup/connect still
+fails. crontick does not install an OS service or keep-alive process; if the daemon dies while idle,
+scheduled jobs pause until the next daemon-backed operation or `crontick daemon start`.
+
 ## Data flow
 
 1. Job is created through CLI, client, or MCP; CLI and MCP only parse inputs and call `CrontickClient`.
@@ -58,6 +66,6 @@
 
 - jobs: `<dataDir>/jobs/*.json`
 - runs/logs: `<dataDir>/runs.db`
-- daemon state: pid/port files and daily daemon logs
+- daemon state: pid/port files and daemon ensure logs
 
 On startup the daemon reloads jobs from disk and reconciles orphaned `running` runs to `canceled` with `error = daemon-restart`.

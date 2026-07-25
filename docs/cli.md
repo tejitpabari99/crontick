@@ -457,14 +457,14 @@ Start the crontick MCP server on stdio (for use with Claude Desktop, Copilot,
 Cursor, etc.)
 
 Options:
-  --no-daemon-start   Do not start the daemon if it is not already running
+  --no-start-daemon   Set startDaemon=false for MCP daemon-backed tools
   --daemon-url <url>  Override the daemon URL (default: resolved from port
                       file)
   -h, --help          display help for command
 
 Transport:    stdio (JSON-RPC 2.0 over stdin/stdout)
 Tool prefix:  crontick_
-Daemon start: Daemon is started unless --no-daemon-start or CRONTICK_MCP_NO_DAEMON_START=1 is set
+Daemon start: startDaemon defaults to true; use --no-start-daemon or CRONTICK_MCP_START_DAEMON=0 to disable demand-start
 
 Example MCP host config (Claude Desktop):
   {

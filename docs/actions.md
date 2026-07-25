@@ -59,15 +59,24 @@ Fields:
 - `engine` — `copilot` or `agency`; defaults to `copilot`
 - `args` — raw engine arguments preserved in order, including duplicates
 - `sessionId` — explicit engine session id to pass every run
-- `reuseSession` — capture the first successful run's session id, persist it, then reuse it
+- `reuseSession` — when no `sessionId` is set, capture the first successful run's session id,
+  persist it into the job JSON, then reuse it
+
+Session precedence is deterministic:
+
+- Explicit `sessionId` is stored and used every run.
+- If `sessionId` and `reuseSession` are both supplied, `sessionId` wins; crontick stores
+  `reuseSession: false` and reports a notice.
+- If only `reuseSession` is supplied, the first successful run must emit a recognizable session id.
+  If capture fails, the run fails with guidance to use explicit `--session-id`.
 
 CLI and programmatic client input may use `promptFile` as creation sugar. It must point to a UTF-8
 `.txt` file; the file is read before persistence and exports contain only `prompt`.
 
 Command lines produced by the runner:
 
-- Copilot: `copilot -p <prompt> <args...> [--session-id <id>]`
-- Agency: `agency cp -p <prompt> <args...> [--session-id <id>]`
+- Copilot: `copilot --prompt=<prompt> <args...> [--session-id=<id>]`
+- Agency: `agency cp --prompt=<prompt> <args...> [--session-id=<id>]`
 
 ## Environment
 
@@ -97,5 +106,3 @@ Retries happen after failed attempts only. Success stops the retry loop.
 ## Budgets
 
 `maxRunsPerDay` limits scheduling attempts per UTC day. Exceeded runs are marked `canceled` with a budget error.
-
-`maxTokensPerRun` is reserved for future LLM-integrated actions and is persisted today for forward compatibility.

@@ -4,6 +4,9 @@
 
 crontick is designed for **local-user automation**. The daemon API listens on `127.0.0.1` only and rejects non-loopback remote addresses.
 
+The daemon is demand-started, not supervised. crontick does not install a background service,
+watchdog, or keep-alive process; use an external supervisor if you need stronger uptime guarantees.
+
 ## API posture
 
 - no bearer tokens
