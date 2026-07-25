@@ -4,7 +4,7 @@
 //
 // Run: npx tsx examples/07-lifecycle.ts
 
-import { createClient } from 'crontick';
+import { createClient, CrontickError } from 'crontick';
 
 const client = createClient();
 
@@ -44,7 +44,12 @@ try {
   const status = await client.daemonStatus();
   console.log('Daemon status:', JSON.stringify(status, null, 2));
 } catch (err) {
-  console.log('Daemon not running (expected if first launch).');
+  // CrontickError carries a machine-readable `code` property.
+  if (err instanceof CrontickError) {
+    console.log(`Daemon not running (code=${err.code}). Expected if first launch.`);
+  } else {
+    console.log('Unexpected error checking daemon status:', (err as Error).message);
+  }
 }
 
 // Start the daemon (demand-start, returns when healthy).

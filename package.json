@@ -43,10 +43,12 @@
   "scripts": {
     "build": "tsup && node scripts/fix-node-sqlite.mjs",
     "typecheck": "tsc --noEmit",
+    "typecheck:examples": "tsc --project examples/tsconfig.json",
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "validate": "npm run lint && npm run typecheck && npm run typecheck:examples && npm test && npm run build",
     "release": "changeset publish",
     "prepublishOnly": "npm run build && npm test"
   },
