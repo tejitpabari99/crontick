@@ -40,9 +40,25 @@ describe('surface capability drift', () => {
           encoding: 'utf-8',
           env: { ...process.env, CRONTICK_HOME: home },
         });
+
         expect(result.status, `${command} help failed: ${result.stderr}`).toBe(0);
         expect(result.stdout + result.stderr).toContain(capability.cliCommand.at(-1));
       }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('CLI exposes global verbose flag without replacing version flag', () => {
+    const home = scratchHome();
+    const result = spawnSync(process.execPath, [CLI, '--help'], {
+      encoding: 'utf-8',
+      env: { ...process.env, CRONTICK_HOME: home },
+    });
+    try {
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain('-V, --version');
+      expect(result.stdout).toContain('-v, --verbose');
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -65,6 +81,10 @@ describe('surface capability drift', () => {
       const names = new Set(listed.tools.map((tool) => tool.name));
       for (const capability of SURFACE_CAPABILITIES) {
         expect(names.has(capability.mcpTool), `${capability.capability} missing MCP tool ${capability.mcpTool}`).toBe(true);
+      }
+      for (const tool of listed.tools.filter((tool) => tool.name.startsWith('crontick_'))) {
+        const properties = (tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+        expect(properties, `${tool.name} missing verbose option`).toHaveProperty('verbose');
       }
     } finally {
       try { await client?.close(); } catch { /* ignore */ }

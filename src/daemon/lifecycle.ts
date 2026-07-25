@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { CrontickError } from '../errors.js';
 import { pidFilePath, portFilePath } from '../paths.js';
 import { ensureDaemon, type DaemonInfo, type EnsureDaemonOptions } from './ensure.js';
+import { nullLogger, type Logger } from '../logger.js';
 
 export interface DaemonLifecycleOptions extends EnsureDaemonOptions {
   foreground?: boolean;
@@ -28,6 +29,7 @@ export interface DaemonRestartResult extends DaemonInfo {
 }
 
 export async function startDaemon(options: DaemonLifecycleOptions = {}): Promise<DaemonStartResult> {
+  const logger = (options.logger ?? nullLogger).child('start');
   if (options.foreground) {
     const script = options.daemonScript;
     if (!script || !existsSync(script)) {
@@ -37,6 +39,7 @@ export async function startDaemon(options: DaemonLifecycleOptions = {}): Promise
         { daemonScript: script, action: 'npm run build' },
       );
     }
+    logger.debug('Starting daemon in foreground', { daemonScript: script });
     const result = spawnSync(process.execPath, [script], {
       stdio: 'inherit',
       env: { ...process.env, ...(options.env ?? {}) },
@@ -44,18 +47,22 @@ export async function startDaemon(options: DaemonLifecycleOptions = {}): Promise
     return { ok: true, baseUrl: '', started: true, foregroundExitCode: result.status };
   }
 
+  logger.debug('Ensuring background daemon');
   const info = await ensureDaemon({ ...options, startDaemon: true });
   return { ok: true, ...info };
 }
 
-export async function stopDaemon(options: { env?: NodeJS.ProcessEnv; timeoutMs?: number } = {}): Promise<DaemonStopResult> {
+export async function stopDaemon(options: { env?: NodeJS.ProcessEnv; timeoutMs?: number; logger?: Logger } = {}): Promise<DaemonStopResult> {
+  const logger = (options.logger ?? nullLogger).child('stop');
   const env = { ...process.env, ...(options.env ?? {}) };
   const pid = readLiveDaemonPid(env);
   if (pid === undefined) {
+    logger.debug('Daemon stop skipped; no live pid', { pidFile: pidFilePath(env) });
     return { ok: true, running: false, stopped: false, message: 'Daemon is not running' };
   }
 
   try {
+    logger.debug('Sending SIGTERM to daemon', { pid });
     process.kill(pid, 'SIGTERM');
   } catch (err) {
     throw new CrontickError(
@@ -66,6 +73,7 @@ export async function stopDaemon(options: { env?: NodeJS.ProcessEnv; timeoutMs?:
   }
 
   const stopped = await waitForStopped(pid, env, options.timeoutMs ?? 5_000);
+  logger.debug('Daemon stop completed', { pid, stopped });
   return {
     ok: true,
     running: !stopped,
@@ -76,7 +84,7 @@ export async function stopDaemon(options: { env?: NodeJS.ProcessEnv; timeoutMs?:
 }
 
 export async function restartDaemon(options: EnsureDaemonOptions = {}): Promise<DaemonRestartResult> {
-  const stopped = await stopDaemon({ env: options.env });
+  const stopped = await stopDaemon({ env: options.env, logger: options.logger });
   const info = await ensureDaemon({ ...options, startDaemon: true });
   return { ok: true, ...info, stopped: stopped.stopped, previousPid: stopped.pid };
 }

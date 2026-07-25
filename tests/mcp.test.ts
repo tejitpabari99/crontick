@@ -437,6 +437,16 @@ describe('MCP server — full contract', () => {
     expect((await callTool(client, 'crontick_config_validate')).json).toMatchObject({ ok: true });
   });
 
+  it('tool verbose option returns MCP diagnostics without stderr protocol pollution', async () => {
+    const { json, isError } = await callTool(client, 'crontick_config_get', { verbose: true });
+    expect(isError).toBe(false);
+    expect(json).toMatchObject({
+      result: { engines: expect.any(Object) },
+      diagnostics: expect.any(Array),
+    });
+    expect((json as { diagnostics: Array<{ level: string }> }).diagnostics.some((event) => event.level === 'debug')).toBe(true);
+  });
+
   // ── Resources ──────────────────────────────────────────────────────────────
 
   it('resources/list returns non-empty list', async () => {

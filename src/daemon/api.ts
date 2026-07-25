@@ -14,6 +14,7 @@ import {
   dashboardStatusFromDaemon,
   resolveDashboardAsset,
 } from '../dashboard.js';
+import { nullLogger, type Logger } from '../logger.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -29,6 +30,7 @@ export interface ApiContext {
   startedAt: Date;
   port: number;
   reload: () => Promise<void>;
+  logger?: Logger;
 }
 
 // ── Server factory ────────────────────────────────────────────────────────────
@@ -57,6 +59,12 @@ async function handleRequest(
   const baseUrl = `http://127.0.0.1`;
   const url = new URL(rawUrl, baseUrl);
   const path = url.pathname;
+  const startedAt = Date.now();
+  const logger = (ctx.logger ?? nullLogger).child('api');
+  logger.debug('HTTP request received', { method, path });
+  res.on('finish', () => {
+    logger.debug('HTTP response sent', { method, path, status: res.statusCode, durationMs: Date.now() - startedAt });
+  });
 
   try {
     // ── Health ───────────────────────────────────────────────────────────────

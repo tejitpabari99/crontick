@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { Cron, type CronOptions } from 'croner';
 import type { Job, Schedule } from '../schemas/job.js';
 import type { Store } from './store.js';
+import { nullLogger, type Logger } from '../logger.js';
 
 // ── Cron alias expansion ──────────────────────────────────────────────────────
 
@@ -43,6 +44,12 @@ export interface ValidateResult {
 
 export class Scheduler extends EventEmitter {
   private entries: Map<string, { stop: () => void }> = new Map();
+  private readonly logger: Logger;
+
+  constructor(logger: Logger = nullLogger) {
+    super();
+    this.logger = logger.child('scheduler');
+  }
 
   /**
    * Schedule a job, handling catchup based on the last run time from the store.
@@ -51,17 +58,23 @@ export class Scheduler extends EventEmitter {
   schedule(job: Job, store?: Store): void {
     this.unschedule(job.id); // idempotent
 
-    if (!job.enabled) return;
+    if (!job.enabled) {
+      this.logger.debug('Skipping disabled job', { jobId: job.id });
+      return;
+    }
 
     const { schedule } = job;
     const lastRun = store?.getLastRun(job.id);
     const lastRunAt = lastRun ? new Date(lastRun.startedAt) : undefined;
 
     if (schedule.kind === 'cron') {
+      this.logger.debug('Scheduling cron job', { jobId: job.id, cron: schedule.cron, tz: schedule.tz });
       this.scheduleCron(job, expandCronAlias(schedule.cron), schedule.tz, lastRunAt);
     } else if (schedule.kind === 'interval') {
+      this.logger.debug('Scheduling interval job', { jobId: job.id, everySec: schedule.everySec, startAt: schedule.startAt });
       this.scheduleInterval(job, schedule.everySec, schedule.startAt, lastRunAt);
     } else if (schedule.kind === 'one-shot') {
+      this.logger.debug('Scheduling one-shot job', { jobId: job.id, runAt: schedule.runAt });
       this.scheduleOneShot(job, schedule.runAt);
     }
   }
@@ -71,6 +84,7 @@ export class Scheduler extends EventEmitter {
     if (entry) {
       entry.stop();
       this.entries.delete(jobId);
+      this.logger.debug('Unscheduled job', { jobId });
     }
   }
 
@@ -176,6 +190,7 @@ export class Scheduler extends EventEmitter {
     const now = new Date();
     const missed = missedCronFires(pattern, tz, lastRunAt, now);
     if (missed.length === 0) return;
+    this.logger.debug('Detected missed cron fires', { jobId: job.id, count: missed.length, catchup: job.catchup });
 
     if (job.catchup === 'run-once') {
       setImmediate(() => this.fireTick(job.id, missed[missed.length - 1]));
@@ -200,6 +215,7 @@ export class Scheduler extends EventEmitter {
       const elapsed = Date.now() - lastRunAt.getTime();
       const missedCount = Math.floor(elapsed / intervalMs);
       if (missedCount > 0) {
+        this.logger.debug('Detected missed interval fires', { jobId: job.id, count: missedCount, catchup: job.catchup });
         if (job.catchup === 'run-once') {
           setImmediate(() => this.fireTick(job.id, new Date()));
         } else if (job.catchup === 'run-all') {

@@ -8,6 +8,7 @@ import type { Store, RunStatus } from './store.js';
 import { CrontickError } from '../errors.js';
 import { extractSessionId } from './prompt-session.js';
 import { buildPromptRunCommand } from '../config.js';
+import { nullLogger, redactText, type Logger } from '../logger.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -19,25 +20,6 @@ interface RunResult {
 
 type QueueEntry = () => Promise<void>;
 
-// ── Secret redaction ──────────────────────────────────────────────────────────
-
-const SECRET_PATTERNS = [
-  /(?:AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN)=[^\s]*/gi,
-  /(?:GITHUB_TOKEN|GH_TOKEN)=[^\s]*/gi,
-  /(?:GCLOUD_SERVICE_KEY|GOOGLE_CREDENTIALS)=[^\s]*/gi,
-  /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi,
-  /ghp_[A-Za-z0-9]{36}/g,
-  /AKIA[0-9A-Z]{16}/g,
-];
-
-function redact(text: string): string {
-  let out = text;
-  for (const pat of SECRET_PATTERNS) {
-    out = out.replace(pat, '[REDACTED]');
-  }
-  return out;
-}
-
 /**
  * Redact secrets from a chunk only when it is valid UTF-8 text.
  * Binary data (NUL bytes or lossy UTF-8 round-trip) is stored as-is.
@@ -48,7 +30,7 @@ function safeRedact(chunk: Buffer): Buffer {
   const str = chunk.toString('utf8');
   // Lossy round-trip → binary or non-UTF-8, skip redaction
   if (!Buffer.from(str, 'utf8').equals(chunk)) return chunk;
-  const cleaned = redact(str);
+  const cleaned = redactText(str);
   return Buffer.from(cleaned, 'utf8');
 }
 
@@ -90,7 +72,11 @@ export class Runner {
   /** Whether a job's queue is currently being drained */
   private draining: Set<string> = new Set();
 
-  constructor(private readonly spawnFn: typeof spawn = spawn) {}
+  private readonly logger: Logger;
+
+  constructor(private readonly spawnFn: typeof spawn = spawn, logger: Logger = nullLogger) {
+    this.logger = logger.child('runner');
+  }
 
   /**
    * Execute a job run, honouring overlap + retry + budget policies.
@@ -98,6 +84,8 @@ export class Runner {
    */
   async run(job: Job, runId: string, store: Store): Promise<void> {
     const overlap = job.overlap ?? 'skip';
+    this.logger.debug('Starting run orchestration', { jobId: job.id, runId, overlap, retryMax: job.retry?.max ?? 0 });
+    this.appendDiagnosticLog(store, runId, 'run orchestration', { jobId: job.id, overlap, retryMax: job.retry?.max ?? 0 });
 
     // Budget: maxRunsPerDay
     if (job.budgets?.maxRunsPerDay != null) {
@@ -109,6 +97,7 @@ export class Runner {
           status: 'canceled',
           error: `budget: maxRunsPerDay (${job.budgets.maxRunsPerDay}) exceeded`,
         });
+        this.logger.debug('Canceled run due to budget', { jobId: job.id, runId, maxRunsPerDay: job.budgets.maxRunsPerDay });
         return;
       }
     }
@@ -120,12 +109,14 @@ export class Runner {
         status: 'canceled',
         error: 'overlap=skip: another run is already active',
       });
+      this.logger.debug('Canceled run due to overlap=skip', { jobId: job.id, runId });
       return;
     }
 
     if (overlap === 'cancel-previous' && isActive) {
       const ctrl = this.activeAborts.get(job.id);
       if (ctrl) ctrl.abort();
+      this.logger.debug('Canceled previous active run for job', { jobId: job.id, runId });
     }
 
     if (overlap === 'queue') {
@@ -143,6 +134,7 @@ export class Runner {
         resolve();
       });
       this.queues.set(job.id, queue);
+      this.logger.debug('Queued run for overlap policy', { jobId: job.id, runId, queueLength: queue.length });
       if (!this.draining.has(job.id)) {
         this.drainQueue(job.id);
       }
@@ -179,6 +171,8 @@ export class Runner {
     try {
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         if (attempt > 0) {
+          this.logger.debug('Retry backoff before run attempt', { jobId: job.id, runId, attempt, backoffSec });
+          this.appendDiagnosticLog(store, runId, 'retry backoff', { attempt, backoffSec });
           await sleep(backoffSec * 1000);
         }
         if (ctrl.signal.aborted) {
@@ -186,6 +180,8 @@ export class Runner {
           break;
         }
         lastResult = await this.spawn(job, runId, store, ctrl.signal);
+        this.logger.debug('Run attempt completed', { jobId: job.id, runId, attempt, status: lastResult.status, exitCode: lastResult.exitCode });
+        this.appendDiagnosticLog(store, runId, 'attempt completed', { attempt, status: lastResult.status, exitCode: lastResult.exitCode });
         if (lastResult.status === 'success') break;
         if (lastResult.status === 'canceled' || lastResult.status === 'timeout') break;
       }
@@ -256,11 +252,13 @@ export class Runner {
           );
         }
 
-        const runCommand = buildPromptRunCommand({ ...latestAction, sessionId });
+        const runCommand = buildPromptRunCommand({ ...latestAction, sessionId }, { logger: this.logger });
         cmd = runCommand.command;
         promptEngineBinary = runCommand.engine;
         args = runCommand.args;
         promptEnv = runCommand.env;
+        this.logger.debug('Resolved prompt run command', { jobId: job.id, runId, engine: promptEngineBinary, command: cmd, args, envKeys: Object.keys(promptEnv) });
+        this.appendDiagnosticLog(store, runId, 'resolved prompt command', { engine: promptEngineBinary, command: cmd, args, envKeys: Object.keys(promptEnv) });
       }
 
       const spawnOpts: Parameters<typeof spawn>[2] = {
@@ -286,6 +284,7 @@ export class Runner {
             ...envFileVars,
             ...(action.env ?? {}),
           } as NodeJS.ProcessEnv;
+          this.logger.debug('Loaded env file for run', { jobId: job.id, runId, envFile: envFilePath, envKeys: Object.keys(envFileVars) });
         } catch (err) {
           throw new CrontickError('ENV_FILE_ERROR', `Failed to load envFile: ${String(err)}`);
         }
@@ -306,6 +305,8 @@ export class Runner {
       };
 
       const result = await new Promise<RunResult>((resolve) => {
+        this.logger.debug('Spawning child process', { jobId: job.id, runId, command: cmd, args, cwd: spawnOpts.cwd, timeoutMs: spawnOpts.timeout });
+        this.appendDiagnosticLog(store, runId, 'spawn', { command: cmd, args, cwd: spawnOpts.cwd, timeoutMs: spawnOpts.timeout });
         const child = this.spawnFn(cmd, args, spawnOpts);
         const startedAt = Date.now();
         const captureAction = promptCaptureAction;
@@ -344,6 +345,8 @@ export class Runner {
 
         child.on('close', (code, sig) => {
           const durationMs = Date.now() - startedAt;
+          this.logger.debug('Child process closed', { jobId: job.id, runId, code, signal: sig, durationMs });
+          this.appendDiagnosticLog(store, runId, 'child closed', { code, signal: sig, durationMs });
           if (signal.aborted) {
             finish({ status: 'canceled', error: 'aborted' });
           } else if (sig === 'SIGTERM' || sig === 'SIGKILL') {
@@ -358,6 +361,7 @@ export class Runner {
             if (result.status === 'success' && capturePromptSession) {
               const sessionId = extractSessionId(transcriptTail.toString('utf-8'));
               if (!sessionId) {
+                this.logger.debug('Session id capture failed', { jobId: job.id, runId });
                 finish({
                   status: 'failed',
                   exitCode: code,
@@ -378,6 +382,7 @@ export class Runner {
                   return;
                 }
                 if (persisted) {
+                  this.logger.debug('Session id captured and persisted', { jobId: job.id, runId });
                   try {
                     store.appendLog(runId, 'stdout', Buffer.from(`[crontick] captured session id: ${sessionId}\n`, 'utf-8'));
                   } catch (err) {
@@ -397,6 +402,8 @@ export class Runner {
         });
 
         child.on('error', (err: NodeJS.ErrnoException) => {
+          this.logger.debug('Child process error', { jobId: job.id, runId, code: err.code, message: err.message });
+          this.appendDiagnosticLog(store, runId, 'child error', { code: err.code, message: err.message });
           if (err.code === 'ABORT_ERR' || signal.aborted) {
             finish({ status: 'canceled', error: 'aborted' });
           } else if (err.code === 'ETIMEDOUT') {
@@ -434,6 +441,13 @@ export class Runner {
       endedAt: now,
       durationMs: run ? now - run.startedAt : undefined,
     });
+    this.logger.debug('Finalized run', { runId, status: result.status, exitCode: result.exitCode, durationMs: run ? now - run.startedAt : undefined });
+  }
+
+  private appendDiagnosticLog(store: Store, runId: string, message: string, data?: unknown): void {
+    if (!this.logger.isDebugEnabled()) return;
+    const suffix = data === undefined ? '' : ` ${redactText(JSON.stringify(data))}`;
+    store.appendLog(runId, 'stderr', Buffer.from(`[crontick:debug] ${message}${suffix}\n`, 'utf-8'));
   }
 
   /** Cancel any active run for a job. */

@@ -42,12 +42,16 @@ import {
   type CrontickConfig,
   type EngineConfig,
 } from './config.js';
+import { createLogger, isVerboseEnv, type Logger, type LogSink } from './logger.js';
 
-export interface CrontickClientOptions extends Omit<EnsureDaemonOptions, 'startDaemon'> {
+export interface CrontickClientOptions extends Omit<EnsureDaemonOptions, 'startDaemon' | 'logger'> {
   requestTimeoutMs?: number;
   cwd?: string;
   startDaemon?: boolean;
   mcpScript?: string;
+  verbose?: boolean;
+  onLog?: LogSink;
+  logger?: Logger;
 }
 
 export interface LogEntry {
@@ -82,19 +86,31 @@ export interface JobStats {
 
 export class CrontickClient {
   private readonly options: CrontickClientOptions;
+  private readonly verbose: boolean;
+  private readonly logger: Logger;
   private cachedBaseUrl?: string;
   private notices: string[] = [];
 
   constructor(options: CrontickClientOptions = {}) {
     this.options = options;
+    this.verbose = options.verbose ?? isVerboseEnv(options.env ?? process.env);
+    this.logger = (options.logger ?? createLogger({
+      verbose: this.verbose,
+      sink: options.onLog,
+      component: 'client',
+    }));
   }
 
   async ensure(): Promise<DaemonInfo> {
+    this.logger.debug('Ensuring daemon', { startDaemon: this.shouldStartDaemon() });
     const info = await ensureDaemon({
       ...this.options,
+      env: this.effectiveEnv(),
+      logger: this.logger.child('ensure'),
       startDaemon: this.shouldStartDaemon(),
     });
     this.cachedBaseUrl = info.baseUrl;
+    this.logger.debug('Daemon resolved', { baseUrl: info.baseUrl, pid: info.pid, port: info.port, started: info.started });
     return info;
   }
 
@@ -194,18 +210,18 @@ export class CrontickClient {
   }
 
   async daemonStart(options: { foreground?: boolean } = {}): Promise<DaemonStartResult> {
-    const result = await startDaemon({ ...this.options, startDaemon: true, foreground: options.foreground });
+    const result = await startDaemon({ ...this.options, env: this.effectiveEnv(), logger: this.logger.child('lifecycle'), startDaemon: true, foreground: options.foreground });
     if (result.baseUrl) this.cachedBaseUrl = result.baseUrl;
     return result;
   }
 
   async daemonStop(): Promise<DaemonStopResult> {
     this.cachedBaseUrl = undefined;
-    return stopDaemon({ env: this.options.env });
+    return stopDaemon({ env: this.effectiveEnv(), logger: this.logger.child('lifecycle') });
   }
 
   async daemonRestart(): Promise<DaemonRestartResult> {
-    const result = await restartDaemon({ ...this.options, startDaemon: true });
+    const result = await restartDaemon({ ...this.options, env: this.effectiveEnv(), logger: this.logger.child('lifecycle'), startDaemon: true });
     this.cachedBaseUrl = result.baseUrl;
     return result;
   }
@@ -222,7 +238,7 @@ export class CrontickClient {
     return runDoctorChecks({
       daemonUrl: options.daemonUrl ?? this.options.daemonUrl,
       mcpScript: options.mcpScript ?? this.options.mcpScript,
-      env: options.env ?? this.options.env,
+      env: options.env ?? this.effectiveEnv(),
       checkMcpHelp: options.checkMcpHelp,
     });
   }
@@ -264,53 +280,57 @@ export class CrontickClient {
   }
 
   getConfig(): CrontickConfig {
-    return loadConfig({ env: this.options.env });
+    return loadConfig({ env: this.effectiveEnv(), logger: this.logger.child('config') });
   }
 
   getConfigValue(path?: string): unknown {
-    return getConfigValue(path, { env: this.options.env });
+    return getConfigValue(path, { env: this.effectiveEnv(), logger: this.logger.child('config') });
   }
 
   setConfigValue(path: string, value: unknown): CrontickConfig {
-    return setConfigValue(path, value, { env: this.options.env });
+    return setConfigValue(path, value, { env: this.effectiveEnv(), logger: this.logger.child('config') });
   }
 
   removeConfigValue(path: string): CrontickConfig {
-    return removeConfigValue(path, { env: this.options.env });
+    return removeConfigValue(path, { env: this.effectiveEnv(), logger: this.logger.child('config') });
   }
 
   listEngines(): Record<string, EngineConfig> {
-    return listEngines({ env: this.options.env });
+    return listEngines({ env: this.effectiveEnv(), logger: this.logger.child('config') });
   }
 
   addEngine(name: string, engine: EngineConfig): CrontickConfig {
-    return addEngine(name, engine, { env: this.options.env });
+    return addEngine(name, engine, { env: this.effectiveEnv(), logger: this.logger.child('config') });
   }
 
   updateEngine(name: string, engine: Partial<EngineConfig>): CrontickConfig {
-    return updateEngine(name, engine, { env: this.options.env });
+    return updateEngine(name, engine, { env: this.effectiveEnv(), logger: this.logger.child('config') });
   }
 
   removeEngine(name: string): CrontickConfig {
-    return removeEngine(name, { env: this.options.env });
+    return removeEngine(name, { env: this.effectiveEnv(), logger: this.logger.child('config') });
   }
 
   initConfig(options: { force?: boolean } = {}): { path: string; config: CrontickConfig; created: boolean } {
-    return initConfig({ env: this.options.env, force: options.force });
+    return initConfig({ env: this.effectiveEnv(), logger: this.logger.child('config'), force: options.force });
   }
 
   validateConfig(path?: string): ConfigValidationResult {
-    return validateConfigFile({ env: this.options.env, path });
+    return validateConfigFile({ env: this.effectiveEnv(), logger: this.logger.child('config'), path });
   }
 
   async uninstall(options: { purge?: boolean } = {}): Promise<UninstallResult> {
-    return uninstall({ purge: options.purge, env: this.options.env });
+    return uninstall({ purge: options.purge, env: this.effectiveEnv() });
   }
 
   drainNotices(): string[] {
     const drained = this.notices;
     this.notices = [];
     return drained;
+  }
+
+  isVerbose(): boolean {
+    return this.verbose;
   }
 
   private async request<T = unknown>(
@@ -322,18 +342,23 @@ export class CrontickClient {
     const ensure = options.ensure ?? true;
     const baseUrl = await this.baseUrl({ ensure });
     let res: Response;
+    const startedAt = Date.now();
+    this.logger.debug('HTTP request', { method, path, baseUrl, ensure });
     try {
       res = await this.fetchRequest(baseUrl, method, path, body);
     } catch (err) {
       if (!ensure || !this.shouldStartDaemon() || this.options.daemonUrl) {
+        this.logger.debug('HTTP request failed without retry', { method, path, baseUrl, error: errorMessage(err), durationMs: Date.now() - startedAt });
         throw this.daemonRequestError(baseUrl, method, path, err);
       }
       this.cachedBaseUrl = undefined;
+      this.logger.debug('HTTP request failed; retrying after daemon ensure', { method, path, baseUrl, error: errorMessage(err) });
       const restarted = await this.ensure();
       await boundedBackoff();
       try {
         res = await this.fetchRequest(restarted.baseUrl, method, path, body);
       } catch (retryErr) {
+        this.logger.debug('HTTP retry failed', { method, path, baseUrl: restarted.baseUrl, error: errorMessage(retryErr), durationMs: Date.now() - startedAt });
         throw this.daemonRequestError(restarted.baseUrl, method, path, retryErr);
       }
     }
@@ -352,6 +377,7 @@ export class CrontickClient {
         err?.details,
       );
     }
+    this.logger.debug('HTTP response', { method, path, baseUrl, status: res.status, durationMs: Date.now() - startedAt });
     return data as T;
   }
 
@@ -362,7 +388,8 @@ export class CrontickClient {
     if (this.cachedBaseUrl) return this.cachedBaseUrl;
     const baseUrl = await resolveDaemonBaseUrl({
       daemonUrl: this.options.daemonUrl,
-      env: this.options.env,
+      env: this.effectiveEnv(),
+      logger: this.logger.child('ensure'),
     });
     this.cachedBaseUrl = baseUrl;
     return baseUrl;
@@ -371,7 +398,7 @@ export class CrontickClient {
   private normalizeOptions(options: NormalizeJobInputOptions): NormalizeJobInputOptions {
     return {
       cwd: this.options.cwd,
-      env: this.options.env,
+      env: this.effectiveEnv(),
       ...options,
       onNotice: (message) => {
         this.notices.push(message);
@@ -382,6 +409,12 @@ export class CrontickClient {
 
   private shouldStartDaemon(): boolean {
     return this.options.startDaemon ?? true;
+  }
+
+  private effectiveEnv(): NodeJS.ProcessEnv | undefined {
+    const source = this.options.env;
+    if (!this.verbose) return source;
+    return { ...(source ?? process.env), CRONTICK_VERBOSE: '1' };
   }
 
   private fetchRequest(

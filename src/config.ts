@@ -5,12 +5,14 @@ import { CrontickError } from './errors.js';
 import { configPath as defaultConfigPath, ensureDirs } from './paths.js';
 import { ConfigKeySchema, ConfigSchema, EngineConfigSchema, type CrontickConfig, type EngineConfig } from './schemas/config.js';
 import type { PromptAction } from './schemas/job.js';
+import { nullLogger, type Logger } from './logger.js';
 
 export { ConfigSchema, EngineConfigSchema, type CrontickConfig, type EngineConfig };
 
 export interface ConfigOptions {
   env?: NodeJS.ProcessEnv;
   path?: string;
+  logger?: Logger;
 }
 
 export interface InitConfigOptions extends ConfigOptions {
@@ -44,14 +46,26 @@ export function configFilePath(options: ConfigOptions = {}): string {
 
 export function loadConfig(options: ConfigOptions = {}): CrontickConfig {
   const filePath = configFilePath(options);
-  if (!existsSync(filePath)) return cloneConfig(BUILT_IN_CONFIG);
+  const logger = (options.logger ?? nullLogger).child('config');
+  if (!existsSync(filePath)) {
+    logger.debug('Config file missing; using built-in defaults', { path: filePath, keys: Object.keys(BUILT_IN_CONFIG) });
+    return cloneConfig(BUILT_IN_CONFIG);
+  }
+  logger.debug('Reading config file', { path: filePath });
   const raw = readConfigJson(filePath);
-  return parseConfig(raw, filePath);
+  const config = parseConfig(raw, filePath);
+  logger.debug('Loaded config', { path: filePath, keys: Object.keys(config), engines: Object.keys(config.engines) });
+  return config;
 }
 
 export function readConfigFile(options: ConfigOptions = {}): CrontickConfig | null {
   const filePath = configFilePath(options);
-  if (!existsSync(filePath)) return null;
+  const logger = (options.logger ?? nullLogger).child('config');
+  if (!existsSync(filePath)) {
+    logger.debug('Config file does not exist', { path: filePath });
+    return null;
+  }
+  logger.debug('Reading config file', { path: filePath });
   return parseConfig(readConfigJson(filePath), filePath);
 }
 
@@ -59,6 +73,7 @@ export function writeConfigFile(config: unknown, options: ConfigOptions = {}): C
   const filePath = configFilePath(options);
   const parsed = parseConfig(config, filePath);
   writeJsonAtomic(filePath, parsed, options.env);
+  (options.logger ?? nullLogger).child('config').debug('Wrote config file', { path: filePath, keys: Object.keys(parsed), engines: Object.keys(parsed.engines) });
   return parsed;
 }
 
@@ -73,11 +88,14 @@ export function initConfig(options: InitConfigOptions = {}): { path: string; con
   }
   const config = cloneConfig(BUILT_IN_CONFIG);
   writeJsonAtomic(filePath, config, options.env);
+  (options.logger ?? nullLogger).child('config').debug('Initialized config file', { path: filePath, force: options.force === true });
   return { path: filePath, config, created: true };
 }
 
 export function validateConfigFile(options: ConfigOptions = {}): ConfigValidationResult {
   const filePath = configFilePath(options);
+  const logger = (options.logger ?? nullLogger).child('config');
+  logger.debug('Validating config file', { path: filePath });
   if (!existsSync(filePath)) {
     return { ok: true, path: filePath, config: cloneConfig(BUILT_IN_CONFIG), problems: [] };
   }
@@ -157,6 +175,7 @@ export function removeEngine(name: string, options: ConfigOptions = {}): Crontic
 }
 
 export function buildPromptRunCommand(action: PromptAction, options: ConfigOptions = {}): PromptRunCommand {
+  const logger = (options.logger ?? nullLogger).child('config');
   const config = loadConfig(options);
   const engineName = action.engine ?? config.defaultEngine;
   const engine = config.engines[engineName];
@@ -173,12 +192,20 @@ export function buildPromptRunCommand(action: PromptAction, options: ConfigOptio
     ...(action.args ?? []),
   ];
   if (action.sessionId) args.push(`--session-id=${action.sessionId}`);
-  return {
+  const result = {
     command: engine.command,
     args,
     env: { ...(engine.env ?? {}) },
     engine: engineName,
   };
+  logger.debug('Resolved prompt engine command', {
+    path: configFilePath(options),
+    engine: engineName,
+    command: result.command,
+    args: result.args,
+    envKeys: Object.keys(result.env),
+  });
+  return result;
 }
 
 function setEngine(name: string, engine: unknown, mustExist: boolean, options: ConfigOptions): CrontickConfig {

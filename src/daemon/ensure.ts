@@ -12,6 +12,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CrontickError } from '../errors.js';
 import { dataDir, ensureDirs, logsDir, pidFilePath, portFilePath } from '../paths.js';
+import { nullLogger, type Logger } from '../logger.js';
 
 export interface EnsureDaemonOptions {
   daemonUrl?: string;
@@ -21,6 +22,7 @@ export interface EnsureDaemonOptions {
   healthTimeoutMs?: number;
   lockTimeoutMs?: number;
   env?: NodeJS.ProcessEnv;
+  logger?: Logger;
 }
 
 export interface DaemonInfo {
@@ -37,20 +39,28 @@ const POLL_MS = 100;
 const STDERR_LIMIT = 4096;
 const HEALTH_PRODUCT = 'crontick';
 
-export async function resolveDaemonBaseUrl(options: { daemonUrl?: string; env?: NodeJS.ProcessEnv } = {}): Promise<string> {
+export async function resolveDaemonBaseUrl(options: { daemonUrl?: string; env?: NodeJS.ProcessEnv; logger?: Logger } = {}): Promise<string> {
+  const logger = (options.logger ?? nullLogger).child('resolve');
   const env = { ...process.env, ...(options.env ?? {}) };
   const envUrl = env['CRONTICK_DAEMON_URL'];
   const explicit = options.daemonUrl ?? envUrl;
-  if (explicit) return normalizeBaseUrl(explicit);
+  if (explicit) {
+    const baseUrl = normalizeBaseUrl(explicit);
+    logger.debug('Using explicit daemon URL', { source: options.daemonUrl ? 'option' : 'CRONTICK_DAEMON_URL', baseUrl });
+    return baseUrl;
+  }
 
   const port = readPortFile(env);
   if (port === undefined) {
+    logger.debug('No daemon port file found', { portFile: portFilePath(env) });
     throw new CrontickError('DAEMON_NOT_RUNNING', 'Daemon is not running');
   }
+  logger.debug('Resolved daemon URL from port file', { portFile: portFilePath(env), port });
   return `http://127.0.0.1:${port}`;
 }
 
 export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<DaemonInfo> {
+  const logger = (options.logger ?? nullLogger).child('ensure');
   const env = { ...process.env, ...(options.env ?? {}) };
   const startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
   const healthTimeoutMs = options.healthTimeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS;
@@ -60,8 +70,12 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<D
   const explicitUrl = options.daemonUrl ?? env['CRONTICK_DAEMON_URL'];
   if (explicitUrl) {
     const baseUrl = normalizeBaseUrl(explicitUrl);
+    logger.debug('Probing explicit daemon URL', { baseUrl, healthTimeoutMs });
     const healthy = await probeHealth(baseUrl, healthTimeoutMs);
-    if (healthy.ok) return { ...healthy.info, baseUrl, started: false };
+    if (healthy.ok) {
+      logger.debug('Explicit daemon URL is healthy', { baseUrl, pid: healthy.info.pid, port: healthy.info.port });
+      return { ...healthy.info, baseUrl, started: false };
+    }
     throw new CrontickError(
       'DAEMON_NOT_RUNNING',
       `Daemon is not reachable at ${baseUrl}. Attempted a health check against CRONTICK_DAEMON_URL/daemonUrl and did not receive a valid crontick health response. Check that the URL is correct, or run: crontick daemon status`,
@@ -69,8 +83,12 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<D
     );
   }
 
+  logger.debug('Probing daemon port file', { portFile: portFilePath(env), healthTimeoutMs });
   const existing = await probePortFile(env, healthTimeoutMs);
-  if (existing) return { ...existing, started: false };
+  if (existing) {
+    logger.debug('Existing daemon is healthy', { baseUrl: existing.baseUrl, pid: existing.pid, port: existing.port });
+    return { ...existing, started: false };
+  }
 
   if (!shouldStartDaemon) {
     throw new CrontickError(
@@ -92,17 +110,23 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<D
 
       ownsLock = tryAcquireLock(lockPath);
       if (ownsLock) {
+        logger.debug('Acquired daemon start lock', { lockPath });
         const rechecked = await probePortFile(env, healthTimeoutMs);
-        if (rechecked) return { ...rechecked, started: false };
+        if (rechecked) {
+          logger.debug('Daemon became healthy after lock acquisition', { baseUrl: rechecked.baseUrl });
+          return { ...rechecked, started: false };
+        }
 
         return await startDaemonAndWait({
           daemonScript: resolveDaemonScript(options.daemonScript, env),
           env,
           startupTimeoutMs,
           healthTimeoutMs,
+          logger,
         });
       }
 
+      logger.debug('Waiting for daemon start lock', { lockPath });
       cleanupStaleLock(lockPath, lockTimeoutMs);
       await sleep(POLL_MS);
     }
@@ -122,8 +146,9 @@ async function startDaemonAndWait(args: {
   env: NodeJS.ProcessEnv;
   startupTimeoutMs: number;
   healthTimeoutMs: number;
+  logger: Logger;
 }): Promise<DaemonInfo> {
-  const { daemonScript, env, startupTimeoutMs, healthTimeoutMs } = args;
+  const { daemonScript, env, startupTimeoutMs, healthTimeoutMs, logger } = args;
   if (!existsSync(daemonScript)) {
     throw new CrontickError(
       'NOT_BUILT',
@@ -135,6 +160,7 @@ async function startDaemonAndWait(args: {
   let childError: Error | undefined;
   let childExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
   const ensureLogPath = join(logsDir(env), 'daemon.ensure.log');
+  logger.debug('Starting daemon process', { daemonScript, ensureLogPath, startupTimeoutMs });
   const logStartOffset = logFileSize(ensureLogPath);
   const startedPidPath = pidFilePath(env);
   const startedPortPath = portFilePath(env);
@@ -176,7 +202,10 @@ async function startDaemonAndWait(args: {
     const deadline = Date.now() + startupTimeoutMs;
     while (Date.now() < deadline) {
       const healthy = await probePortFile(env, healthTimeoutMs);
-      if (healthy) return { ...healthy, started: true };
+      if (healthy) {
+        logger.debug('Started daemon became healthy', { baseUrl: healthy.baseUrl, pid: healthy.pid, port: healthy.port, ensureLogPath });
+        return { ...healthy, started: true };
+      }
       if (childError) {
         const stderr = readEnsureLogTail(ensureLogPath, logStartOffset);
         throw new CrontickError(
@@ -193,6 +222,7 @@ async function startDaemonAndWait(args: {
           { daemonScript, logPath: ensureLogPath, exitCode: childExit.code, signal: childExit.signal, action: 'crontick daemon start' },
         );
       }
+      logger.debug('Waiting for daemon health', { daemonScript, ensureLogPath });
       await sleep(POLL_MS);
     }
 

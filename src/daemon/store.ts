@@ -6,6 +6,7 @@ import { runsDbPath, jobsDir } from '../paths.js';
 import { JobSchema, type Job, type PromptAction } from '../schemas/job.js';
 import { CrontickError } from '../errors.js';
 import { jobJsonSchemaText } from '../schema-json.js';
+import { nullLogger, type Logger } from '../logger.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -76,13 +77,16 @@ export class Store {
   private db!: DatabaseSync;
   private dbPath: string;
   private jobsPath: string;
+  private logger: Logger;
 
-  constructor(dbPath?: string, jobsPath?: string) {
+  constructor(dbPath?: string, jobsPath?: string, logger: Logger = nullLogger) {
     this.dbPath = dbPath ?? runsDbPath();
     this.jobsPath = jobsPath ?? jobsDir();
+    this.logger = logger.child('store');
   }
 
   open(): void {
+    this.logger.debug('Opening store', { dbPath: this.dbPath, jobsPath: this.jobsPath });
     this.db = new DatabaseSync(this.dbPath);
     this.db.exec('PRAGMA journal_mode=WAL;');
     this.db.exec('PRAGMA foreign_keys=ON;');
@@ -136,6 +140,7 @@ export class Store {
     const filePath = join(this.jobsPath, `${persisted.id}.json`);
     writeFileSync(filePath, json, 'utf-8');
     writeFileSync(join(this.jobsPath, `${persisted.id}.schema.json`), jobJsonSchemaText(), 'utf-8');
+    this.logger.debug('Persisted job files', { jobId: persisted.id, filePath, schemaPath: join(this.jobsPath, `${persisted.id}.schema.json`) });
   }
 
   tryCapturePromptSession(jobId: string, expectedAction: PromptAction, sessionId: string): boolean {
@@ -152,6 +157,7 @@ export class Store {
         reuseSession: false,
       },
     });
+    this.logger.debug('Captured prompt session id', { jobId });
     return true;
   }
 
@@ -160,6 +166,7 @@ export class Store {
       | { json: string }
       | undefined;
     if (!row) return undefined;
+    this.logger.debug('Read job from store', { jobId: id });
     return JSON.parse(row.json) as Job;
   }
 
@@ -167,6 +174,7 @@ export class Store {
     const rows = this.db.prepare('SELECT json FROM jobs ORDER BY id').all() as Array<{
       json: string;
     }>;
+    this.logger.debug('Listed jobs', { count: rows.length });
     return rows.map((r) => JSON.parse(r.json) as Job);
   }
 
@@ -188,13 +196,18 @@ export class Store {
         // ignore
       }
     }
+    this.logger.debug('Deleted job', { jobId: id, deleted: changes > 0, filePath, schemaPath });
     return changes > 0;
   }
 
   /** Load jobs from the jobs directory (disk is source of truth on daemon start). */
   loadJobsFromDisk(): void {
-    if (!existsSync(this.jobsPath)) return;
+    if (!existsSync(this.jobsPath)) {
+      this.logger.debug('Jobs directory missing during load', { jobsPath: this.jobsPath });
+      return;
+    }
     const files = readdirSync(this.jobsPath).filter((f) => f.endsWith('.json') && !f.endsWith('.schema.json'));
+    let loaded = 0;
     for (const file of files) {
       try {
         const raw = readFileSync(join(this.jobsPath, file), 'utf-8');
@@ -206,11 +219,13 @@ export class Store {
               'INSERT INTO jobs (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at',
             )
             .run(parsed.data.id, json, Date.now());
+          loaded++;
         }
       } catch {
         // skip malformed job files
       }
     }
+    this.logger.debug('Loaded jobs from disk', { jobsPath: this.jobsPath, files: files.length, loaded });
   }
 
   // ── Run CRUD ────────────────────────────────────────────────────────────────
@@ -223,6 +238,7 @@ export class Store {
         'INSERT INTO runs (id, job_id, started_at, status) VALUES (?, ?, ?, ?)',
       )
       .run(id, jobId, now, 'queued');
+    this.logger.debug('Inserted run', { runId: id, jobId, startedAt: now });
     return { id, jobId, startedAt: now, status: 'queued' };
   }
 
@@ -260,6 +276,7 @@ export class Store {
     if (fields.length === 0) return;
     values.push(id);
     this.db.prepare(`UPDATE runs SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    this.logger.debug('Updated run', { runId: id, fields });
   }
 
   getRun(id: string): Run | undefined {
@@ -286,6 +303,7 @@ export class Store {
     const limit = opts.limit !== undefined ? `LIMIT ${opts.limit}` : '';
     const rows = this.db.prepare(`SELECT * FROM runs ${where} ORDER BY started_at DESC ${limit}`)
       .all(...params) as unknown as DbRunRow[];
+    this.logger.debug('Listed runs', { count: rows.length, jobId: opts.jobId, limit: opts.limit, since: opts.since });
     return rows.map(rowToRun);
   }
 
@@ -342,6 +360,7 @@ export class Store {
         "UPDATE runs SET status = 'canceled', error = 'daemon-restart', ended_at = ? WHERE status IN ('running', 'queued')",
       )
       .run(Date.now()) as { changes: number };
+    this.logger.debug('Reconciled orphan runs', { changes: result.changes });
     return result.changes;
   }
 }

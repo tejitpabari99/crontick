@@ -10,6 +10,7 @@ import { createClient, type CrontickClient } from '../client.js';
 import { buildJobPatchFromUpdateOptions, type JobCreateCliOptions, type JobPatchCliOptions } from '../job-input.js';
 import type { Schedule } from '../schemas/job.js';
 import type { EngineConfig } from '../schemas/config.js';
+import { isVerboseEnv, type LogEvent } from '../logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -22,43 +23,68 @@ function mcpScript(): string {
 }
 
 function client(startDaemon = true) {
-  return createClient({ daemonScript: daemonScript(), startDaemon, mcpScript: mcpScript(), cwd: process.cwd() });
+  const verbose = useVerbose();
+  return createClient({
+    daemonScript: daemonScript(),
+    startDaemon,
+    mcpScript: mcpScript(),
+    cwd: process.cwd(),
+    verbose,
+    onLog: verbose ? renderLogEvent : undefined,
+  });
 }
 
 function useJson(): boolean {
   return !!(program.opts() as { json?: boolean }).json;
 }
 
+function useVerbose(): boolean {
+  return !!(program.opts() as { verbose?: boolean }).verbose || isVerboseEnv();
+}
+
+function stdout(line = ''): void {
+  process.stdout.write(`${line}\n`);
+}
+
+function stderr(line = ''): void {
+  process.stderr.write(`${line}\n`);
+}
+
+function renderLogEvent(event: LogEvent): void {
+  const data = event.data === undefined ? '' : ` ${JSON.stringify(event.data)}`;
+  stderr(`[crontick:${event.level}] ${event.component ? `${event.component} ` : ''}${event.message}${data}`);
+}
+
 function print(data: unknown, json = useJson()): void {
   if (json) {
-    console.log(JSON.stringify(data, null, 2));
+    stdout(JSON.stringify(data, null, 2));
     return;
   }
   if (Array.isArray(data)) {
     if (data.length === 0) {
-      console.log('(no items)');
+      stdout('(no items)');
       return;
     }
     const rows = data as Array<Record<string, unknown>>;
     const keys = Object.keys(rows[0]);
-    console.log(keys.join('\t'));
+    stdout(keys.join('\t'));
     for (const row of rows) {
-      console.log(keys.map((key) => display(row[key])).join('\t'));
+      stdout(keys.map((key) => display(row[key])).join('\t'));
     }
     return;
   }
   if (data !== null && typeof data === 'object') {
     for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
-      console.log(`${key}: ${display(value)}`);
+      stdout(`${key}: ${display(value)}`);
     }
     return;
   }
-  console.log(String(data ?? ''));
+  stdout(String(data ?? ''));
 }
 
 function printNotices(c: CrontickClient, notices: string[] = []): void {
   const all = [...notices, ...c.drainNotices()];
-  for (const notice of all) console.error(`Notice: ${notice}`);
+  for (const notice of all) stderr(`Notice: ${notice}`);
 }
 
 function display(value: unknown): string {
@@ -83,34 +109,34 @@ function printDashboardData(data: unknown): void {
   };
   const stats = model.stats;
   if (stats) {
-    console.log(`Jobs: ${stats.enabledJobs ?? 0}/${stats.totalJobs ?? 0} enabled`);
-    console.log(`Runs: ${stats.totalRuns ?? 0} total, ${stats.failed ?? 0} failed`);
+    stdout(`Jobs: ${stats.enabledJobs ?? 0}/${stats.totalJobs ?? 0} enabled`);
+    stdout(`Runs: ${stats.totalRuns ?? 0} total, ${stats.failed ?? 0} failed`);
   }
-  console.log('');
-  console.log('Jobs');
-  if (!model.jobs || model.jobs.length === 0) console.log('(no jobs)');
+  stdout('');
+  stdout('Jobs');
+  if (!model.jobs || model.jobs.length === 0) stdout('(no jobs)');
   else {
     for (const job of model.jobs) {
-      console.log(`- ${job.id} [${job.enabled ? 'enabled' : 'disabled'}] ${job.actionKind} ${job.scheduleLabel} last=${job.lastStatus ?? '—'}`);
+      stdout(`- ${job.id} [${job.enabled ? 'enabled' : 'disabled'}] ${job.actionKind} ${job.scheduleLabel} last=${job.lastStatus ?? '—'}`);
     }
   }
-  console.log('');
-  console.log('Recent runs');
-  if (!model.runs || model.runs.length === 0) console.log('(no runs)');
+  stdout('');
+  stdout('Recent runs');
+  if (!model.runs || model.runs.length === 0) stdout('(no runs)');
   else {
     for (const run of model.runs) {
-      console.log(`- ${run.id} ${run.jobId} ${run.status} ${new Date(run.startedAt).toISOString()}`);
+      stdout(`- ${run.id} ${run.jobId} ${run.status} ${new Date(run.startedAt).toISOString()}`);
     }
   }
 }
 
 function handleError(err: unknown): never {
   if (err instanceof CrontickError) {
-    console.error(`Error [${err.code}]: ${err.message}`);
+    stderr(`Error [${err.code}]: ${err.message}`);
   } else if (err instanceof Error) {
-    console.error(`Error: ${err.message}`);
+    stderr(`Error: ${err.message}`);
   } else {
-    console.error(`Error: ${String(err)}`);
+    stderr(`Error: ${String(err)}`);
   }
   process.exit(1);
 }
@@ -255,7 +281,8 @@ program
   .name('crontick')
   .description('A standalone cron daemon, CLI, and MCP server for local scheduled jobs.')
   .version(VERSION)
-  .option('--json', 'Output as JSON');
+  .option('--json', 'Output as JSON')
+  .option('-v, --verbose', 'Write crontick diagnostic logs to stderr (also enabled by CRONTICK_VERBOSE=1)');
 
 commonJobOptions(program.command('new <id> [engineArgs...]').description('Create a new job'))
   .action(async (id: string, engineArgs: string[], opts) => {
@@ -339,7 +366,7 @@ program.command('logs <runId>')
     try {
       const result = await client().getLogs(runId, { lines: (opts.tail ?? opts.lines) as number | undefined });
       if (useJson()) {
-        console.log(JSON.stringify(result, null, 2));
+        stdout(JSON.stringify(result, null, 2));
       } else {
         for (const entry of result.lines) process.stdout.write(`[${entry.stream}] ${entry.data}`);
       }
@@ -420,9 +447,9 @@ program.command('export')
       const json = JSON.stringify(data, null, 2);
       if (opts.out) {
         writeFileSync(resolve(process.cwd(), opts.out as string), json, 'utf-8');
-        console.log(`Exported to ${opts.out as string}`);
+        stdout(`Exported to ${opts.out as string}`);
       } else {
-        console.log(json);
+        stdout(json);
       }
     } catch (err) { handleError(err); }
   });
@@ -440,10 +467,10 @@ program.command('doctor').description('Check system health').action(async () => 
   try {
     const result = await client(false).doctor({ mcpScript: mcpScript() });
     if (useJson()) {
-      console.log(JSON.stringify(result, null, 2));
+      stdout(JSON.stringify(result, null, 2));
     } else {
       for (const check of result.checks) {
-        console.log(`${check.ok ? '✓' : '✗'} ${check.name}${check.note ? ` (${check.note})` : ''}`);
+        stdout(`${check.ok ? '✓' : '✗'} ${check.name}${check.note ? ` (${check.note})` : ''}`);
       }
     }
     if (!result.ok) process.exit(1);
@@ -458,14 +485,14 @@ daemon.command('start')
     try {
       const result = await client().daemonStart({ foreground: opts.foreground as boolean | undefined });
       if (opts.foreground) process.exit(result.foregroundExitCode ?? 0);
-      console.log(result.started ? `Daemon started on port ${String(result.port ?? '')}` : `Daemon already running on port ${String(result.port ?? '')}`);
+      stdout(result.started ? `Daemon started on port ${String(result.port ?? '')}` : `Daemon already running on port ${String(result.port ?? '')}`);
     } catch (err) { handleError(err); }
   });
 daemon.command('stop').description('Stop the daemon').action(async () => {
-  try { console.log((await client(false).daemonStop()).message); } catch (err) { handleError(err); }
+  try { stdout((await client(false).daemonStop()).message); } catch (err) { handleError(err); }
 });
 daemon.command('status').description('Show daemon status').action(async () => {
-  try { print(await client(false).daemonStatus()); } catch { console.log('Daemon is not running'); }
+  try { print(await client(false).daemonStatus()); } catch { stdout('Daemon is not running'); }
 });
 daemon.command('reload').description('Reload jobs from disk').action(async () => {
   try { print(await client().daemonReload()); } catch (err) { handleError(err); }
@@ -473,7 +500,7 @@ daemon.command('reload').description('Reload jobs from disk').action(async () =>
 daemon.command('restart').description('Restart the daemon').action(async () => {
   try {
     const result = await client().daemonRestart();
-    console.log(`Daemon restarted on port ${String(result.port ?? '')}`);
+    stdout(`Daemon restarted on port ${String(result.port ?? '')}`);
   } catch (err) { handleError(err); }
 });
 
@@ -497,12 +524,12 @@ program.command('uninstall')
         }
         if (confirmed) {
           const result = await c.uninstall({ purge: true });
-          console.log(`✓ ${result.message}`);
+          stdout(`✓ ${result.message}`);
         } else {
-          console.log('Skipped data directory deletion.');
+          stdout('Skipped data directory deletion.');
         }
       } else {
-        console.log((await c.uninstall()).message);
+        stdout((await c.uninstall()).message);
       }
     } catch (err) { handleError(err); }
   });
@@ -516,14 +543,14 @@ dashboard.command('start')
       const result = await client().dashboardStart();
       if (opts.open as boolean) openDashboardUrl(result.url);
       if (useJson()) print(result, true);
-      else console.log(`Dashboard ${opts.open ? 'opened' : 'running'}: ${result.url}`);
+      else stdout(`Dashboard ${opts.open ? 'opened' : 'running'}: ${result.url}`);
     } catch (err) { handleError(err); }
   });
 dashboard.command('status').description('Show dashboard status').action(async () => {
   try {
     const result = await client(false).dashboardStatus();
     if (useJson()) print(result, true);
-    else console.log(`Dashboard ${result.running ? 'running' : 'stopped'}: ${result.url}`);
+    else stdout(`Dashboard ${result.running ? 'running' : 'stopped'}: ${result.url}`);
   } catch (err) { handleError(err); }
 });
 dashboard.command('data')
@@ -544,7 +571,7 @@ dashboard.command('stop').description('Stop the dashboard server').action(async 
   try {
     const result = await client(false).dashboardStop();
     if (useJson()) print(result, true);
-    else console.log(result.message);
+    else stdout(result.message);
   } catch (err) { handleError(err); }
 });
 
@@ -566,12 +593,13 @@ Example MCP host config (Claude Desktop):
   .action((opts) => {
     const script = mcpScript();
     if (!existsSync(script)) {
-      console.error(`MCP server script not found: ${script}. Run: npm run build`);
+      stderr(`MCP server script not found: ${script}. Run: npm run build`);
       process.exit(1);
     }
     const env: NodeJS.ProcessEnv = { ...process.env };
     if (opts.startDaemon === false) env['CRONTICK_MCP_START_DAEMON'] = '0';
     if (opts.daemonUrl) env['CRONTICK_DAEMON_URL'] = opts.daemonUrl as string;
+    if (useVerbose()) env['CRONTICK_VERBOSE'] = '1';
     const result = spawnSync(process.execPath, [script], { stdio: 'inherit', env });
     process.exit(result.status ?? 0);
   });

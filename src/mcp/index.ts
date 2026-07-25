@@ -11,7 +11,8 @@ import { VERSION } from '../version.js';
 import { ScheduleSchema } from '../schemas/job.js';
 import { EngineConfigSchema } from '../schemas/config.js';
 import { JobCreateInputSchema, JobPatchInputSchema } from '../job-input.js';
-import { createClient } from '../client.js';
+import { createClient, type CrontickClient } from '../client.js';
+import { isVerboseEnv, type LogEvent } from '../logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -27,12 +28,28 @@ function mcpScript(): string {
   return pathResolve(__dirname, '../mcp/index.js');
 }
 
-function mcpClient(startDaemon = shouldStartDaemon()) {
+type VerboseArgs = { verbose?: boolean };
+type RawArgs = Record<string, unknown> & VerboseArgs;
+
+const VERBOSE_INPUT = { verbose: z.boolean().optional() };
+
+function withVerbose<T extends Record<string, unknown>>(schema: T): T & typeof VERBOSE_INPUT {
+  return { ...schema, ...VERBOSE_INPUT };
+}
+
+function mcpVerbose(args?: VerboseArgs): boolean {
+  return args?.verbose === true || isVerboseEnv();
+}
+
+function mcpClient(startDaemon = shouldStartDaemon(), options: { verbose?: boolean; diagnostics?: LogEvent[] } = {}) {
+  const verbose = options.verbose ?? isVerboseEnv();
   return createClient({
     daemonScript: daemonScript(),
     startDaemon,
     mcpScript: mcpScript(),
     cwd: process.cwd(),
+    verbose,
+    onLog: options.diagnostics ? (event) => options.diagnostics?.push(event) : undefined,
   });
 }
 
@@ -43,8 +60,9 @@ type ToolResult = {
   isError?: boolean;
 };
 
-function okResult(data: unknown): ToolResult {
-  return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+function okResult(data: unknown, diagnostics: LogEvent[] = [], verbose = false): ToolResult {
+  const payload = verbose && diagnostics.length > 0 ? { result: data, diagnostics } : data;
+  return { content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }] };
 }
 
 /** Redact sensitive details before returning errors to the LLM. Exported for testing. */
@@ -59,10 +77,13 @@ export function redactForLlm(msg: string): string {
     .replace(/(^|[\s(["'])\/(?:[^\s"'/]+\/)+[^\s"'/]+/g, '$1<path>');
 }
 
-function errResult(err: unknown): ToolResult {
+function errResult(err: unknown, diagnostics: LogEvent[] = [], verbose = false): ToolResult {
   const redacted = redactedErrorMessage(err);
+  const payload = verbose && diagnostics.length > 0
+    ? { error: redacted, diagnostics }
+    : { error: redacted };
   return {
-    content: [{ type: 'text', text: JSON.stringify({ error: redacted }, null, 2) }],
+    content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
     isError: true,
   };
 }
@@ -72,22 +93,24 @@ function redactedErrorMessage(err: unknown): string {
   return redactForLlm(msg);
 }
 
-async function toolWrap(fn: () => Promise<unknown>): Promise<ToolResult> {
+async function toolWrap(args: VerboseArgs | undefined, fn: (client: CrontickClient) => Promise<unknown>, startDaemon = shouldStartDaemon()): Promise<ToolResult> {
+  const diagnostics: LogEvent[] = [];
+  const verbose = mcpVerbose(args);
+  const client = mcpClient(startDaemon, { verbose, diagnostics });
   try {
-    const result = await fn();
-    return okResult(result);
+    const result = await fn(client);
+    const notices = client.drainNotices();
+    const data = notices.length > 0 ? { result, notices } : result;
+    return okResult(data, diagnostics, verbose);
   } catch (err) {
-    return errResult(err);
+    return errResult(err, diagnostics, verbose);
   }
 }
 
-async function toolWrapClient(fn: (client: ReturnType<typeof mcpClient>) => Promise<unknown>): Promise<ToolResult> {
-  const client = mcpClient();
-  return toolWrap(async () => {
-    const result = await fn(client);
-    const notices = client.drainNotices();
-    return notices.length > 0 ? { result, notices } : result;
-  });
+function withoutVerbose<T extends RawArgs>(args: T): Omit<T, 'verbose'> {
+  const rest = { ...args };
+  delete rest.verbose;
+  return rest;
 }
 
 // ── MCP server setup ──────────────────────────────────────────────────────────
@@ -105,29 +128,29 @@ export function createMcpServer(): McpServer {
     {
       description:
         'Create and schedule a new cron job. Provide the full job definition including id, schedule (kind: cron|interval|one-shot), and action (kind: script|exec|prompt). Prompt actions use prompt, optional configured engine name, args, sessionId, or reuseSession. Validate the schedule first with crontick_schedule_validate.',
-      inputSchema: {
+      inputSchema: withVerbose({
 ...JobCreateInputSchema.shape,
-      },
+      }),
     },
-    async (args) => toolWrapClient((client) => client.createJob(args)),
+    async (args) => toolWrap(args, (client) => client.createJob(withoutVerbose(args))),
   );
 
   server.registerTool(
     'crontick_job_list',
     {
       description: 'List all scheduled jobs with their current status and next run time.',
-      inputSchema: {},
+      inputSchema: withVerbose({}),
     },
-    async () => toolWrap(() => mcpClient().listJobs()),
+    async (args) => toolWrap(args, (client) => client.listJobs()),
   );
 
   server.registerTool(
     'crontick_job_get',
     {
       description: 'Get the full definition and status of a specific job by ID.',
-      inputSchema: { id: z.string() },
+      inputSchema: withVerbose({ id: z.string() }),
     },
-    async (args) => toolWrap(() => mcpClient().getJob(args.id)),
+    async (args) => toolWrap(args, (client) => client.getJob(args.id)),
   );
 
   server.registerTool(
@@ -135,14 +158,14 @@ export function createMcpServer(): McpServer {
     {
       description:
         'Update an existing job. Provide the job ID and any fields to change (partial update is merged with existing definition). Action can be script, exec, or prompt.',
-      inputSchema: {
+      inputSchema: withVerbose({
 id: z.string(),
         ...JobPatchInputSchema.shape,
-      },
+      }),
     },
     async (args) => {
       const { id, ...patch } = args;
-return toolWrapClient((client) => client.updateJob(id, patch));
+return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     },
   );
 
@@ -151,27 +174,27 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     {
       description:
         'Permanently delete a job and all its run history. This cannot be undone — confirm with the user first.',
-      inputSchema: { id: z.string() },
+      inputSchema: withVerbose({ id: z.string() }),
     },
-    async (args) => toolWrap(() => mcpClient().deleteJob(args.id)),
+    async (args) => toolWrap(args, (client) => client.deleteJob(args.id)),
   );
 
   server.registerTool(
     'crontick_job_enable',
     {
       description: 'Enable a disabled job so it will run on its next scheduled time.',
-      inputSchema: { id: z.string() },
+      inputSchema: withVerbose({ id: z.string() }),
     },
-    async (args) => toolWrap(() => mcpClient().enableJob(args.id)),
+    async (args) => toolWrap(args, (client) => client.enableJob(args.id)),
   );
 
   server.registerTool(
     'crontick_job_disable',
     {
       description: 'Disable a job so it will not run until re-enabled.',
-      inputSchema: { id: z.string() },
+      inputSchema: withVerbose({ id: z.string() }),
     },
-    async (args) => toolWrap(() => mcpClient().disableJob(args.id)),
+    async (args) => toolWrap(args, (client) => client.disableJob(args.id)),
   );
 
   server.registerTool(
@@ -179,18 +202,18 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     {
       description:
         'Trigger an immediate run of a job, bypassing its schedule. Returns a runId to track progress with crontick_run_get.',
-      inputSchema: { id: z.string() },
+      inputSchema: withVerbose({ id: z.string() }),
     },
-    async (args) => toolWrap(() => mcpClient().runNow(args.id)),
+    async (args) => toolWrap(args, (client) => client.runNow(args.id)),
   );
 
   server.registerTool(
     'crontick_job_cancel_run',
     {
       description: 'Cancel an in-progress run by its run ID.',
-      inputSchema: { runId: z.string() },
+      inputSchema: withVerbose({ runId: z.string() }),
     },
-    async (args) => toolWrap(() => mcpClient().cancelRun(args.runId)),
+    async (args) => toolWrap(args, (client) => client.cancelRun(args.runId)),
   );
 
   // ── Runs ───────────────────────────────────────────────────────────────────
@@ -199,22 +222,22 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     'crontick_run_list',
     {
       description: 'List recent runs, optionally filtered by job ID.',
-      inputSchema: {
+      inputSchema: withVerbose({
         jobId: z.string().optional(),
         limit: z.number().int().positive().optional(),
         since: z.number().int().optional(),
-      },
+      }),
     },
-    async (args) => toolWrap(() => mcpClient().listRuns(args)),
+    async (args) => toolWrap(args, (client) => client.listRuns(withoutVerbose(args))),
   );
 
   server.registerTool(
     'crontick_run_get',
     {
       description: 'Get the details and current status of a specific run by run ID.',
-      inputSchema: { runId: z.string() },
+      inputSchema: withVerbose({ runId: z.string() }),
     },
-    async (args) => toolWrap(() => mcpClient().getRun(args.runId)),
+    async (args) => toolWrap(args, (client) => client.getRun(args.runId)),
   );
 
   server.registerTool(
@@ -222,12 +245,12 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     {
       description:
         'Get the last N lines of output for a run. Useful for diagnosing failures.',
-      inputSchema: {
+      inputSchema: withVerbose({
         runId: z.string(),
         lines: z.number().int().positive().default(50),
-      },
+      }),
     },
-    async (args) => toolWrap(() => mcpClient().getLogs(args.runId, { lines: args.lines })),
+    async (args) => toolWrap(args, (client) => client.getLogs(args.runId, { lines: args.lines })),
   );
 
   // ── Schedules ─────────────────────────────────────────────────────────────
@@ -237,11 +260,11 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     {
       description:
         'Validate a schedule definition. Returns ok:true and human-readable description on success, or an error message on failure. Always call this before creating a job.',
-      inputSchema: {
+      inputSchema: withVerbose({
         schedule: ScheduleSchema,
-      },
+      }),
     },
-    async (args) => toolWrap(() => mcpClient().validateSchedule(args.schedule)),
+    async (args) => toolWrap(args, (client) => client.validateSchedule(args.schedule)),
   );
 
   server.registerTool(
@@ -249,13 +272,13 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     {
       description:
         'Preview the next N fire times for a schedule. Useful to confirm the schedule is what the user expects before creating the job.',
-      inputSchema: {
+      inputSchema: withVerbose({
         schedule: ScheduleSchema,
         n: z.number().int().positive().max(20).default(5),
         tz: z.string().optional(),
-      },
+      }),
     },
-    async (args) => toolWrap(() => mcpClient().previewSchedule({ schedule: args.schedule, n: args.n, tz: args.tz })),
+    async (args) => toolWrap(args, (client) => client.previewSchedule({ schedule: args.schedule, n: args.n, tz: args.tz })),
   );
 
   // ── Stats ──────────────────────────────────────────────────────────────────
@@ -265,18 +288,18 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     {
       description:
         'Get an aggregate summary of all jobs: total count, enabled count, run history, success/failure counts, average duration.',
-      inputSchema: {},
+      inputSchema: withVerbose({}),
     },
-    async () => toolWrap(() => mcpClient().statsSummary()),
+    async (args) => toolWrap(args, (client) => client.statsSummary()),
   );
 
   server.registerTool(
     'crontick_stats_job',
     {
       description: 'Get run statistics for a specific job: total runs, success/failure rates, last status.',
-      inputSchema: { id: z.string() },
+      inputSchema: withVerbose({ id: z.string() }),
     },
-    async (args) => toolWrap(() => mcpClient().statsJob(args.id)),
+    async (args) => toolWrap(args, (client) => client.statsJob(args.id)),
   );
 
   // ── Daemon ─────────────────────────────────────────────────────────────────
@@ -286,14 +309,17 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     {
       description:
         'Get the daemon process status: PID, version, uptime, job counts, run stats, Node version, and platform.',
-      inputSchema: {},
+      inputSchema: withVerbose({}),
     },
-    async () => {
+    async (args) => {
+      const diagnostics: LogEvent[] = [];
+      const verbose = mcpVerbose(args);
+      const client = mcpClient(false, { verbose, diagnostics });
       try {
-        return okResult(await mcpClient(false).daemonStatus());
+        return okResult(await client.daemonStatus(), diagnostics, verbose);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        return okResult({ running: false, error: redactForLlm(msg) });
+        return okResult({ running: false, error: redactForLlm(msg) }, diagnostics, verbose);
       }
     },
   );
@@ -303,9 +329,9 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     {
       description:
         'Reload job definitions from disk without restarting the daemon. Use after manually editing job files.',
-      inputSchema: {},
+      inputSchema: withVerbose({}),
     },
-    async () => toolWrap(() => mcpClient().daemonReload()),
+    async (args) => toolWrap(args, (client) => client.daemonReload()),
   );
 
   server.registerTool(
@@ -313,9 +339,9 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     {
       description:
         'Restart the crontick daemon (stop + start). Running jobs will be interrupted. Confirm with the user before calling.',
-      inputSchema: {},
+      inputSchema: withVerbose({}),
     },
-    async () => toolWrap(() => mcpClient().daemonRestart()),
+    async (args) => toolWrap(args, (client) => client.daemonRestart()),
   );
 
   // ── Admin ──────────────────────────────────────────────────────────────────
@@ -325,9 +351,9 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     {
       description:
         'Export all job definitions as a JSON object. Use this to back up or migrate jobs.',
-      inputSchema: {},
+      inputSchema: withVerbose({}),
     },
-    async () => toolWrap(() => mcpClient().exportJobs()),
+    async (args) => toolWrap(args, (client) => client.exportJobs()),
   );
 
   server.registerTool(
@@ -335,11 +361,11 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     {
       description:
         'Import job definitions from a JSON array. Jobs are upserted (existing jobs with the same ID are updated).',
-      inputSchema: {
+      inputSchema: withVerbose({
         jobs: z.array(z.unknown()),
-      },
+      }),
     },
-    async (args) => toolWrapClient((client) => client.importJobs(args.jobs)),
+    async (args) => toolWrap(args, (client) => client.importJobs(args.jobs)),
   );
 
   server.registerTool(
@@ -347,9 +373,9 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     {
       description:
         'Start the crontick dashboard server and return its URL. The dashboard is served by the local daemon.',
-      inputSchema: {},
+      inputSchema: withVerbose({}),
     },
-    async () => toolWrap(() => mcpClient().dashboardStart()),
+    async (args) => toolWrap(args, (client) => client.dashboardStart()),
   );
 
   server.registerTool(
@@ -357,9 +383,9 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     {
       description:
         'Return dashboard server status without starting it. If it is down, start it with crontick_dashboard_start.',
-      inputSchema: {},
+      inputSchema: withVerbose({}),
     },
-    async () => toolWrap(() => mcpClient(false).dashboardStatus()),
+    async (args) => toolWrap(args, (client) => client.dashboardStatus(), false),
   );
 
   server.registerTool(
@@ -367,12 +393,12 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     {
       description:
         'Return the core dashboard data model: health, aggregate stats, jobs, and recent runs.',
-      inputSchema: {
+      inputSchema: withVerbose({
         jobId: z.string().optional(),
         runsLimit: z.number().int().positive().optional(),
-      },
+      }),
     },
-    async (args) => toolWrap(() => mcpClient(false).dashboardData(args)),
+    async (args) => toolWrap(args, (client) => client.dashboardData(withoutVerbose(args)), false),
   );
 
   server.registerTool(
@@ -380,9 +406,9 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     {
       description:
         'Stop the daemon-backed dashboard server. This also stops the local daemon because the dashboard is served by it.',
-      inputSchema: {},
+      inputSchema: withVerbose({}),
     },
-    async () => toolWrap(() => mcpClient(false).dashboardStop()),
+    async (args) => toolWrap(args, (client) => client.dashboardStop(), false),
   );
 
   server.registerTool(
@@ -390,9 +416,9 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     {
       description:
         'Run a suite of health checks: Node.js version, SQLite, data directory, daemon connectivity, dashboard reachability, and MCP server availability.',
-      inputSchema: {},
+      inputSchema: withVerbose({}),
     },
-    async () => toolWrap(() => mcpClient(false).doctor({ mcpScript: mcpScript() })),
+    async (args) => toolWrap(args, (client) => client.doctor({ mcpScript: mcpScript() }), false),
   );
 
   // ── Config ─────────────────────────────────────────────────────────────────
@@ -401,81 +427,81 @@ return toolWrapClient((client) => client.updateJob(id, patch));
     'crontick_config_get',
     {
       description: 'Get the effective crontick config, or a single value by dot-separated path.',
-      inputSchema: { path: z.string().optional() },
+      inputSchema: withVerbose({ path: z.string().optional() }),
     },
-    async (args) => toolWrap(() => Promise.resolve(mcpClient(false).getConfigValue(args.path))),
+    async (args) => toolWrap(args, (client) => Promise.resolve(client.getConfigValue(args.path)), false),
   );
 
   server.registerTool(
     'crontick_config_set',
     {
       description: 'Set one crontick config value by dot-separated path. The updated config is validated and returned.',
-      inputSchema: { path: z.string(), value: z.unknown() },
+      inputSchema: withVerbose({ path: z.string(), value: z.unknown() }),
     },
-    async (args) => toolWrap(() => Promise.resolve(mcpClient(false).setConfigValue(args.path, args.value))),
+    async (args) => toolWrap(args, (client) => Promise.resolve(client.setConfigValue(args.path, args.value)), false),
   );
 
   server.registerTool(
     'crontick_config_unset',
     {
       description: 'Remove one crontick config value by dot-separated path. The updated config is validated and returned.',
-      inputSchema: { path: z.string() },
+      inputSchema: withVerbose({ path: z.string() }),
     },
-    async (args) => toolWrap(() => Promise.resolve(mcpClient(false).removeConfigValue(args.path))),
+    async (args) => toolWrap(args, (client) => Promise.resolve(client.removeConfigValue(args.path)), false),
   );
 
   server.registerTool(
     'crontick_config_engine_list',
     {
       description: 'List configured prompt engines from the effective crontick config.',
-      inputSchema: {},
+      inputSchema: withVerbose({}),
     },
-    async () => toolWrap(() => Promise.resolve(mcpClient(false).listEngines())),
+    async (args) => toolWrap(args, (client) => Promise.resolve(client.listEngines()), false),
   );
 
   server.registerTool(
     'crontick_config_engine_add',
     {
       description: 'Add a prompt engine. The engine defines the command, default args, and default env used when prompt jobs run.',
-      inputSchema: { name: z.string(), engine: EngineConfigSchema },
+      inputSchema: withVerbose({ name: z.string(), engine: EngineConfigSchema }),
     },
-    async (args) => toolWrap(() => Promise.resolve(mcpClient(false).addEngine(args.name, args.engine))),
+    async (args) => toolWrap(args, (client) => Promise.resolve(client.addEngine(args.name, args.engine)), false),
   );
 
   server.registerTool(
     'crontick_config_engine_update',
     {
       description: 'Update a prompt engine. Provided fields replace the existing command, args, or env.',
-      inputSchema: { name: z.string(), engine: EngineConfigSchema.partial() },
+      inputSchema: withVerbose({ name: z.string(), engine: EngineConfigSchema.partial() }),
     },
-    async (args) => toolWrap(() => Promise.resolve(mcpClient(false).updateEngine(args.name, args.engine))),
+    async (args) => toolWrap(args, (client) => Promise.resolve(client.updateEngine(args.name, args.engine)), false),
   );
 
   server.registerTool(
     'crontick_config_engine_remove',
     {
       description: 'Remove a prompt engine. You cannot remove the current defaultEngine.',
-      inputSchema: { name: z.string() },
+      inputSchema: withVerbose({ name: z.string() }),
     },
-    async (args) => toolWrap(() => Promise.resolve(mcpClient(false).removeEngine(args.name))),
+    async (args) => toolWrap(args, (client) => Promise.resolve(client.removeEngine(args.name)), false),
   );
 
   server.registerTool(
     'crontick_config_init',
     {
       description: 'Create the default crontick config file. Use force:true to replace an existing file.',
-      inputSchema: { force: z.boolean().optional() },
+      inputSchema: withVerbose({ force: z.boolean().optional() }),
     },
-    async (args) => toolWrap(() => Promise.resolve(mcpClient(false).initConfig({ force: args.force }))),
+    async (args) => toolWrap(args, (client) => Promise.resolve(client.initConfig({ force: args.force })), false),
   );
 
   server.registerTool(
     'crontick_config_validate',
     {
       description: 'Validate the current crontick config file, or a specific config file path.',
-      inputSchema: { path: z.string().optional() },
+      inputSchema: withVerbose({ path: z.string().optional() }),
     },
-    async (args) => toolWrap(() => Promise.resolve(mcpClient(false).validateConfig(args.path))),
+    async (args) => toolWrap(args, (client) => Promise.resolve(client.validateConfig(args.path)), false),
   );
 
   // ── Resources ─────────────────────────────────────────────────────────────

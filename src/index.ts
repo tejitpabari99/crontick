@@ -65,3 +65,5 @@ export type {
 export { SURFACE_CAPABILITIES } from './surface.js';
 export type { SurfaceCapability } from './surface.js';
 export type { UninstallResult, UninstallOptions } from './uninstall.js';
+export { createLogger, isVerboseEnv, nullLogger, redactText, redactValue, sanitizeLogEvent } from './logger.js';
+export type { LogEvent, Logger, LoggerOptions, LogLevel, LogSink } from './logger.js';
