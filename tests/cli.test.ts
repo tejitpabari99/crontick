@@ -1,5 +1,5 @@
 import { spawnSync, spawn, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -147,6 +147,100 @@ describe('CLI e2e with daemon', () => {
     expect(r.status).toBe(0);
     const data = JSON.parse(r.stdout);
     expect(data.id).toBe('e2e-job');
+  });
+
+  it('crontick new creates a prompt job with default engine', () => {
+    const r = cli(['--json', 'new', 'prompt-cli-job', '--cron', '0 9 * * *', '--prompt', 'Summarize'], env());
+    expect(r.status, r.stderr).toBe(0);
+    const data = JSON.parse(r.stdout);
+    expect(data.action).toMatchObject({
+      kind: 'prompt',
+      prompt: 'Summarize',
+      engine: 'copilot',
+      args: [],
+      reuseSession: false,
+    });
+  });
+
+  it('crontick new creates a prompt job from file with raw passthrough args', () => {
+    const promptPath = join(dir, 'prompt.txt');
+    writeFileSync(promptPath, 'Prompt from file', 'utf-8');
+    const r = cli([
+      '--json',
+      'new',
+      'prompt-file-cli-job',
+      '--cron',
+      '0 10 * * *',
+      '--prompt-file',
+      promptPath,
+      '--engine',
+      'agency',
+      '--reuse-session',
+      '--',
+      '--silent',
+      '--add-dir',
+      'Q:\\Repos\\crontick',
+      '--flag',
+      'one',
+      '--flag',
+      'two',
+    ], env());
+    expect(r.status, r.stderr).toBe(0);
+    const data = JSON.parse(r.stdout);
+    expect(data.action).toMatchObject({
+      kind: 'prompt',
+      prompt: 'Prompt from file',
+      engine: 'agency',
+      args: ['--silent', '--add-dir', 'Q:\\Repos\\crontick', '--flag', 'one', '--flag', 'two'],
+      reuseSession: true,
+    });
+    expect(data.action).not.toHaveProperty('promptFile');
+  });
+
+  it('crontick new stores explicit prompt session id', () => {
+    const r = cli([
+      '--json',
+      'new',
+      'prompt-session-cli-job',
+      '--cron',
+      '0 11 * * *',
+      '--prompt',
+      'hello',
+      '--session-id',
+      'sess-12345678',
+    ], env());
+    expect(r.status, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout).action).toMatchObject({
+      kind: 'prompt',
+      sessionId: 'sess-12345678',
+      reuseSession: false,
+    });
+  });
+
+  it('crontick new rejects prompt-only flags outside prompt mode', () => {
+    const raw = cli(['new', 'bad-raw-job', '--cron', '0 0 * * *', '--script', 'echo hi', '--', '--silent'], env());
+    expect(raw.status).not.toBe(0);
+    expect(raw.stderr).toContain('Raw engine args');
+
+    const session = cli(['new', 'bad-session-job', '--cron', '0 0 * * *', '--script', 'echo hi', '--session-id', 'sess-12345678'], env());
+    expect(session.status).not.toBe(0);
+    expect(session.stderr).toContain('Prompt engine/session flags');
+  });
+
+  it('crontick new enforces action and file exclusivity', () => {
+    const multi = cli(['new', 'bad-multi-job', '--cron', '0 0 * * *', '--script', 'echo hi', '--prompt', 'x'], env());
+    expect(multi.status).not.toBe(0);
+    expect(multi.stderr).toContain('exactly one action source');
+
+    const jobFile = join(dir, 'job.json');
+    writeFileSync(jobFile, JSON.stringify({
+      id: 'file-prompt-job',
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: { kind: 'prompt', prompt: 'x' },
+    }), 'utf-8');
+    const fileConflict = cli(['new', 'ignored-id', '--file', jobFile, '--prompt', 'x'], env());
+    expect(fileConflict.status).not.toBe(0);
+    expect(fileConflict.stderr).toContain('--file is mutually exclusive');
   });
 
   it('crontick list returns the job', () => {

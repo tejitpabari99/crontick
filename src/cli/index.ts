@@ -9,6 +9,7 @@ import { portFilePath, pidFilePath, dataDir, ensureDirs } from '../paths.js';
 import { JobSchema } from '../schemas/job.js';
 import { CrontickError } from '../errors.js';
 import { createClient } from '../client.js';
+import { normalizeJobInput, type JobCreateInput } from '../job-input.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -79,6 +80,35 @@ function handleError(err: unknown): never {
   process.exit(1);
 }
 
+function assertFileModeExclusive(opts: Record<string, unknown>, rawArgs: string[]): void {
+  const conflicting =
+    rawArgs.length > 0
+    || opts.cron !== undefined
+    || opts.every !== undefined
+    || opts.at !== undefined
+    || opts.tz !== undefined
+    || opts.script !== undefined
+    || opts.exec !== undefined
+    || opts.prompt !== undefined
+    || opts.promptFile !== undefined
+    || opts.engine !== undefined
+    || opts.sessionId !== undefined
+    || opts.reuseSession !== undefined
+    || opts.shell !== 'auto'
+    || opts.envFile !== undefined
+    || opts.timeout !== undefined
+    || opts.overlap !== 'skip'
+    || opts.retry !== undefined
+    || opts.desc !== undefined;
+
+  if (conflicting) {
+    throw new CrontickError(
+      'VALIDATION_ERROR',
+      '--file is mutually exclusive with schedule, action, prompt, session, and raw engine arguments',
+    );
+  }
+}
+
 // ── Daemon helpers ────────────────────────────────────────────────────────────
 
 function daemonScript(): string {
@@ -119,7 +149,7 @@ program
 // ── new ───────────────────────────────────────────────────────────────────────
 
 program
-  .command('new <id>')
+  .command('new <id> [engineArgs...]')
   .description('Create a new job')
   .option('--cron <expr>', 'Cron expression (e.g. "0 9 * * *")')
   .option('--every <sec>', 'Interval in seconds', parseInt)
@@ -127,6 +157,11 @@ program
   .option('--tz <tz>', 'Timezone for cron schedule')
   .option('--script <body>', 'Inline script body')
   .option('--exec <cmd>', 'Command to exec (use -- for args)')
+  .option('--prompt <text>', 'Prompt text for a prompt action')
+  .option('--prompt-file <path>', 'UTF-8 .txt file to read into the prompt')
+  .option('--engine <engine>', 'Prompt engine: copilot|agency (default: copilot)')
+  .option('--session-id <id>', 'Reuse this prompt engine session every run')
+  .option('--reuse-session', 'Capture the first successful run session id and reuse it')
   .option('--file <path>', 'Load full job from JSON file')
   .option('--shell <shell>', 'Shell: auto|bash|pwsh|cmd', 'auto')
   .option('--env-file <path>', 'Load extra environment variables from a .env file')
@@ -134,13 +169,20 @@ program
   .option('--overlap <policy>', 'Overlap policy: skip|queue|cancel-previous', 'skip')
   .option('--retry <max>', 'Retry count', parseInt)
   .option('--desc <description>', 'Job description')
-  .action(async (id: string, opts) => {
+  .action(async (id: string, engineArgs: string[], opts) => {
     try {
-      let jobData: unknown;
+      let jobData: JobCreateInput;
+      const rawArgs = Array.isArray(engineArgs) ? engineArgs : [];
 
       if (opts.file) {
-        const raw = readFileSync(resolve(process.cwd(), opts.file as string), 'utf-8');
-        jobData = JSON.parse(raw);
+        assertFileModeExclusive(opts, rawArgs);
+        const filePath = resolve(process.cwd(), opts.file as string);
+        const raw = readFileSync(filePath, 'utf-8');
+        jobData = JSON.parse(raw) as JobCreateInput;
+        jobData = normalizeJobInput(jobData, {
+          cwd: process.cwd(),
+          fileBaseDir: dirname(filePath),
+        });
       } else {
         // Build schedule
         let schedule: unknown;
@@ -156,6 +198,27 @@ program
 
         // Build action
         let action: unknown;
+        const actionSourceCount = [opts.script, opts.exec, opts.prompt, opts.promptFile].filter(
+          (value) => value !== undefined,
+        ).length;
+        if (actionSourceCount !== 1) {
+          throw new CrontickError(
+            'MISSING_ARG',
+            'Provide exactly one action source: --script, --exec, --prompt, or --prompt-file',
+          );
+        }
+
+        const promptMode = opts.prompt !== undefined || opts.promptFile !== undefined;
+        if (!promptMode && rawArgs.length > 0) {
+          throw new CrontickError('VALIDATION_ERROR', 'Raw engine args after -- are valid only with prompt mode');
+        }
+        if (!promptMode && (opts.engine !== undefined || opts.sessionId !== undefined || opts.reuseSession)) {
+          throw new CrontickError('VALIDATION_ERROR', 'Prompt engine/session flags are valid only with prompt mode');
+        }
+        if (opts.sessionId !== undefined && opts.reuseSession) {
+          throw new CrontickError('VALIDATION_ERROR', 'sessionId and reuseSession are mutually exclusive');
+        }
+
         if (opts.script) {
           action = {
             kind: 'script',
@@ -173,8 +236,20 @@ program
             envFile: opts.envFile as string | undefined,
             timeoutSec: opts.timeout as number | undefined,
           };
+        } else if (promptMode) {
+          action = {
+            kind: 'prompt',
+            prompt: opts.prompt as string | undefined,
+            promptFile: opts.promptFile as string | undefined,
+            engine: opts.engine as string | undefined,
+            args: rawArgs,
+            sessionId: opts.sessionId as string | undefined,
+            reuseSession: opts.reuseSession as boolean | undefined,
+            envFile: opts.envFile as string | undefined,
+            timeoutSec: opts.timeout as number | undefined,
+          };
         } else {
-          throw new CrontickError('MISSING_ARG', 'Provide --script or --exec');
+          throw new CrontickError('MISSING_ARG', 'Provide --script, --exec, --prompt, or --prompt-file');
         }
 
         jobData = {
@@ -184,7 +259,8 @@ program
           action,
           overlap: opts.overlap as string,
           retry: opts.retry !== undefined ? { max: opts.retry as number, backoffSec: 30 } : undefined,
-        };
+        } as JobCreateInput;
+        jobData = normalizeJobInput(jobData, { cwd: process.cwd() });
       }
 
       const parsed = JobSchema.safeParse(jobData);
