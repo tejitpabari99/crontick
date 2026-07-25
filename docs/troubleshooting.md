@@ -94,11 +94,25 @@ Do not set `NODE_TLS_REJECT_UNAUTHORIZED=0` as a workaround. It disables TLS cer
 
 ### `Daemon is not running`
 
-Start it with:
+Daemon-backed commands normally demand-start the daemon. If start/connect fails, crontick errors
+include what was attempted, the failed path/exit/stderr excerpt when available, and a next command to
+run. Start it explicitly with:
 
 ```sh
 crontick daemon start
 ```
+
+Then run `crontick doctor`. If it still fails, inspect the ensure log in the crontick data directory:
+`logs/daemon.ensure.log`. crontick is not a supervisor; if the daemon died while idle, scheduled jobs
+pause until you start it or run another daemon-backed command.
+
+### Need more crontick diagnostics
+
+Use `crontick --verbose ...` (or `-v`) or set `CRONTICK_VERBOSE=1`. Verbose output goes to stderr,
+so `crontick --json --verbose ...` still writes parseable JSON to stdout. Daemon logs live under the
+crontick data directory `logs/`: `daemon.ensure.log` for demand-start and `daemon-YYYY-MM-DD.log` for
+daemon lifecycle/API/scheduler diagnostics. In verbose daemon mode, run logs can also contain
+`[crontick:debug]` lines for spawn/retry/session decisions.
 
 ### `node:sqlite` import errors
 
@@ -108,9 +122,7 @@ Use Node.js 22.5+; older Node versions may need the daemon re-exec shim or a new
 
 Check `crontick daemon status` and inspect the latest daemon log in the crontick data directory `logs/` folder.
 
-### Autostart is unsupported on my platform
 
-v1 manages autostart only on Windows. On macOS/Linux use `crontick autostart status` to get manual setup instructions.
 
 ### A run keeps failing
 

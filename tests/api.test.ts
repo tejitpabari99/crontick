@@ -84,6 +84,7 @@ describe('Daemon HTTP API', () => {
     const { status, data } = await apiCall(port, 'GET', '/health');
     expect(status).toBe(200);
     expect((data as { ok: boolean }).ok).toBe(true);
+    expect((data as { product: string }).product).toBe('crontick');
     expect(typeof (data as { version: string }).version).toBe('string');
     expect(typeof (data as { uptimeSec: number }).uptimeSec).toBe('number');
   });
@@ -109,6 +110,52 @@ describe('Daemon HTTP API', () => {
     const { status, data } = await apiCall(port, 'POST', '/api/jobs', testJob);
     expect(status).toBe(201);
     expect((data as { id: string }).id).toBe('api-test-job');
+  });
+
+  it('POST /api/jobs creates a normalized prompt job', async () => {
+    const { status, data } = await apiCall(port, 'POST', '/api/jobs', {
+      id: 'api-prompt-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'prompt', prompt: 'hello', engine: 'agency', args: ['--silent'] },
+    });
+    expect(status).toBe(201);
+    expect((data as { action: unknown }).action).toMatchObject({
+      kind: 'prompt',
+      prompt: 'hello',
+      engine: 'agency',
+      args: ['--silent'],
+      reuseSession: false,
+    });
+  });
+
+  it('POST /api/jobs rejects caller-only promptFile and normalizes explicit session precedence', async () => {
+    const promptFile = await apiCall(port, 'POST', '/api/jobs', {
+      id: 'api-prompt-file-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'prompt', promptFile: 'prompt.txt' },
+    });
+    expect(promptFile.status).toBe(400);
+
+    const sessionMix = await apiCall(port, 'POST', '/api/jobs', {
+      id: 'api-prompt-session-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'prompt', prompt: 'x', sessionId: 'sess-12345678', reuseSession: true },
+    });
+    expect(sessionMix.status).toBe(201);
+    expect((sessionMix.data as { action: unknown }).action).toMatchObject({
+      kind: 'prompt',
+      sessionId: 'sess-12345678',
+      reuseSession: false,
+    });
+  });
+
+  it('POST /api/jobs rejects reserved prompt passthrough flags', async () => {
+    const result = await apiCall(port, 'POST', '/api/jobs', {
+      id: 'api-prompt-reserved-flag',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'prompt', prompt: 'hello', args: ['--prompt=override'] },
+    });
+    expect(result.status).toBe(400);
   });
 
   it('GET /api/jobs lists jobs', async () => {
@@ -206,9 +253,21 @@ describe('Daemon HTTP API', () => {
       schedule: { kind: 'cron', cron: '0 * * * *' },
       action: { kind: 'exec', command: 'echo', args: [] },
     };
-    const { status, data } = await apiCall(port, 'POST', '/api/import', { jobs: [importJob] });
+    const importPromptJob = {
+      id: 'imported-prompt-job',
+      schedule: { kind: 'cron', cron: '0 10 * * *' },
+      action: { kind: 'prompt', prompt: 'imported prompt' },
+    };
+    const { status, data } = await apiCall(port, 'POST', '/api/import', { jobs: [importJob, importPromptJob] });
     expect(status).toBe(200);
-    expect((data as { imported: number }).imported).toBe(1);
+    expect((data as { imported: number }).imported).toBe(2);
+
+    const imported = await apiCall(port, 'GET', '/api/jobs/imported-prompt-job');
+    expect(imported.status).toBe(200);
+    expect((imported.data as { action: unknown }).action).toMatchObject({
+      kind: 'prompt',
+      engine: 'copilot',
+    });
   });
 
   // ── Run logs ───────────────────────────────────────────────────────────────────
@@ -239,6 +298,15 @@ describe('Daemon HTTP API', () => {
     expect((data as { ok: boolean }).ok).toBe(true);
     const { status: s2 } = await apiCall(port, 'GET', '/api/jobs/api-test-job');
     expect(s2).toBe(404);
+  });
+
+
+  it('returns 404 for removed startup-registration routes', async () => {
+    for (const path of ['/api/' + 'auto' + 'start/status', '/api/' + 'auto' + 'start/install', '/api/' + 'auto' + 'start/remove']) {
+      const method = path.endsWith('status') ? 'GET' : 'POST';
+      const { status } = await apiCall(port, method, path, method === 'GET' ? undefined : {});
+      expect(status).toBe(404);
+    }
   });
 
   // ── 404 for unknown route ─────────────────────────────────────────────────────

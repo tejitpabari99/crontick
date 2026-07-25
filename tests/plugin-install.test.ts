@@ -3,7 +3,7 @@
  * Runs plugin/install.mjs in a subprocess with:
  *   - CRONTICK_PLUGIN_NONINTERACTIVE=1
  *   - CRONTICK_PLUGIN_SKIP_NPM=1  (avoid real npm install)
- *   - CRONTICK_PLUGIN_SKIP_AUTOSTART=1  (avoid win32 registry changes)
+ *   - CRONTICK_PLUGIN_SKIP_STARTUP=1  (avoid win32 startup registration changes)
  *   - USERPROFILE / HOME pointing to a temp directory
  *
  * Verifies that SKILL.md is copied to <tmpHome>/.copilot/skills/crontick/SKILL.md
@@ -33,7 +33,6 @@ describe('plugin/install.mjs', () => {
         HOME: tmpHome,
         CRONTICK_PLUGIN_NONINTERACTIVE: '1',
         CRONTICK_PLUGIN_SKIP_NPM: '1',
-        CRONTICK_PLUGIN_SKIP_AUTOSTART: '1',
       };
 
       const result = spawnSync(process.execPath, [INSTALL_SCRIPT], {
@@ -68,13 +67,13 @@ describe('plugin/install.mjs', () => {
           HOME: tmpHome,
           CRONTICK_PLUGIN_NONINTERACTIVE: '1',
           CRONTICK_PLUGIN_SKIP_NPM: '1',
-          CRONTICK_PLUGIN_SKIP_AUTOSTART: '1',
-        },
+          },
         encoding: 'utf-8',
         timeout: 30_000,
       });
       expect(result.stdout).toContain('SKILL.md copied to');
       expect(result.stdout).toContain('Installation complete');
+      expect(result.stdout.toLowerCase()).not.toContain('auto' + 'start');
     } finally {
       try { rmSync(tmpHome, { recursive: true, force: true }); } catch { /* ignore */ }
     }

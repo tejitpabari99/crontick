@@ -3,19 +3,17 @@
  * esbuild (used by tsup) normalises newer `node:*` built-ins by stripping the
  * prefix, but Node.js only exposes the `sqlite` built-in via `node:sqlite`.
  *
- * Handles: from "sqlite", from 'sqlite', import("sqlite"), import('sqlite'),
- *          require("sqlite"), require('sqlite')
+ * Handles: from "sqlite", from 'sqlite', import("sqlite"), import('sqlite')
  */
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const DIST = 'dist';
 
-// Matches: from "sqlite", from 'sqlite', import("sqlite"), import('sqlite'),
-//          require("sqlite"), require('sqlite')
+// Matches: from "sqlite", from 'sqlite', import("sqlite"), import('sqlite')
 // Capture group 1: the keyword/paren prefix
 // Capture group 2: the quote character (for backreference \2)
-const SQLITE_RE = /(from\s+|import\(|require\()(['"])sqlite\2/g;
+const SQLITE_RE = /(from\s+|import\()(['"])sqlite\2/g;
 
 function patchFile(fullPath) {
   const src = readFileSync(fullPath, 'utf-8');
@@ -31,7 +29,7 @@ function processDir(dir) {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
       processDir(fullPath);
-    } else if (entry.name.endsWith('.js') || entry.name.endsWith('.cjs')) {
+    } else if (entry.name.endsWith('.js')) {
       patchFile(fullPath);
     }
   }

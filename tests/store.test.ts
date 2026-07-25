@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Store } from '../src/daemon/store.js';
@@ -20,10 +20,25 @@ function execJob(id: string): Job {
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
     action: { kind: 'exec', command: 'echo', args: ['hello'] },
-    catchup: 'skip',
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+  };
+}
+
+function promptJob(id: string): Job {
+  return {
+    id,
+    enabled: true,
+    schedule: { kind: 'cron', cron: '* * * * *' },
+    action: {
+      kind: 'prompt',
+      prompt: 'Summarize status',
+      engine: 'copilot',
+      args: [],
+      reuseSession: false,
+    },
+    overlap: 'skip',
+    retry: { max: 0, backoffSec: 30 },
   };
 }
 
@@ -50,6 +65,58 @@ describe('Store', () => {
     const retrieved = store.getJob('test-job');
     expect(retrieved).toBeTruthy();
     expect(retrieved?.id).toBe('test-job');
+  });
+
+  it('upsertJob and getJob round-trips a prompt job', () => {
+    store.upsertJob(promptJob('prompt-job'));
+    const retrieved = store.getJob('prompt-job');
+    expect(retrieved?.action).toMatchObject({
+      kind: 'prompt',
+      prompt: 'Summarize status',
+      engine: 'copilot',
+    });
+  });
+
+  it('tryCapturePromptSession only updates an unchanged reusable prompt job', () => {
+    const base = promptJob('prompt-capture');
+    const job = { ...base, action: { ...base.action, reuseSession: true } } as Job;
+    store.upsertJob(job);
+
+    expect(
+      store.tryCapturePromptSession(
+        job.id,
+        job.action as Extract<Job['action'], { kind: 'prompt' }>,
+        'sess-12345678',
+      ),
+    ).toBe(true);
+    expect(store.getJob(job.id)?.action).toMatchObject({
+      kind: 'prompt',
+      sessionId: 'sess-12345678',
+      reuseSession: false,
+    });
+    expect(JSON.parse(readFileSync(join(dir, 'jobs', `${job.id}.json`), 'utf-8')).action).toMatchObject({
+      sessionId: 'sess-12345678',
+      reuseSession: false,
+    });
+
+    const original = promptJob('prompt-capture-updated');
+    const originalAction = original.action as Extract<Job['action'], { kind: 'prompt' }>;
+    store.upsertJob({
+      ...original,
+      action: { ...originalAction, prompt: 'Changed', reuseSession: true },
+    });
+    expect(
+      store.tryCapturePromptSession(
+        original.id,
+        originalAction,
+        'sess-abcdefgh',
+      ),
+    ).toBe(false);
+    expect(store.getJob(original.id)?.action).toMatchObject({
+      kind: 'prompt',
+      prompt: 'Changed',
+      reuseSession: true,
+    });
   });
 
   it('listJobs returns all jobs', () => {
@@ -119,20 +186,6 @@ describe('Store', () => {
     await new Promise((r) => setTimeout(r, 5));
     store.insertRun('job-s');
     expect(store.listRuns({ jobId: 'job-s', since })).toHaveLength(1);
-  });
-
-  it('getLastRun returns most recent terminal run', () => {
-    const r1 = store.insertRun('job-z');
-    store.updateRun(r1.id, { status: 'success' });
-    expect(store.getLastRun('job-z')?.id).toBe(r1.id);
-  });
-
-  it('countRunsSince counts correctly', () => {
-    const past = Date.now() - 10000;
-    store.insertRun('job-c');
-    store.insertRun('job-c');
-    expect(store.countRunsSince('job-c', past)).toBe(2);
-    expect(store.countRunsSince('job-c', Date.now() + 10000)).toBe(0);
   });
 
   // ── Logs ────────────────────────────────────────────────────────────────────

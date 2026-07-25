@@ -1,7 +1,0 @@
-{
-  "$ref": "#/definitions/CrontickJob",
-  "definitions": {
-    "CrontickJob": {}
-  },
-  "$schema": "http://json-schema.org/draft-07/schema#"
-}

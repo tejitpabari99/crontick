@@ -1,11 +1,16 @@
 {
   "id": "crontick",
   "name": "crontick",
-  "description": "Local cron scheduler with MCP integration. Schedules shell scripts, provides a skill for LLM-assisted job creation, and manages daemon autostart.",
+  "description": "Local cron scheduler with MCP integration. Schedules shell scripts and provides a skill for LLM-assisted job creation.",
   "version": "0.0.0",
   "install": "plugin/install.mjs",
   "postInstall": null,
-  "uninstall": "plugin/uninstall.mjs",
   "homepage": "https://github.com/crontick/crontick",
-  "keywords": ["cron", "scheduler", "mcp", "daemon", "automation"]
+  "keywords": [
+    "cron",
+    "scheduler",
+    "mcp",
+    "daemon",
+    "automation"
+  ]
 }

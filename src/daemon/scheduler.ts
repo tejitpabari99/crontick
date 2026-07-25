@@ -1,26 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { Cron, type CronOptions } from 'croner';
 import type { Job, Schedule } from '../schemas/job.js';
-import type { Store } from './store.js';
-
-// ── Cron alias expansion ──────────────────────────────────────────────────────
-
-const CRON_ALIASES: Record<string, string> = {
-  '@yearly': '0 0 1 1 *',
-  '@annually': '0 0 1 1 *',
-  '@monthly': '0 0 1 * *',
-  '@weekly': '0 0 * * 0',
-  '@daily': '0 0 * * *',
-  '@midnight': '0 0 * * *',
-  '@noon': '0 12 * * *',
-  '@hourly': '0 * * * *',
-  '@every_minute': '* * * * *',
-};
-
-/** Expand a cron alias like @daily → '0 0 * * *', or return expr unchanged. */
-export function expandCronAlias(expr: string): string {
-  return CRON_ALIASES[expr.toLowerCase()] ?? expr;
-}
+import { nullLogger, type Logger } from '../logger.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -43,25 +24,30 @@ export interface ValidateResult {
 
 export class Scheduler extends EventEmitter {
   private entries: Map<string, { stop: () => void }> = new Map();
+  private readonly logger: Logger;
 
-  /**
-   * Schedule a job, handling catchup based on the last run time from the store.
-   * On daemon start pass `store` so catchup can be resolved; at runtime it's optional.
-   */
-  schedule(job: Job, store?: Store): void {
+  constructor(logger: Logger = nullLogger) {
+    super();
+    this.logger = logger.child('scheduler');
+  }
+
+  schedule(job: Job): void {
     this.unschedule(job.id); // idempotent
 
-    if (!job.enabled) return;
+    if (!job.enabled) {
+      this.logger.debug('Skipping disabled job', { jobId: job.id });
+      return;
+    }
 
     const { schedule } = job;
-    const lastRun = store?.getLastRun(job.id);
-    const lastRunAt = lastRun ? new Date(lastRun.startedAt) : undefined;
-
     if (schedule.kind === 'cron') {
-      this.scheduleCron(job, expandCronAlias(schedule.cron), schedule.tz, lastRunAt);
+      this.logger.debug('Scheduling cron job', { jobId: job.id, cron: schedule.cron, tz: schedule.tz });
+      this.scheduleCron(job, schedule.cron, schedule.tz);
     } else if (schedule.kind === 'interval') {
-      this.scheduleInterval(job, schedule.everySec, schedule.startAt, lastRunAt);
+      this.logger.debug('Scheduling interval job', { jobId: job.id, everySec: schedule.everySec, startAt: schedule.startAt });
+      this.scheduleInterval(job, schedule.everySec, schedule.startAt);
     } else if (schedule.kind === 'one-shot') {
+      this.logger.debug('Scheduling one-shot job', { jobId: job.id, runAt: schedule.runAt });
       this.scheduleOneShot(job, schedule.runAt);
     }
   }
@@ -71,6 +57,7 @@ export class Scheduler extends EventEmitter {
     if (entry) {
       entry.stop();
       this.entries.delete(jobId);
+      this.logger.debug('Unscheduled job', { jobId });
     }
   }
 
@@ -86,7 +73,7 @@ export class Scheduler extends EventEmitter {
     const n = opts.n ?? 5;
 
     if (schedule.kind === 'cron') {
-      return cronNextN(expandCronAlias(schedule.cron), opts.tz ?? schedule.tz, n);
+      return cronNextN(schedule.cron, opts.tz ?? schedule.tz, n);
     }
 
     if (schedule.kind === 'interval') {
@@ -111,7 +98,7 @@ export class Scheduler extends EventEmitter {
   validateSchedule(schedule: Schedule): ValidateResult {
     if (schedule.kind === 'cron') {
       try {
-        const cron = new Cron(expandCronAlias(schedule.cron), { paused: true });
+        const cron = new Cron(schedule.cron, { paused: true });
         cron.stop();
         return { ok: true };
       } catch (err) {
@@ -150,11 +137,7 @@ export class Scheduler extends EventEmitter {
     job: Job,
     pattern: string,
     tz: string | undefined,
-    lastRunAt: Date | undefined,
   ): void {
-    // Handle catchup before starting recurring schedule
-    this.handleCronCatchup(job, pattern, tz, lastRunAt);
-
     const options: CronOptions = {};
     if (tz) options.timezone = tz;
 
@@ -165,50 +148,12 @@ export class Scheduler extends EventEmitter {
     this.entries.set(job.id, { stop: () => cron.stop() });
   }
 
-  private handleCronCatchup(
-    job: Job,
-    pattern: string,
-    tz: string | undefined,
-    lastRunAt: Date | undefined,
-  ): void {
-    if (job.catchup === 'skip' || !lastRunAt) return;
-
-    const now = new Date();
-    const missed = missedCronFires(pattern, tz, lastRunAt, now);
-    if (missed.length === 0) return;
-
-    if (job.catchup === 'run-once') {
-      setImmediate(() => this.fireTick(job.id, missed[missed.length - 1]));
-    } else if (job.catchup === 'run-all') {
-      for (const t of missed) {
-        const capturedT = t;
-        setImmediate(() => this.fireTick(job.id, capturedT));
-      }
-    }
-  }
-
   private scheduleInterval(
     job: Job,
     everySec: number,
     startAt: string | undefined,
-    lastRunAt: Date | undefined,
   ): void {
     const intervalMs = everySec * 1000;
-
-    // Handle catchup
-    if (lastRunAt && job.catchup !== 'skip') {
-      const elapsed = Date.now() - lastRunAt.getTime();
-      const missedCount = Math.floor(elapsed / intervalMs);
-      if (missedCount > 0) {
-        if (job.catchup === 'run-once') {
-          setImmediate(() => this.fireTick(job.id, new Date()));
-        } else if (job.catchup === 'run-all') {
-          for (let i = 0; i < missedCount; i++) {
-            setImmediate(() => this.fireTick(job.id, new Date()));
-          }
-        }
-      }
-    }
 
     // Calculate initial delay
     let delay = intervalMs;
@@ -243,12 +188,6 @@ export class Scheduler extends EventEmitter {
 
     const delay = t.getTime() - Date.now();
     if (delay <= 0) {
-      if (job.catchup !== 'skip') {
-        setImmediate(() => {
-          this.fireTick(job.id, t);
-          this.entries.delete(job.id);
-        });
-      }
       return;
     }
 
@@ -306,32 +245,6 @@ function cronNextN(pattern: string, tz: string | undefined, n: number): string[]
     }
     cron.stop();
     return results;
-  } catch {
-    return [];
-  }
-}
-
-function missedCronFires(
-  pattern: string,
-  tz: string | undefined,
-  from: Date,
-  to: Date,
-): Date[] {
-  try {
-    const options: CronOptions = { paused: true };
-    if (tz) options.timezone = tz;
-    const cron = new Cron(pattern, options);
-    const missed: Date[] = [];
-    let ref: Date | undefined = from;
-    for (;;) {
-      const next = cron.nextRun(ref) as Date | null;
-      if (!next || next > to) break;
-      missed.push(next);
-      ref = new Date(next.getTime() + 1);
-      if (missed.length > 1000) break;
-    }
-    cron.stop();
-    return missed;
   } catch {
     return [];
   }

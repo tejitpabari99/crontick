@@ -2,47 +2,44 @@ import envPaths from 'env-paths';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-function root(): string {
-  const override = process.env['CRONTICK_HOME'];
+function root(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env['CRONTICK_HOME'];
   if (override) return override;
   // env-paths v3: data dir on windows = %LOCALAPPDATA%\crontick
   return envPaths('crontick', { suffix: '' }).data;
 }
 
-export function dataDir(): string {
-  return root();
+export function dataDir(env: NodeJS.ProcessEnv = process.env): string {
+  return root(env);
 }
 
-export function jobsDir(): string {
-  return join(root(), 'jobs');
+export function jobsDir(env: NodeJS.ProcessEnv = process.env): string {
+  return join(root(env), 'jobs');
 }
 
-export function runsDbPath(): string {
-  return join(root(), 'runs.db');
+export function runsDbPath(env: NodeJS.ProcessEnv = process.env): string {
+  return join(root(env), 'runs.db');
 }
 
-export function logsDir(): string {
-  return join(root(), 'logs');
+export function logsDir(env: NodeJS.ProcessEnv = process.env): string {
+  return join(root(env), 'logs');
 }
 
-export function configPath(): string {
-  return join(root(), 'config.json');
+export function configPath(env: NodeJS.ProcessEnv = process.env): string {
+  return join(root(env), 'config.json');
 }
 
-export function pidFilePath(): string {
-  return join(root(), 'daemon.pid');
+export function pidFilePath(env: NodeJS.ProcessEnv = process.env): string {
+  return join(root(env), 'daemon.pid');
 }
 
-export function portFilePath(): string {
-  return join(root(), 'daemon.port');
+export function portFilePath(env: NodeJS.ProcessEnv = process.env): string {
+  return join(root(env), 'daemon.port');
 }
 
-export function autostartDir(): string {
-  return join(root(), 'autostart');
-}
 
-export function ensureDirs(): void {
-  for (const dir of [dataDir(), jobsDir(), logsDir()]) {
+export function ensureDirs(env: NodeJS.ProcessEnv = process.env): void {
+  for (const dir of [dataDir(env), jobsDir(env), logsDir(env)]) {
     mkdirSync(dir, { recursive: true });
   }
 }

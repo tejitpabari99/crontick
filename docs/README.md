@@ -13,7 +13,6 @@ crontick ships a local daemon, CLI, dashboard, and stdio MCP server. Start here,
 - [Troubleshooting](troubleshooting.md)
 - [Architecture](architecture.md)
 - [Contributing](contributing.md)
-- [Awesome MCP draft](awesome-mcp-submission.md)
 
 ## Release docs
 
