@@ -13,14 +13,12 @@ scheduled jobs on Windows, macOS, and Linux.
 - `crontick-daemon` — loopback-only local scheduler + runner + HTTP API
 - `crontick-mcp` — stdio MCP server with job, run, schedule, stats, and doctor tools
 - `plugin/install.mjs` — Copilot plugin installer that installs the package, skill, and optional
-  Windows autostart
 
 ## v1 scope
 
 - `action.kind: "script"` and `action.kind: "exec"`
 - cron, interval, and one-shot schedules
 - stdio MCP transport only
-- Windows autostart via API-based `HKCU\Run` registration; macOS/Linux provide manual guidance for now
 
 ## Quick start
 

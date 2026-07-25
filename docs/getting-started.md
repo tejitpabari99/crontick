@@ -48,16 +48,11 @@ crontick logs <run-id> --tail 50
 crontick dashboard
 ```
 
-## Windows autostart
 
-v1 supports managed autostart on Windows via `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` and a generated hidden VBS shim.
 
 ```powershell
-crontick autostart install
-crontick autostart status
 ```
 
-On macOS and Linux, `crontick autostart status` and the API return manual instructions for now.
 
 ## Copilot plugin / MCP usage
 
@@ -77,4 +72,3 @@ Example MCP host config:
 }
 ```
 
-See [mcp.md](mcp.md) for tools, resources, prompts, and autostart behavior.

@@ -61,6 +61,7 @@ describe('CLI binary (dist/cli/index.js)', () => {
     const result = cli(['--help']);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('crontick');
+    expect(result.stdout.toLowerCase()).not.toContain('auto' + 'start');
   });
 
   it('doctor exits 1 when daemon is not running (no CRONTICK_HOME)', () => {
@@ -69,6 +70,12 @@ describe('CLI binary (dist/cli/index.js)', () => {
     rmSync(tmp, { recursive: true, force: true });
     // doctor always exits with a code — 0 = all ok, 1 = some checks failed
     expect([0, 1]).toContain(result.status);
+  });
+
+  it('removed startup-registration command is not available', () => {
+    const result = cli(['auto' + 'start', 'status']);
+    expect(result.status).not.toBe(0);
+    expect((result.stdout + result.stderr).toLowerCase()).not.toContain('registry');
   });
 });
 

@@ -1,20 +1,16 @@
 # Agent D — NPM Packaging + Open-Source Publishing Plan
 
-Opinionated plan to extract the Copilot `cron-job` extension into a standalone open-source npm package with CLI, daemon, and MCP server. Defaults: scoped package, `0.1.0`, MIT, Node 22+, TypeScript, native SQLite first, minimal deps, cross-platform autostart, provenance, SBOM, DCO.
 ## ⚠️ V2 AMENDMENT (2026-07-18) — read this first.
 
 - **Package name = `crontick`** (single unscoped npm package). Drop the `@cronjs/core` + `@cronjs/cli` + `@cronjs/mcp` + `@cronjs/dashboard` split. One package ships everything (CLI, daemon, MCP server, dashboard, bundled SKILL.md).
 - **`package.json.bin`** = `{ "crontick": "./dist/cli.js", "crontick-daemon": "./dist/daemon.js", "crontick-mcp": "./dist/mcp.js" }`.
 - **Language decision confirmed**: TypeScript + `tsup` (dual ESM+CJS+types).
 - **§5 Cross-platform strategy — SQLite**: use **built-in `node:sqlite`**. `engines.node >= 22.5`. The daemon shim injects `--experimental-sqlite` when `process.versions.node.split('.')[0] < 24`. No `better-sqlite3` dependency.
-- **§5 Cross-platform — autostart**: **v1 ships `win32` + `manual` only.** Create `src/autostart/darwin.ts` and `src/autostart/linux.ts` as stub modules that throw `NotImplementedInV1Error` with a comment block explaining exactly where to add the launchd plist and systemd unit later. Do not include them in the platform factory switch until post-v1.
 - **§5 Path conventions**: root = `env-paths('crontick').data` → `%LOCALAPPDATA%\crontick` on Windows. Post-v1: `~/Library/Application Support/crontick` (mac), `~/.local/state/crontick` (linux).
 - **§6 Dependency policy — drop these**: any HTTP auth libs, any LLM SDK, any `@github/copilot-sdk`. Keep `croner`, `ajv`, `ajv-formats`, add `@modelcontextprotocol/sdk`, `env-paths`, `commander`, `pino`, `zod` (evaluate vs ajv-only), `tsup`, `vitest`, `fast-check`, `@stryker-mutator/core`.
-- **§8 CI/CD** — v1 matrix is `windows-latest × (Node 22.5, 24)` for e2e (autostart requires Windows); `ubuntu-latest × (Node 22.5, 24)` for unit/integration/contract; `macos-latest` unit only. Post-v1 expands e2e to all three.
 - **§9 Release** — confirmed: changesets + npm publish `--provenance` via GitHub OIDC.
 - **Add a `plugin/` directory** at repo root with:
     - `plugin/plugin.json` — Copilot marketplace plugin manifest (id: `crontick`).
-    - `plugin/install.mjs` — runs `npm i -g crontick` if missing; then copies `src/skill/SKILL.md` → `~/.copilot/skills/crontick/SKILL.md`; then offers to run `crontick autostart install`.
     - Documented in `docs/marketplace-plugin.md`.
 - **Drop from scope**: `/api` bearer token, HTTP MCP transport, any auth doc. The README instead has a "**Security model: local user trust boundary**" section.
 - **No migration, no deprecation, no old-extension pointer.** README does not mention `cron-job` extension at all.
@@ -40,7 +36,6 @@ cronjs-core/
   .vscode/{extensions.json,settings.json}
   bench/{daemon-startup.bench.ts,schedule-parse.bench.ts,sqlite-throughput.bench.ts}
   docs/{README.md,package.json,docusaurus.config.ts,sidebars.ts}
-  docs/docs/{intro.md,getting-started.md,installation.md,configuration.md,cli-reference.md,daemon-reference.md,mcp-reference.md,json-schemas.md,autostart.md,runners.md}
   docs/docs/cookbook/{index.md,run-shell-command.md,run-http-job.md,mcp-client-setup.md,systemd-user-service.md}
   docs/docs/architecture/{overview.md,storage.md,daemon-protocol.md,mcp-server.md,security-model.md}
   docs/docs/contributing/{development.md,release-process.md,governance.md}
@@ -52,7 +47,6 @@ cronjs-core/
   src/cli/formatters/{json.ts,table.ts,text.ts}
   src/daemon/{index.ts,daemon.ts,lifecycle.ts,lockfile.ts,pidfile.ts,portfile.ts,server.ts,shutdown.ts,supervisor.ts}
   src/mcp/{index.ts,protocol.ts,resources.ts,server.ts,tools.ts}
-  src/autostart/{index.ts,common.ts,linux-systemd.ts,macos-launchd.ts,templates.ts,windows-run-key.ts}
   src/runners/builtin/{command-runner.ts,http-runner.ts,noop-runner.ts}
   src/runners/llm/{index.ts,optional-loader.ts,types.ts}
   src/schemas/{cron-config.schema.json,daemon-state.schema.json,job.schema.json,mcp.schema.json,schedule.schema.json}
@@ -97,7 +91,6 @@ cronjs-core/
     "./cli": { "types": "./dist/cli.d.ts", "import": "./dist/cli.js", "require": "./dist/cli.cjs" },
     "./daemon": { "types": "./dist/daemon.d.ts", "import": "./dist/daemon.js", "require": "./dist/daemon.cjs" },
     "./mcp": { "types": "./dist/mcp.d.ts", "import": "./dist/mcp.js", "require": "./dist/mcp.cjs" },
-    "./autostart": { "types": "./dist/autostart.d.ts", "import": "./dist/autostart.js", "require": "./dist/autostart.cjs" },
     "./runners": { "types": "./dist/runners.d.ts", "import": "./dist/runners.js", "require": "./dist/runners.cjs" },
     "./schemas": { "types": "./dist/schemas/index.d.ts", "import": "./dist/schemas/index.js", "require": "./dist/schemas/index.cjs" },
     "./schemas/*.json": "./dist/schemas/*.json",
@@ -139,12 +132,10 @@ Choose TypeScript + `tsup` dual ESM/CJS. `.mjs` no-build is simpler but lacks fi
 ### tsup.config.ts
 ```ts
 import { defineConfig } from 'tsup';
-export default defineConfig({ entry:{index:'src/index.ts',cli:'src/cli/index.ts',daemon:'src/daemon/index.ts',mcp:'src/mcp/index.ts',autostart:'src/autostart/index.ts',runners:'src/runners/index.ts','schemas/index':'src/schemas/index.ts'}, format:['esm','cjs'], dts:true, sourcemap:true, clean:true, target:'node22', platform:'node', external:['better-sqlite3','@anthropic-ai/sdk','openai'], outExtension({format}){return {js:format==='esm'?'.js':'.cjs'}} });
 ```
 ## 5. Cross-platform strategy
 - Node 22+ on Windows, macOS, Linux.
 - SQLite: default `node:sqlite`; Node 22 may need `NODE_OPTIONS=--experimental-sqlite`; Node 24 should be unflagged; optional `better-sqlite3` fallback; no Bun/libsql in core.
-- Autostart: Windows HKCU Run, macOS LaunchAgent, Linux systemd user; every installer has `--manual`.
 - Paths: use `env-paths` app `cronjs`, not `~/.copilot/cron`; support `CRON_HOME` and specific dir env vars.
 - Port: daemon binds `127.0.0.1`, dynamic port by default, `CRON_PORT` override, pid/port/lock files in runtime dir.
 ### Windows Run key
@@ -220,7 +211,6 @@ MIT License text from section 7: Copyright (c) 2026 CronJS Contributors; permiss
 ```
 ### README.md
 ```text
-Badges, feature list, install, quick start, MCP config, daemon/autostart examples, security and license links.
 ```
 ### CONTRIBUTING.md
 ```text
@@ -281,7 +271,6 @@ stale.yml: mark inactive issues at 60 days and PRs at 30 days; close after grace
 ```
 CI notes: require npm 2FA for maintainers, trusted publishing/OIDC, `npm publish --provenance`, `actions/attest-build-provenance`, npm cache via setup-node, no node_modules cache, JUnit XML to GitHub checks.
 ## 9. Release process
-Semver: pre-1.0 patch fixes, minor features/breaking; post-1.0 normal semver. Prereleases use `next` and `rc` dist-tags. Pick Changesets over release-please for explicit contributor release notes and future monorepo support. Manual QA: build, typecheck, lint, tests, pack, global install, CLI/daemon/MCP/autostart smoke. Rollback: `npm deprecate` bad version, publish hotfix, move dist-tag, advisory if security-impacting.
 ## 10. Supply-chain security
 Run `npm audit` and `npm audit signatures`; use sigstore provenance; maintain lockfile; Socket.dev GitHub app by default, Snyk optional; generate CycloneDX SBOM; reproducible builds from clean checkout with deterministic generated files and tarball verification.
 ## 11. Docs site
@@ -311,9 +300,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O016. daemon.
 - [ ] O017. MCP.
 - [ ] O018. SQLite.
-- [ ] O019. autostart Windows.
-- [ ] O020. autostart macOS.
-- [ ] O021. autostart Linux.
 - [ ] O022. unit tests.
 - [ ] O023. integration tests.
 - [ ] O024. e2e tests.
@@ -345,9 +331,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O050. daemon.
 - [ ] O051. MCP.
 - [ ] O052. SQLite.
-- [ ] O053. autostart Windows.
-- [ ] O054. autostart macOS.
-- [ ] O055. autostart Linux.
 - [ ] O056. unit tests.
 - [ ] O057. integration tests.
 - [ ] O058. e2e tests.
@@ -379,9 +362,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O084. daemon.
 - [ ] O085. MCP.
 - [ ] O086. SQLite.
-- [ ] O087. autostart Windows.
-- [ ] O088. autostart macOS.
-- [ ] O089. autostart Linux.
 - [ ] O090. unit tests.
 - [ ] O091. integration tests.
 - [ ] O092. e2e tests.
@@ -413,9 +393,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O118. daemon.
 - [ ] O119. MCP.
 - [ ] O120. SQLite.
-- [ ] O121. autostart Windows.
-- [ ] O122. autostart macOS.
-- [ ] O123. autostart Linux.
 - [ ] O124. unit tests.
 - [ ] O125. integration tests.
 - [ ] O126. e2e tests.
@@ -447,9 +424,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O152. daemon.
 - [ ] O153. MCP.
 - [ ] O154. SQLite.
-- [ ] O155. autostart Windows.
-- [ ] O156. autostart macOS.
-- [ ] O157. autostart Linux.
 - [ ] O158. unit tests.
 - [ ] O159. integration tests.
 - [ ] O160. e2e tests.
@@ -481,9 +455,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O186. daemon.
 - [ ] O187. MCP.
 - [ ] O188. SQLite.
-- [ ] O189. autostart Windows.
-- [ ] O190. autostart macOS.
-- [ ] O191. autostart Linux.
 - [ ] O192. unit tests.
 - [ ] O193. integration tests.
 - [ ] O194. e2e tests.
@@ -515,9 +486,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O220. daemon.
 - [ ] O221. MCP.
 - [ ] O222. SQLite.
-- [ ] O223. autostart Windows.
-- [ ] O224. autostart macOS.
-- [ ] O225. autostart Linux.
 - [ ] O226. unit tests.
 - [ ] O227. integration tests.
 - [ ] O228. e2e tests.
@@ -549,9 +517,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O254. daemon.
 - [ ] O255. MCP.
 - [ ] O256. SQLite.
-- [ ] O257. autostart Windows.
-- [ ] O258. autostart macOS.
-- [ ] O259. autostart Linux.
 - [ ] O260. unit tests.
 - [ ] O261. integration tests.
 - [ ] O262. e2e tests.
@@ -583,9 +548,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O288. daemon.
 - [ ] O289. MCP.
 - [ ] O290. SQLite.
-- [ ] O291. autostart Windows.
-- [ ] O292. autostart macOS.
-- [ ] O293. autostart Linux.
 - [ ] O294. unit tests.
 - [ ] O295. integration tests.
 - [ ] O296. e2e tests.
@@ -617,9 +579,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O322. daemon.
 - [ ] O323. MCP.
 - [ ] O324. SQLite.
-- [ ] O325. autostart Windows.
-- [ ] O326. autostart macOS.
-- [ ] O327. autostart Linux.
 - [ ] O328. unit tests.
 - [ ] O329. integration tests.
 - [ ] O330. e2e tests.
@@ -651,9 +610,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O356. daemon.
 - [ ] O357. MCP.
 - [ ] O358. SQLite.
-- [ ] O359. autostart Windows.
-- [ ] O360. autostart macOS.
-- [ ] O361. autostart Linux.
 - [ ] O362. unit tests.
 - [ ] O363. integration tests.
 - [ ] O364. e2e tests.
@@ -685,9 +641,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O390. daemon.
 - [ ] O391. MCP.
 - [ ] O392. SQLite.
-- [ ] O393. autostart Windows.
-- [ ] O394. autostart macOS.
-- [ ] O395. autostart Linux.
 - [ ] O396. unit tests.
 - [ ] O397. integration tests.
 - [ ] O398. e2e tests.
@@ -719,9 +672,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O424. daemon.
 - [ ] O425. MCP.
 - [ ] O426. SQLite.
-- [ ] O427. autostart Windows.
-- [ ] O428. autostart macOS.
-- [ ] O429. autostart Linux.
 - [ ] O430. unit tests.
 - [ ] O431. integration tests.
 - [ ] O432. e2e tests.
@@ -753,9 +703,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O458. daemon.
 - [ ] O459. MCP.
 - [ ] O460. SQLite.
-- [ ] O461. autostart Windows.
-- [ ] O462. autostart macOS.
-- [ ] O463. autostart Linux.
 - [ ] O464. unit tests.
 - [ ] O465. integration tests.
 - [ ] O466. e2e tests.
@@ -787,9 +734,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O492. daemon.
 - [ ] O493. MCP.
 - [ ] O494. SQLite.
-- [ ] O495. autostart Windows.
-- [ ] O496. autostart macOS.
-- [ ] O497. autostart Linux.
 - [ ] O498. unit tests.
 - [ ] O499. integration tests.
 - [ ] O500. e2e tests.
@@ -821,9 +765,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O526. daemon.
 - [ ] O527. MCP.
 - [ ] O528. SQLite.
-- [ ] O529. autostart Windows.
-- [ ] O530. autostart macOS.
-- [ ] O531. autostart Linux.
 - [ ] O532. unit tests.
 - [ ] O533. integration tests.
 - [ ] O534. e2e tests.
@@ -855,9 +796,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O560. daemon.
 - [ ] O561. MCP.
 - [ ] O562. SQLite.
-- [ ] O563. autostart Windows.
-- [ ] O564. autostart macOS.
-- [ ] O565. autostart Linux.
 - [ ] O566. unit tests.
 - [ ] O567. integration tests.
 - [ ] O568. e2e tests.
@@ -889,9 +827,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O594. daemon.
 - [ ] O595. MCP.
 - [ ] O596. SQLite.
-- [ ] O597. autostart Windows.
-- [ ] O598. autostart macOS.
-- [ ] O599. autostart Linux.
 - [ ] O600. unit tests.
 - [ ] O601. integration tests.
 - [ ] O602. e2e tests.
@@ -923,9 +858,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O628. daemon.
 - [ ] O629. MCP.
 - [ ] O630. SQLite.
-- [ ] O631. autostart Windows.
-- [ ] O632. autostart macOS.
-- [ ] O633. autostart Linux.
 - [ ] O634. unit tests.
 - [ ] O635. integration tests.
 - [ ] O636. e2e tests.
@@ -957,9 +889,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O662. daemon.
 - [ ] O663. MCP.
 - [ ] O664. SQLite.
-- [ ] O665. autostart Windows.
-- [ ] O666. autostart macOS.
-- [ ] O667. autostart Linux.
 - [ ] O668. unit tests.
 - [ ] O669. integration tests.
 - [ ] O670. e2e tests.
@@ -991,9 +920,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O696. daemon.
 - [ ] O697. MCP.
 - [ ] O698. SQLite.
-- [ ] O699. autostart Windows.
-- [ ] O700. autostart macOS.
-- [ ] O701. autostart Linux.
 - [ ] O702. unit tests.
 - [ ] O703. integration tests.
 - [ ] O704. e2e tests.
@@ -1025,9 +951,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O730. daemon.
 - [ ] O731. MCP.
 - [ ] O732. SQLite.
-- [ ] O733. autostart Windows.
-- [ ] O734. autostart macOS.
-- [ ] O735. autostart Linux.
 - [ ] O736. unit tests.
 - [ ] O737. integration tests.
 - [ ] O738. e2e tests.
@@ -1059,9 +982,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] O764. daemon.
 - [ ] O765. MCP.
 - [ ] O766. SQLite.
-- [ ] O767. autostart Windows.
-- [ ] O768. autostart macOS.
-- [ ] O769. autostart Linux.
 - [ ] O770. unit tests.
 - [ ] O771. integration tests.
 - [ ] O772. e2e tests.
@@ -1103,7 +1023,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A006. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A007. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A008. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A009. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A010. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A011. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A012. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1123,7 +1042,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A026. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A027. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A028. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A029. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A030. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A031. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A032. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1143,7 +1061,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A046. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A047. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A048. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A049. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A050. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A051. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A052. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1163,7 +1080,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A066. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A067. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A068. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A069. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A070. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A071. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A072. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1183,7 +1099,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A086. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A087. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A088. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A089. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A090. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A091. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A092. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1203,7 +1118,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A106. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A107. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A108. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A109. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A110. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A111. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A112. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1223,7 +1137,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A126. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A127. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A128. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A129. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A130. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A131. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A132. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1243,7 +1156,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A146. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A147. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A148. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A149. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A150. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A151. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A152. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1263,7 +1175,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A166. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A167. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A168. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A169. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A170. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A171. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A172. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1283,7 +1194,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A186. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A187. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A188. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A189. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A190. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A191. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A192. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1303,7 +1213,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A206. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A207. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A208. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A209. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A210. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A211. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A212. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1323,7 +1232,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A226. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A227. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A228. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A229. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A230. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A231. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A232. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1343,7 +1251,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A246. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A247. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A248. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A249. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A250. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A251. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A252. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1363,7 +1270,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A266. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A267. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A268. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A269. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A270. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A271. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A272. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1383,7 +1289,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A286. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A287. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A288. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A289. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A290. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A291. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A292. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1403,7 +1308,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A306. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A307. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A308. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A309. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A310. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A311. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A312. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1423,7 +1327,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A326. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A327. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A328. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A329. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A330. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A331. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A332. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1443,7 +1346,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A346. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A347. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A348. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A349. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A350. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A351. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A352. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1463,7 +1365,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A366. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A367. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A368. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A369. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A370. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A371. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A372. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1483,7 +1384,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A386. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A387. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A388. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A389. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A390. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A391. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A392. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1503,7 +1403,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A406. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A407. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A408. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A409. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A410. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A411. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A412. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1523,7 +1422,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A426. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A427. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A428. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A429. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A430. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A431. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A432. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1543,7 +1441,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A446. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A447. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A448. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A449. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A450. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A451. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A452. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1563,7 +1460,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A466. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A467. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A468. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A469. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A470. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A471. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A472. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
@@ -1583,7 +1479,6 @@ No copyright assignment; standard MIT inbound=outbound. Trademark: pick a distin
 - [ ] A486. Automate the daemon lifecycle deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A487. Harden the MCP protocol deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A488. Cross-check the storage adapter deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
-- [ ] A489. Smoke-test the autostart provider deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A490. Finalize the path resolver deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A491. Create the logging deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.
 - [ ] A492. Review the unit test deliverable; owner must include copy-paste commands, expected output, rollback notes, and acceptance evidence before 0.1.0.

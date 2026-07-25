@@ -11,14 +11,11 @@ Audience: one junior developer at ~20h/week. Tickets are issue-tracker ready; P0
 - LLM runner refactor / provider plugin interface / copilot/agency built-in plugins — no LLM support in core.
 - HTTP MCP server / streamable-http transport tickets.
 - Auth / token / bearer / token-rotate / CORS-for-MCP tickets.
-- darwin autostart backend, linux autostart backend — v1 ships stubs only (single stub ticket each; no launchd/systemd unit implementation).
 - Deprecation of old extension / `0.2.0-deprecated` release / `remove HKCU CopilotCronDaemon` tickets.
 - Copilot-side skill install as separate ticket — folded into the marketplace plugin ticket (see below).
 
 **Added tickets (add these to M4 / M5):**
-- **T-NEW-1** (M4, M): Copilot marketplace plugin manifest + install script (`plugin/plugin.json`, `plugin/install.mjs`). Runs `npm i -g crontick` if missing; copies bundled `src/skill/SKILL.md` → `~/.copilot/skills/crontick/SKILL.md`; offers to run autostart install.
 - **T-NEW-2** (M4, S): Bundle `SKILL.md` inside the npm package; verify `files` allowlist in `package.json` includes it.
-- **T-NEW-3** (M5, S): Post-v1 stubs — `src/autostart/darwin.ts` + `src/autostart/linux.ts` throw `NotImplementedInV1Error` with TODO comment blocks specifying exact insertion points.
 - **T-NEW-4** (M2, S): `node:sqlite` runtime detection — daemon shim adds `--experimental-sqlite` iff Node major < 24.
 - **T-NEW-5** (M2, S): Localhost-only bind hardening test — reject non-loopback connections.
 
@@ -29,7 +26,6 @@ Audience: one junior developer at ~20h/week. Tickets are issue-tracker ready; P0
 | M1 | Repo scaffold, TS build, CI, CLI skeleton | `crontick --version` |
 | M2 | Daemon core (scheduler, runner, store, localhost HTTP API, `node:sqlite` shim) | `crontick new … && crontick list` green |
 | M3 | stdio MCP server + full `crontick_*` tool catalog | Contract tests pass; verified with Copilot + Claude Desktop |
-| M4 | Windows autostart + manual fallback + bundled `SKILL.md` + Copilot marketplace plugin (T-NEW-1, T-NEW-2) | Plugin install verified on Windows |
 | M5 | Dashboard rebrand + ecosystem features (@daily aliases, env-file, /health) + darwin/linux stubs (T-NEW-3) | Dashboard functional; stubs compile |
 | M6 | Testing hardening (unit / integration / e2e / fuzz / property / security) | All gates green |
 | M7 | Docs + 0.1.0 release with provenance; submit to awesome-mcp | On npm; awesome-mcp PR opened |
@@ -48,7 +44,6 @@ Everything else — ticket format, DAG conventions, risk register (drop rows 12 
 - **M1 — Fork & rename** (week 1): repo scaffolded, cron --version works, tests and CI pass.
 - **M2 — Decoupling & schema v4** (weeks 2-3): core is platform-agnostic, v4 schema and v3 importer work.
 - **M3 — Runner + MCP MVP** (weeks 4-5): script/exec runners and stdio MCP pass contracts.
-- **M4 — Cross-platform autostart** (week 6): daemon/autostart works or falls back on win32/darwin/linux.
 - **M5 — HTTP MCP, dashboard, skill** (week 7): auth HTTP MCP, rebranded dashboard, rewritten skill.
 - **M6 — Testing + security hardening** (week 8): unit/int/e2e/fuzz/property/security gates green.
 - **M7 — Docs, release, beta** (week 9): docs, provenance, release workflow, beta complete.
@@ -65,7 +60,6 @@ Files: src,tests,docs/create-standalone-repository-scaffold.ts, tests/t-001.test
 Description: Area: Repo scaffolding & tooling. Create standalone repository scaffold. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Repo scaffolding & tooling behavior for `Create standalone repository scaffold` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -83,7 +77,6 @@ Files: src,tests,docs/add-cli-entrypoint-and-version-help-commands.ts, tests/t-0
 Description: Area: Repo scaffolding & tooling. Add CLI entrypoint and version/help commands. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Repo scaffolding & tooling behavior for `Add CLI entrypoint and version/help commands` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -101,7 +94,6 @@ Files: src,tests,docs/configure-typescript-lint-format-baseline.ts, tests/t-003.
 Description: Area: Repo scaffolding & tooling. Configure TypeScript lint format baseline. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Repo scaffolding & tooling behavior for `Configure TypeScript lint format baseline` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -119,7 +111,6 @@ Files: src,tests,docs/configure-vitest-isolated-test-harness.ts, tests/t-004.tes
 Description: Area: Repo scaffolding & tooling. Configure Vitest isolated test harness. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Repo scaffolding & tooling behavior for `Configure Vitest isolated test harness` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -137,7 +128,6 @@ Files: src,tests,docs/add-developer-scripts-and-optional-commit-hooks.ts, tests/
 Description: Area: Repo scaffolding & tooling. Add developer scripts and optional commit hooks. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Repo scaffolding & tooling behavior for `Add developer scripts and optional commit hooks` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -155,7 +145,6 @@ Files: src,tests,docs/establish-source-layout-and-import-boundaries.ts, tests/t-
 Description: Area: Repo scaffolding & tooling. Establish source layout and import boundaries. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Repo scaffolding & tooling behavior for `Establish source layout and import boundaries` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -173,7 +162,6 @@ Files: src,tests,docs/write-initial-architecture-decision-records.ts, tests/t-00
 Description: Area: Repo scaffolding & tooling. Write initial architecture decision records. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Repo scaffolding & tooling behavior for `Write initial architecture decision records` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -191,7 +179,6 @@ Files: src,tests,docs/port-and-quarantine-existing-useful-tests.ts, tests/t-008.
 Description: Area: Repo scaffolding & tooling. Port and quarantine existing useful tests. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Repo scaffolding & tooling behavior for `Port and quarantine existing useful tests` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -209,7 +196,6 @@ Files: src/core,src/cli,tests/extract-core-job-model.ts, tests/t-009.test.ts, do
 Description: Area: Package refactor. Extract core Job model. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Package refactor behavior for `Extract core Job model` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -227,7 +213,6 @@ Files: src/core,src/cli,tests/implement-cross-platform-env-paths.ts, tests/t-010
 Description: Area: Package refactor. Implement cross-platform env paths. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Package refactor behavior for `Implement cross-platform env paths` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -245,7 +230,6 @@ Files: src/core,src/cli,tests/create-typed-error-taxonomy.ts, tests/t-011.test.t
 Description: Area: Package refactor. Create typed error taxonomy. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Package refactor behavior for `Create typed error taxonomy` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -263,7 +247,6 @@ Files: src/core,src/cli,tests/build-atomic-json-job-store.ts, tests/t-012.test.t
 Description: Area: Package refactor. Build atomic JSON job store. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Package refactor behavior for `Build atomic JSON job store` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -281,7 +264,6 @@ Files: src/core,src/cli,tests/add-cli-job-create-list-show-delete.ts, tests/t-01
 Description: Area: Package refactor. Add CLI job create/list/show/delete. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Package refactor behavior for `Add CLI job create/list/show/delete` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -299,7 +281,6 @@ Files: src/core,src/cli,tests/implement-cli-run-command.ts, tests/t-014.test.ts,
 Description: Area: Package refactor. Implement CLI run command. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Package refactor behavior for `Implement CLI run command` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -317,7 +298,6 @@ Files: src/core,src/cli,tests/add-structured-logging-with-redaction.ts, tests/t-
 Description: Area: Package refactor. Add structured logging with redaction. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Package refactor behavior for `Add structured logging with redaction` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -335,7 +315,6 @@ Files: src/core,src/cli,tests/implement-scheduler-service-wrapper.ts, tests/t-01
 Description: Area: Package refactor. Implement scheduler service wrapper. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Package refactor behavior for `Implement scheduler service wrapper` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -353,7 +332,6 @@ Files: src/core,src/cli,tests/add-daemon-foreground-status-stop-commands.ts, tes
 Description: Area: Package refactor. Add daemon foreground/status/stop commands. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Package refactor behavior for `Add daemon foreground/status/stop commands` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -371,7 +349,6 @@ Files: src/core,src/cli,tests/enforce-import-boundary-tests.ts, tests/t-018.test
 Description: Area: Package refactor. Enforce import boundary tests. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Package refactor behavior for `Enforce import boundary tests` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -389,7 +366,6 @@ Files: schemas,src/core/migrate,tests,docs/add-json-schema-generation-pipeline.t
 Description: Area: Schema v4 and migration. Add JSON schema generation pipeline. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Schema v4 and migration behavior for `Add JSON schema generation pipeline` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -407,7 +383,6 @@ Files: schemas,src/core/migrate,tests,docs/define-schema-v4-job-format.ts, tests
 Description: Area: Schema v4 and migration. Define schema v4 job format. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Schema v4 and migration behavior for `Define schema v4 job format` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -425,7 +400,6 @@ Files: schemas,src/core/migrate,tests,docs/write-pure-v3-to-v4-migration-library
 Description: Area: Schema v4 and migration. Write pure v3-to-v4 migration library. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Schema v4 and migration behavior for `Write pure v3-to-v4 migration library` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -443,7 +417,6 @@ Files: schemas,src/core/migrate,tests,docs/add-migration-backup-manifest-writer.
 Description: Area: Schema v4 and migration. Add migration backup manifest writer. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Schema v4 and migration behavior for `Add migration backup manifest writer` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -461,7 +434,6 @@ Files: schemas,src/core/migrate,tests,docs/implement-copilot-extension-detector.
 Description: Area: Schema v4 and migration. Implement Copilot extension detector. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Schema v4 and migration behavior for `Implement Copilot extension detector` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -479,7 +451,6 @@ Files: schemas,src/core/migrate,tests,docs/implement-migrate-dry-run-apply-cli.t
 Description: Area: Schema v4 and migration. Implement migrate dry-run/apply CLI. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Schema v4 and migration behavior for `Implement migrate dry-run/apply CLI` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -497,7 +468,6 @@ Files: schemas,src/core/migrate,tests,docs/add-migration-conflict-resolver.ts, t
 Description: Area: Schema v4 and migration. Add migration conflict resolver. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Schema v4 and migration behavior for `Add migration conflict resolver` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -515,7 +485,6 @@ Files: schemas,src/core/migrate,tests,docs/create-telemetry-free-migration-repor
 Description: Area: Schema v4 and migration. Create telemetry-free migration report. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Schema v4 and migration behavior for `Create telemetry-free migration report` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -533,7 +502,6 @@ Files: src/runners,src/core,tests,docs/define-runner-plugin-interface.ts, tests/
 Description: Area: Runner refactor. Define Runner plugin interface. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Runner refactor behavior for `Define Runner plugin interface` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -551,7 +519,6 @@ Files: src/runners,src/core,tests,docs/implement-script-runner.ts, tests/t-028.t
 Description: Area: Runner refactor. Implement script runner. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Runner refactor behavior for `Implement script runner` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -569,7 +536,6 @@ Files: src/runners,src/core,tests,docs/implement-exec-runner.ts, tests/t-029.tes
 Description: Area: Runner refactor. Implement exec runner. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Runner refactor behavior for `Implement exec runner` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -587,7 +553,6 @@ Files: src/runners,src/core,tests,docs/add-runner-registry-and-discovery.ts, tes
 Description: Area: Runner refactor. Add runner registry and discovery. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Runner refactor behavior for `Add runner registry and discovery` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -605,7 +570,6 @@ Files: src/runners,src/core,tests,docs/define-llm-provider-plugin-interface.ts, 
 Description: Area: Runner refactor. Define LLM provider plugin interface. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Runner refactor behavior for `Define LLM provider plugin interface` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -623,7 +587,6 @@ Files: src/runners,src/core,tests,docs/implement-optional-copilot-runner-plugin.
 Description: Area: Runner refactor. Implement optional Copilot runner plugin. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Runner refactor behavior for `Implement optional Copilot runner plugin` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -641,7 +604,6 @@ Files: src/runners,src/core,tests,docs/implement-optional-agency-runner-plugin.t
 Description: Area: Runner refactor. Implement optional Agency runner plugin. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Runner refactor behavior for `Implement optional Agency runner plugin` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -659,7 +621,6 @@ Files: src/runners,src/core,tests,docs/add-retry-backoff-policy-engine.ts, tests
 Description: Area: Runner refactor. Add retry/backoff policy engine. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Runner refactor behavior for `Add retry/backoff policy engine` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -677,7 +638,6 @@ Files: src/mcp,tests/mcp,docs/create-mcp-stdio-server-entrypoint.ts, tests/t-035
 Description: Area: MCP server. Create MCP stdio server entrypoint. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The MCP server behavior for `Create MCP stdio server entrypoint` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -695,7 +655,6 @@ Files: src/mcp,tests/mcp,docs/implement-mcp-job_create-tool.ts, tests/t-036.test
 Description: Area: MCP server. Implement MCP job_create tool. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The MCP server behavior for `Implement MCP job_create tool` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -713,7 +672,6 @@ Files: src/mcp,tests/mcp,docs/implement-mcp-job_list-and-job_get-tools.ts, tests
 Description: Area: MCP server. Implement MCP job_list and job_get tools. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The MCP server behavior for `Implement MCP job_list and job_get tools` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -731,7 +689,6 @@ Files: src/mcp,tests/mcp,docs/implement-mcp-job_update-and-job_delete-tools.ts, 
 Description: Area: MCP server. Implement MCP job_update and job_delete tools. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The MCP server behavior for `Implement MCP job_update and job_delete tools` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -749,7 +706,6 @@ Files: src/mcp,tests/mcp,docs/implement-mcp-job_run_now-tool.ts, tests/t-039.tes
 Description: Area: MCP server. Implement MCP job_run_now tool. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The MCP server behavior for `Implement MCP job_run_now tool` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -767,7 +723,6 @@ Files: src/mcp,tests/mcp,docs/implement-mcp-enable-disable-pause-tools.ts, tests
 Description: Area: MCP server. Implement MCP enable/disable/pause tools. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The MCP server behavior for `Implement MCP enable/disable/pause tools` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -785,7 +740,6 @@ Files: src/mcp,tests/mcp,docs/implement-mcp-history-and-logs-tools.ts, tests/t-0
 Description: Area: MCP server. Implement MCP history and logs tools. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The MCP server behavior for `Implement MCP history and logs tools` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -803,7 +757,6 @@ Files: src/mcp,tests/mcp,docs/implement-mcp-jobs-resource.ts, tests/t-042.test.t
 Description: Area: MCP server. Implement MCP jobs resource. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The MCP server behavior for `Implement MCP jobs resource` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -821,7 +774,6 @@ Files: src/mcp,tests/mcp,docs/implement-mcp-schemas-and-capabilities-resources.t
 Description: Area: MCP server. Implement MCP schemas and capabilities resources. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The MCP server behavior for `Implement MCP schemas and capabilities resources` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -839,7 +791,6 @@ Files: src/mcp,tests/mcp,docs/implement-mcp-workflow-prompts.ts, tests/t-044.tes
 Description: Area: MCP server. Implement MCP workflow prompts. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The MCP server behavior for `Implement MCP workflow prompts` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -857,7 +808,6 @@ Files: src/mcp,tests/mcp,docs/add-mcp-contract-fixture-suite.ts, tests/t-045.tes
 Description: Area: MCP server. Add MCP contract fixture suite. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The MCP server behavior for `Add MCP contract fixture suite` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -866,41 +816,27 @@ Test:
   - integration/e2e: smallest existing harness that proves `Add MCP contract fixture suite` works with isolated CRON_HOME
   - manual: platform or release verification when the ticket names Windows, macOS, Linux, npm, or MCP hosts
 
-### T-046: Define Autostart interface and factory
 Milestone: M4
 Priority: P0
 Estimate: M
 Depends on: T-045 (previous area), plus relevant design artifact from Agents A-E
-Files: src/autostart,src/cli,tests,docs/define-autostart-interface-and-factory.ts, tests/t-046.test.ts, docs/autostart.md
-Description: Area: Autostart. Define Autostart interface and factory. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
-  - The Autostart behavior for `Define Autostart interface and factory` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
 Test:
-  - unit: focused success and failure tests for `Define Autostart interface and factory`
-  - integration/e2e: smallest existing harness that proves `Define Autostart interface and factory` works with isolated CRON_HOME
   - manual: platform or release verification when the ticket names Windows, macOS, Linux, npm, or MCP hosts
 
-### T-047: Implement Windows HKCU autostart backend
 Milestone: M4
 Priority: P1
 Estimate: L
 Depends on: T-046
-Files: src/autostart,src/cli,tests,docs/implement-windows-hkcu-autostart-backend.ts, tests/t-047.test.ts, docs/autostart.md
-Description: Area: Autostart. Implement Windows HKCU autostart backend. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
-  - The Autostart behavior for `Implement Windows HKCU autostart backend` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
   - Requires reviewer with Windows access to verify HKCU behavior and legacy `CopilotCronDaemon` handling.
 Test:
-  - unit: focused success and failure tests for `Implement Windows HKCU autostart backend`
-  - integration/e2e: smallest existing harness that proves `Implement Windows HKCU autostart backend` works with isolated CRON_HOME
   - manual: platform or release verification when the ticket names Windows, macOS, Linux, npm, or MCP hosts
 
 ### T-048: Implement macOS launchd backend
@@ -908,11 +844,7 @@ Milestone: M4
 Priority: P0
 Estimate: L
 Depends on: T-047
-Files: src/autostart,src/cli,tests,docs/implement-macos-launchd-backend.ts, tests/t-048.test.ts, docs/autostart.md
-Description: Area: Autostart. Implement macOS launchd backend. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
-  - The Autostart behavior for `Implement macOS launchd backend` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -927,11 +859,7 @@ Milestone: M4
 Priority: P0
 Estimate: L
 Depends on: T-048
-Files: src/autostart,src/cli,tests,docs/implement-linux-systemd-user-backend.ts, tests/t-049.test.ts, docs/autostart.md
-Description: Area: Autostart. Implement Linux systemd user backend. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
-  - The Autostart behavior for `Implement Linux systemd user backend` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -941,40 +869,26 @@ Test:
   - integration/e2e: smallest existing harness that proves `Implement Linux systemd user backend` works with isolated CRON_HOME
   - manual: platform or release verification when the ticket names Windows, macOS, Linux, npm, or MCP hosts
 
-### T-050: Implement manual autostart backend
 Milestone: M4
 Priority: P1
 Estimate: L
 Depends on: T-049
-Files: src/autostart,src/cli,tests,docs/implement-manual-autostart-backend.ts, tests/t-050.test.ts, docs/autostart.md
-Description: Area: Autostart. Implement manual autostart backend. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
-  - The Autostart behavior for `Implement manual autostart backend` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
 Test:
-  - unit: focused success and failure tests for `Implement manual autostart backend`
-  - integration/e2e: smallest existing harness that proves `Implement manual autostart backend` works with isolated CRON_HOME
   - manual: platform or release verification when the ticket names Windows, macOS, Linux, npm, or MCP hosts
 
-### T-051: Add autostart CLI commands
 Milestone: M4
 Priority: P0
 Estimate: M
 Depends on: T-050
-Files: src/autostart,src/cli,tests,docs/add-autostart-cli-commands.ts, tests/t-051.test.ts, docs/autostart.md
-Description: Area: Autostart. Add autostart CLI commands. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
-  - The Autostart behavior for `Add autostart CLI commands` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
 Test:
-  - unit: focused success and failure tests for `Add autostart CLI commands`
-  - integration/e2e: smallest existing harness that proves `Add autostart CLI commands` works with isolated CRON_HOME
   - manual: platform or release verification when the ticket names Windows, macOS, Linux, npm, or MCP hosts
 
 ### T-052: Integrate migration daemon handoff
@@ -982,11 +896,7 @@ Milestone: M4
 Priority: P0
 Estimate: M
 Depends on: T-051
-Files: src/autostart,src/cli,tests,docs/integrate-migration-daemon-handoff.ts, tests/t-052.test.ts, docs/autostart.md
-Description: Area: Autostart. Integrate migration daemon handoff. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
-  - The Autostart behavior for `Integrate migration daemon handoff` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -995,22 +905,15 @@ Test:
   - integration/e2e: smallest existing harness that proves `Integrate migration daemon handoff` works with isolated CRON_HOME
   - manual: platform or release verification when the ticket names Windows, macOS, Linux, npm, or MCP hosts
 
-### T-053: Add MCP daemon/autostart status tool
 Milestone: M4
 Priority: P1
 Estimate: M
 Depends on: T-052
-Files: src/autostart,src/cli,tests,docs/add-mcp-daemon-autostart-status-tool.ts, tests/t-053.test.ts, docs/autostart.md
-Description: Area: Autostart. Add MCP daemon/autostart status tool. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
-  - The Autostart behavior for `Add MCP daemon/autostart status tool` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
 Test:
-  - unit: focused success and failure tests for `Add MCP daemon/autostart status tool`
-  - integration/e2e: smallest existing harness that proves `Add MCP daemon/autostart status tool` works with isolated CRON_HOME
   - manual: platform or release verification when the ticket names Windows, macOS, Linux, npm, or MCP hosts
 
 ### T-054: Implement local token store
@@ -1022,7 +925,6 @@ Files: src/core/auth,src/mcp,tests,docs/implement-local-token-store.ts, tests/t-
 Description: Area: Auth token CORS rate limit. Implement local token store. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Auth token CORS rate limit behavior for `Implement local token store` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1040,7 +942,6 @@ Files: src/core/auth,src/mcp,tests,docs/add-http-mcp-transport.ts, tests/t-055.t
 Description: Area: Auth token CORS rate limit. Add HTTP MCP transport. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Auth token CORS rate limit behavior for `Add HTTP MCP transport` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1058,7 +959,6 @@ Files: src/core/auth,src/mcp,tests,docs/add-http-auth-middleware.ts, tests/t-056
 Description: Area: Auth token CORS rate limit. Add HTTP auth middleware. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Auth token CORS rate limit behavior for `Add HTTP auth middleware` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1076,7 +976,6 @@ Files: src/core/auth,src/mcp,tests,docs/add-cors-allowlist.ts, tests/t-057.test.
 Description: Area: Auth token CORS rate limit. Add CORS allowlist. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Auth token CORS rate limit behavior for `Add CORS allowlist` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1094,7 +993,6 @@ Files: src/core/auth,src/mcp,tests,docs/add-http-rate-limiting.ts, tests/t-058.t
 Description: Area: Auth token CORS rate limit. Add HTTP rate limiting. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Auth token CORS rate limit behavior for `Add HTTP rate limiting` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1112,7 +1010,6 @@ Files: src/dashboard,tests,docs/rebrand-dashboard-shell.ts, tests/t-059.test.ts,
 Description: Area: Dashboard. Rebrand dashboard shell. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Dashboard behavior for `Rebrand dashboard shell` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1130,7 +1027,6 @@ Files: src/dashboard,tests,docs/add-dashboard-job-wizard.ts, tests/t-060.test.ts
 Description: Area: Dashboard. Add dashboard job wizard. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Dashboard behavior for `Add dashboard job wizard` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1148,7 +1044,6 @@ Files: src/dashboard,tests,docs/add-dashboard-schedule-preview.ts, tests/t-061.t
 Description: Area: Dashboard. Add dashboard schedule preview. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Dashboard behavior for `Add dashboard schedule preview` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1166,7 +1061,6 @@ Files: src/dashboard,tests,docs/add-dashboard-run-history-and-log-viewer.ts, tes
 Description: Area: Dashboard. Add dashboard run history and log viewer. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Dashboard behavior for `Add dashboard run history and log viewer` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1184,7 +1078,6 @@ Files: src/dashboard,tests,docs/add-dashboard-migration-assistant.ts, tests/t-06
 Description: Area: Dashboard. Add dashboard migration assistant. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Dashboard behavior for `Add dashboard migration assistant` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1202,7 +1095,6 @@ Files: src/dashboard,tests,docs/add-dashboard-accessibility-pass.ts, tests/t-064
 Description: Area: Dashboard. Add dashboard accessibility pass. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Dashboard behavior for `Add dashboard accessibility pass` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1220,7 +1112,6 @@ Files: skills/cron,docs,tests/rewrite-copilot-skill-to-call-package-cli.ts, test
 Description: Area: Skill rewrite. Rewrite Copilot skill to call package CLI. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Skill rewrite behavior for `Rewrite Copilot skill to call package CLI` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1238,7 +1129,6 @@ Files: skills/cron,docs,tests/package-skill-with-npm-distribution-docs.ts, tests
 Description: Area: Skill rewrite. Package skill with NPM distribution docs. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Skill rewrite behavior for `Package skill with NPM distribution docs` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1256,7 +1146,6 @@ Files: skills/cron,docs,tests/add-skill-regression-examples.ts, tests/t-067.test
 Description: Area: Skill rewrite. Add skill regression examples. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Skill rewrite behavior for `Add skill regression examples` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1274,7 +1163,6 @@ Files: docs,docs-site,README.md/write-getting-started-guide.ts, tests/t-068.test
 Description: Area: Docs site. Write getting started guide. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Docs site behavior for `Write getting started guide` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1292,7 +1180,6 @@ Files: docs,docs-site,README.md/write-migration-guide.ts, tests/t-069.test.ts, d
 Description: Area: Docs site. Write migration guide. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Docs site behavior for `Write migration guide` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1310,7 +1197,6 @@ Files: docs,docs-site,README.md/write-mcp-integration-guide.ts, tests/t-070.test
 Description: Area: Docs site. Write MCP integration guide. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Docs site behavior for `Write MCP integration guide` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1328,7 +1214,6 @@ Files: docs,docs-site,README.md/write-plugin-authoring-guide.ts, tests/t-071.tes
 Description: Area: Docs site. Write plugin authoring guide. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Docs site behavior for `Write plugin authoring guide` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1346,7 +1231,6 @@ Files: docs,docs-site,README.md/create-docs-site-build.ts, tests/t-072.test.ts, 
 Description: Area: Docs site. Create docs site build. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Docs site behavior for `Create docs site build` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1364,7 +1248,6 @@ Files: .github/workflows,package.json,docs/add-ci-workflow-for-build-and-unit-te
 Description: Area: CI release provenance. Add CI workflow for build and unit tests. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The CI release provenance behavior for `Add CI workflow for build and unit tests` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1382,7 +1265,6 @@ Files: .github/workflows,package.json,docs/add-cross-platform-ci-matrix.ts, test
 Description: Area: CI release provenance. Add cross-platform CI matrix. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The CI release provenance behavior for `Add cross-platform CI matrix` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1400,7 +1282,6 @@ Files: .github/workflows,package.json,docs/add-release-workflow-with-provenance.
 Description: Area: CI release provenance. Add release workflow with provenance. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The CI release provenance behavior for `Add release workflow with provenance` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1418,7 +1299,6 @@ Files: .github/workflows,package.json,docs/add-dependency-review-and-lockfile-po
 Description: Area: CI release provenance. Add dependency review and lockfile policy. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The CI release provenance behavior for `Add dependency review and lockfile policy` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1436,7 +1316,6 @@ Files: .github/workflows,package.json,docs/finalize-npm-metadata-and-name-fallba
 Description: Area: CI release provenance. Finalize npm metadata and name fallback. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The CI release provenance behavior for `Finalize npm metadata and name fallback` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1454,7 +1333,6 @@ Files: .github/workflows,package.json,docs/create-0.1.0-release-checklist.ts, te
 Description: Area: CI release provenance. Create 0.1.0 release checklist. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The CI release provenance behavior for `Create 0.1.0 release checklist` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1472,7 +1350,6 @@ Files: tests,vitest.config.ts,playwright.config.ts/create-shared-fixture-library
 Description: Area: Tests. Create shared fixture library. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Tests behavior for `Create shared fixture library` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1490,7 +1367,6 @@ Files: tests,vitest.config.ts,playwright.config.ts/add-cli-integration-workflow-
 Description: Area: Tests. Add CLI integration workflow suite. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Tests behavior for `Add CLI integration workflow suite` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1508,7 +1384,6 @@ Files: tests,vitest.config.ts,playwright.config.ts/add-daemon-scheduler-e2e-suit
 Description: Area: Tests. Add daemon scheduler e2e suite. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Tests behavior for `Add daemon scheduler e2e suite` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1526,7 +1401,6 @@ Files: tests,vitest.config.ts,playwright.config.ts/add-mcp-integration-suite.ts,
 Description: Area: Tests. Add MCP integration suite. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Tests behavior for `Add MCP integration suite` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1544,7 +1418,6 @@ Files: tests,vitest.config.ts,playwright.config.ts/add-dashboard-e2e-suite.ts, t
 Description: Area: Tests. Add dashboard e2e suite. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Tests behavior for `Add dashboard e2e suite` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1562,7 +1435,6 @@ Files: tests,vitest.config.ts,playwright.config.ts/set-coverage-thresholds.ts, t
 Description: Area: Tests. Set coverage thresholds. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Tests behavior for `Set coverage thresholds` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1580,7 +1452,6 @@ Files: tests/fuzz,tests/property,tests/chaos/add-cron-expression-property-tests.
 Description: Area: Fuzz property mutation chaos. Add cron expression property tests. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Fuzz property mutation chaos behavior for `Add cron expression property tests` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1598,7 +1469,6 @@ Files: tests/fuzz,tests/property,tests/chaos/add-migration-fuzz-tests.ts, tests/
 Description: Area: Fuzz property mutation chaos. Add migration fuzz tests. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Fuzz property mutation chaos behavior for `Add migration fuzz tests` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1616,7 +1486,6 @@ Files: tests/fuzz,tests/property,tests/chaos/add-schema-round-trip-property-test
 Description: Area: Fuzz property mutation chaos. Add schema round-trip property tests. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Fuzz property mutation chaos behavior for `Add schema round-trip property tests` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1634,7 +1503,6 @@ Files: tests/fuzz,tests/property,tests/chaos/add-runner-chaos-tests.ts, tests/t-
 Description: Area: Fuzz property mutation chaos. Add runner chaos tests. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Fuzz property mutation chaos behavior for `Add runner chaos tests` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1652,7 +1520,6 @@ Files: tests/fuzz,tests/property,tests/chaos/add-storage-fault-injection-tests.t
 Description: Area: Fuzz property mutation chaos. Add storage fault injection tests. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Fuzz property mutation chaos behavior for `Add storage fault injection tests` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1670,7 +1537,6 @@ Files: tests/fuzz,tests/property,tests/chaos/add-mutation-testing-pilot.ts, test
 Description: Area: Fuzz property mutation chaos. Add mutation testing pilot. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Fuzz property mutation chaos behavior for `Add mutation testing pilot` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1688,7 +1554,6 @@ Files: tests/fuzz,tests/property,tests/chaos/add-mcp-protocol-fuzz-tests.ts, tes
 Description: Area: Fuzz property mutation chaos. Add MCP protocol fuzz tests. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Fuzz property mutation chaos behavior for `Add MCP protocol fuzz tests` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1706,7 +1571,6 @@ Files: docs/security,tests/security/write-threat-model.ts, tests/t-092.test.ts, 
 Description: Area: Security threat model. Write threat model. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Security threat model behavior for `Write threat model` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1724,7 +1588,6 @@ Files: docs/security,tests/security/add-security-hardening-checklist-and-tests.t
 Description: Area: Security threat model. Add security hardening checklist and tests. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Security threat model behavior for `Add security hardening checklist and tests` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1742,7 +1605,6 @@ Files: docs/security,tests/security/run-dependency-and-license-audit.ts, tests/t
 Description: Area: Security threat model. Run dependency and license audit. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Security threat model behavior for `Run dependency and license audit` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1760,7 +1622,6 @@ Files: docs/smoke,tests/platform-smoke/create-manual-smoke-test-checklist.ts, te
 Description: Area: Cross-platform smoke matrix. Create manual smoke test checklist. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Cross-platform smoke matrix behavior for `Create manual smoke test checklist` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1778,7 +1639,6 @@ Files: docs/smoke,tests/platform-smoke/execute-cross-platform-smoke-matrix.ts, t
 Description: Area: Cross-platform smoke matrix. Execute cross-platform smoke matrix. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Cross-platform smoke matrix behavior for `Execute cross-platform smoke matrix` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1796,7 +1656,6 @@ Files: docs/smoke,tests/platform-smoke/verify-mcp-host-coverage.ts, tests/t-097.
 Description: Area: Cross-platform smoke matrix. Verify MCP host coverage. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Cross-platform smoke matrix behavior for `Verify MCP host coverage` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1814,7 +1673,6 @@ Files: docs,.github,old-extension/create-beta-feedback-intake-process.ts, tests/
 Description: Area: Beta feedback bake window. Create beta feedback intake process. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Beta feedback bake window behavior for `Create beta feedback intake process` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1832,7 +1690,6 @@ Files: docs,.github,old-extension/run-beta-bake-window-triage.ts, tests/t-099.te
 Description: Area: Beta feedback bake window. Run beta bake window triage. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Beta feedback bake window behavior for `Run beta bake window triage` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1850,7 +1707,6 @@ Files: docs,.github,old-extension/ship-deprecated-old-extension-notice.ts, tests
 Description: Area: Beta feedback bake window. Ship deprecated old extension notice. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Beta feedback bake window behavior for `Ship deprecated old extension notice` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1868,7 +1724,6 @@ Files: docs,.github,old-extension/open-ecosystem-launch-prs.ts, tests/t-101.test
 Description: Area: Beta feedback bake window. Open ecosystem launch PRs. Implement the production path for the standalone `cron` NPM package, remove cron-job extension coupling, and keep behavior platform-agnostic unless this ticket names a platform backend.
 Acceptance:
   - The Beta feedback bake window behavior for `Open ecosystem launch PRs` is implemented end-to-end and reachable from the documented CLI, MCP, dashboard, or release path.
-  - The implementation is idempotent where it mutates files, daemon state, autostart, migration data, or release metadata.
   - Errors are typed, user-actionable, and redact tokens, prompts, environment secrets, and local private paths where appropriate.
   - Docs/help text explain default behavior, dry-run or rollback steps when relevant, and platform caveats.
   - A reviewer can validate the change from a clean checkout without relying on the old Copilot extension runtime.
@@ -1908,7 +1763,6 @@ Critical path summary:
 - Core CLI: T-001 -> T-006 -> T-009 -> T-012 -> T-013 -> T-014 -> T-017.
 - Migration: T-018 -> T-019 -> T-020 -> T-021/T-022 -> T-023 -> T-049 -> T-080.
 - MCP: T-025 -> T-028 -> T-033 -> T-034/T-035/T-036/T-037 -> T-064 -> T-088.
-- Autostart: T-017 -> T-043 -> T-044/T-045/T-046/T-047 -> T-048 -> T-087.
 - Release: T-073/T-074/T-075/T-076/T-077/T-078 plus docs T-079/T-080/T-081 -> T-085 -> T-087 -> T-090.
 
 ## 4. Migration plan for existing users
@@ -1917,8 +1771,6 @@ Critical path summary:
 - Communicate `cron migrate --from-copilot-ext --dry-run` first. Dry-run lists imports, targets, schema changes, conflicts, daemon actions, backups, and platform caveats.
 - On `--apply`, copy v3 files into the new home, upgrade schema v3 to v4, and write `.bak` backups plus checksum manifest before v4 writes.
 - Stop old daemon before new registration. If stop fails, report exact manual stop command and continue only with safe data import.
-- Register new daemon only with explicit migration option or follow-up `cron autostart install`.
-- Remove Windows HKCU `CopilotCronDaemon` by default after successful new autostart; offer `--keep-legacy-autostart`.
 - On macOS/Linux remove only confidently identified old launchd/systemd artifacts; otherwise report manual cleanup.
 - Ship old extension `0.2.0-deprecated` that prints pointer to package and recommends dry-run before apply.
 
@@ -1931,7 +1783,6 @@ Critical path summary:
 - **M1**: reset scaffold tag.
 - **M2**: deprecate prerelease and restore from backups only on explicit user action.
 - **M3**: disable bad MCP/plugin and keep script/exec CLI.
-- **M4**: disable affected autostart backend and publish removal commands.
 - **M5**: disable HTTP/dashboard by default and rotate tokens if needed.
 - **M6**: extend beta until P0/P1 security/test blockers close.
 - **M7**: deprecate bad beta and publish hotfix beta.
@@ -1943,8 +1794,6 @@ Critical path summary:
 | 1 | experimental SQLite API change | storage rewrite | Medium | keep JSON primary and adapter boundary | Dev |
 | 2 | croner v10 breaking | missed jobs | Medium | pin and property test | Dev |
 | 3 | MCP spec churn | host breakage | High | contract fixtures and 3-host verification | Dev |
-| 4 | launchd quirks macOS 15 | autostart fail | Medium | golden plist and mac reviewer | macOS reviewer |
-| 5 | Windows Defender autostart flag | install distrust | Medium | HKCU only and docs | Windows reviewer |
 | 6 | npm 2FA lockout | release delay | Low | trusted publishing backup maintainer | Maintainer |
 | 7 | npm name collision | rename churn | High | check early fallback names | Dev |
 | 8 | unmaintained deps | security burden | Medium | min deps audit | Dev |
@@ -1952,7 +1801,6 @@ Critical path summary:
 | 10 | token leak via logs | credential exposure | High | central redaction tests | Security reviewer |
 | 11 | shell injection | command execution risk | High | exec no-shell default | Dev |
 | 12 | migration data loss | trust loss | Low | dry-run backups manifest | Dev |
-| 13 | dual daemons | duplicate jobs | Medium | stop old remove legacy autostart | Dev |
 | 14 | locked-down machines | setup failure | Medium | CRON_HOME diagnose manual fallback | Dev |
 | 15 | HTTP exposed remotely | local RCE risk | Medium | localhost token CORS rate limit | Security reviewer |
 | 16 | dashboard package bloat | slow installs | Medium | pack size gate | Dev |

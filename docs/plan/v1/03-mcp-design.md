@@ -904,9 +904,7 @@ Notes:
 - Return normalized error codes as MCP tool execution errors, not protocol errors.
 - Rate-limit if the tool can mutate state or start work.
 
-### tool: `cron_autostart_status`
 
-Description: Report login autostart and watchdog status.
 
 Input schema (JSON Schema):
 ```json
@@ -940,14 +938,11 @@ Example response:
 ```
 
 Notes:
-- Backend mapping: package autostart service.
 - Validate arguments before calling daemon REST.
 - Return normalized error codes as MCP tool execution errors, not protocol errors.
 - Rate-limit if the tool can mutate state or start work.
 
-### tool: `cron_autostart_install`
 
-Description: Install per-user daemon autostart and optional watchdog.
 
 Input schema (JSON Schema):
 ```json
@@ -981,14 +976,11 @@ Example response:
 ```
 
 Notes:
-- Backend mapping: package autostart service.
 - Validate arguments before calling daemon REST.
 - Return normalized error codes as MCP tool execution errors, not protocol errors.
 - Rate-limit if the tool can mutate state or start work.
 
-### tool: `cron_autostart_remove`
 
-Description: Remove per-user daemon autostart and optional watchdog.
 
 Input schema (JSON Schema):
 ```json
@@ -1022,7 +1014,6 @@ Example response:
 ```
 
 Notes:
-- Backend mapping: package autostart service.
 - Validate arguments before calling daemon REST.
 - Return normalized error codes as MCP tool execution errors, not protocol errors.
 - Rate-limit if the tool can mutate state or start work.
@@ -1298,7 +1289,6 @@ The old `/cron-job` slash command is removed. Do not call it. Do not edit cron f
 - List, inspect, update, enable, disable, delete, and run jobs.
 - Validate and preview schedules before mutation.
 - Read run history and logs through resources.
-- Open dashboard, export/import, migrate legacy state, diagnose daemon/autostart/token issues.
 
 ## Tool reference
 
@@ -1322,9 +1312,6 @@ The old `/cron-job` slash command is removed. Do not call it. Do not edit cron f
 - `cron_daemon_reload`
 - `cron_daemon_restart`
 - `cron_daemon_shutdown`
-- `cron_autostart_status`
-- `cron_autostart_install`
-- `cron_autostart_remove`
 - `cron_export`
 - `cron_import`
 - `cron_dashboard_open`
@@ -1477,16 +1464,10 @@ Use the structured result. Cite ids. Do not invent fields.
 Ask daemon to stop after responding.
 Use the structured result. Cite ids. Do not invent fields.
 
-### cron_autostart_status
-Report login autostart and watchdog status.
 Use the structured result. Cite ids. Do not invent fields.
 
-### cron_autostart_install
-Install per-user daemon autostart and optional watchdog.
 Use the structured result. Cite ids. Do not invent fields.
 
-### cron_autostart_remove
-Remove per-user daemon autostart and optional watchdog.
 Use the structured result. Cite ids. Do not invent fields.
 
 ### cron_export

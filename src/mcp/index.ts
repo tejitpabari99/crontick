@@ -45,10 +45,10 @@ function daemonScript(): string {
   return pathResolve(__dirname, '../daemon/index.js');
 }
 
-function appendAutostartLog(text: string): void {
+function appendDaemonStartLog(text: string): void {
   try {
     mkdirSync(logsDir(), { recursive: true });
-    const logPath = pathJoin(logsDir(), 'daemon.autostart.log');
+    const logPath = pathJoin(logsDir(), 'daemon.ensure.log');
     let size = 0;
     try { size = statSync(logPath).size; } catch { /* new file */ }
     if (size < 256 * 1024) {
@@ -70,7 +70,7 @@ function waitForPortFile(maxMs = 10_000, getStderr?: () => string): Promise<void
       }
       if (Date.now() - start > maxMs) {
         const stderr = getStderr?.() ?? '';
-        const hint = stderr ? `\nAutostart stderr: ${stderr.slice(0, 500)}` : '';
+        const hint = stderr ? `\nDaemon start stderr: ${stderr.slice(0, 500)}` : '';
         return reject(new DaemonUnavailableError(`Timed out waiting for daemon to start.${hint}`));
       }
       setTimeout(check, 200);
@@ -89,13 +89,13 @@ async function ensureDaemon(): Promise<void> {
     if (res.ok) return;
   } catch { /* not running or not responding */ }
 
-  if (process.env['CRONTICK_MCP_NO_AUTOSTART'] === '1') {
+  if (process.env['CRONTICK_MCP_NO_DAEMON_START'] === '1') {
     throw new DaemonUnavailableError(
-      'CRONTICK_MCP_NO_AUTOSTART=1 is set — start the daemon manually: crontick daemon start',
+      'CRONTICK_MCP_NO_DAEMON_START=1 is set — start the daemon manually: crontick daemon start',
     );
   }
 
-  // Auto-start
+  // Start daemon
   ensureDirs();
   const script = daemonScript();
   if (!existsSync(script)) {
@@ -127,7 +127,7 @@ async function ensureDaemon(): Promise<void> {
     await waitForPortFile(10_000, getStderr);
   } catch (err) {
     const stderr = getStderr();
-    if (stderr) appendAutostartLog(`ensureDaemon failed:\n${stderr}`);
+    if (stderr) appendDaemonStartLog(`ensureDaemon failed:\n${stderr}`);
     throw err;
   }
 }
@@ -536,42 +536,11 @@ export function createMcpServer(): McpServer {
           await waitForPortFile(10_000, getRestartStderr);
         } catch (err) {
           const stderr = getRestartStderr();
-          if (stderr) appendAutostartLog(`daemon restart failed:\n${stderr}`);
+          if (stderr) appendDaemonStartLog(`daemon restart failed:\n${stderr}`);
           throw err;
         }
         return { ok: true, message: 'Daemon restarted successfully.' };
       }),
-  );
-
-  // ── Autostart ─────────────────────────────────────────────────────────────
-
-  server.registerTool(
-    'crontick_autostart_status',
-    {
-      description:
-        'Check whether the crontick daemon is registered to start automatically at login. (v1: Windows uses HKCU Run; other platforms return manual instructions.)',
-      inputSchema: {},
-    },
-    async () => toolWrap(() => callDaemon('GET', '/api/autostart/status')),
-  );
-
-  server.registerTool(
-    'crontick_autostart_install',
-    {
-      description:
-        'Register the crontick daemon to start automatically at login. (v1: Windows only via HKCU Run + VBS shim. On other platforms returns manual instructions.) On non-Windows, this returns a 501 with instructions to use manual autostart.',
-      inputSchema: {},
-    },
-    async () => toolWrap(() => callDaemon('POST', '/api/autostart/install', {})),
-  );
-
-  server.registerTool(
-    'crontick_autostart_remove',
-    {
-      description: 'Remove the crontick daemon from the automatic startup registry.',
-      inputSchema: {},
-    },
-    async () => toolWrap(() => callDaemon('POST', '/api/autostart/remove', {})),
   );
 
   // ── Admin ──────────────────────────────────────────────────────────────────
@@ -620,7 +589,7 @@ export function createMcpServer(): McpServer {
     'crontick_doctor',
     {
       description:
-        'Run a suite of health checks: Node.js version, SQLite, data directory, daemon connectivity, dashboard reachability, autostart, and MCP server availability.',
+        'Run a suite of health checks: Node.js version, SQLite, data directory, daemon connectivity, dashboard reachability, daemon connectivity, dashboard reachability, and MCP server availability.',
       inputSchema: {},
     },
     async () => {
@@ -682,23 +651,6 @@ export function createMcpServer(): McpServer {
         });
       } catch {
         checks.push({ name: 'dashboard reachable', ok: false, note: 'daemon not running or no dashboard' });
-      }
-
-      // Autostart status
-      if (daemonReachable) {
-        try {
-          const asResult = await callDaemon('GET', '/api/autostart/status');
-          const as = asResult as { installed?: boolean; backend?: string };
-          checks.push({
-            name: 'autostart',
-            ok: true,
-            note: `backend=${as.backend ?? '?'}, installed=${String(as.installed ?? false)}`,
-          });
-        } catch {
-          checks.push({ name: 'autostart', ok: false, note: 'could not check (daemon not running)' });
-        }
-      } else {
-        checks.push({ name: 'autostart', ok: false, note: 'could not check (daemon not running)' });
       }
 
       // MCP server binary

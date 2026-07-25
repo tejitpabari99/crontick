@@ -5,14 +5,10 @@
  * Steps:
  *   1. Check/install the crontick npm package globally.
  *   2. Run `crontick doctor` to verify the installation.
- *   3. Copy the bundled SKILL.md to ~/.copilot/skills/crontick/.
- *   4. Optionally install win32 autostart (skipped in non-interactive mode or non-win32).
- *
+ *   3. Copy the bundled SKILL.md to ~/.copilot/skills/crontick/. *
  * Environment flags:
  *   CRONTICK_PLUGIN_NONINTERACTIVE=1   — skip prompts, accept defaults
- *   CRONTICK_PLUGIN_SKIP_NPM=1         — skip `npm i -g crontick` step (for testing)
- *   CRONTICK_PLUGIN_SKIP_AUTOSTART=1   — skip autostart installation
- */
+ *   CRONTICK_PLUGIN_SKIP_NPM=1         — skip `npm i -g crontick` step (for testing) */
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, copyFileSync } from 'node:fs';
@@ -24,7 +20,6 @@ import { createInterface } from 'node:readline';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const nonInteractive = process.env['CRONTICK_PLUGIN_NONINTERACTIVE'] === '1';
 const skipNpm = process.env['CRONTICK_PLUGIN_SKIP_NPM'] === '1';
-const skipAutostart = process.env['CRONTICK_PLUGIN_SKIP_AUTOSTART'] === '1';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -112,37 +107,6 @@ if (!existsSync(skillSrc)) {
   console.log(`[crontick-plugin] SKILL.md installed at: ${skillDst}`);
 }
 
-// ── Step 4: Optional autostart ────────────────────────────────────────────────
-
-if (!skipAutostart) {
-  if (process.platform === 'win32') {
-    let doAutostart = nonInteractive;
-    if (!nonInteractive) {
-      const answer = await prompt(
-        '\n[crontick-plugin] Install autostart? Registers crontick-daemon to start at login. [Y/n] ',
-      );
-      doAutostart = answer === '' || answer.toLowerCase() === 'y';
-    }
-    if (doAutostart) {
-      console.log('[crontick-plugin] Installing autostart…');
-      const code = run('crontick', ['autostart', 'install']);
-      if (code === 0) {
-        steps.push('win32 autostart installed');
-        console.log('[crontick-plugin] Autostart installed.');
-      } else {
-        steps.push('autostart install FAILED (see above)');
-        console.warn('[crontick-plugin] Autostart install failed — you can retry later: crontick autostart install');
-      }
-    } else {
-      steps.push('autostart skipped by user');
-      console.log('[crontick-plugin] Autostart skipped. Run later: crontick autostart install');
-    }
-  } else {
-    console.log('[crontick-plugin] Autostart (non-Windows): run `crontick autostart status` for manual setup instructions.');
-    steps.push('autostart not applicable on this platform (non-win32)');
-  }
-}
-
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 console.log('\n[crontick-plugin] Installation complete!\n');
@@ -151,5 +115,4 @@ for (const step of steps) {
 }
 console.log('\nGet started:');
 console.log('  crontick --help');
-console.log('  crontick daemon start');
 console.log('  crontick new my-job --cron "0 9 * * *" --script "echo hello"');

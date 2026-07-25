@@ -12,7 +12,6 @@ Add crontick — local cron daemon + scheduler MCP server
 
 - practical automation use case: recurring and one-shot local jobs
 - safe local-first design: loopback daemon, stdio MCP, shell=false exec support
-- rich operational surface: jobs, runs, logs, stats, doctor, dashboard, autostart
 - bundled skill/docs for Copilot- and Claude-style hosts
 
 ## Repository / package

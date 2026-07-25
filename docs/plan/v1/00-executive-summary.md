@@ -6,7 +6,6 @@
 
 ## TL;DR
 
-Build **`crontick`** — a single, standalone, open-source NPM package that ships a CLI, a daemon, and an MCP server (stdio only). No Copilot dependency in the core, no LLM runners in the core, no HTTP MCP, no auth, no migration from the current extension. Windows autostart in v1; macOS/Linux backends are stubbed for later. A Copilot **marketplace plugin also named `crontick`** installs the npm package and drops a `SKILL.md` into `~/.copilot/skills/crontick/` — that skill instructs the LLM (Copilot or any other) to *generate a shell script* and register it via MCP.
 
 **Name**: `crontick` — verified free on npm (2026-07-18). Domains and GitHub org not verified; do that before M1.
 
@@ -14,7 +13,6 @@ Build **`crontick`** — a single, standalone, open-source NPM package that ship
 - One package, not a scoped monorepo (was `@cronjs/core` family).
 - **No LLM runner** in core. Only `script`/`exec` action kinds. The skill produces scripts.
 - **stdio MCP only**. No HTTP transport, no bearer token, no `/api` auth surface.
-- **Windows autostart only** for v1; `darwin`/`linux` backends kept as clearly-scoped empty modules for post-v1.
 - **No migration**. Treat the existing extension as if it does not exist. It will be manually deleted.
 - **No deprecation of the old extension**. Nothing shipped there.
 
@@ -30,7 +28,6 @@ Build **`crontick`** — a single, standalone, open-source NPM package that ship
 | D-3 | SQLite | **Built-in `node:sqlite`.** Node 22.5+ requires `--experimental-sqlite` flag (daemon shim injects it); Node 24+ unflagged. `engines.node >= 22.5`. No external SQLite dependency. |
 | D-4 | MCP transport | **stdio only.** No HTTP MCP. |
 | D-5 | Auth | **None.** No HTTP endpoints for LLMs → no token needed. Local HTTP API for the dashboard binds to `127.0.0.1` only; trust boundary = local user. Explicitly document this in README. |
-| D-6 | Autostart | **`win32` (HKCU Run + VBS shim) + `manual` (prints commands) for v1.** `darwin` and `linux` module stubs pre-created under `src/autostart/` with clear TODO markers so they can be added later without restructuring. |
 | D-7 | Migration | **None. Removed entirely.** Old extension is out of scope. |
 | D-8 | LLM runner | **Removed from core.** Only `script` and `exec` action kinds. The bundled `SKILL.md` teaches any LLM to draft a script and register it via MCP. No copilot/agency provider adapters. |
 | D-9 | License | **MIT** + DCO sign-off (no CLA) |
@@ -48,12 +45,10 @@ Copilot / Claude Desktop / Cursor / any MCP host
    crontick mcp  ─────►  HTTP GET/POST to 127.0.0.1:<port>/api/*  (no auth, localhost only)
                                   │
                                   ▼
-                     crontick daemon (long-lived, autostart)
                         ├─ scheduler (croner)
                         ├─ runner ──► script | exec  ← only these two kinds
                         ├─ node:sqlite runs.db
                         ├─ dashboard on 127.0.0.1:<port>
-                        └─ autostart: win32 | manual  (darwin/linux stubs)
 
 crontick CLI (`crontick new/list/run-now/…`)  ──► same 127.0.0.1 API
 ```
@@ -79,8 +74,6 @@ crontick/
 │   ├── cli/                      # commander-based CLI
 │   ├── daemon/                   # scheduler, runner, store, api, lifecycle
 │   ├── mcp/                      # stdio MCP server; talks to local daemon over localhost HTTP
-│   ├── autostart/
-│   │   ├── index.ts              # Autostart interface + factory
 │   │   ├── win32.ts              # HKCU Run + VBS shim  (v1)
 │   │   ├── manual.ts             # prints instructions   (v1)
 │   │   ├── darwin.ts             # STUB — throws "not implemented in v1" with TODO markers
@@ -141,7 +134,6 @@ Final catalog:
 - **Schedules**: `crontick_schedule_{preview, validate}`
 - **Stats**: `crontick_stats_{summary, job}`
 - **Daemon**: `crontick_daemon_{status, reload, restart}` (no `shutdown` — dangerous with no auth boundary; require CLI for that)
-- **Autostart**: `crontick_autostart_{status, install, remove}`
 - **Admin**: `crontick_export`, `crontick_import`, `crontick_dashboard_open`, `crontick_doctor`
 
 Resources: `crontick://jobs/{id}`, `crontick://runs/{id}`, `crontick://runs/{id}/log`, `crontick://schemas/job`.
@@ -166,14 +158,12 @@ Full draft in `03-mcp-design.md` §5 (with V2 amendments applied — the "provid
 - macOS (post-v1): `~/Library/Application Support/crontick/`.
 - Linux (post-v1): `$XDG_STATE_HOME/crontick` or `~/.local/state/crontick/`.
 
-Autostart backend for v1 = win32 only. `crontick autostart install` on non-win32 prints the manual instructions from `autostart/manual.ts`.
 
 ### 3.6 The Copilot marketplace plugin
 - Plugin id: `crontick` (same as npm package).
 - Manifest declares:
   - `install`: runs `npm i -g crontick` if not present; then `crontick init` (creates data dir, generates config).
   - `postInstall`: copies bundled `SKILL.md` to `~/.copilot/skills/crontick/SKILL.md`.
-  - Optionally starts the daemon and registers autostart (with user prompt).
 - `uninstall`: leaves data dir intact by default; provides `crontick uninstall --purge`.
 
 This gives Copilot users one-click install; non-Copilot users just `npm i -g crontick`. Identical binary either way.
@@ -197,19 +187,16 @@ Add:
 
 ## 5. Delivery plan (V2 rescoped)
 
-**~7 milestones, ~65 tickets, ~6-7 weeks @ 20 h/week** (down from ~93 tickets / 10 weeks in V1 — thanks to dropping migration, LLM adapters, HTTP MCP, auth, and 2 autostart backends).
 
 | MS | Focus | Exit |
 |---|---|---|
 | M1 | Repo scaffold, TS build, CI, CLI skeleton | `crontick --version` |
 | M2 | Daemon core (scheduler, runner, store, HTTP API on localhost) | `crontick new … && crontick list` green |
 | M3 | stdio MCP server + full tool catalog | Contract tests pass; verified with Copilot MCP host + Claude Desktop |
-| M4 | Windows autostart + manual fallback + `SKILL.md` bundled + Copilot marketplace plugin | `crontick autostart install` works on Windows; plugin install verified |
 | M5 | Dashboard rebrand + polish; ecosystem features (cron aliases, env-file, `/health`) | Dashboard functional; `@daily` etc. accepted |
 | M6 | Testing hardening (unit / integration / e2e / fuzz / property / security) | All gates green |
 | M7 | Docs + 0.1.0 release with provenance | Published on npm, submitted to awesome-mcp |
 
-Post-v1 backlog (single ticket each, deferred): darwin autostart, linux autostart, HTTP MCP + auth, distributed HA daemon, resource limits.
 
 ---
 
@@ -220,7 +207,6 @@ Post-v1 backlog (single ticket each, deferred): darwin autostart, linux autostar
 | 1 | `--experimental-sqlite` semantics change between Node 22.5 and 24 | Guard with `process.versions.node` check; test both matrices |
 | 2 | `croner` v10 breaking | Pin, property-test |
 | 3 | MCP spec churn | Contract fixtures; verify against Copilot + Claude Desktop + Cursor |
-| 4 | Windows Defender flags autostart | HKCU only; sigstore provenance |
 | 5 | Local dashboard reachable over LAN | Explicitly bind to `127.0.0.1`; test |
 | 6 | Shell injection via script action | `exec` mode = argv (no shell) default; `script` mode writes to file with mode 700 |
 | 7 | npm name squatted after we decide | Claim `crontick` on npm immediately (day 0) |
@@ -235,7 +221,6 @@ Full 20-item register in `06-work-breakdown.md` §6.
 
 1. Read files in order: 00 (this), 01, 02, 03, 04, 05, 06 — **respecting the V2 AMENDMENT blocks at the top of 01-06**.
 2. Claim `crontick` on npm; create GitHub repo `crontick`; create Copilot marketplace plugin listing `crontick`.
-3. Open ticket T-001 (repo scaffold). Follow the DAG in `06-work-breakdown.md` §3, **skipping any ticket in the V2-removed categories** (migration, LLM adapters, HTTP MCP, auth, darwin/linux autostart, deprecation).
 4. Push after every ticket; every PR passes the DoD in `05-testing-plan.md` §16.
 
 ---
@@ -251,7 +236,6 @@ Location: `C:\Users\tejitpabari\.copilot\session-state\9e2c541e-1ef1-4f9a-bcc0-7
 | `01-current-state.md` | V2 amendment prepended; migration + LLM sections marked SUPERSEDED |
 | `02-ecosystem-research.md` | V2 amendment: name = `crontick`; ignore auth/HTTP recommendations |
 | `03-mcp-design.md` | V2 amendment: stdio only; no auth; drop LLM/migration tools; rename `cron_*` → `crontick_*` |
-| `04-npm-oss-plan.md` | V2 amendment: single unscoped package `crontick`; TS build; no HTTP; win32+manual autostart |
 | `05-testing-plan.md` | V2 amendment: drop HTTP-MCP/auth/LLM/migration tests |
 | `06-work-breakdown.md` | V2 amendment: drop migration + LLM + HTTP-MCP + auth + darwin/linux + deprecation tickets; rescoped to ~7 milestones |
 

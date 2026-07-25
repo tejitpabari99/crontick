@@ -6,7 +6,6 @@
 > - **§4 Runner extraction** — DROP the "LLM provider adapter" plan entirely. The new runner supports only `script` and `exec`. Delete plans for `providerAdapters.copilot`, `providerAdapters.agency`, `providerAdapters.custom`.
 > - **§5 Schema evolution** — do NOT preserve v3 or produce v4-vs-v3 diffs. There is **no migration**. Start with a fresh single schema (no `$schemaVersion` field needed; drop the migration column). Only `action.kind ∈ {script, exec}` — remove `llm-prompt` and every provider-specific field.
 > - **§6 HTTP API surface** — DROP the "bearer auth" and `~/.cron/token` plan. The API binds to `127.0.0.1` only; local user is the trust boundary. Do NOT add auth middleware. Keep `/api/version`.
-> - **§7 Autostart abstraction** — v1 ships **win32 + manual only**. Keep `darwin.ts` and `linux.ts` as stub modules with a clear "not implemented in v1" throw and TODO markers; do not wire them into the platform switch until post-v1.
 > - **§10 Skill vs MCP** — the new skill teaches the LLM to *generate a shell script* and register it via MCP (no `llm-prompt` action). Bundle the `SKILL.md` inside the npm package at `src/skill/SKILL.md`; the Copilot marketplace plugin copies it to `~/.copilot/skills/crontick/SKILL.md` on install.
 > - **§11 Backward compatibility / migration** — DELETE ENTIRELY. The current extension is treated as if it does not exist. No `cron migrate --from-copilot-ext`, no `.bak` handling, no import path detection.
 > - **§2 Copilot coupling map** — the "move-to-plugin" rows for LLM runners are downgraded to **remove**. Only kept for historical reference of what to delete.
@@ -36,7 +35,6 @@
 | `/lib/cli-invocation.mjs` | Normalizes Copilot TUI vs native CLI invocation. |
 | `/lib/daemon-port.mjs` | Resolves daemon port; handles collisions. |
 | `/lib/ipc-client.mjs` | Client for daemon status and REST calls. |
-| `/lib/selfInstall.mjs` | Copies runtime binaries, schema, skill, autostart, daemon bootstrap. |
 | `/lib/security.mjs` | Windows ACL hardening and session warning logging. |
 | `/lib/parseFlags.mjs` | Flag parser used by CLI/dispatch. |
 | `/lib/duration.mjs` | Duration parsing helpers. |
@@ -45,7 +43,6 @@
 | `/lib/canonical-json.mjs` | Stable JSON serialization for diffing. |
 | `/lib/uninstall.mjs` | Uninstall workflow. |
 | `/lib/schedule.mjs` | Schedule parsing and next-run calculation. |
-| `/lib/daemon/*` | Runtime engine: store, scheduler, runner, lifecycle, API, migration, autostart, DB, process control. |
 | `/lib/subcommands/*` | One file per CLI verb (`new`, `edit`, `list`, `logs`, etc.). |
 | `/dashboard/*` | Static dashboard app served by daemon. |
 | `/skills/cron/SKILL.md` | Copilot skill instructions. |
@@ -64,10 +61,7 @@
 | `/lib/runtime-config.mjs:6-34` | `chat.tools.global.autoApprove` in Copilot config | `remove` | Delete; unsafe and Copilot-specific. |
 | `/lib/selfInstall.mjs:45-46` | auto-approve config write | `remove` | Remove from standalone installer. |
 | `/lib/selfInstall.mjs:57-103` | installs `~/.copilot/skills/cron/SKILL.md` | `move-to-plugin` | Make skill install optional, or ship separate Copilot integration package. |
-| `/lib/selfInstall.mjs:60-76` | HKCU autostart + daemon ensure | `move-to-plugin` | Move to platform-specific autostart plugin. |
 | `/lib/selfInstall.mjs:68-69` | "Registered CopilotCronDaemon…" | `remove` | Rename/replace. |
-| `/lib/daemon/autostart.mjs:7-12` | `CopilotCronDaemon`, `CopilotCronWatchdog` | `remove` | Rename to neutral identifiers. |
-| `/lib/daemon/autostart.mjs:67-75` | Windows watchdog behavior tied to daemon | `move-to-plugin` | Keep as optional plugin. |
 | `/cli.mjs:31-32` | references `CopilotCronDaemon` in prompt | `remove` | Rewrite neutral uninstall text. |
 | `/bin/daemon.mjs:49-50, 56-69, 124-149, 196` | "copilot cron daemon" logging | `keep-as-generic` | Rename logs to `cron daemon`. |
 | `/lib/daemon/runner.mjs:18-57` | `copilot`, `agency`, `--resume`, prompt semantics | `move-to-plugin` | Make LLM runner pluggable; script/exec core stays. |
@@ -97,7 +91,6 @@
 | Port file | `~/.copilot/cron/.daemon-port.json` (`/lib/paths.mjs:18`) |
 | Config | `~/.copilot/cron/config.json` (`/lib/config.mjs:7`) |
 | Skill install | `~/.copilot/skills/cron/SKILL.md` (`/lib/selfInstall.mjs:83`) |
-| Win autostart VBS | `~/.copilot/cron/bin/daemon-hidden.vbs` (`/lib/daemon/autostart.mjs:11-12`) |
 | Dashboard log | `~/.copilot/cron/logs/daemon.log` (`/bin/daemon.mjs:31-35`) |
 | Session log | `~/.copilot/cron/logs/session.log` (`/lib/security.mjs:9-12`) |
 
@@ -118,10 +111,6 @@
 
 | Kind | Current value |
 |---|---|
-| HKCU Run key | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (`/lib/daemon/autostart.mjs:7`) |
-| Run value name | `CopilotCronDaemon` (`/lib/daemon/autostart.mjs:8`) |
-| Watchdog task | `CopilotCronWatchdog` (`/lib/daemon/autostart.mjs:9`) |
-| VBS shim | `daemon-hidden.vbs` in `BIN_DIR` (`/lib/daemon/autostart.mjs:11-12`) |
 
 ### Neutral defaults to adopt
 
@@ -130,7 +119,6 @@
 - Logs: `~/.local/state/cron/logs` or `~/.cron/logs`
 - Jobs: `~/.cron/jobs`
 - Skill install: `~/.copilot/skills/cron` only in Copilot integration package
-- Autostart service name: `CronDaemon`
 - Registry value: `CronDaemon`
 - Port env var: `CRON_PORT`
 - Root override env var: `CRON_HOME`
@@ -235,14 +223,11 @@ It also injects `--resume`, tools, dirs, attachments, timeout, session IDs, logs
   - CORS config for MCP/dashboard if needed
 - Add request auth middleware before routing.
 
-## 7) Autostart abstraction
 
 ### Current
-Windows-only registry autostart + VBS shim + optional watchdog (`/lib/daemon/autostart.mjs`).
 
 ### Required interface
 ```ts
-interface Autostart {
   status(): Promise<Status>;
   install(opts): Promise<Result>;
   remove(): Promise<Result>;
@@ -278,7 +263,6 @@ interface Autostart {
 - `extension.test.mjs`
 - `selfInstall-skill.test.mjs`
 - `runtime-config.test.mjs`
-- `selfInstall-autostart.test.mjs`
 - `subcommand-*` tests that mention `/cron-job`, Copilot, agency
 - `runner-session-resume.test.mjs`
 - `runner-max-tokens.test.mjs`
@@ -288,7 +272,6 @@ interface Autostart {
 ### New tests needed
 - MCP auth/token tests
 - `llm-prompt`, `script`, `exec` schema tests
-- cross-platform autostart tests
 - migration from `~/.copilot/cron`
 - provider-adapter absence tests
 - API version endpoint tests
@@ -299,7 +282,6 @@ Change:
 - Title/branding from "Copilot cron"
 - any `/cron-job` wording
 - any Copilot-specific help text
-- autostart/config/login hints
 
 Keep:
 - job list/detail

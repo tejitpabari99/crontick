@@ -1,6 +1,5 @@
 # Testing Plan for Standalone Cron/Scheduler NPM Package
 
-This plan targets an open-source, platform-agnostic cron/scheduler NPM package with daemon, local HTTP API, SQLite persistence, MCP server, dashboard, and cross-platform autostart. It assumes Vitest for most suites, `node:test` for real subprocess E2E, and automation-first release gates.
 
 ## ⚠️ V2 AMENDMENT (2026-07-18) — read this first.
 
@@ -9,7 +8,6 @@ This plan targets an open-source, platform-agnostic cron/scheduler NPM package w
 - All bearer-token / auth / token-rotation tests.
 - All LLM provider adapter tests (`copilot`, `agency`, `custom` — none exist in v1).
 - All v3→v4 migration tests, importer tests, `.bak` sidecar tests, `cron migrate --from-copilot-ext` tests.
-- macOS launchd and Linux systemd autostart tests (stubs only in v1; add tests when backends land).
 - LLM-prompt schema fixtures (only `script` and `exec` action kinds exist).
 
 **Added / expanded test areas**:
@@ -21,7 +19,6 @@ This plan targets an open-source, platform-agnostic cron/scheduler NPM package w
 
 **Rename** every test file / helper referencing `cron` (as package name) or `@cronjs/*` to `crontick`. Rename every MCP tool assertion from `cron_*` to `crontick_*`.
 
-**Cross-platform matrix (§6)** — v1 CI: `windows-latest × Node 22.5,24` (full incl. autostart e2e); `ubuntu-latest × Node 22.5,24` (unit + integration + contract + MCP stdio); `macos-latest × Node 24` (unit only). No systemd/launchd assertions until those backends land.
 
 Everything else — the 13-layer taxonomy, fuzz corpus policy, property invariants, mutation targets, chaos plan, soak, perf harness, security scanners, DoD checklist — remains authoritative.
 
@@ -35,7 +32,6 @@ Everything else — the 13-layer taxonomy, fuzz corpus policy, property invarian
 | Integration | Multi-module | vitest + tmp fs | 150+ | every push |
 | Contract (schema/MCP) | JSON schema, MCP tool schema | ajv + mcp SDK client | 60+ | every push |
 | E2E (CLI + daemon) | Real subprocess | node:test w/ real spawns | 40+ | every push |
-| Cross-platform smoke | OS-specific autostart | GitHub Actions matrix | 20+ | every PR |
 | Fuzz | Malformed input | fast-check + jsfuzz | continuous | nightly |
 | Property | Invariants | fast-check | 30+ | every push |
 | Mutation | Test quality | Stryker | — | weekly |
@@ -419,57 +415,31 @@ File: `tests/unit/jitter.test.ts`
 - Assert: exact result/error code, stable canonical output, and no pending timers or handles.
 - Command: `pnpm test:unit -- tests/unit/jitter.test.ts -t "reject jitter greater than interval"`.
 
-### 2.8. `autostart-path-resolution` unit tests
 
-File: `tests/unit/autostart-path-resolution.test.ts`
 
-#### UT-autostart-path-resolution-01: linux systemd user path
-- Arrange: create deterministic fixtures for `autostart-path-resolution` and seed fake timers/randomness.
 - Act: call the public module API for `linux systemd user path`; do not reach into private helpers.
 - Assert: exact result/error code, stable canonical output, and no pending timers or handles.
-- Command: `pnpm test:unit -- tests/unit/autostart-path-resolution.test.ts -t "linux systemd user path"`.
 
-#### UT-autostart-path-resolution-02: mac launchd plist path
-- Arrange: create deterministic fixtures for `autostart-path-resolution` and seed fake timers/randomness.
 - Act: call the public module API for `mac launchd plist path`; do not reach into private helpers.
 - Assert: exact result/error code, stable canonical output, and no pending timers or handles.
-- Command: `pnpm test:unit -- tests/unit/autostart-path-resolution.test.ts -t "mac launchd plist path"`.
 
-#### UT-autostart-path-resolution-03: windows HKCU Run command
-- Arrange: create deterministic fixtures for `autostart-path-resolution` and seed fake timers/randomness.
 - Act: call the public module API for `windows HKCU Run command`; do not reach into private helpers.
 - Assert: exact result/error code, stable canonical output, and no pending timers or handles.
-- Command: `pnpm test:unit -- tests/unit/autostart-path-resolution.test.ts -t "windows HKCU Run command"`.
 
-#### UT-autostart-path-resolution-04: independent of process cwd
-- Arrange: create deterministic fixtures for `autostart-path-resolution` and seed fake timers/randomness.
 - Act: call the public module API for `independent of process cwd`; do not reach into private helpers.
 - Assert: exact result/error code, stable canonical output, and no pending timers or handles.
-- Command: `pnpm test:unit -- tests/unit/autostart-path-resolution.test.ts -t "independent of process cwd"`.
 
-#### UT-autostart-path-resolution-05: portable mode carries data dir
-- Arrange: create deterministic fixtures for `autostart-path-resolution` and seed fake timers/randomness.
 - Act: call the public module API for `portable mode carries data dir`; do not reach into private helpers.
 - Assert: exact result/error code, stable canonical output, and no pending timers or handles.
-- Command: `pnpm test:unit -- tests/unit/autostart-path-resolution.test.ts -t "portable mode carries data dir"`.
 
-#### UT-autostart-path-resolution-06: reject relative daemon path
-- Arrange: create deterministic fixtures for `autostart-path-resolution` and seed fake timers/randomness.
 - Act: call the public module API for `reject relative daemon path`; do not reach into private helpers.
 - Assert: exact result/error code, stable canonical output, and no pending timers or handles.
-- Command: `pnpm test:unit -- tests/unit/autostart-path-resolution.test.ts -t "reject relative daemon path"`.
 
-#### UT-autostart-path-resolution-07: quote paths with spaces
-- Arrange: create deterministic fixtures for `autostart-path-resolution` and seed fake timers/randomness.
 - Act: call the public module API for `quote paths with spaces`; do not reach into private helpers.
 - Assert: exact result/error code, stable canonical output, and no pending timers or handles.
-- Command: `pnpm test:unit -- tests/unit/autostart-path-resolution.test.ts -t "quote paths with spaces"`.
 
-#### UT-autostart-path-resolution-08: dry-run reports mutations only
-- Arrange: create deterministic fixtures for `autostart-path-resolution` and seed fake timers/randomness.
 - Act: call the public module API for `dry-run reports mutations only`; do not reach into private helpers.
 - Assert: exact result/error code, stable canonical output, and no pending timers or handles.
-- Command: `pnpm test:unit -- tests/unit/autostart-path-resolution.test.ts -t "dry-run reports mutations only"`.
 
 ### 2.9. `env-paths` unit tests
 
@@ -1092,7 +1062,6 @@ Purpose: SQLite WAL recovery from unclean shutdown.
 
 ### 5.1. `install-lifecycle`
 - File: `tests/e2e/install-lifecycle.test.mjs`.
-- Covers: Full install lifecycle (`cron install --autostart`, restart, uninstall).
 - spawn `node dist/daemon.js --data-dir <root> --port 0`.
 - spawn `node dist/cli.js` commands as real subprocesses.
 - assert daemon stderr matches `listening on 127.0.0.1:\d+`.
@@ -1172,20 +1141,16 @@ Purpose: SQLite WAL recovery from unclean shutdown.
 
 ## 6. Cross-platform matrix (GitHub Actions)
 
-| OS | Node | Autostart backend | Special asserts |
 |-|-|-|-|
 | ubuntu-latest | 22, 24 | systemd --user | `systemctl --user is-enabled` |
 | macos-latest | 22, 24 | launchd | `launchctl list` |
 | windows-latest | 22, 24 | HKCU Run + VBS | registry query |
 - CP-01 `ubuntu-latest` command: `systemctl --user is-enabled cron-scheduler.service`; expected pattern: stdout `enabled|linked`, exit 0.
 - CP-02 `ubuntu-latest` command: `systemctl --user cat cron-scheduler.service`; expected pattern: contains `ExecStart=` and absolute daemon path.
-- CP-03 `ubuntu-latest` command: `node dist/cli.js install --autostart --dry-run`; expected pattern: contains `Would write systemd unit`; no file created.
 - CP-04 `macos-latest` command: `launchctl list | grep cron-scheduler`; expected pattern: contains service label, exit 0.
 - CP-05 `macos-latest` command: `plutil -lint ~/Library/LaunchAgents/com.cron-scheduler.daemon.plist`; expected pattern: contains `OK`.
-- CP-06 `macos-latest` command: `node dist/cli.js install --autostart --dry-run`; expected pattern: contains `launchctl bootstrap gui/`.
 - CP-07 `windows-latest` command: `reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v CronScheduler`; expected pattern: contains `REG_SZ` and quoted daemon command.
 - CP-08 `windows-latest` command: `powershell -NoProfile -Command "Test-Path $env:APPDATA\CronScheduler\start-daemon.vbs"`; expected pattern: stdout `True`.
-- CP-09 `windows-latest` command: `node dist/cli.js install --autostart --dry-run`; expected pattern: contains `Would set HKCU Run`; registry unchanged.
 
 ## 7. Fuzz testing
 
@@ -1343,7 +1308,6 @@ Nightly workflow: run `pnpm build && pnpm test:fuzz -- --reporter=verbose`; uplo
 
 - Target: 75% overall mutation score.
 - Target: 90% on scheduler/runner/store/security/path-sandbox.
-- Include `src/scheduler/**/*.ts`, `src/runner/**/*.ts`, `src/store/**/*.ts`, `src/security/**/*.ts`, `src/api/**/*.ts`, `src/mcp/**/*.ts`, `src/autostart/**/*.ts`.
 - Exclude `src/dashboard/**`, `src/generated/**`, `src/**/*.d.ts`, `src/cli/help-text.ts`, `tests/**`, `bench/**`.
 - Weekly run: `pnpm test:mutation`; upload `reports/mutation/mutation.json` and HTML.
 - PR alert: compare against latest baseline; warn on any drop; block below threshold.
@@ -1668,7 +1632,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - [ ] Public schema changes include valid and invalid fixtures
 - [ ] MCP changes include schema, success, and error contract tests
 - [ ] Runner/script changes include security regression tests
-- [ ] Autostart changes include dry-run assertions on each OS
 - [ ] DB schema changes include migration/idempotence/rollback tests
 - [ ] No test writes to real home or external network
 
@@ -1683,7 +1646,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 | REQ-005 | Auth rotation invalidates old token | auth + HTTP + MCP | tests/e2e/auth-token-rotation.test.mjs | old 401, new initialize ok |
 | REQ-006 | Scripts cannot escape allowed dirs | script-runtime + path sandbox | tests/fuzz/paths.fuzz.ts | ERR_PATH_DENIED |
 | REQ-007 | Logs rotate and redact | log rotation | tests/unit/log-rotation.test.ts | rotated logs and [REDACTED] |
-| REQ-008 | Autostart installs per user | autostart | tests/e2e/autostart-linux.test.mjs | systemd unit enabled |
 | REQ-009 | Daily run budget enforced | budget + scheduler | tests/property/budget.property.test.ts | 48h cap never exceeded |
 | REQ-010 | MCP schemas conform | mcp server | tests/contract/mcp-tool-schemas.test.ts | Ajv strict compiles |
 ### REQ-001: Users can create a scheduled job through REST API
@@ -1728,9 +1690,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - Test case: rotated logs and [REDACTED].
 - Release gate: blocking for PRs touching mapped module.
 
-### REQ-008: Autostart installs per user
-- Module: `autostart`.
-- Test file: `tests/e2e/autostart-linux.test.mjs`.
 - Test case: systemd unit enabled.
 - Release gate: blocking for PRs touching mapped module.
 
@@ -1863,28 +1822,7 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - AUTO-099: `mcp-snapshot-stable` in `tests/integration/mcp-snapshot-stable.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
 - AUTO-100: `mcp-no-external-writes` in `tests/integration/mcp-no-external-writes.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
 
-### Appendix A.6. autostart backlog
 
-- AUTO-101: `autostart-happy-path` in `tests/integration/autostart-happy-path.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-102: `autostart-invalid-input` in `tests/integration/autostart-invalid-input.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-103: `autostart-boundary-value` in `tests/integration/autostart-boundary-value.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-104: `autostart-concurrency` in `tests/integration/autostart-concurrency.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-105: `autostart-restart-persistence` in `tests/integration/autostart-restart-persistence.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-106: `autostart-error-envelope` in `tests/integration/autostart-error-envelope.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-107: `autostart-metric-emitted` in `tests/integration/autostart-metric-emitted.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-108: `autostart-artifact-uploaded` in `tests/integration/autostart-artifact-uploaded.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-109: `autostart-coverage-branch` in `tests/integration/autostart-coverage-branch.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-110: `autostart-regression-seed` in `tests/integration/autostart-regression-seed.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-111: `autostart-Windows-path` in `tests/integration/autostart-Windows-path.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-112: `autostart-POSIX-path` in `tests/integration/autostart-POSIX-path.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-113: `autostart-permission-denied` in `tests/integration/autostart-permission-denied.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-114: `autostart-timeout` in `tests/integration/autostart-timeout.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-115: `autostart-cancellation` in `tests/integration/autostart-cancellation.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-116: `autostart-large-payload` in `tests/integration/autostart-large-payload.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-117: `autostart-unicode` in `tests/integration/autostart-unicode.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-118: `autostart-schema-default` in `tests/integration/autostart-schema-default.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-119: `autostart-snapshot-stable` in `tests/integration/autostart-snapshot-stable.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
-- AUTO-120: `autostart-no-external-writes` in `tests/integration/autostart-no-external-writes.test.ts`; assert exact code/output, deterministic seed, sandbox cleanup, and CI artifact on failure.
 
 ### Appendix A.7. security backlog
 
@@ -1985,7 +1923,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 | ci-fast | pull_request,push | pnpm build && pnpm test | unit/contract/property |
 | ci-integration | pull_request,push | pnpm test:integration | multi-module |
 | ci-e2e | pull_request,push | pnpm test:e2e | real daemon/CLI |
-| ci-cross-platform | pull_request | matrix OS/Node smoke | autostart |
 | ci-security | pull_request,push | pnpm security:scan | audit/static |
 | nightly-fuzz | schedule | pnpm test:fuzz | malformed input |
 | nightly-chaos | schedule | pnpm test:chaos | fault injection |
@@ -2014,7 +1951,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 ### Appendix B.4. `ci-cross-platform`
 - Trigger: pull_request.
 - Command: `matrix OS/Node smoke`.
-- Gate: autostart.
 - Failure artifact: logs, coverage/benchmark JSON, database files if applicable, and exact repro command.
 
 ### Appendix B.5. `ci-security`
@@ -2079,7 +2015,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-003: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-004: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-005: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-006: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-007: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-008: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-009: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2089,7 +2024,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-013: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-014: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-015: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-016: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-017: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-018: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-019: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2099,7 +2033,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-023: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-024: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-025: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-026: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-027: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-028: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-029: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2109,7 +2042,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-033: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-034: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-035: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-036: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-037: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-038: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-039: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2119,7 +2051,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-043: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-044: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-045: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-046: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-047: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-048: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-049: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2129,7 +2060,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-053: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-054: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-055: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-056: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-057: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-058: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-059: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2139,7 +2069,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-063: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-064: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-065: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-066: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-067: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-068: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-069: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2149,7 +2078,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-073: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-074: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-075: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-076: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-077: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-078: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-079: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2159,7 +2087,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-083: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-084: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-085: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-086: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-087: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-088: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-089: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2169,7 +2096,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-093: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-094: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-095: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-096: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-097: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-098: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-099: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2179,7 +2105,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-103: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-104: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-105: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-106: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-107: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-108: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-109: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2189,7 +2114,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-113: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-114: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-115: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-116: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-117: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-118: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-119: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2199,7 +2123,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-123: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-124: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-125: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-126: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-127: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-128: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-129: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2209,7 +2132,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-133: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-134: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-135: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-136: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-137: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-138: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-139: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2219,7 +2141,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-143: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-144: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-145: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-146: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-147: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-148: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-149: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2229,7 +2150,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-153: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-154: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-155: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-156: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-157: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-158: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-159: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2239,7 +2159,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-163: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-164: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-165: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-166: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-167: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-168: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-169: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2249,7 +2168,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-173: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-174: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-175: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-176: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-177: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-178: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-179: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2259,7 +2177,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-183: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-184: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-185: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-186: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-187: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-188: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-189: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2269,7 +2186,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-193: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-194: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-195: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-196: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-197: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-198: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-199: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2279,7 +2195,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-203: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-204: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-205: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-206: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-207: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-208: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-209: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2289,7 +2204,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-213: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-214: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-215: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-216: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-217: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-218: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-219: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2299,7 +2213,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-223: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-224: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-225: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-226: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-227: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-228: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-229: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2309,7 +2222,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-233: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-234: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-235: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-236: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-237: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-238: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-239: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2319,7 +2231,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-243: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-244: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-245: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-246: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-247: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-248: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-249: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2329,7 +2240,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-253: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-254: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-255: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-256: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-257: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-258: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-259: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2339,7 +2249,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-263: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-264: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-265: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-266: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-267: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-268: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-269: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2349,7 +2258,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-273: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-274: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-275: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-276: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-277: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-278: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-279: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2359,7 +2267,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-283: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-284: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-285: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-286: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-287: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-288: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-289: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2369,7 +2276,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-293: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-294: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-295: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-296: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-297: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-298: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-299: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2379,7 +2285,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-303: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-304: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-305: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-306: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-307: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-308: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-309: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2389,7 +2294,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-313: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-314: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-315: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-316: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-317: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-318: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-319: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2399,7 +2303,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-323: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-324: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-325: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-326: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-327: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-328: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-329: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2409,7 +2312,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-333: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-334: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-335: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-336: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-337: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-338: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-339: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2419,7 +2321,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-343: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-344: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-345: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-346: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-347: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-348: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-349: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2429,7 +2330,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-353: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-354: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-355: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-356: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-357: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-358: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-359: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2439,7 +2339,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-363: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-364: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-365: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-366: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-367: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-368: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-369: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2449,7 +2348,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-373: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-374: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-375: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-376: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-377: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-378: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-379: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2459,7 +2357,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-383: `store` `boundary value` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-384: `api` `concurrency` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-385: `mcp` `restart persistence` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-386: `autostart` `error envelope` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-387: `security` `metric emitted` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-388: `dashboard` `artifact uploaded` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-389: `cli` `coverage branch` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
@@ -2469,7 +2366,6 @@ pnpm i && pnpm build && pnpm test && pnpm test:integration
 - ASSERT-393: `store` `permission denied` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-394: `api` `timeout` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-395: `mcp` `cancellation` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
-- ASSERT-396: `autostart` `large payload` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-397: `security` `unicode` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-398: `dashboard` `schema default` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.
 - ASSERT-399: `cli` `snapshot stable` must use `expect(result.error?.code ?? "OK").toMatch(/^(OK|ERR_[A-Z0-9_]+)$/)` and must clean its sandbox root after completion.

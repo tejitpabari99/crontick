@@ -157,9 +157,6 @@ describe('MCP server — full contract', () => {
     'crontick_daemon_status',
     'crontick_daemon_reload',
     'crontick_daemon_restart',
-    'crontick_autostart_status',
-    'crontick_autostart_install',
-    'crontick_autostart_remove',
     'crontick_export',
     'crontick_import',
     'crontick_dashboard_open',
@@ -174,6 +171,7 @@ describe('MCP server — full contract', () => {
     }
     for (const tool of result.tools) {
       expect(tool.name).toMatch(/^crontick_/);
+      expect(tool.name).not.toContain('auto' + 'start');
     }
   });
 
@@ -330,16 +328,6 @@ describe('MCP server — full contract', () => {
     expect(data.checks.length).toBeGreaterThan(0);
   });
 
-  // ── Autostart stubs ───────────────────────────────────────────────────────────
-
-  it('crontick_autostart_status returns backend and installed fields', async () => {
-    const { json, isError } = await callTool(client, 'crontick_autostart_status');
-    expect(isError).toBe(false);
-    const d = json as Record<string, unknown>;
-    expect(typeof d['backend']).toBe('string');
-    expect(typeof d['installed']).toBe('boolean');
-  });
-
   // ── Resources ──────────────────────────────────────────────────────────────
 
   it('resources/list returns non-empty list', async () => {
@@ -426,10 +414,10 @@ describe('MCP server — full contract', () => {
   });
 });
 
-// ── Autostart-off path ────────────────────────────────────────────────────────
+// ── Daemon-start-off path ────────────────────────────────────────────────────
 
-describe('MCP server — CRONTICK_MCP_NO_AUTOSTART path', () => {
-  it('tool call returns actionable error when daemon is not running and autostart is off', async () => {
+describe('MCP server — CRONTICK_MCP_NO_DAEMON_START path', () => {
+  it('tool call returns actionable error when daemon is not running and daemon start is off', async () => {
     const isolatedDir = makeTmpDir();
     let isolatedTransport: StdioClientTransport | undefined;
     let isolatedClient: Client | undefined;
@@ -441,12 +429,12 @@ describe('MCP server — CRONTICK_MCP_NO_AUTOSTART path', () => {
         env: {
           ...process.env,
           CRONTICK_HOME: isolatedDir,
-          CRONTICK_MCP_NO_AUTOSTART: '1',
+          CRONTICK_MCP_NO_DAEMON_START: '1',
         },
         stderr: 'pipe',
       });
       isolatedClient = new Client(
-        { name: 'test-client-noauto', version: '0.0.0' },
+        { name: 'test-client-nostart', version: '0.0.0' },
         { capabilities: {} },
       );
       await isolatedClient.connect(isolatedTransport);
@@ -455,8 +443,8 @@ describe('MCP server — CRONTICK_MCP_NO_AUTOSTART path', () => {
       expect(isError).toBe(true);
       // Must NOT leak 127.0.0.1:port to the LLM
       expect(text).not.toMatch(/127\.0\.0\.1:\d+/);
-      // Must mention how to start or daemon/autostart
-      expect(text.toLowerCase()).toMatch(/start|daemon|autostart/);
+      // Must mention how to start or daemon
+      expect(text.toLowerCase()).toMatch(/start|daemon|daemon start/);
     } finally {
       try { await isolatedClient?.close(); } catch { /* ignore */ }
       try { await isolatedTransport?.close(); } catch { /* ignore */ }

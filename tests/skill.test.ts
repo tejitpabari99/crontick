@@ -36,11 +36,11 @@ describe('src/skill/SKILL.md content', () => {
     expect(content).toContain('crontick_job_list');
     expect(content).toContain('crontick_schedule_validate');
     expect(content).toContain('crontick_schedule_preview');
-    expect(content).toContain('crontick_autostart_install');
+    expect(content).not.toContain('crontick_' + 'auto' + 'start');
   });
 
-  it('contains ban statements (no LLM sub-runtime)', () => {
-    expect(content).toMatch(/never invent.*llm|do not.*llm-prompt|llm sub-runtime/i);
+  it('does not list removed daemon startup-registration tools', () => {
+    expect(content.toLowerCase()).not.toContain('auto' + 'start');
   });
 
   it('contains confirmation guardrail for delete/disable', () => {

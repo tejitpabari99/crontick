@@ -10,12 +10,10 @@ crontick mcp
 
 Helpful flags:
 
-- `--no-autostart` — do not start the daemon automatically
 - `--daemon-url <url>` — override the daemon base URL
 
 Environment variables:
 
-- `CRONTICK_MCP_NO_AUTOSTART=1`
 - `CRONTICK_DAEMON_URL=http://127.0.0.1:<port>`
 
 ## Tool groups
@@ -50,9 +48,6 @@ Environment variables:
 - `crontick_daemon_status`
 - `crontick_daemon_reload`
 - `crontick_daemon_restart`
-- `crontick_autostart_status`
-- `crontick_autostart_install`
-- `crontick_autostart_remove`
 - `crontick_export`
 - `crontick_import`
 - `crontick_dashboard_open`
@@ -75,6 +70,4 @@ Environment variables:
 
 Tool input is validated with Zod before daemon calls are made. Invalid inputs return structured MCP tool errors instead of crashing the server.
 
-## Autostart behavior
 
-On launch, the MCP server checks whether the daemon is already healthy. If not, it attempts to start the daemon unless `--no-autostart` or `CRONTICK_MCP_NO_AUTOSTART=1` is set.

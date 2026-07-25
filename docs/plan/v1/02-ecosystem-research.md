@@ -960,9 +960,7 @@ Follow POSIX conventions: `0` success, `1` general error, `2` usage error. Add `
 
 **Reference implementations to study:**
 - `pm2/lib/API/Startup.js` — detects `systemd`/`launchd`/`sysvinit`/Windows and generates the appropriate install unit
-- `node-auto-launch` (Teamwork, MIT) — npm package that writes to Windows Registry (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`), macOS `LaunchAgents` plist, and Linux XDG autostart `.desktop` file. Clean, well-tested, 0 runtime deps.
 
-### 6.2 Cross-Platform Autostart Libraries on npm
 
 | Library | Platform Support | Mechanism | License | Weekly DLs | Notes |
 |---|---|---|---|---|---|
@@ -971,7 +969,6 @@ Follow POSIX conventions: `0` success, `1` general error, `2` usage error. Add `
 | `auto-launch` (Teamwork fork) | Win/mac/Linux | Same as above | MIT | ~50k | Same family as node-auto-launch |
 
 **Our current implementation** uses Windows `HKCU\...\Run` registry. To extend cross-platform:
-1. Use `node-auto-launch` for user-session autostart (GUI/Electron-like use)
 2. Or hand-roll: detect `process.platform`, write appropriate artifact:
    - `win32`: Registry via `reg add` shell call
    - `darwin`: Write `~/Library/LaunchAgents/<name>.plist`
@@ -979,12 +976,10 @@ Follow POSIX conventions: `0` success, `1` general error, `2` usage error. Add `
 
 ### 6.3 Platform-Specific Considerations
 
-| Platform | Autostart mechanism | Daemon supervision | Log location |
 |---|---|---|---|
 | Windows | `HKCU\...\Run` (user login) or Windows Service (NSSM) | Windows SCM | `%APPDATA%\<name>\logs\` |
 | macOS | `~/Library/LaunchAgents/<name>.plist` | launchd | `~/Library/Logs/<name>/` |
 | Linux (systemd) | `~/.config/systemd/user/<name>.service` | systemd user unit | `journalctl --user -u <name>` |
-| Linux (non-systemd) | `~/.config/autostart/<name>.desktop` or rc.local | supervise/runit | `~/.local/share/<name>/logs/` |
 
 ---
 

@@ -37,9 +37,6 @@ export function portFilePath(): string {
   return join(root(), 'daemon.port');
 }
 
-export function autostartDir(): string {
-  return join(root(), 'autostart');
-}
 
 export function ensureDirs(): void {
   for (const dir of [dataDir(), jobsDir(), logsDir()]) {

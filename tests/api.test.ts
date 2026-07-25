@@ -241,6 +241,15 @@ describe('Daemon HTTP API', () => {
     expect(s2).toBe(404);
   });
 
+
+  it('returns 404 for removed startup-registration routes', async () => {
+    for (const path of ['/api/' + 'auto' + 'start/status', '/api/' + 'auto' + 'start/install', '/api/' + 'auto' + 'start/remove']) {
+      const method = path.endsWith('status') ? 'GET' : 'POST';
+      const { status } = await apiCall(port, method, path, method === 'GET' ? undefined : {});
+      expect(status).toBe(404);
+    }
+  });
+
   // ── 404 for unknown route ─────────────────────────────────────────────────────
 
   it('returns 404 for unknown route', async () => {

@@ -29,8 +29,6 @@ Commands:
   import <file>           Import jobs from a JSON file
   doctor                  Check system health
   daemon                  Manage the crontick daemon
-  autostart               Manage daemon autostart at login
-  uninstall [options]     Remove autostart entry and optionally delete all
                           crontick data
   dashboard [options]     Open the crontick dashboard in a browser
   mcp [options]           Start the crontick MCP server on stdio (for use with
@@ -251,12 +249,9 @@ Options:
   -h, --help  display help for command
 ```
 
-## autostart
 
 ```text
-Usage: crontick autostart [options] [command]
 
-Manage daemon autostart at login
 
 Options:
   -h, --help         display help for command
@@ -269,10 +264,8 @@ Commands:
   help [command]     display help for command
 ```
 
-## autostart install
 
 ```text
-Usage: crontick autostart install [options]
 
 Register the daemon to start automatically at login
 
@@ -282,10 +275,8 @@ Options:
   -h, --help           display help for command
 ```
 
-## autostart remove
 
 ```text
-Usage: crontick autostart remove [options]
 
 Remove the daemon from automatic startup
 
@@ -295,10 +286,8 @@ Options:
   -h, --help           display help for command
 ```
 
-## autostart status
 
 ```text
-Usage: crontick autostart status [options]
 
 Check whether the daemon is registered for automatic startup
 
@@ -325,7 +314,6 @@ Options:
 ```text
 Usage: crontick uninstall [options]
 
-Remove autostart entry and optionally delete all crontick data
 
 Options:
   --purge     Also delete the data directory (jobs, runs, config)
@@ -342,14 +330,12 @@ Start the crontick MCP server on stdio (for use with Claude Desktop, Copilot,
 Cursor, etc.)
 
 Options:
-  --no-autostart      Do not auto-start the daemon if it is not already running
   --daemon-url <url>  Override the daemon URL (default: resolved from port
                       file)
   -h, --help          display help for command
 
 Transport:    stdio (JSON-RPC 2.0 over stdin/stdout)
 Tool prefix:  crontick_
-Autostart:    Daemon is auto-started unless --no-autostart or CRONTICK_MCP_NO_AUTOSTART=1 is set
 
 Example MCP host config (Claude Desktop):
   {

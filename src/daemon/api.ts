@@ -15,8 +15,6 @@ import type { Runner } from './runner.js';
 import { JobSchema } from '../schemas/job.js';
 import { CrontickError } from '../errors.js';
 import { VERSION } from '../version.js';
-import { createAutostart, NotImplementedInV1Error } from '../autostart/index.js';
-import type { AutostartBackend } from '../autostart/index.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -318,31 +316,6 @@ async function handleRequest(
       return sendJson(res, 200, { imported: results.filter((r) => r.ok).length, results });
     }
 
-    // ── Autostart ─────────────────────────────────────────────────────────────
-
-    if (method === 'GET' && path === '/api/autostart/status') {
-      const backend = (url.searchParams.get('backend') ?? undefined) as AutostartBackend | undefined;
-      const autostart = createAutostart({ backend });
-      const result = await autostart.status();
-      return sendJson(res, 200, result);
-    }
-
-    if (method === 'POST' && path === '/api/autostart/install') {
-      const body = await readBody(req);
-      const backend = (body?.['backend'] as string | undefined) as AutostartBackend | undefined;
-      const autostart = createAutostart({ backend });
-      const result = await autostart.install();
-      return sendJson(res, 200, result);
-    }
-
-    if (method === 'POST' && path === '/api/autostart/remove') {
-      const body = await readBody(req);
-      const backend = (body?.['backend'] as string | undefined) as AutostartBackend | undefined;
-      const autostart = createAutostart({ backend });
-      const result = await autostart.remove();
-      return sendJson(res, 200, result);
-    }
-
     // ── Dashboard ─────────────────────────────────────────────────────────────
     if (method === 'GET' && (path === '/' || path === '/dashboard' || path.startsWith('/dashboard/'))) {
       return serveDashboard(res, path);
@@ -351,9 +324,6 @@ async function handleRequest(
     // ── 404 ───────────────────────────────────────────────────────────────────
     return sendError(res, 404, 'NOT_FOUND', `${method} ${path} not found`);
   } catch (err) {
-    if (err instanceof NotImplementedInV1Error) {
-      return sendError(res, 501, 'NOT_IMPLEMENTED_V1', err.message);
-    }
     if (err instanceof CrontickError) {
       return sendError(res, 400, err.code, err.message, err.details);
     }

@@ -108,9 +108,7 @@ Use Node.js 22.5+; older Node versions may need the daemon re-exec shim or a new
 
 Check `crontick daemon status` and inspect the latest daemon log in the crontick data directory `logs/` folder.
 
-### Autostart is unsupported on my platform
 
-v1 manages autostart only on Windows. On macOS/Linux use `crontick autostart status` to get manual setup instructions.
 
 ### A run keeps failing
 

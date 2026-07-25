@@ -30,7 +30,6 @@
 - `src/daemon/runner.ts` — process execution, overlap, retry, timeout, budgets, log redaction
 - `src/daemon/store.ts` — SQLite-backed runs/logs + JSON job persistence
 - `src/mcp/index.ts` — MCP tool/resource/prompt layer over the local daemon API
-- `src/autostart/*` — platform-specific autostart backends
 
 ## Data flow
 

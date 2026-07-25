@@ -32,10 +32,6 @@ const sections = [
   { title: 'daemon status', cmd: ['daemon', 'status', '--help'] },
   { title: 'daemon reload', cmd: ['daemon', 'reload', '--help'] },
   { title: 'daemon restart', cmd: ['daemon', 'restart', '--help'] },
-  { title: 'autostart', cmd: ['autostart', '--help'] },
-  { title: 'autostart install', cmd: ['autostart', 'install', '--help'] },
-  { title: 'autostart remove', cmd: ['autostart', 'remove', '--help'] },
-  { title: 'autostart status', cmd: ['autostart', 'status', '--help'] },
   { title: 'dashboard', cmd: ['dashboard', '--help'] },
   { title: 'uninstall', cmd: ['uninstall', '--help'] },
   { title: 'mcp', cmd: ['mcp', '--help'] },
@@ -46,7 +42,7 @@ const stripAnsi = (text) => text.replace(/\u001b\[[0-9;]*m/g, '');
 const runHelp = (args) => {
   const result = spawnSync(process.execPath, [cli, ...args], {
     encoding: 'utf-8',
-    env: { ...process.env, CRONTICK_MCP_NO_AUTOSTART: '1' },
+    env: { ...process.env, CRONTICK_MCP_NO_DAEMON_START: '1' },
   });
   const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim();
   if (result.status !== 0 && !output) {

@@ -15,7 +15,7 @@ Use `crontick` tools when the user asks to:
 - Monitor a condition and take action periodically
 - Set up a one-shot delayed task ("in 30 minutes", "at midnight tonight")
 
-**Do NOT use** for: interactive tasks requiring human input, long-running LLM reasoning sessions that need a session ID, or tasks that require browser or GUI automation.
+**Do NOT use** for: interactive tasks requiring human input, tasks that require browser or GUI automation.
 
 ---
 
@@ -130,11 +130,6 @@ After `crontick_job_create` returns:
 | `crontick_stats_job` | Per-job run statistics |
 | `crontick_daemon_status` | Daemon PID, version, uptime |
 | `crontick_daemon_reload` | Reload job definitions from disk |
-| `crontick_daemon_restart` | Restart the daemon (interrupts running jobs) |
-| `crontick_autostart_status` | Check if daemon is registered for autostart |
-| `crontick_autostart_install` | Register daemon for login autostart |
-| `crontick_autostart_remove` | Unregister daemon from login autostart |
-| `crontick_export` | Export all jobs as JSON |
 | `crontick_import` | Import jobs from a JSON array (upsert) |
 | `crontick_dashboard_open` | Get the URL for the local web dashboard |
 | `crontick_doctor` | Health check: Node.js, SQLite, data dir, daemon |
@@ -160,7 +155,6 @@ After `crontick_job_create` returns:
 
 - ❌ Do NOT use `action.kind: "llm-prompt"` — this kind does not exist
 - ❌ Do NOT set `action.provider` — there is no provider field
-- ❌ Do NOT use `action.resumeSessionId` — sessions are not supported
 - ❌ Do NOT call `crontick_daemon_restart` without user confirmation — it interrupts running jobs
 - ❌ Do NOT call `crontick_job_delete` without explicit user confirmation ("yes, delete it")
 

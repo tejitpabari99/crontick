@@ -8,8 +8,6 @@ import { VERSION } from '../version.js';
 import { portFilePath, pidFilePath, dataDir, ensureDirs } from '../paths.js';
 import { JobSchema } from '../schemas/job.js';
 import { CrontickError } from '../errors.js';
-import { createAutostart } from '../autostart/index.js';
-import type { AutostartBackend } from '../autostart/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -430,19 +428,6 @@ program
       checks.push({ name: 'dashboard reachable', ok: false, note: 'daemon not running or no dashboard' });
     }
 
-    // Autostart status
-    try {
-      const asResult = await api('GET', '/api/autostart/status');
-      const as = asResult as { installed?: boolean; backend?: string };
-      checks.push({
-        name: 'autostart',
-        ok: true,
-        note: `backend=${as.backend ?? '?'}, installed=${String(as.installed ?? false)}`,
-      });
-    } catch {
-      checks.push({ name: 'autostart', ok: false, note: 'could not check (daemon not running)' });
-    }
-
     // MCP server binary
     const mcpScript = resolve(__dirname, '../mcp/index.js');
     checks.push({
@@ -456,7 +441,7 @@ program
       const result = spawnSync(process.execPath, [mcpScript, '--help'], {
         timeout: 5000,
         encoding: 'utf-8',
-        env: { ...process.env, CRONTICK_MCP_NO_AUTOSTART: '1' },
+        env: { ...process.env, CRONTICK_MCP_NO_DAEMON_START: '1' },
       });
       // --help exits 0 on commander; if exit code is 0 or it printed help text it's fine
       const helpOk = result.status === 0 || (result.stdout ?? '').includes('stdio');
@@ -586,74 +571,15 @@ daemon
     }
   });
 
-// ── autostart ─────────────────────────────────────────────────────────────────
-
-const autostart = program.command('autostart').description('Manage daemon autostart at login');
-
-autostart
-  .command('install')
-  .description('Register the daemon to start automatically at login')
-  .option('--backend <backend>', 'Backend: win32|darwin|linux|manual (default: auto-detect)')
-  .action(async (opts) => {
-    try {
-      const backend = opts.backend as AutostartBackend | undefined;
-      const as = createAutostart({ backend });
-      const result = await as.install();
-      print(result, !!(program.opts() as { json?: boolean }).json);
-      if (process.platform !== 'win32' && !backend) {
-        const statusResult = await as.status();
-        const details = (statusResult.details as Record<string, unknown> | undefined);
-        const instr = details?.['instructions'] as string | undefined;
-        if (instr) console.log('\nManual setup instructions:\n' + instr);
-      }
-    } catch (err) {
-      handleError(err);
-    }
-  });
-
-autostart
-  .command('remove')
-  .description('Remove the daemon from automatic startup')
-  .option('--backend <backend>', 'Backend: win32|darwin|linux|manual (default: auto-detect)')
-  .action(async (opts) => {
-    try {
-      const backend = opts.backend as AutostartBackend | undefined;
-      const as = createAutostart({ backend });
-      const result = await as.remove();
-      print(result, !!(program.opts() as { json?: boolean }).json);
-    } catch (err) {
-      handleError(err);
-    }
-  });
-
-autostart
-  .command('status')
-  .description('Check whether the daemon is registered for automatic startup')
-  .option('--backend <backend>', 'Backend: win32|darwin|linux|manual (default: auto-detect)')
-  .action(async (opts) => {
-    try {
-      const backend = opts.backend as AutostartBackend | undefined;
-      const as = createAutostart({ backend });
-      const result = await as.status();
-      print(result, !!(program.opts() as { json?: boolean }).json);
-    } catch (err) {
-      handleError(err);
-    }
-  });
-
 // ── uninstall ─────────────────────────────────────────────────────────────────
 
 program
   .command('uninstall')
-  .description('Remove autostart entry and optionally delete all crontick data')
+  .description('Optionally delete all crontick data')
   .option('--purge', 'Also delete the data directory (jobs, runs, config)')
   .option('--yes', 'Skip confirmation prompts')
   .action(async (opts) => {
     try {
-      // Remove autostart
-      const as = createAutostart();
-      await as.remove();
-      console.log('✓ Autostart entry removed.');
 
       if (opts.purge as boolean) {
         const dir = dataDir();
@@ -719,14 +645,14 @@ program
 program
   .command('mcp')
   .description('Start the crontick MCP server on stdio (for use with Claude Desktop, Copilot, Cursor, etc.)')
-  .option('--no-autostart', 'Do not auto-start the daemon if it is not already running')
+  .option('--no-daemon-start', 'Do not start the daemon if it is not already running')
   .option('--daemon-url <url>', 'Override the daemon URL (default: resolved from port file)')
   .addHelpText(
     'after',
     `
 Transport:    stdio (JSON-RPC 2.0 over stdin/stdout)
 Tool prefix:  crontick_
-Autostart:    Daemon is auto-started unless --no-autostart or CRONTICK_MCP_NO_AUTOSTART=1 is set
+Daemon start: Daemon is started unless --no-daemon-start or CRONTICK_MCP_NO_DAEMON_START=1 is set
 
 Example MCP host config (Claude Desktop):
   {
@@ -742,7 +668,7 @@ Example MCP host config (Claude Desktop):
       process.exit(1);
     }
     const env: NodeJS.ProcessEnv = { ...process.env };
-    if (opts.noAutostart) env['CRONTICK_MCP_NO_AUTOSTART'] = '1';
+    if (opts.noDaemonStart) env['CRONTICK_MCP_NO_DAEMON_START'] = '1';
     if (opts.daemonUrl) env['CRONTICK_DAEMON_URL'] = opts.daemonUrl as string;
     const result = spawnSync(process.execPath, [mcpScript], {
       stdio: 'inherit',
