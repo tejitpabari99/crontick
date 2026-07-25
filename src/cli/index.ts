@@ -1,15 +1,13 @@
 import { Command } from 'commander';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { VERSION } from '../version.js';
-import { dataDir } from '../paths.js';
 import { CrontickError } from '../errors.js';
-import { createClient } from '../client.js';
+import { createClient, type CrontickClient } from '../client.js';
 import { buildJobPatchFromUpdateOptions, type JobCreateCliOptions, type JobPatchCliOptions } from '../job-input.js';
-import { readLiveDaemonPid } from '../daemon/lifecycle.js';
 import type { Schedule } from '../schemas/job.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -22,8 +20,8 @@ function mcpScript(): string {
   return resolve(__dirname, '../mcp/index.js');
 }
 
-function client(allowStart = true) {
-  return createClient({ daemonScript: daemonScript(), allowStart, mcpScript: mcpScript(), cwd: process.cwd() });
+function client(startDaemon = true) {
+  return createClient({ daemonScript: daemonScript(), startDaemon, mcpScript: mcpScript(), cwd: process.cwd() });
 }
 
 function useJson(): boolean {
@@ -55,6 +53,11 @@ function print(data: unknown, json = useJson()): void {
     return;
   }
   console.log(String(data ?? ''));
+}
+
+function printNotices(c: CrontickClient, notices: string[] = []): void {
+  const all = [...notices, ...c.drainNotices()];
+  for (const notice of all) console.error(`Notice: ${notice}`);
 }
 
 function display(value: unknown): string {
@@ -179,8 +182,10 @@ program
 
 commonJobOptions(program.command('new <id> [engineArgs...]').description('Create a new job'))
   .action(async (id: string, engineArgs: string[], opts) => {
+    const c = client();
     try {
-      const result = await client().createJobFromCliOptions(collectJobOptions(id, engineArgs, opts));
+      const result = await c.createJobFromCliOptions(collectJobOptions(id, engineArgs, opts));
+      printNotices(c);
       print(result);
     } catch (err) {
       handleError(err);
@@ -191,9 +196,15 @@ commonJobOptions(program.command('update <id> [engineArgs...]').description('Upd
   .option('--enable', 'Enable the job')
   .option('--disable', 'Disable the job')
   .action(async (id: string, engineArgs: string[], opts) => {
+    const c = client();
+    const notices: string[] = [];
     try {
-      const patch = buildJobPatchFromUpdateOptions(collectPatchOptions(engineArgs, opts), { cwd: process.cwd() });
-      const result = await client().updateJob(id, patch);
+      const patch = buildJobPatchFromUpdateOptions(collectPatchOptions(engineArgs, opts), {
+        cwd: process.cwd(),
+        onNotice: (message) => notices.push(message),
+      });
+      const result = await c.updateJob(id, patch);
+      printNotices(c, notices);
       print(result);
     } catch (err) {
       handleError(err);
@@ -349,31 +360,27 @@ program.command('uninstall')
   .option('--purge', 'Also delete the data directory (jobs, runs, config)')
   .option('--yes', 'Skip confirmation prompts')
   .action(async (opts) => {
+    const c = client(false);
     try {
       if (opts.purge as boolean) {
-        const dir = dataDir();
-        const livePid = readLiveDaemonPid();
-        if (livePid !== undefined) {
-          throw new CrontickError('DAEMON_RUNNING', `Daemon appears to be running (pid ${livePid}). Run: crontick daemon stop before uninstall --purge`);
-        }
         let confirmed = opts.yes as boolean;
         if (!confirmed) {
           confirmed = await new Promise<boolean>((resolveAnswer) => {
             const rl = createInterface({ input: process.stdin, output: process.stdout });
-            rl.question(`Delete all crontick data at ${dir}? [y/N] `, (answer) => {
+            rl.question('Delete all crontick data? [y/N] ', (answer) => {
               rl.close();
               resolveAnswer(answer.trim().toLowerCase() === 'y');
             });
           });
         }
         if (confirmed) {
-          rmSync(dir, { recursive: true, force: true });
-          console.log(`✓ Data directory deleted: ${dir}`);
+          const result = await c.uninstall({ purge: true });
+          console.log(`✓ ${result.message}`);
         } else {
           console.log('Skipped data directory deletion.');
         }
       } else {
-        console.log('Data directory preserved. Run `crontick uninstall --purge` to also delete it.');
+        console.log((await c.uninstall()).message);
       }
     } catch (err) { handleError(err); }
   });
@@ -401,12 +408,12 @@ program.command('dashboard')
 
 program.command('mcp')
   .description('Start the crontick MCP server on stdio (for use with Claude Desktop, Copilot, Cursor, etc.)')
-  .option('--no-daemon-start', 'Do not start the daemon if it is not already running')
+  .option('--no-start-daemon', 'Set startDaemon=false for MCP daemon-backed tools')
   .option('--daemon-url <url>', 'Override the daemon URL (default: resolved from port file)')
   .addHelpText('after', `
 Transport:    stdio (JSON-RPC 2.0 over stdin/stdout)
 Tool prefix:  crontick_
-Daemon start: Daemon is started unless --no-daemon-start or CRONTICK_MCP_NO_DAEMON_START=1 is set
+Daemon start: startDaemon defaults to true; use --no-start-daemon or CRONTICK_MCP_START_DAEMON=0 to disable demand-start
 
 Example MCP host config (Claude Desktop):
   {
@@ -421,7 +428,7 @@ Example MCP host config (Claude Desktop):
       process.exit(1);
     }
     const env: NodeJS.ProcessEnv = { ...process.env };
-    if (opts.noDaemonStart) env['CRONTICK_MCP_NO_DAEMON_START'] = '1';
+    if (opts.startDaemon === false) env['CRONTICK_MCP_START_DAEMON'] = '0';
     if (opts.daemonUrl) env['CRONTICK_DAEMON_URL'] = opts.daemonUrl as string;
     const result = spawnSync(process.execPath, [script], { stdio: 'inherit', env });
     process.exit(result.status ?? 0);

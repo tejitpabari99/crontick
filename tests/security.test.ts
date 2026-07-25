@@ -115,7 +115,7 @@ describe('Security', () => {
       catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+      budgets: { maxRunsPerDay: null },
     };
 
     const run = store2.insertRun(job.id);
@@ -143,7 +143,7 @@ describe('Security', () => {
       catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+      budgets: { maxRunsPerDay: null },
     };
 
     const run = logStore.insertRun(job.id);
@@ -172,7 +172,7 @@ describe('Security', () => {
       catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+      budgets: { maxRunsPerDay: null },
     };
 
     const run = logStore.insertRun(job.id);
@@ -196,7 +196,7 @@ describe('Security', () => {
       catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+      budgets: { maxRunsPerDay: null },
     };
     writeFileSync(secretJobPath, JSON.stringify(secretJob), 'utf-8');
 

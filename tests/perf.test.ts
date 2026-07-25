@@ -19,7 +19,7 @@ function makeJob(id: string): Job {
     catchup: 'skip',
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+    budgets: { maxRunsPerDay: null },
   };
 }
 

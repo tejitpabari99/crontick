@@ -23,7 +23,7 @@ export type {
   NormalizeJobInputOptions,
   PromptActionInput,
 } from './job-input.js';
-export { jobJsonSchema } from './schema-json.js';
+export { jobJsonSchema, jobJsonSchemaText } from './schema-json.js';
 export {
   JobSchema,
   PromptActionSchema,
@@ -33,3 +33,4 @@ export {
 export type { Job, JobInput, Schedule, Action, PromptAction, PromptEngine } from './schemas/job.js';
 export { SURFACE_CAPABILITIES } from './surface.js';
 export type { SurfaceCapability } from './surface.js';
+export type { UninstallResult, UninstallOptions } from './uninstall.js';

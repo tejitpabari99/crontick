@@ -190,7 +190,7 @@ Common creation flags:
 - Schedule: `--cron <expr>`, `--every <sec>`, or `--at <iso>`; use `--tz <tz>` for cron schedules.
 - Action source: exactly one of `--prompt`, `--prompt-file`, `--script`, or `--exec`.
 - Prompt engine: `--engine copilot|agency`; this skill uses `--engine agency` by default.
-- Session: `--session-id <id>` or `--reuse-session`; mutually exclusive.
+- Session: `--session-id <id>` wins; `--reuse-session` without a session id captures one after the first successful run.
 - Prompt file: `--prompt-file <path.txt>` must point to a UTF-8 `.txt` file and is not persisted as a path.
 - Engine passthrough: arguments after `--` are stored exactly as `action.args`.
 - Shared fields: `--env-file <path>`, `--timeout <sec>`, `--overlap <skip|queue|cancel-previous>`, `--retry <max>`, `--desc <description>`.
@@ -201,7 +201,7 @@ Validation rules:
 - Exactly one schedule source: `--cron`, `--every`, or `--at`.
 - Exactly one action source: `--script`, `--exec`, `--prompt`, or `--prompt-file`, unless `--file` is used.
 - Prompt-only flags and raw engine args are valid only in prompt mode.
-- `sessionId` XOR `reuseSession`.
+- If `sessionId` and `reuseSession` are both supplied, crontick ignores `reuseSession` and reports a notice.
 - Script and exec jobs remain supported unchanged.
 
 
@@ -217,7 +217,7 @@ The runner does not wrap prompt jobs in a shell. It builds one of these commands
 Mapping details:
 
 - `--prompt <text>` becomes `<prompt>` after `-p`.
-- `--prompt-file <path.txt>` is read by crontick; the engine still receives prompt text via `-p`.
+- `--prompt-file <path.txt>` is read by crontick; the engine still receives prompt text via `--prompt=<text>`.
 - Raw args after `--` become `<action.args...>` and are placed after the prompt.
 - Package-owned `--session-id <id>` is appended after raw args for both engines.
 - `--reuse-session` starts the first run without a session flag, captures the successful run's session id, persists it, and later runs use `--session-id <captured-id>`.

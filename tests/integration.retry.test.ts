@@ -41,7 +41,7 @@ describe('Integration: retry semantics', () => {
       catchup: 'skip',
       overlap: 'skip',
       retry: { max: maxRetries, backoffSec },
-      budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+      budgets: { maxRunsPerDay: null },
     };
 
     const run = store.insertRun(job.id);
@@ -63,7 +63,7 @@ describe('Integration: retry semantics', () => {
       catchup: 'skip',
       overlap: 'skip',
       retry: { max: 3, backoffSec: 10 },
-      budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+      budgets: { maxRunsPerDay: null },
     };
     const run = store.insertRun(job.id);
     const startMs = Date.now();

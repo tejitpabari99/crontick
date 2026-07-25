@@ -18,19 +18,18 @@ function daemonScript(): string {
   return pathResolve(__dirname, '../daemon/index.js');
 }
 
-function allowDaemonStart(): boolean {
-  return process.env['CRONTICK_MCP_NO_DAEMON_START'] !== '1';
+function shouldStartDaemon(): boolean {
+  return process.env['CRONTICK_MCP_START_DAEMON'] !== '0';
 }
 
 function mcpScript(): string {
   return pathResolve(__dirname, '../mcp/index.js');
 }
 
-function mcpClient(allowStart = allowDaemonStart()) {
+function mcpClient(startDaemon = shouldStartDaemon()) {
   return createClient({
     daemonScript: daemonScript(),
-    allowStart,
-    startDaemon: allowStart,
+    startDaemon,
     mcpScript: mcpScript(),
     cwd: process.cwd(),
   });
@@ -81,6 +80,15 @@ async function toolWrap(fn: () => Promise<unknown>): Promise<ToolResult> {
   }
 }
 
+async function toolWrapClient(fn: (client: ReturnType<typeof mcpClient>) => Promise<unknown>): Promise<ToolResult> {
+  const client = mcpClient();
+  return toolWrap(async () => {
+    const result = await fn(client);
+    const notices = client.drainNotices();
+    return notices.length > 0 ? { result, notices } : result;
+  });
+}
+
 // ── MCP server setup ──────────────────────────────────────────────────────────
 
 export function createMcpServer(): McpServer {
@@ -100,7 +108,7 @@ export function createMcpServer(): McpServer {
 ...JobCreateInputSchema.shape,
       },
     },
-    async (args) => toolWrap(() => mcpClient().createJob(args)),
+    async (args) => toolWrapClient((client) => client.createJob(args)),
   );
 
   server.registerTool(
@@ -133,7 +141,7 @@ id: z.string(),
     },
     async (args) => {
       const { id, ...patch } = args;
-return toolWrap(() => mcpClient().updateJob(id, patch));
+return toolWrapClient((client) => client.updateJob(id, patch));
     },
   );
 
@@ -330,7 +338,7 @@ return toolWrap(() => mcpClient().updateJob(id, patch));
         jobs: z.array(z.unknown()),
       },
     },
-    async (args) => toolWrap(() => mcpClient().importJobs(args.jobs)),
+    async (args) => toolWrapClient((client) => client.importJobs(args.jobs)),
   );
 
   server.registerTool(

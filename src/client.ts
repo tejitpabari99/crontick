@@ -18,8 +18,9 @@ import {
 } from './job-input.js';
 import { runDoctorChecks, type DoctorOptions, type DoctorResult } from './doctor.js';
 import { jobJsonSchema } from './schema-json.js';
+import { uninstall, type UninstallResult } from './uninstall.js';
 
-export interface CrontickClientOptions extends EnsureDaemonOptions {
+export interface CrontickClientOptions extends Omit<EnsureDaemonOptions, 'startDaemon'> {
   requestTimeoutMs?: number;
   cwd?: string;
   startDaemon?: boolean;
@@ -59,6 +60,7 @@ export interface JobStats {
 export class CrontickClient {
   private readonly options: CrontickClientOptions;
   private cachedBaseUrl?: string;
+  private notices: string[] = [];
 
   constructor(options: CrontickClientOptions = {}) {
     this.options = options;
@@ -67,7 +69,7 @@ export class CrontickClient {
   async ensure(): Promise<DaemonInfo> {
     const info = await ensureDaemon({
       ...this.options,
-      allowStart: this.shouldStartDaemon(),
+      startDaemon: this.shouldStartDaemon(),
     });
     this.cachedBaseUrl = info.baseUrl;
     return info;
@@ -83,7 +85,7 @@ export class CrontickClient {
   }
 
   async createJobFromCliOptions(input: JobCreateCliOptions): Promise<Job> {
-    return this.createJob(buildJobFromCreateOptions(input, { cwd: this.options.cwd ?? process.cwd() }));
+    return this.createJob(buildJobFromCreateOptions(input, this.normalizeOptions({ cwd: this.options.cwd ?? process.cwd() })));
   }
 
   async listJobs(): Promise<Job[]> {
@@ -169,7 +171,7 @@ export class CrontickClient {
   }
 
   async daemonStart(options: { foreground?: boolean } = {}): Promise<DaemonStartResult> {
-    const result = await startDaemon({ ...this.options, allowStart: true, foreground: options.foreground });
+    const result = await startDaemon({ ...this.options, startDaemon: true, foreground: options.foreground });
     if (result.baseUrl) this.cachedBaseUrl = result.baseUrl;
     return result;
   }
@@ -180,7 +182,7 @@ export class CrontickClient {
   }
 
   async daemonRestart(): Promise<DaemonRestartResult> {
-    const result = await restartDaemon({ ...this.options, allowStart: true });
+    const result = await restartDaemon({ ...this.options, startDaemon: true });
     this.cachedBaseUrl = result.baseUrl;
     return result;
   }
@@ -212,19 +214,40 @@ export class CrontickClient {
     return jobJsonSchema();
   }
 
+  async uninstall(options: { purge?: boolean } = {}): Promise<UninstallResult> {
+    return uninstall({ purge: options.purge, env: this.options.env });
+  }
+
+  drainNotices(): string[] {
+    const drained = this.notices;
+    this.notices = [];
+    return drained;
+  }
+
   private async request<T = unknown>(
     method: string,
     path: string,
     body?: unknown,
     options: { ensure?: boolean } = {},
   ): Promise<T> {
-    const baseUrl = await this.baseUrl({ ensure: options.ensure ?? true });
-    const res = await fetch(`${baseUrl}${path}`, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(this.options.requestTimeoutMs ?? 30_000),
-    });
+    const ensure = options.ensure ?? true;
+    const baseUrl = await this.baseUrl({ ensure });
+    let res: Response;
+    try {
+      res = await this.fetchRequest(baseUrl, method, path, body);
+    } catch (err) {
+      if (!ensure || !this.shouldStartDaemon() || this.options.daemonUrl) {
+        throw this.daemonRequestError(method, path, err);
+      }
+      this.cachedBaseUrl = undefined;
+      const restarted = await this.ensure();
+      await boundedBackoff();
+      try {
+        res = await this.fetchRequest(restarted.baseUrl, method, path, body);
+      } catch (retryErr) {
+        throw this.daemonRequestError(method, path, retryErr);
+      }
+    }
     const text = await res.text();
     let data: unknown;
     try {
@@ -257,14 +280,51 @@ export class CrontickClient {
   }
 
   private normalizeOptions(options: NormalizeJobInputOptions): NormalizeJobInputOptions {
-    return { cwd: this.options.cwd, ...options };
+    return {
+      cwd: this.options.cwd,
+      ...options,
+      onNotice: (message) => {
+        this.notices.push(message);
+        options.onNotice?.(message);
+      },
+    };
   }
 
   private shouldStartDaemon(): boolean {
-    return this.options.startDaemon ?? this.options.allowStart ?? true;
+    return this.options.startDaemon ?? true;
+  }
+
+  private fetchRequest(
+    baseUrl: string,
+    method: string,
+    path: string,
+    body: unknown,
+  ): Promise<Response> {
+    return fetch(`${baseUrl}${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(this.options.requestTimeoutMs ?? 30_000),
+    });
+  }
+
+  private daemonRequestError(method: string, path: string, err: unknown): CrontickError {
+    return new CrontickError(
+      'DAEMON_REQUEST_FAILED',
+      `Failed to reach the crontick daemon while attempting ${method} ${path}: ${errorMessage(err)}. crontick attempted a demand-start/reconnect when allowed. Run "crontick daemon start" and inspect the daemon ensure log under the crontick data directory logs folder if this continues.`,
+      { method, path },
+    );
   }
 }
 
 export function createClient(options?: CrontickClientOptions): CrontickClient {
   return new CrontickClient(options);
+}
+
+async function boundedBackoff(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 100));
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

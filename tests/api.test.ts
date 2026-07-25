@@ -128,7 +128,7 @@ describe('Daemon HTTP API', () => {
     });
   });
 
-  it('POST /api/jobs rejects caller-only promptFile and invalid session mix', async () => {
+  it('POST /api/jobs rejects caller-only promptFile and normalizes explicit session precedence', async () => {
     const promptFile = await apiCall(port, 'POST', '/api/jobs', {
       id: 'api-prompt-file-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
@@ -141,7 +141,12 @@ describe('Daemon HTTP API', () => {
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'prompt', prompt: 'x', sessionId: 'sess-12345678', reuseSession: true },
     });
-    expect(sessionMix.status).toBe(400);
+    expect(sessionMix.status).toBe(201);
+    expect((sessionMix.data as { action: unknown }).action).toMatchObject({
+      kind: 'prompt',
+      sessionId: 'sess-12345678',
+      reuseSession: false,
+    });
   });
 
   it('POST /api/jobs rejects reserved prompt passthrough flags', async () => {

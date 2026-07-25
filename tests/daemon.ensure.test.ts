@@ -175,7 +175,7 @@ describe('ensureDaemon', () => {
     writeFileSync(join(home, 'daemon.port'), String(port), 'utf-8');
 
     await expectRejectCode(
-      ensureDaemon({ allowStart: false, daemonScript: join(home, 'missing.mjs') }),
+      ensureDaemon({ startDaemon: false, daemonScript: join(home, 'missing.mjs') }),
       'DAEMON_NOT_RUNNING',
     );
   });
@@ -267,6 +267,7 @@ describe('ensureDaemon', () => {
     );
 
     expect(err.message).toContain('Daemon script not found');
+    expect(err.message).toContain('Attempted to start the daemon');
     expect(err.message).toContain('npm run build');
   });
 
@@ -274,11 +275,16 @@ describe('ensureDaemon', () => {
     const home = makeHome();
     const script = writeFakeDaemon(home, 'bad-daemon.mjs', "console.error('boom'); process.exit(7);");
 
-    await expectRejectCode(
+    const err = await expectRejectCode(
       ensureDaemon({ daemonScript: script, startupTimeoutMs: 2_000 }),
       'DAEMON_START_FAILED',
     );
 
+    expect(err.message).toContain('Daemon exited before becoming healthy');
+    expect(err.message).toContain('code 7');
+    expect(err.message).toContain(join(home, 'logs', 'daemon.ensure.log'));
+    expect(err.message).toContain('crontick daemon start');
+    expect(err.message).toContain('boom');
     expect(readFileSync(join(home, 'logs', 'daemon.ensure.log'), 'utf-8')).toContain('boom');
   });
 
@@ -328,11 +334,11 @@ describe('ensureDaemon', () => {
     expect(info.started).toBe(true);
   }, 10_000);
 
-  it('does not start when allowStart is false', async () => {
+  it('does not start when startDaemon is false', async () => {
     const home = makeHome();
 
     await expectRejectCode(
-      ensureDaemon({ allowStart: false, daemonScript: join(home, 'missing.mjs') }),
+      ensureDaemon({ startDaemon: false, daemonScript: join(home, 'missing.mjs') }),
       'DAEMON_NOT_RUNNING',
     );
 

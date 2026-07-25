@@ -51,6 +51,7 @@ export interface NormalizeJobInputOptions {
   cwd?: string;
   fileBaseDir?: string;
   maxPromptFileBytes?: number;
+  onNotice?: (message: string) => void;
 }
 
 export interface JobCreateCliOptions {
@@ -189,10 +190,19 @@ function normalizeActionInput(action: ActionInput, options: NormalizeJobInputOpt
 
   const { promptFile: _promptFile, ...rest } = action;
   void _promptFile;
-  const normalized = {
+  let normalized = {
     ...rest,
     prompt: prompt ?? readPromptFile(promptFile!, options),
   };
+  if (typeof normalized.sessionId === 'string' && normalized.reuseSession === true) {
+    options.onNotice?.(
+      'reuseSession was ignored because an explicit sessionId was provided; crontick will reuse the explicit session id.',
+    );
+    normalized = {
+      ...normalized,
+      reuseSession: false,
+    };
+  }
   validatePromptActionRuntimeArgs(normalized);
   return normalized;
 }
@@ -236,7 +246,10 @@ function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[]): ActionI
   ).length;
   if (actionSourceCount === 0) {
     if (rawArgs.length > 0 || input.engine !== undefined || input.sessionId !== undefined || input.reuseSession) {
-      throw new CrontickError('VALIDATION_ERROR', 'Prompt engine/session flags are valid only with prompt mode');
+      throw new CrontickError(
+        'VALIDATION_ERROR',
+        'Prompt engine/session flags are valid only with prompt mode. Use --prompt or --prompt-file, or remove --engine/--session-id/--reuse-session.',
+      );
     }
     return undefined;
   }
@@ -249,10 +262,16 @@ function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[]): ActionI
 
   const promptMode = input.prompt !== undefined || input.promptFile !== undefined;
   if (!promptMode && rawArgs.length > 0) {
-    throw new CrontickError('VALIDATION_ERROR', 'Raw engine args after -- are valid only with prompt mode');
+    throw new CrontickError(
+      'VALIDATION_ERROR',
+      'Raw engine args after -- are valid only with prompt mode. Use --prompt or --prompt-file, or remove the raw engine args.',
+    );
   }
   if (!promptMode && (input.engine !== undefined || input.sessionId !== undefined || input.reuseSession)) {
-    throw new CrontickError('VALIDATION_ERROR', 'Prompt engine/session flags are valid only with prompt mode');
+    throw new CrontickError(
+      'VALIDATION_ERROR',
+      'Prompt engine/session flags are valid only with prompt mode. Use --prompt or --prompt-file, or remove --engine/--session-id/--reuse-session.',
+    );
   }
 
   if (input.script !== undefined) {

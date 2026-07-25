@@ -16,7 +16,7 @@ import { dataDir, ensureDirs, logsDir, pidFilePath, portFilePath } from '../path
 export interface EnsureDaemonOptions {
   daemonUrl?: string;
   daemonScript?: string;
-  allowStart?: boolean;
+  startDaemon?: boolean;
   startupTimeoutMs?: number;
   healthTimeoutMs?: number;
   lockTimeoutMs?: number;
@@ -55,23 +55,28 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<D
   const startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
   const healthTimeoutMs = options.healthTimeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS;
   const lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
-  const allowStart = options.allowStart ?? true;
+  const shouldStartDaemon = options.startDaemon ?? true;
 
   const explicitUrl = options.daemonUrl ?? env['CRONTICK_DAEMON_URL'];
   if (explicitUrl) {
     const baseUrl = normalizeBaseUrl(explicitUrl);
     const healthy = await probeHealth(baseUrl, healthTimeoutMs);
     if (healthy.ok) return { ...healthy.info, baseUrl, started: false };
-    throw new CrontickError('DAEMON_NOT_RUNNING', `Daemon is not reachable at ${baseUrl}`);
+    throw new CrontickError(
+      'DAEMON_NOT_RUNNING',
+      `Daemon is not reachable at ${baseUrl}. Attempted a health check against CRONTICK_DAEMON_URL/daemonUrl and did not receive a valid crontick health response. Check that the URL is correct, or run: crontick daemon status`,
+      { baseUrl, action: 'crontick daemon status' },
+    );
   }
 
   const existing = await probePortFile(env, healthTimeoutMs);
   if (existing) return { ...existing, started: false };
 
-  if (!allowStart) {
+  if (!shouldStartDaemon) {
     throw new CrontickError(
       'DAEMON_NOT_RUNNING',
-      'Daemon is not running. Start it with: crontick daemon start',
+      `Daemon is not running. Attempted to resolve ${portFilePath(env)} but no healthy daemon was found, and startDaemon is false. Start it with: crontick daemon start`,
+      { portFile: portFilePath(env), action: 'crontick daemon start' },
     );
   }
 
@@ -107,7 +112,8 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<D
 
   throw new CrontickError(
     'DAEMON_START_LOCK_TIMEOUT',
-    'Timed out waiting for another process to start the daemon',
+    `Timed out waiting for another process to start the daemon. Attempted to acquire ${lockPath} for ${startupTimeoutMs}ms. Remove the stale lock if no crontick start is running, then retry: crontick daemon start`,
+    { lockPath, action: 'crontick daemon start' },
   );
 }
 
@@ -121,7 +127,8 @@ async function startDaemonAndWait(args: {
   if (!existsSync(daemonScript)) {
     throw new CrontickError(
       'NOT_BUILT',
-      `Daemon script not found: ${daemonScript}. Run: npm run build`,
+      `Daemon script not found: ${daemonScript}. Attempted to start the daemon with Node at ${process.execPath}. Run: npm run build`,
+      { daemonScript, action: 'npm run build' },
     );
   }
 
@@ -147,7 +154,11 @@ async function startDaemonAndWait(args: {
   } catch (err) {
     closeLogFd(stdoutFd);
     closeLogFd(stderrFd);
-    throw new CrontickError('DAEMON_START_FAILED', `Failed to start daemon: ${String(err)}`);
+    throw new CrontickError(
+      'DAEMON_START_FAILED',
+      `Failed to start daemon with ${process.execPath} ${daemonScript}: ${errorMessage(err)}. Inspect ${ensureLogPath} and retry: crontick daemon start`,
+      { daemonScript, logPath: ensureLogPath, action: 'crontick daemon start' },
+    );
   }
   closeLogFd(stdoutFd);
   closeLogFd(stderrFd);
@@ -170,21 +181,27 @@ async function startDaemonAndWait(args: {
         const stderr = readEnsureLogTail(ensureLogPath, logStartOffset);
         throw new CrontickError(
           'DAEMON_START_FAILED',
-          `Failed to start daemon: ${childError.message}${stderrHint(stderr)}`,
+          `Failed to start daemon with ${process.execPath} ${daemonScript}: ${childError.message}${stderrHint(stderr, ensureLogPath)}. Retry with: crontick daemon start`,
+          { daemonScript, logPath: ensureLogPath, action: 'crontick daemon start' },
         );
       }
       if (childExit) {
         const stderr = readEnsureLogTail(ensureLogPath, logStartOffset);
         throw new CrontickError(
           'DAEMON_START_FAILED',
-          `Daemon exited before becoming healthy (code ${String(childExit.code)}, signal ${String(childExit.signal)})${stderrHint(stderr)}`,
+          `Daemon exited before becoming healthy after ${process.execPath} ${daemonScript} (code ${String(childExit.code)}, signal ${String(childExit.signal)})${stderrHint(stderr, ensureLogPath)}. Inspect ${ensureLogPath}, then run: crontick daemon start`,
+          { daemonScript, logPath: ensureLogPath, exitCode: childExit.code, signal: childExit.signal, action: 'crontick daemon start' },
         );
       }
       await sleep(POLL_MS);
     }
 
     const stderr = readEnsureLogTail(ensureLogPath, logStartOffset);
-    throw new CrontickError('DAEMON_TIMEOUT', `Timed out waiting for daemon health${stderrHint(stderr)}`);
+    throw new CrontickError(
+      'DAEMON_TIMEOUT',
+      `Timed out after ${startupTimeoutMs}ms waiting for daemon health after starting ${daemonScript}${stderrHint(stderr, ensureLogPath)}. Inspect ${ensureLogPath}, check permissions under ${dataDir(env)}, then retry: crontick daemon start`,
+      { daemonScript, logPath: ensureLogPath, action: 'crontick daemon start' },
+    );
   } catch (err) {
     await terminateStartedProcess(child, () => childExit !== undefined);
     cleanupStartedFiles({
@@ -413,10 +430,14 @@ function readEnsureLogTail(path: string, startOffset: number): string {
   }
 }
 
-function stderrHint(stderr: string): string {
-  return stderr ? `\nDaemon stderr: ${stderr.slice(0, 500)}` : '';
+function stderrHint(stderr: string, logPath: string): string {
+  return stderr ? `\nDaemon stderr excerpt from ${logPath}: ${stderr.slice(0, 500)}` : `\nDaemon log path: ${logPath}`;
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

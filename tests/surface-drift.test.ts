@@ -56,7 +56,7 @@ describe('surface capability drift', () => {
       transport = new StdioClientTransport({
         command: process.execPath,
         args: [MCP],
-        env: { ...process.env, CRONTICK_HOME: home, CRONTICK_MCP_NO_DAEMON_START: '1' },
+        env: { ...process.env, CRONTICK_HOME: home, CRONTICK_MCP_START_DAEMON: '0' },
         stderr: 'pipe',
       });
       client = new Client({ name: 'surface-drift-test', version: '0.0.0' }, { capabilities: {} });

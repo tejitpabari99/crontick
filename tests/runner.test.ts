@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { platform, tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
@@ -31,7 +31,7 @@ function execJob(id: string, command: string, args: string[], opts?: Partial<Job
     catchup: 'skip',
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+    budgets: { maxRunsPerDay: null },
     ...opts,
   };
 }
@@ -52,7 +52,7 @@ function promptJob(id: string, action: Partial<Extract<Job['action'], { kind: 'p
     catchup: 'skip',
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+    budgets: { maxRunsPerDay: null },
   };
 }
 
@@ -172,26 +172,26 @@ describe('Runner', () => {
   // ── script kind ─────────────────────────────────────────────────────────────
 
   it('script: executes inline script body', async () => {
+    const isWindows = platform() === 'win32';
     const job: Job = {
       id: 'script-job',
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },
       action: {
         kind: 'script',
-        // Use node shebang for cross-platform
-        script: `#!/usr/bin/env node\nprocess.stdout.write('from-script\\n');\n`,
-        shell: 'auto',
+        script: isWindows ? '@echo from-script\r\n' : 'printf "from-script\\n"\n',
+        shell: isWindows ? 'cmd' : 'bash',
       },
       catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+      budgets: { maxRunsPerDay: null },
     };
     const run = store.insertRun(job.id);
     await runner.run(job, run.id, store);
-    // Either success or failed depending on pwsh availability, but no crash
     const updated = store.getRun(run.id)!;
-    expect(['success', 'failed']).toContain(updated.status);
+    expect(updated.status).toBe('success');
+    expect(store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('')).toContain('from-script');
   });
 
   // ── Timeout ──────────────────────────────────────────────────────────────────
@@ -278,7 +278,7 @@ describe('Runner', () => {
       'budget-job',
       node,
       ['-e', 'process.exit(0)'],
-      { budgets: { maxRunsPerDay: 1, maxTokensPerRun: null } },
+      { budgets: { maxRunsPerDay: 1 } },
     );
 
     const run1 = store.insertRun(job.id);
@@ -451,6 +451,27 @@ describe('Runner', () => {
     expect(fake.calls).toHaveLength(2);
     expect(fake.calls[0].args).toEqual(['--prompt=hello', '--silent', '--session-id=sess-12345678']);
     expect(fake.calls[1].args).toEqual(['--prompt=hello', '--silent', '--session-id=sess-12345678']);
+  });
+
+  it('prompt: explicit session id wins over reuseSession and logs a notice', async () => {
+    const fake = fakeSpawn([{ stdout: 'ok\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-session-precedence', {
+      sessionId: 'sess-12345678',
+      reuseSession: true,
+    });
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(fake.calls[0].args).toEqual(['--prompt=hello', '--session-id=sess-12345678']);
+    expect(store.getJob(job.id)?.action).toMatchObject({
+      kind: 'prompt',
+      sessionId: 'sess-12345678',
+      reuseSession: false,
+    });
+    expect(store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('')).not.toContain('captured session id');
   });
 
   it('prompt: captures and persists a reusable session id after first successful run', async () => {

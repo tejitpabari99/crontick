@@ -6,7 +6,9 @@ import { randomUUID } from 'node:crypto';
 import { createClient } from '../src/client.js';
 import { CrontickError } from '../src/errors.js';
 import type { JobInput } from '../src/schemas/job.js';
+import { jobJsonSchemaText } from '../src/schema-json.js';
 
+const DAEMON_SCRIPT = resolve('dist', 'daemon', 'index.js');
 const scratchRoot = resolve('.crontick', 'client-tests');
 let previousHome: string | undefined;
 let previousUrl: string | undefined;
@@ -210,7 +212,7 @@ describe('CrontickClient', () => {
   it('validates create/import jobs before posting', async () => {
     makeHome();
     const server = await startHealthOnlyServer();
-    const client = createClient({ daemonUrl: server.baseUrl, allowStart: false });
+    const client = createClient({ daemonUrl: server.baseUrl, startDaemon: false });
 
     await expect(client.createJob({ ...testJob, id: 'not valid' })).rejects.toBeInstanceOf(Error);
     await expect(client.importJobs([{ ...testJob, id: 'also invalid' }])).rejects.toBeInstanceOf(Error);
@@ -271,7 +273,6 @@ describe('CrontickClient', () => {
       startupTimeoutMs: 5_000,
       cwd: home,
     });
-
     const created = await client.createJob({
       id: 'client-prompt-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
@@ -303,6 +304,36 @@ describe('CrontickClient', () => {
       ]),
     ).resolves.toMatchObject({ imported: 1 });
   });
+
+  it('exposes session precedence notices through the public client', async () => {
+    const home = makeHome();
+    const client = createClient({
+      daemonScript: writeFakeApiDaemon(home),
+      startupTimeoutMs: 5_000,
+    });
+
+    const created = await client.createJob({
+      id: 'client-session-precedence-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'prompt', prompt: 'hello', sessionId: 'sess-client1', reuseSession: true },
+    });
+
+    expect(created.action).toMatchObject({
+      kind: 'prompt',
+      sessionId: 'sess-client1',
+      reuseSession: false,
+    });
+    expect(client.drainNotices()).toEqual([expect.stringContaining('reuseSession was ignored')]);
+  });
+
+  it('writes the core-generated per-job schema sidecar through the public client', async () => {
+    const home = makeHome();
+    const client = createClient({ daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 10_000 });
+
+    await client.createJob({ ...testJob, id: 'client-schema-job' });
+
+    expect(readFileSync(join(home, 'jobs', 'client-schema-job.schema.json'), 'utf-8')).toBe(jobJsonSchemaText());
+  }, 15_000);
 
   it('surfaces API errors as CrontickError', async () => {
     const home = makeHome();

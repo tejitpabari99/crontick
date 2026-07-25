@@ -31,7 +31,11 @@ export async function startDaemon(options: DaemonLifecycleOptions = {}): Promise
   if (options.foreground) {
     const script = options.daemonScript;
     if (!script || !existsSync(script)) {
-      throw new CrontickError('NOT_BUILT', `Daemon script not found: ${script ?? '<default>'}. Run: npm run build`);
+      throw new CrontickError(
+        'NOT_BUILT',
+        `Daemon script not found: ${script ?? '<default>'}. Attempted foreground daemon start. Run: npm run build`,
+        { daemonScript: script, action: 'npm run build' },
+      );
     }
     const result = spawnSync(process.execPath, [script], {
       stdio: 'inherit',
@@ -40,7 +44,7 @@ export async function startDaemon(options: DaemonLifecycleOptions = {}): Promise
     return { ok: true, baseUrl: '', started: true, foregroundExitCode: result.status };
   }
 
-  const info = await ensureDaemon({ ...options, allowStart: true });
+  const info = await ensureDaemon({ ...options, startDaemon: true });
   return { ok: true, ...info };
 }
 
@@ -54,7 +58,11 @@ export async function stopDaemon(options: { env?: NodeJS.ProcessEnv; timeoutMs?:
   try {
     process.kill(pid, 'SIGTERM');
   } catch (err) {
-    throw new CrontickError('DAEMON_STOP_FAILED', `Failed to stop daemon ${pid}: ${String(err)}`);
+    throw new CrontickError(
+      'DAEMON_STOP_FAILED',
+      `Failed to stop daemon ${pid}: ${err instanceof Error ? err.message : String(err)}. Check whether the process belongs to the current user, then retry: crontick daemon stop`,
+      { pid, action: 'crontick daemon stop' },
+    );
   }
 
   const stopped = await waitForStopped(pid, env, options.timeoutMs ?? 5_000);
@@ -69,7 +77,7 @@ export async function stopDaemon(options: { env?: NodeJS.ProcessEnv; timeoutMs?:
 
 export async function restartDaemon(options: EnsureDaemonOptions = {}): Promise<DaemonRestartResult> {
   const stopped = await stopDaemon({ env: options.env });
-  const info = await ensureDaemon({ ...options, allowStart: true });
+  const info = await ensureDaemon({ ...options, startDaemon: true });
   return { ok: true, ...info, stopped: stopped.stopped, previousPid: stopped.pid };
 }
 

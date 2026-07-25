@@ -58,11 +58,6 @@ const invalidJobArb = fc.oneof(
   fc.constant({
     id: 'valid-id',
     schedule: { kind: 'cron', cron: '* * * * *' },
-    action: { kind: 'prompt', prompt: 'x', sessionId: 'sess-12345678', reuseSession: true },
-  }),
-  fc.constant({
-    id: 'valid-id',
-    schedule: { kind: 'cron', cron: '* * * * *' },
     action: { kind: 'script', script: 'echo hi', engine: 'copilot' },
   }),
 );

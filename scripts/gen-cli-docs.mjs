@@ -53,7 +53,7 @@ const stripAnsi = (text) => text.replace(/\u001b\[[0-9;]*m/g, '');
 const runHelp = (args) => {
   const result = spawnSync(process.execPath, [cli, ...args], {
     encoding: 'utf-8',
-    env: { ...process.env, CRONTICK_MCP_NO_DAEMON_START: '1' },
+    env: { ...process.env, CRONTICK_MCP_START_DAEMON: '0' },
   });
   const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim();
   if (result.status !== 0 && !output) {

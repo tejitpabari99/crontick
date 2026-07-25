@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Store } from '../src/daemon/store.js';
@@ -23,7 +23,7 @@ function execJob(id: string): Job {
     catchup: 'skip',
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+    budgets: { maxRunsPerDay: null },
   };
 }
 
@@ -42,7 +42,7 @@ function promptJob(id: string): Job {
     catchup: 'skip',
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+    budgets: { maxRunsPerDay: null },
   };
 }
 
@@ -95,6 +95,10 @@ describe('Store', () => {
     ).toBe(true);
     expect(store.getJob(job.id)?.action).toMatchObject({
       kind: 'prompt',
+      sessionId: 'sess-12345678',
+      reuseSession: false,
+    });
+    expect(JSON.parse(readFileSync(join(dir, 'jobs', `${job.id}.json`), 'utf-8')).action).toMatchObject({
       sessionId: 'sess-12345678',
       reuseSession: false,
     });

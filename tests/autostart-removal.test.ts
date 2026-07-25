@@ -33,7 +33,16 @@ describe('startup registration removal guards', () => {
       const rel = relative(root, file).replace(/\\/g, '/');
       if (!/^(src|docs|plugin|scripts|README\.md|CHANGELOG\.md|package(?:-lock)?\.json|tsup\.config\.ts)/.test(rel)) continue;
       const text = readFileSync(file, 'utf-8').toLowerCase();
-      for (const needle of [removed, 'registry' + '-js', 'reg' + '.exe', 'login ' + 'item']) {
+      for (const needle of [
+        removed,
+        'registry' + '-js',
+        'reg' + '.exe',
+        'login ' + 'item',
+        'allow' + 'start',
+        'no-daemon-start',
+        'crontick_mcp_no_daemon_start',
+        'maxtokensperrun',
+      ]) {
         if (text.includes(needle)) offenders.push(`${rel}: ${needle}`);
       }
     }

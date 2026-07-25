@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { runsDbPath, jobsDir } from '../paths.js';
 import { JobSchema, type Job, type PromptAction } from '../schemas/job.js';
 import { CrontickError } from '../errors.js';
+import { jobJsonSchemaText } from '../schema-json.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -123,16 +124,18 @@ export class Store {
   // ── Job CRUD ────────────────────────────────────────────────────────────────
 
   upsertJob(job: Job): void {
-    const json = JSON.stringify(job);
+    const persisted = normalizeJobForPersistence(job);
+    const json = JSON.stringify(persisted);
     const now = Date.now();
     this.db
       .prepare(
         'INSERT INTO jobs (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at',
       )
-      .run(job.id, json, now);
+      .run(persisted.id, json, now);
     // File-based persistence: jobs dir is source of truth
-    const filePath = join(this.jobsPath, `${job.id}.json`);
+    const filePath = join(this.jobsPath, `${persisted.id}.json`);
     writeFileSync(filePath, json, 'utf-8');
+    writeFileSync(join(this.jobsPath, `${persisted.id}.schema.json`), jobJsonSchemaText(), 'utf-8');
   }
 
   tryCapturePromptSession(jobId: string, expectedAction: PromptAction, sessionId: string): boolean {
@@ -170,9 +173,17 @@ export class Store {
   deleteJob(id: string): boolean {
     const changes = (this.db.prepare('DELETE FROM jobs WHERE id = ?').run(id) as { changes: number }).changes;
     const filePath = join(this.jobsPath, `${id}.json`);
+    const schemaPath = join(this.jobsPath, `${id}.schema.json`);
     if (existsSync(filePath)) {
       try {
         unlinkSync(filePath);
+      } catch {
+        // ignore
+      }
+    }
+    if (existsSync(schemaPath)) {
+      try {
+        unlinkSync(schemaPath);
       } catch {
         // ignore
       }
@@ -183,7 +194,7 @@ export class Store {
   /** Load jobs from the jobs directory (disk is source of truth on daemon start). */
   loadJobsFromDisk(): void {
     if (!existsSync(this.jobsPath)) return;
-    const files = readdirSync(this.jobsPath).filter((f) => f.endsWith('.json'));
+    const files = readdirSync(this.jobsPath).filter((f) => f.endsWith('.json') && !f.endsWith('.schema.json'));
     for (const file of files) {
       try {
         const raw = readFileSync(join(this.jobsPath, file), 'utf-8');
@@ -389,4 +400,15 @@ function isSamePromptCaptureTarget(current: PromptAction, expected: PromptAction
     && current.timeoutSec === expected.timeoutSec
     && JSON.stringify(current.env ?? {}) === JSON.stringify(expected.env ?? {})
   );
+}
+
+function normalizeJobForPersistence(job: Job): Job {
+  if (job.action.kind !== 'prompt' || !job.action.sessionId || !job.action.reuseSession) return job;
+  return {
+    ...job,
+    action: {
+      ...job.action,
+      reuseSession: false,
+    },
+  };
 }

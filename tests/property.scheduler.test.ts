@@ -11,7 +11,7 @@ function makeOneShotJob(id: string, runAt: string) {
     catchup: 'skip' as const,
     overlap: 'skip' as const,
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+    budgets: { maxRunsPerDay: null },
   };
 }
 

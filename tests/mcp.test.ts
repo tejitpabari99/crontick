@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { jobJsonSchemaText } from '../src/schema-json.js';
 
 const DAEMON_SCRIPT = join(process.cwd(), 'dist', 'daemon', 'index.js');
 const MCP_SCRIPT = join(process.cwd(), 'dist', 'mcp', 'index.js');
@@ -205,6 +206,7 @@ describe('MCP server — full contract', () => {
     });
     expect(isError).toBe(false);
     expect((json as { id: string }).id).toBe(testJobId);
+    expect(readFileSync(join(dir, 'jobs', `${testJobId}.schema.json`), 'utf-8')).toBe(jobJsonSchemaText());
   });
 
   it('crontick_job_create accepts prompt actions', async () => {
@@ -220,6 +222,26 @@ describe('MCP server — full contract', () => {
       prompt: 'hello',
       engine: 'copilot',
       args: ['--silent'],
+    });
+  });
+
+  it('crontick_job_create reports session precedence notices from core', async () => {
+    const { json, isError } = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-session-precedence-job',
+      description: 'MCP prompt session precedence job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'prompt', prompt: 'hello', sessionId: 'sess-mcpprec1', reuseSession: true },
+    });
+    expect(isError).toBe(false);
+    expect(json).toMatchObject({
+      result: {
+        action: {
+          kind: 'prompt',
+          sessionId: 'sess-mcpprec1',
+          reuseSession: false,
+        },
+      },
+      notices: [expect.stringContaining('reuseSession was ignored')],
     });
   });
 
@@ -460,7 +482,7 @@ describe('MCP server — full contract', () => {
 
 // ── Daemon-start-off path ────────────────────────────────────────────────────
 
-describe('MCP server — CRONTICK_MCP_NO_DAEMON_START path', () => {
+describe('MCP server — CRONTICK_MCP_START_DAEMON path', () => {
   it('daemon status reports not running without starting the daemon', async () => {
     const isolatedDir = makeTmpDir();
     let isolatedTransport: StdioClientTransport | undefined;
@@ -473,7 +495,7 @@ describe('MCP server — CRONTICK_MCP_NO_DAEMON_START path', () => {
         env: {
           ...process.env,
           CRONTICK_HOME: isolatedDir,
-          CRONTICK_MCP_NO_DAEMON_START: '1',
+          CRONTICK_MCP_START_DAEMON: '0',
           CRONTICK_DAEMON_URL: 'http://127.0.0.1:9',
         },
         stderr: 'pipe',
@@ -510,7 +532,7 @@ describe('MCP server — CRONTICK_MCP_NO_DAEMON_START path', () => {
         env: {
           ...process.env,
           CRONTICK_HOME: isolatedDir,
-          CRONTICK_MCP_NO_DAEMON_START: '1',
+          CRONTICK_MCP_START_DAEMON: '0',
           CRONTICK_DAEMON_URL: 'http://127.0.0.1:9',
         },
         stderr: 'pipe',

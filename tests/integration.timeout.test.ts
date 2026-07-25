@@ -44,7 +44,7 @@ describe('Integration: timeout semantics', () => {
       catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+      budgets: { maxRunsPerDay: null },
     };
 
     const run = store.insertRun(job.id);
@@ -61,7 +61,7 @@ describe('Integration: timeout semantics', () => {
       catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+      budgets: { maxRunsPerDay: null },
     };
 
     const run = store.insertRun(job.id);

@@ -80,7 +80,6 @@ export const RetrySchema = z.object({
 
 export const BudgetsSchema = z.object({
   maxRunsPerDay: z.number().int().positive().nullable().default(null),
-  maxTokensPerRun: z.number().int().positive().nullable().default(null),
 });
 
 // ── Job ───────────────────────────────────────────────────────────────────────
@@ -96,7 +95,7 @@ export const JobSchema = z.object({
   catchup: z.enum(['run-once', 'run-all', 'skip']).default('skip'),
   overlap: z.enum(['skip', 'queue', 'cancel-previous']).default('skip'),
   retry: RetrySchema.default({ max: 0, backoffSec: 30 }),
-  budgets: BudgetsSchema.default({ maxRunsPerDay: null, maxTokensPerRun: null }),
+  budgets: BudgetsSchema.default({ maxRunsPerDay: null }),
 });
 
 export type Job = z.infer<typeof JobSchema>;
@@ -107,14 +106,6 @@ export type PromptAction = z.infer<typeof PromptActionBaseSchema>;
 export type PromptEngine = z.infer<typeof PromptEngineSchema>;
 
 function addPromptRuntimeIssues(action: z.infer<typeof PromptActionBaseSchema>, ctx: z.RefinementCtx): void {
-  if (action.sessionId && action.reuseSession) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['reuseSession'],
-      message: 'sessionId and reuseSession are mutually exclusive',
-    });
-  }
-
   const message = promptRuntimeValidationMessage(action);
   if (message) {
     ctx.addIssue({

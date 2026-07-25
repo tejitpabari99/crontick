@@ -247,6 +247,13 @@ export class Runner {
         const sessionArgs = sessionId ? [`--session-id=${sessionId}`] : [];
         capturePromptSession = latestAction.reuseSession && !sessionId;
         promptCaptureAction = capturePromptSession ? latestAction : undefined;
+        if (sessionId && latestAction.reuseSession) {
+          store.appendLog(
+            runId,
+            'stderr',
+            Buffer.from('[crontick] notice: reuseSession was ignored because an explicit sessionId was provided.\n', 'utf-8'),
+          );
+        }
 
         if (latestAction.engine === 'agency') {
           cmd = 'agency';
@@ -356,7 +363,7 @@ export class Runner {
                 finish({
                   status: 'failed',
                   exitCode: code,
-                  error: 'SESSION_ID_NOT_FOUND: prompt engine output did not include a session id',
+                  error: 'SESSION_ID_NOT_FOUND: prompt engine output did not include a session id. Configure an explicit session id with --session-id <id>, or disable reuseSession.',
                 });
                 return;
               }

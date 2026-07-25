@@ -40,7 +40,7 @@ describe('Integration: budget semantics', () => {
       catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: 2, maxTokensPerRun: null },
+      budgets: { maxRunsPerDay: 2 },
     };
 
     for (let i = 0; i < 4; i++) {
@@ -65,7 +65,7 @@ describe('Integration: budget semantics', () => {
       catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: 1, maxTokensPerRun: null },
+      budgets: { maxRunsPerDay: 1 },
     };
 
     const first = store.insertRun(job.id);
@@ -116,7 +116,7 @@ describe('Integration: budget semantics', () => {
       catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: 1, maxTokensPerRun: null },
+      budgets: { maxRunsPerDay: 1 },
     };
 
     // Insert a run backdated to 22:00 UTC (same UTC day).

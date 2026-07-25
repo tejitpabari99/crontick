@@ -90,14 +90,18 @@ describe('normalizeJobInput', () => {
     ).toThrow(/valid UTF-8/);
   });
 
-  it('enforces prompt/promptFile XOR and sessionId/reuseSession XOR', () => {
+  it('enforces prompt/promptFile XOR and normalizes explicit session precedence', () => {
     expect(() => normalizeJobInput(baseJob({ kind: 'prompt' }))).toThrow(/exactly one/);
     expect(() =>
       normalizeJobInput(baseJob({ kind: 'prompt', prompt: 'x', promptFile: 'prompt.txt' })),
     ).toThrow(/exactly one/);
-    expect(() =>
-      normalizeJobInput(baseJob({ kind: 'prompt', prompt: 'x', sessionId: 'sess-12345678', reuseSession: true })),
-    ).toThrow(/VALIDATION_ERROR|Invalid job/);
+    const notices: string[] = [];
+    const job = normalizeJobInput(
+      baseJob({ kind: 'prompt', prompt: 'x', sessionId: 'sess-12345678', reuseSession: true }),
+      { onNotice: (message) => notices.push(message) },
+    );
+    expect(job.action).toMatchObject({ kind: 'prompt', sessionId: 'sess-12345678', reuseSession: false });
+    expect(notices.join('\n')).toContain('reuseSession was ignored');
   });
 
   it('rejects prompt/session fields on script and exec persisted schemas', () => {

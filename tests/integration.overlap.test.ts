@@ -27,7 +27,7 @@ function makeJob(id: string, overlap: Job['overlap'], durationMs = 200): Job {
     catchup: 'skip',
     overlap,
     retry: { max: 0, backoffSec: 0 },
-    budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+    budgets: { maxRunsPerDay: null },
   };
 }
 

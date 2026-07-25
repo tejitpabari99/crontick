@@ -6,3 +6,7 @@ export function jobJsonSchema(): unknown {
     name: 'CrontickJob',
   });
 }
+
+export function jobJsonSchemaText(): string {
+  return `${JSON.stringify(jobJsonSchema(), null, 2)}\n`;
+}

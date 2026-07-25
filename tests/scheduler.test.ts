@@ -11,7 +11,7 @@ function makeCronJob(id: string, cron: string, catchup: Job['catchup'] = 'skip')
     catchup,
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+    budgets: { maxRunsPerDay: null },
   };
 }
 
@@ -24,7 +24,7 @@ function makeIntervalJob(id: string, everySec: number): Job {
     catchup: 'skip',
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+    budgets: { maxRunsPerDay: null },
   };
 }
 
@@ -37,7 +37,7 @@ function makeOneShotJob(id: string, runAt: string): Job {
     catchup: 'skip',
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+    budgets: { maxRunsPerDay: null },
   };
 }
 

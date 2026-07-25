@@ -106,8 +106,9 @@ async function handleRequest(
         return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid job', parsed.error.format());
       }
       ctx.store.upsertJob(parsed.data);
-      ctx.scheduler.schedule(parsed.data, ctx.store);
-      return sendJson(res, 201, parsed.data);
+      const stored = ctx.store.getJob(parsed.data.id) ?? parsed.data;
+      ctx.scheduler.schedule(stored, ctx.store);
+      return sendJson(res, 201, stored);
     }
 
     // /api/jobs/:id/*
@@ -131,8 +132,9 @@ async function handleRequest(
           return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid job', parsed.error.format());
         }
         ctx.store.upsertJob(parsed.data);
-        ctx.scheduler.schedule(parsed.data, ctx.store);
-        return sendJson(res, 200, parsed.data);
+        const stored = ctx.store.getJob(id) ?? parsed.data;
+        ctx.scheduler.schedule(stored, ctx.store);
+        return sendJson(res, 200, stored);
       }
 
       if (method === 'DELETE' && sub === '') {

@@ -83,7 +83,7 @@ export async function runDoctorChecks(options: DoctorOptions = {}): Promise<Doct
         const result = spawnSync(process.execPath, [options.mcpScript, '--help'], {
           timeout: 5_000,
           encoding: 'utf-8',
-          env: { ...env, CRONTICK_MCP_NO_DAEMON_START: '1' },
+          env: { ...env, CRONTICK_MCP_START_DAEMON: '0' },
         });
         const helpOk = result.status === 0 || (result.stdout ?? '').includes('stdio');
         checks.push({ name: 'MCP server --help', ok: helpOk });

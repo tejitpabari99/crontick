@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync, writeFileSync
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { jobJsonSchemaText } from '../src/schema-json.js';
 
 const CLI = resolve('dist/cli/index.js');
 const DAEMON_SCRIPT = resolve('dist/daemon/index.js');
@@ -104,6 +105,13 @@ describe('CLI binary (dist/cli/index.js)', () => {
     const result = cli(['auto' + 'start', 'status']);
     expect(result.status).not.toBe(0);
     expect((result.stdout + result.stderr).toLowerCase()).not.toContain('registry');
+  });
+
+  it('logs help does not expose removed follow mode', () => {
+    const result = cli(['logs', '--help']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain('--follow');
+    expect(result.stdout).not.toContain('-f,');
   });
 
   it('daemon-backed list auto-starts the daemon when down', async () => {
@@ -208,6 +216,7 @@ describe('CLI e2e with daemon', () => {
     expect(r.status).toBe(0);
     const data = JSON.parse(r.stdout);
     expect(data.id).toBe('e2e-job');
+    expect(readFileSync(join(dir, 'jobs', 'e2e-job.schema.json'), 'utf-8')).toBe(jobJsonSchemaText());
   });
 
   it('crontick new creates a prompt job with default engine', () => {
@@ -283,6 +292,28 @@ describe('CLI e2e with daemon', () => {
     expect(JSON.parse(r.stdout).action).toMatchObject({
       kind: 'prompt',
       sessionId: 'sess-12345678',
+      reuseSession: false,
+    });
+  });
+
+  it('crontick new reports that reuseSession is ignored when an explicit session id is provided', () => {
+    const r = cli([
+      '--json',
+      'new',
+      'prompt-session-precedence-cli-job',
+      '--cron',
+      '0 11 * * *',
+      '--prompt',
+      'hello',
+      '--session-id',
+      'sess-precedence1',
+      '--reuse-session',
+    ], env());
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toContain('reuseSession was ignored');
+    expect(JSON.parse(r.stdout).action).toMatchObject({
+      kind: 'prompt',
+      sessionId: 'sess-precedence1',
       reuseSession: false,
     });
   });
