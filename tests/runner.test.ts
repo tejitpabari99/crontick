@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { Runner } from '../src/daemon/runner.js';
 import { Store } from '../src/daemon/store.js';
 import type { Job } from '../src/schemas/job.js';
@@ -31,6 +34,58 @@ function execJob(id: string, command: string, args: string[], opts?: Partial<Job
     budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
     ...opts,
   };
+}
+
+function promptJob(id: string, action: Partial<Extract<Job['action'], { kind: 'prompt' }>> = {}): Job {
+  return {
+    id,
+    enabled: true,
+    schedule: { kind: 'cron', cron: '* * * * *' },
+    action: {
+      kind: 'prompt',
+      prompt: 'hello',
+      engine: 'copilot',
+      args: [],
+      reuseSession: false,
+      ...action,
+    },
+    catchup: 'skip',
+    overlap: 'skip',
+    retry: { max: 0, backoffSec: 30 },
+    budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
+  };
+}
+
+interface SpawnCall {
+  cmd: string;
+  args: string[];
+  opts?: SpawnOptions;
+}
+
+function fakeSpawn(outputs: Array<{ stdout?: string; stderr?: string; code?: number }>) {
+  const calls: SpawnCall[] = [];
+  const spawnFn = (cmd: string, args?: readonly string[], opts?: SpawnOptions): ChildProcess => {
+    calls.push({ cmd, args: [...(args ?? [])], opts });
+    const child = new EventEmitter() as ChildProcess;
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    Object.assign(child, {
+      stdout,
+      stderr,
+      pid: 12345,
+      kill: () => true,
+    });
+    const output = outputs[Math.min(calls.length - 1, outputs.length - 1)] ?? {};
+    queueMicrotask(() => {
+      if (output.stdout) stdout.write(output.stdout);
+      if (output.stderr) stderr.write(output.stderr);
+      stdout.end();
+      stderr.end();
+      child.emit('close', output.code ?? 0, null);
+    });
+    return child;
+  };
+  return { calls, spawnFn };
 }
 
 describe('Runner', () => {
@@ -285,10 +340,126 @@ describe('Runner', () => {
       action: { kind: 'exec', command: 'echo', args: [], shell: true },
     };
     const result = JobSchema.safeParse(jobData);
-    // Zod strips unknown fields by default, so parse succeeds but shell is absent
-    if (result.success) {
-      expect((result.data.action as Record<string, unknown>).shell).toBeUndefined();
-    }
-    // If rejected that is also acceptable — either way shell:true cannot reach runner
+    expect(result.success).toBe(false);
+    // Either way shell:true cannot reach runner
+  });
+
+  // ── prompt kind ─────────────────────────────────────────────────────────────
+
+  it('prompt: builds Copilot command line without shell expansion', async () => {
+    const fake = fakeSpawn([{ stdout: 'ok\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-copilot', {
+      prompt: 'hello $(echo INJECTED)',
+      args: ['--silent', '--add-dir', 'Q:\\Repos\\crontick', '--flag', 'one', '--flag', 'two'],
+    });
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(store.getRun(run.id)?.status).toBe('success');
+    expect(fake.calls[0]).toMatchObject({
+      cmd: 'copilot',
+      args: ['-p', 'hello $(echo INJECTED)', '--silent', '--add-dir', 'Q:\\Repos\\crontick', '--flag', 'one', '--flag', 'two'],
+    });
+    expect(fake.calls[0].opts?.shell).toBe(false);
+  });
+
+  it('prompt: builds Agency command line', async () => {
+    const fake = fakeSpawn([{ stdout: 'ok\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-agency', {
+      engine: 'agency',
+      args: ['--profile', 'dev'],
+    });
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(fake.calls[0]).toMatchObject({
+      cmd: 'agency',
+      args: ['cp', '-p', 'hello', '--profile', 'dev'],
+    });
+    expect(store.getRun(run.id)?.status).toBe('success');
+  });
+
+  it('prompt: forwards explicit session id every run after raw args', async () => {
+    const fake = fakeSpawn([{ stdout: 'ok\n' }, { stdout: 'ok\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-session', {
+      args: ['--silent'],
+      sessionId: 'sess-12345678',
+    });
+
+    await runner.run(job, store.insertRun(job.id).id, store);
+    await runner.run(job, store.insertRun(job.id).id, store);
+
+    expect(fake.calls).toHaveLength(2);
+    expect(fake.calls[0].args).toEqual(['-p', 'hello', '--silent', '--session-id', 'sess-12345678']);
+    expect(fake.calls[1].args).toEqual(['-p', 'hello', '--silent', '--session-id', 'sess-12345678']);
+  });
+
+  it('prompt: captures and persists a reusable session id after first successful run', async () => {
+    const fake = fakeSpawn([{ stdout: 'session id: sess-abcdefgh\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-reuse', { reuseSession: true });
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(store.getRun(run.id)?.status).toBe('success');
+    const stored = store.getJob(job.id)!;
+    expect(stored.action).toMatchObject({
+      kind: 'prompt',
+      sessionId: 'sess-abcdefgh',
+      reuseSession: false,
+    });
+    expect(store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('')).toContain('captured session id');
+  });
+
+  it('prompt: reuses a previously persisted session id', async () => {
+    const fake = fakeSpawn([{ stdout: 'ok\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-reuse-existing', {
+      sessionId: 'sess-abcdefgh',
+      reuseSession: false,
+    });
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(fake.calls[0].args).toEqual(['-p', 'hello', '--session-id', 'sess-abcdefgh']);
+    expect(store.getRun(run.id)?.status).toBe('success');
+  });
+
+  it('prompt: fails reuse contract when a successful first run emits no session id', async () => {
+    const fake = fakeSpawn([{ stdout: 'ok but no id\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-reuse-missing', { reuseSession: true });
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(store.getRun(run.id)).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('SESSION_ID_NOT_FOUND'),
+    });
+    expect(store.getJob(job.id)?.action).toMatchObject({ kind: 'prompt', reuseSession: true });
+  });
+
+  it('prompt: does not persist a session id when the engine fails', async () => {
+    const fake = fakeSpawn([{ stdout: 'session id: sess-abcdefgh\n', code: 7 }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-reuse-fail', { reuseSession: true });
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(store.getRun(run.id)).toMatchObject({ status: 'failed', exitCode: 7 });
+    expect(store.getJob(job.id)?.action).toMatchObject({ kind: 'prompt', reuseSession: true });
   });
 });

@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type { Job } from '../schemas/job.js';
 import type { Store, RunStatus } from './store.js';
 import { CrontickError } from '../errors.js';
+import { extractSessionId } from './prompt-session.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -87,6 +88,8 @@ export class Runner {
   private activeRunIds: Map<string, string> = new Map();
   /** Whether a job's queue is currently being drained */
   private draining: Set<string> = new Set();
+
+  constructor(private readonly spawnFn: typeof spawn = spawn) {}
 
   /**
    * Execute a job run, honouring overlap + retry + budget policies.
@@ -208,6 +211,9 @@ export class Runner {
       let cmd: string;
       let args: string[];
 
+      let capturePromptSession = false;
+      let promptSessionJob = job;
+
       if (action.kind === 'script') {
         // Write script to temp file
         const ext = resolveShellExt(action.shell ?? 'auto');
@@ -231,7 +237,21 @@ export class Runner {
         cmd = action.command;
         args = action.args ?? [];
       } else {
-        return { status: 'failed', error: 'prompt action execution is not implemented' };
+        const latestJob = store.getJob(job.id) ?? job;
+        if (latestJob.action.kind === 'prompt') promptSessionJob = latestJob;
+        const latestAction =
+          promptSessionJob.action.kind === 'prompt' ? promptSessionJob.action : action;
+        const sessionId = latestAction.sessionId ?? action.sessionId;
+        const sessionArgs = sessionId ? ['--session-id', sessionId] : [];
+        capturePromptSession = action.reuseSession && !sessionId;
+
+        if (action.engine === 'agency') {
+          cmd = 'agency';
+          args = ['cp', '-p', action.prompt, ...(action.args ?? []), ...sessionArgs];
+        } else {
+          cmd = 'copilot';
+          args = ['-p', action.prompt, ...(action.args ?? []), ...sessionArgs];
+        }
       }
 
       const spawnOpts: Parameters<typeof spawn>[2] = {
@@ -265,15 +285,28 @@ export class Runner {
         spawnOpts.timeout = action.timeoutSec * 1000;
       }
 
+      const transcriptChunks: Buffer[] = [];
+      let transcriptBytes = 0;
+      const appendTranscript = (chunk: Buffer) => {
+        if (!capturePromptSession) return;
+        const remaining = 128 * 1024 - transcriptBytes;
+        if (remaining <= 0) return;
+        const kept = chunk.byteLength > remaining ? chunk.subarray(0, remaining) : chunk;
+        transcriptChunks.push(Buffer.from(kept));
+        transcriptBytes += kept.byteLength;
+      };
+
       const result = await new Promise<RunResult>((resolve) => {
-        const child = spawn(cmd, args, spawnOpts);
+        const child = this.spawnFn(cmd, args, spawnOpts);
         const startedAt = Date.now();
 
         child.stdout?.on('data', (chunk: Buffer) => {
+          appendTranscript(chunk);
           store.appendLog(runId, 'stdout', safeRedact(chunk));
         });
 
         child.stderr?.on('data', (chunk: Buffer) => {
+          appendTranscript(chunk);
           store.appendLog(runId, 'stderr', safeRedact(chunk));
         });
 
@@ -284,10 +317,34 @@ export class Runner {
           } else if (code === null) {
             resolve({ status: 'failed', error: 'process exited without code' });
           } else {
-            resolve({
+            const result: RunResult = {
               status: code === 0 ? 'success' : 'failed',
               exitCode: code,
-            });
+            };
+            if (result.status === 'success' && capturePromptSession) {
+              const sessionId = extractSessionId(Buffer.concat(transcriptChunks).toString('utf-8'));
+              if (!sessionId) {
+                resolve({
+                  status: 'failed',
+                  exitCode: code,
+                  error: 'SESSION_ID_NOT_FOUND: prompt engine output did not include a session id',
+                });
+                return;
+              }
+              const latestJob = store.getJob(job.id) ?? promptSessionJob;
+              if (latestJob.action.kind === 'prompt') {
+                store.upsertJob({
+                  ...latestJob,
+                  action: {
+                    ...latestJob.action,
+                    sessionId,
+                    reuseSession: false,
+                  },
+                });
+              }
+              store.appendLog(runId, 'stdout', Buffer.from(`[crontick] captured session id: ${sessionId}\n`, 'utf-8'));
+            }
+            resolve(result);
           }
           void durationMs; // consumed below via store
         });
