@@ -33,7 +33,15 @@ crontick mcp --help
 ```
 
 Daemon-backed commands start the daemon on demand. Use `crontick daemon start|stop|status` when you
-want explicit lifecycle control.
+want explicit lifecycle control; crontick does not install login/startup launch entries.
+
+Prompt jobs use `--prompt <text>` or `--prompt-file <path.txt>`, optional `--engine copilot|agency`,
+and either `--session-id <id>` or `--reuse-session` for shared context. Arguments after `--` are
+passed through verbatim to the prompt engine, for example:
+
+```sh
+crontick new daily-summary --cron "0 9 * * *" --prompt-file .\summary.txt --engine agency --reuse-session -- --add-dir Q:\Repos\crontick --allow-all-tools
+```
 
 ## Security model
 

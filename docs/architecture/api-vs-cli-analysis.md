@@ -54,7 +54,7 @@ The HTTP API exists, but it should be treated as an internal transport rather th
 - It binds only to loopback and rejects non-loopback sockets (`src\daemon\api.ts:46-55`).
 - It listens on a random port discovered via the port file (`src\daemon\index.ts:148-154`).
 - It has no remote auth model; the README explicitly defines the trust boundary as the local user session (`README.md:38-42`).
-- It accepts normalized persisted job JSON only; caller-side sugar such as `promptFile` belongs in the CLI/client normalizer, not in the daemon (`.dev\users-tejitpabari-prompt-cron-daemon-autostart\design.v1.model.md:251-257`).
+- It accepts normalized persisted job JSON only; caller-side sugar such as `promptFile` belongs in the CLI/client normalizer, not in the daemon (see the design model artifact).
 
 This makes the client more, not less, important. The client hides daemon start/probe mechanics, transport errors, endpoint paths, JSON parsing, and prompt-file normalization behind a typed API. Public consumers should not be told to read pid/port files or call ephemeral loopback endpoints directly.
 
@@ -160,7 +160,7 @@ More concretely:
 4. HTTP should remain the process-local transport between client/core and daemon. It should be tested, but not promoted as the supported integration API.
 5. The daemon should stay independent of public adapters and own state, scheduling, and execution.
 
-This aligns with the intended design artifacts: shared daemon ensure, caller-side prompt-file normalization, a programmatic `CrontickClient`, and CLI/client parity were explicit design goals (`.dev\users-tejitpabari-prompt-cron-daemon-autostart\design.v1.user.md:5-12`, `.dev\users-tejitpabari-prompt-cron-daemon-autostart\design.v1.model.md:121-257`, `.dev\users-tejitpabari-prompt-cron-daemon-autostart\test-plan.v1.model.md:152-158`). It also aligns with the adversarial review's conclusion that the layering is coherent but should keep shared behavior central (`.dev\users-tejitpabari-prompt-cron-daemon-autostart\multi-persona-review.v1.model.md:27-29`).
+This aligns with the intended design artifacts: shared daemon ensure, caller-side prompt-file normalization, a programmatic `CrontickClient`, and CLI/client parity were explicit design goals. It also aligns with the adversarial review's conclusion that the layering is coherent but should keep shared behavior central.
 
 ## Low-risk refactor steps
 
