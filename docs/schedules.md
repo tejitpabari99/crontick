@@ -35,14 +35,6 @@ One-shot jobs fire once in the future and then remove their timer entry.
 
 Only cron schedules use `tz`. Interval and one-shot schedules use their numeric delay or absolute timestamp directly.
 
-## Catchup policy
-
-`catchup` controls what happens when the daemon was offline:
-
-- `skip` — do nothing for missed fires
-- `run-once` — emit a single catchup tick
-- `run-all` — emit all missed ticks (bounded internally)
-
 ## Preview examples
 
 ```sh

@@ -106,7 +106,3 @@ Retries happen after failed attempts only. Success stops the retry loop.
 - `skip` — cancel new run if another run is active
 - `queue` — serialize runs per job
 - `cancel-previous` — abort the active run and start the latest request
-
-## Budgets
-
-`maxRunsPerDay` limits scheduling attempts per UTC day. Exceeded runs are marked `canceled` with a budget error.

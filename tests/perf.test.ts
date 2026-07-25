@@ -16,10 +16,8 @@ function makeJob(id: string): Job {
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
     action: { kind: 'exec', command: 'echo', args: [id] },
-    catchup: 'skip',
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null },
   };
 }
 

@@ -20,10 +20,8 @@ function execJob(id: string): Job {
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
     action: { kind: 'exec', command: 'echo', args: ['hello'] },
-    catchup: 'skip',
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null },
   };
 }
 
@@ -39,10 +37,8 @@ function promptJob(id: string): Job {
       args: [],
       reuseSession: false,
     },
-    catchup: 'skip',
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null },
   };
 }
 
@@ -190,20 +186,6 @@ describe('Store', () => {
     await new Promise((r) => setTimeout(r, 5));
     store.insertRun('job-s');
     expect(store.listRuns({ jobId: 'job-s', since })).toHaveLength(1);
-  });
-
-  it('getLastRun returns most recent terminal run', () => {
-    const r1 = store.insertRun('job-z');
-    store.updateRun(r1.id, { status: 'success' });
-    expect(store.getLastRun('job-z')?.id).toBe(r1.id);
-  });
-
-  it('countRunsSince counts correctly', () => {
-    const past = Date.now() - 10000;
-    store.insertRun('job-c');
-    store.insertRun('job-c');
-    expect(store.countRunsSince('job-c', past)).toBe(2);
-    expect(store.countRunsSince('job-c', Date.now() + 10000)).toBe(0);
   });
 
   // ── Logs ────────────────────────────────────────────────────────────────────

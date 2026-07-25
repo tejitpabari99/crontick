@@ -79,10 +79,6 @@ export const RetrySchema = z.object({
   backoffSec: z.number().positive().default(30),
 });
 
-export const BudgetsSchema = z.object({
-  maxRunsPerDay: z.number().int().positive().nullable().default(null),
-});
-
 // ── Job ───────────────────────────────────────────────────────────────────────
 
 const kebabCase = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -93,10 +89,8 @@ export const JobSchema = z.object({
   enabled: z.boolean().default(true),
   schedule: ScheduleSchema,
   action: ActionSchema,
-  catchup: z.enum(['run-once', 'run-all', 'skip']).default('skip'),
   overlap: z.enum(['skip', 'queue', 'cancel-previous']).default('skip'),
   retry: RetrySchema.default({ max: 0, backoffSec: 30 }),
-  budgets: BudgetsSchema.default({ maxRunsPerDay: null }),
 });
 
 export type Job = z.infer<typeof JobSchema>;

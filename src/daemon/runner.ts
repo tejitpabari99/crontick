@@ -79,28 +79,13 @@ export class Runner {
   }
 
   /**
-   * Execute a job run, honouring overlap + retry + budget policies.
+   * Execute a job run, honouring overlap + retry policies.
    * The run record must already exist in the store (status=queued).
    */
   async run(job: Job, runId: string, store: Store): Promise<void> {
     const overlap = job.overlap ?? 'skip';
     this.logger.debug('Starting run orchestration', { jobId: job.id, runId, overlap, retryMax: job.retry?.max ?? 0 });
     this.appendDiagnosticLog(store, runId, 'run orchestration', { jobId: job.id, overlap, retryMax: job.retry?.max ?? 0 });
-
-    // Budget: maxRunsPerDay
-    if (job.budgets?.maxRunsPerDay != null) {
-      const todayStart = new Date();
-      todayStart.setUTCHours(0, 0, 0, 0);
-      const count = store.countRunsSince(job.id, todayStart.getTime(), runId);
-      if (count >= job.budgets.maxRunsPerDay) {
-        await this.finalizeRun(store, runId, {
-          status: 'canceled',
-          error: `budget: maxRunsPerDay (${job.budgets.maxRunsPerDay}) exceeded`,
-        });
-        this.logger.debug('Canceled run due to budget', { jobId: job.id, runId, maxRunsPerDay: job.budgets.maxRunsPerDay });
-        return;
-      }
-    }
 
     const isActive = this.activeRunIds.has(job.id);
 

@@ -40,8 +40,8 @@
 - `src/daemon/ensure.ts` — shared on-demand daemon start/probe logic for CLI, MCP, and client
 - `src/daemon/lifecycle.ts` — shared explicit start/stop/restart helpers
 - `src/daemon/prompt-session.ts` — prompt-engine session id extraction helpers
-- `src/daemon/scheduler.ts` — cron/interval/one-shot scheduling, preview, validation, catchup
-- `src/daemon/runner.ts` — process execution, overlap, retry, timeout, budgets, log redaction
+- `src/daemon/scheduler.ts` — cron/interval/one-shot scheduling, preview, validation
+- `src/daemon/runner.ts` — process execution, overlap, retry, timeout, log redaction
 - `src/daemon/store.ts` — SQLite-backed runs/logs + JSON job persistence
 - `src/job-input.ts` — shared create/update/import normalization and prompt-file handling
 - `src/mcp/index.ts` — MCP tools and job-schema resource over `CrontickClient`

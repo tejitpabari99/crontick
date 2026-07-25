@@ -4,7 +4,6 @@ import { TextDecoder } from 'node:util';
 import { z } from 'zod';
 import { CrontickError } from './errors.js';
 import {
-  BudgetsSchema,
   ExecActionSchema,
   JobSchema,
   PromptActionBaseSchema,
@@ -38,10 +37,8 @@ export const JobPatchInputSchema = z.object({
   enabled: z.boolean().optional(),
   schedule: ScheduleSchema.optional(),
   action: ActionInputSchema.optional(),
-  catchup: z.enum(['run-once', 'run-all', 'skip']).optional(),
   overlap: z.enum(['skip', 'queue', 'cancel-previous']).optional(),
   retry: RetrySchema.optional(),
-  budgets: BudgetsSchema.optional(),
 }).strict();
 
 export type PromptActionInput = z.input<typeof PromptActionInputSchema>;
@@ -80,7 +77,6 @@ export interface JobCreateCliOptions {
   retry?: number;
   desc?: string;
   enabled?: boolean;
-  catchup?: string;
 }
 
 export type JobPatchCliOptions = Omit<JobCreateCliOptions, 'id'>;
@@ -151,7 +147,6 @@ export function buildJobFromCreateOptions(
     enabled: input.enabled,
     schedule: buildSchedule(input),
     action: buildAction(input, rawArgs),
-    catchup: input.catchup as JobCreateInput['catchup'],
     overlap: (input.overlap ?? 'skip') as JobCreateInput['overlap'],
     retry: input.retry !== undefined ? { max: input.retry, backoffSec: 30 } : undefined,
   } satisfies JobCreateInput;
@@ -181,7 +176,6 @@ export function buildJobPatchFromUpdateOptions(
   if (schedule !== undefined) patch.schedule = schedule;
   const action = maybeBuildAction(input, rawArgs);
   if (action !== undefined) patch.action = normalizeActionInput(action, options) as ActionInput;
-  if (input.catchup !== undefined) patch.catchup = input.catchup as JobPatchInput['catchup'];
   if (input.overlap !== undefined) patch.overlap = input.overlap as JobPatchInput['overlap'];
   if (input.retry !== undefined) patch.retry = { max: input.retry, backoffSec: 30 };
 
@@ -345,8 +339,7 @@ function assertFileModeExclusive(opts: JobPatchCliOptions, rawArgs: string[]): v
     || opts.overlap !== undefined && opts.overlap !== 'skip'
     || opts.retry !== undefined
     || opts.desc !== undefined
-    || opts.enabled !== undefined
-    || opts.catchup !== undefined;
+    || opts.enabled !== undefined;
 
   if (conflicting) {
     throw new CrontickError(

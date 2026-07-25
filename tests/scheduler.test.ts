@@ -2,16 +2,14 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { Scheduler } from '../src/daemon/scheduler.js';
 import type { Job } from '../src/schemas/job.js';
 
-function makeCronJob(id: string, cron: string, catchup: Job['catchup'] = 'skip'): Job {
+function makeCronJob(id: string, cron: string): Job {
   return {
     id,
     enabled: true,
     schedule: { kind: 'cron', cron },
     action: { kind: 'exec', command: 'echo', args: [] },
-    catchup,
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null },
   };
 }
 
@@ -21,10 +19,8 @@ function makeIntervalJob(id: string, everySec: number): Job {
     enabled: true,
     schedule: { kind: 'interval', everySec },
     action: { kind: 'exec', command: 'echo', args: [] },
-    catchup: 'skip',
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null },
   };
 }
 
@@ -34,10 +30,8 @@ function makeOneShotJob(id: string, runAt: string): Job {
     enabled: true,
     schedule: { kind: 'one-shot', runAt },
     action: { kind: 'exec', command: 'echo', args: [] },
-    catchup: 'skip',
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null },
   };
 }
 

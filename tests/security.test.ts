@@ -112,10 +112,8 @@ describe('Security', () => {
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },
       action: { kind: 'exec', command: node, args: ['-e', 'process.stdout.write(process.argv[1])', dangerousArg] },
-      catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: null },
     };
 
     const run = store2.insertRun(job.id);
@@ -140,10 +138,8 @@ describe('Security', () => {
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },
       action: { kind: 'exec', command: node, args: ['-e', `process.stdout.write('${secretValue}')`] },
-      catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: null },
     };
 
     const run = logStore.insertRun(job.id);
@@ -169,10 +165,8 @@ describe('Security', () => {
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },
       action: { kind: 'exec', command: node, args: ['-e', `process.stdout.write('${ghToken}')`] },
-      catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: null },
     };
 
     const run = logStore.insertRun(job.id);
@@ -193,10 +187,8 @@ describe('Security', () => {
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },
       action: { kind: 'exec', command: 'echo', args: [] },
-      catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: null },
     };
     writeFileSync(secretJobPath, JSON.stringify(secretJob), 'utf-8');
 

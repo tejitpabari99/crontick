@@ -50,7 +50,7 @@ reuse behavior, and speculative model-limit field removal.
 | Chaining/dependencies between jobs  | Current scheduler fires independent cron/interval/one-shot jobs (`src\daemon\scheduler.ts:51-67`). AI workflows often need "summarize after scrape" or "notify only if analysis finds risk".                    | Add dependency triggers: `afterJob`, `onSuccess`, `onFailure`, `onResultMatch`, and fan-in groups. Store dependency edges, prevent cycles, and surface graph in dashboard/MCP.                                                                            |      L | Result capture; scheduler/store migration    |
 | Notifications and webhooks          | Users must poll logs/runs via CLI/MCP/dashboard (`docs\getting-started.md:59-65`). AI-first cron should proactively surface results.                                                                            | Add notification sinks: desktop notification, webhook, file, email/Teams via user-provided command, and MCP resource updates. Per-job policy controls success/failure/summary delivery.                                                                   |      M | Result summaries; secrets for webhook tokens |
 | Session lifecycle management        | Users can set/capture a session id but cannot list, inspect, rename, expire, or rotate sessions (`src\schemas\job.ts:71-72`, `src\daemon\store.ts:138-153`).                                                    | Add `crontick sessions list                                                                                                                                                                                                                               |    get | expire                                       | attach | detach`, MCP tools/resources, per-engine session metadata, TTL, last-used timestamp, and explicit rotation. | M   | Engine registry session strategy |
-| Cost and rate limits                | `maxRunsPerDay` is enforced per job, but multiple prompt jobs can still stampede an engine account.                                                                    | Add global and per-engine concurrency/rate limits, daily/monthly cost budgets, backpressure policies (`queue`, `skip`, `fail`), and budget alerts after structured engine accounting exists.                                                                |      M | Cost observability                          |
+| Cost and rate limits                | Prompt jobs have no cost/rate limiting yet, so multiple schedules can stampede an engine account.                                                                    | Add global and per-engine concurrency/rate limits and cost guardrails after structured engine accounting exists.                                                                |      M | Cost observability                          |
 | Agent-aware retries/backoff         | Generic retry exists (`src\daemon\runner.ts:167-190`) but treats prompt engine failures like any other process.                                                                                                 | Add retry classifiers for rate limit, auth, network, tool approval, and deterministic prompt errors. Support exponential backoff/jitter and max wall-clock per run.                                                                                       |      M | Observability/error taxonomy                 |
 | AI-first dashboard and MCP workflows | Dashboard is now core-owned and basic/read-only, but it does not yet show prompt-specific result summaries, sessions, or repair workflows. MCP currently stays tool-first; no bundled prompt templates ship. | Add rendered prompt preview, result cards, session views, and only then consider MCP prompt templates such as `create-scheduled-prompt`, `summarize-last-run`, and `repair-failed-agent-job`. |      M | Config + prompt template + results           |
 
@@ -77,7 +77,7 @@ reuse behavior, and speculative model-limit field removal.
 Recommended read precedence, highest first:
 
 1. Per-command CLI flags and explicit client options.
-2. Per-job persisted settings (`action.engine`, `action.args`, `action.cwd`, `action.timeoutSec`, `retry`, `budgets`).
+2. Per-job persisted settings (`action.engine`, `action.args`, `action.cwd`, `action.timeoutSec`, `retry`).
 3. Environment variables for bootstrapping and automation:
    - Existing: `CRONTICK_HOME`, `CRONTICK_DAEMON_URL`, `CRONTICK_DAEMON_BINARY`, `CRONTICK_MCP_START_DAEMON` (`src\paths.ts:5-13`, `src\daemon\ensure.ts:40-60`, `src\daemon\ensure.ts:256-260`, `src\mcp\index.ts:27-35`).
    - New: `CRONTICK_CONFIG`, `CRONTICK_DEFAULT_ENGINE`, `CRONTICK_ENGINE_<NAME>_COMMAND`, `CRONTICK_TELEMETRY`, `CRONTICK_LOG_LEVEL`.
@@ -89,7 +89,7 @@ Recommended read precedence, highest first:
    - If `CRONTICK_HOME` changes, user config moves with the data dir.
 6. Built-in defaults:
    - Default engine `copilot` for package/API compatibility.
-   - Current retry/overlap/catchup defaults from `JobSchema` (`src\schemas\job.ts:118-127`).
+   - Current retry/overlap defaults from `JobSchema` (`src\schemas\job.ts`).
 
 Special case: `dataDir` cannot be reliably read from a config file inside the data dir. Keep `CRONTICK_HOME` as the authoritative bootstrap override, with a `crontick config path` command explaining the resolved locations.
 
@@ -140,9 +140,8 @@ Add `src\schemas\config.ts` plus a generated `src\schemas\config.schema.json`:
   },
   "limits": {
     "globalPromptConcurrency": 1,
-    "perEngineConcurrency": {},
-    "maxRunsPerDay": null,
-      },
+    "perEngineConcurrency": {}
+  },
   "telemetry": {
     "enabled": false,
     "level": "off",
@@ -178,7 +177,7 @@ MCP should stay tool-first for config (`crontick_config_get`, `crontick_config_v
 
 - Creation-time defaults: CLI/client/MCP job creation fills omitted fields from effective config, then persists explicit normalized job JSON. This keeps exports/backups reproducible.
 - Runtime defaults: engine command paths, rate limits, redaction policy, telemetry, and retention are evaluated at run time because they are machine-local operational settings.
-- Per-job wins over global: `action.engine`, `action.args`, `action.timeoutSec`, `retry`, `budgets`, `cwd`, `env`, and `envFile` override defaults.
+- Per-job wins over global: `action.engine`, `action.args`, `action.timeoutSec`, `retry`, `cwd`, `env`, and `envFile` override defaults.
 - Environment wins over config for daemon bootstrap and CI automation.
 
 ### Migration and back-compat

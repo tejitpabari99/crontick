@@ -1,7 +1,7 @@
 ## Verdict
 PASS
 
-Final state has no remaining P0/P1/P2 architecture findings after the small fixes in this pass. Reviewed branch `users/tejitpabari/prompt-cron-daemon-autostart` against merge-base `42051828a7f78266d22aac6a4727c9a8a1eb7138` (`origin/main`).
+Final state has no remaining P0/P1/P2 architecture findings after the small fixes in this pass. Reviewed the current feature branch against merge-base `42051828a7f78266d22aac6a4727c9a8a1eb7138` (`origin/main`).
 
 ## Findings fixed in this pass
 | Severity | File:line | Rule | Required fix |

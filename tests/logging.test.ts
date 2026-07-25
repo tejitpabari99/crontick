@@ -108,11 +108,9 @@ describe('verbose propagation', () => {
           args: ['-e', 'process.exit(0)'],
           env: { GITHUB_TOKEN: 'ghp_123456789012345678901234567890123456' },
         },
-        catchup: 'skip',
-        overlap: 'skip',
+          overlap: 'skip',
         retry: { max: 0, backoffSec: 30 },
-        budgets: { maxRunsPerDay: null },
-      };
+        };
       store.upsertJob(job);
       const run = store.insertRun(job.id);
       await new Runner(undefined, logger).run(job, run.id, store);

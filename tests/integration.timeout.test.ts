@@ -41,10 +41,8 @@ describe('Integration: timeout semantics', () => {
         args: ['-e', 'setTimeout(() => process.exit(0), 60000)'],
         timeoutSec: 1,
       },
-      catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: null },
     };
 
     const run = store.insertRun(job.id);
@@ -58,10 +56,8 @@ describe('Integration: timeout semantics', () => {
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },
       action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'], timeoutSec: 10 },
-      catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: null },
     };
 
     const run = store.insertRun(job.id);

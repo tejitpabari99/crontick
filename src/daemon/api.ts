@@ -86,7 +86,7 @@ async function handleRequest(
       const job = applyConfigDefaults(parsed.data);
       ctx.store.upsertJob(job);
       const stored = ctx.store.getJob(job.id) ?? job;
-      ctx.scheduler.schedule(stored, ctx.store);
+      ctx.scheduler.schedule(stored);
       return sendJson(res, 201, stored);
     }
 
@@ -113,7 +113,7 @@ async function handleRequest(
         const job = applyConfigDefaults(parsed.data);
         ctx.store.upsertJob(job);
         const stored = ctx.store.getJob(id) ?? job;
-        ctx.scheduler.schedule(stored, ctx.store);
+        ctx.scheduler.schedule(stored);
         return sendJson(res, 200, stored);
       }
 
@@ -129,7 +129,7 @@ async function handleRequest(
         if (!job) return sendError(res, 404, 'NOT_FOUND', `Job ${id} not found`);
         const updated = { ...job, enabled: true };
         ctx.store.upsertJob(updated);
-        ctx.scheduler.schedule(updated, ctx.store);
+        ctx.scheduler.schedule(updated);
         return sendJson(res, 200, updated);
       }
 
@@ -279,7 +279,7 @@ async function handleRequest(
         if (parsed.success) {
           const job = applyConfigDefaults(parsed.data);
           ctx.store.upsertJob(job);
-          ctx.scheduler.schedule(job, ctx.store);
+          ctx.scheduler.schedule(job);
           results.push({ id: job.id, ok: true });
         } else {
           results.push({ id: String(raw?.id ?? '?'), ok: false, error: 'validation failed' });

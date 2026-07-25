@@ -307,30 +307,6 @@ export class Store {
     return rows.map(rowToRun);
   }
 
-  /** Get the most recent successful run for a job (for catchup calculation). */
-  getLastRun(jobId: string): Run | undefined {
-    const row = this.db
-      .prepare(
-        "SELECT * FROM runs WHERE job_id = ? AND status IN ('success','failed','timeout') ORDER BY started_at DESC LIMIT 1",
-      )
-      .get(jobId) as DbRunRow | undefined;
-    return row ? rowToRun(row) : undefined;
-  }
-
-  /** Count runs for a job started after a given epoch ms. */
-  countRunsSince(jobId: string, since: number, excludeId?: string): number {
-    if (excludeId) {
-      const result = this.db
-        .prepare('SELECT COUNT(*) as cnt FROM runs WHERE job_id = ? AND started_at >= ? AND id != ?')
-        .get(jobId, since, excludeId) as { cnt: number };
-      return result.cnt;
-    }
-    const result = this.db
-      .prepare('SELECT COUNT(*) as cnt FROM runs WHERE job_id = ? AND started_at >= ?')
-      .get(jobId, since) as { cnt: number };
-    return result.cnt;
-  }
-
   // ── Log CRUD ────────────────────────────────────────────────────────────────
 
   appendLog(runId: string, stream: 'stdout' | 'stderr', chunk: Buffer): void {

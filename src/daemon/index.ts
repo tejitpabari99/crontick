@@ -121,7 +121,7 @@ if (needsSqliteShim) {
     const runner = new Runner(undefined, logger);
 
     for (const job of jobs) {
-      if (job.enabled) scheduler.schedule(job, store);
+      if (job.enabled) scheduler.schedule(job);
     }
 
     scheduler.on('tick', ({ jobId, plannedAt }) => {
@@ -139,7 +139,7 @@ if (needsSqliteShim) {
       store.loadJobsFromDisk();
       const reloaded = store.listJobs();
       for (const job of reloaded) {
-        if (job.enabled) scheduler.schedule(job, store);
+        if (job.enabled) scheduler.schedule(job);
       }
       logger.info(`Reloaded ${reloaded.length} job(s)`);
     }

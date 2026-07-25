@@ -28,10 +28,8 @@ function execJob(id: string, command: string, args: string[], opts?: Partial<Job
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
     action: { kind: 'exec', command, args },
-    catchup: 'skip',
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null },
     ...opts,
   };
 }
@@ -49,10 +47,8 @@ function promptJob(id: string, action: Partial<Extract<Job['action'], { kind: 'p
       reuseSession: false,
       ...action,
     },
-    catchup: 'skip',
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null },
   };
 }
 
@@ -187,10 +183,8 @@ describe('Runner', () => {
         script: isWindows ? '@echo from-script\r\n' : 'printf "from-script\\n"\n',
         shell: isWindows ? 'cmd' : 'bash',
       },
-      catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: null },
     };
     const run = store.insertRun(job.id);
     await runner.run(job, run.id, store);
@@ -275,25 +269,6 @@ describe('Runner', () => {
 
     expect(['canceled', 'failed']).toContain(store.getRun(run1.id)?.status);
   }, 15000);
-
-  // ── Budget ───────────────────────────────────────────────────────────────────
-
-  it('budget: maxRunsPerDay=1 cancels second run on same day', async () => {
-    const job = execJob(
-      'budget-job',
-      node,
-      ['-e', 'process.exit(0)'],
-      { budgets: { maxRunsPerDay: 1 } },
-    );
-
-    const run1 = store.insertRun(job.id);
-    await runner.run(job, run1.id, store);
-    expect(store.getRun(run1.id)?.status).toBe('success');
-
-    const run2 = store.insertRun(job.id);
-    await runner.run(job, run2.id, store);
-    expect(store.getRun(run2.id)?.status).toBe('canceled');
-  });
 
   // ── cancelRun ────────────────────────────────────────────────────────────────
 

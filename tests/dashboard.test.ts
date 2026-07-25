@@ -91,13 +91,11 @@ describe('core dashboard data model', () => {
       enabled: true,
       schedule: { kind: 'interval', everySec: 60 },
       action: { kind: 'exec', command: process.execPath, args: ['-v'] },
-      catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: null },
     } satisfies Job;
     store.upsertJob(job);
-    scheduler.schedule(job, store);
+    scheduler.schedule(job);
     const run = store.insertRun(job.id, Date.now() - 1000);
     store.updateRun(run.id, { status: 'success', endedAt: Date.now(), durationMs: 25, exitCode: 0 });
 

@@ -24,10 +24,8 @@ function makeJob(id: string, overlap: Job['overlap'], durationMs = 200): Job {
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
     action: { kind: 'exec', command: node, args: ['-e', `setTimeout(() => process.exit(0), ${durationMs})`] },
-    catchup: 'skip',
     overlap,
     retry: { max: 0, backoffSec: 0 },
-    budgets: { maxRunsPerDay: null },
   };
 }
 
