@@ -51,6 +51,15 @@ function makeTmpDir(): string {
   return d;
 }
 
+function stopDaemonInHome(dir: string): void {
+  const pidFile = join(dir, 'daemon.pid');
+  if (!existsSync(pidFile)) return;
+  const pid = parseInt(readFileSync(pidFile, 'utf-8').trim(), 10);
+  if (!isNaN(pid)) {
+    try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
+  }
+}
+
 function waitForPortFile(dir: string, maxMs = 30_000, getStderr?: () => string): Promise<number> {
   const portFile = join(dir, 'daemon.port');
   return new Promise((resolve, reject) => {
@@ -417,7 +426,7 @@ describe('MCP server — full contract', () => {
 // ── Daemon-start-off path ────────────────────────────────────────────────────
 
 describe('MCP server — CRONTICK_MCP_NO_DAEMON_START path', () => {
-  it('tool call returns actionable error when daemon is not running and daemon start is off', async () => {
+  it('daemon status reports not running without starting the daemon', async () => {
     const isolatedDir = makeTmpDir();
     let isolatedTransport: StdioClientTransport | undefined;
     let isolatedClient: Client | undefined;
@@ -439,15 +448,52 @@ describe('MCP server — CRONTICK_MCP_NO_DAEMON_START path', () => {
       );
       await isolatedClient.connect(isolatedTransport);
 
-      const { text, isError } = await callTool(isolatedClient, 'crontick_daemon_status');
-      expect(isError).toBe(true);
+      const { json, text, isError } = await callTool(isolatedClient, 'crontick_daemon_status');
+      expect(isError).toBe(false);
+      expect((json as { running?: boolean }).running).toBe(false);
       // Must NOT leak 127.0.0.1:port to the LLM
       expect(text).not.toMatch(/127\.0\.0\.1:\d+/);
-      // Must mention how to start or daemon
-      expect(text.toLowerCase()).toMatch(/start|daemon|daemon start/);
+      expect(existsSync(join(isolatedDir, 'daemon.port'))).toBe(false);
+      expect(existsSync(join(isolatedDir, 'daemon.pid'))).toBe(false);
     } finally {
       try { await isolatedClient?.close(); } catch { /* ignore */ }
       try { await isolatedTransport?.close(); } catch { /* ignore */ }
+      try { rmSync(isolatedDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  }, TIMEOUT_MS);
+});
+
+describe('MCP server — daemon-backed tools start daemon on demand', () => {
+  it('job list starts a persistent daemon when down', async () => {
+    const isolatedDir = makeTmpDir();
+    let isolatedTransport: StdioClientTransport | undefined;
+    let isolatedClient: Client | undefined;
+
+    try {
+      isolatedTransport = new StdioClientTransport({
+        command: process.execPath,
+        args: [MCP_SCRIPT],
+        env: {
+          ...process.env,
+          CRONTICK_HOME: isolatedDir,
+        },
+        stderr: 'pipe',
+      });
+      isolatedClient = new Client(
+        { name: 'test-client-start', version: '0.0.0' },
+        { capabilities: {} },
+      );
+      await isolatedClient.connect(isolatedTransport);
+
+      const { json, isError } = await callTool(isolatedClient, 'crontick_job_list');
+      expect(isError).toBe(false);
+      expect(json).toEqual([]);
+      expect(existsSync(join(isolatedDir, 'daemon.port'))).toBe(true);
+      expect(existsSync(join(isolatedDir, 'daemon.pid'))).toBe(true);
+    } finally {
+      try { await isolatedClient?.close(); } catch { /* ignore */ }
+      try { await isolatedTransport?.close(); } catch { /* ignore */ }
+      stopDaemonInHome(isolatedDir);
       try { rmSync(isolatedDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
   }, TIMEOUT_MS);

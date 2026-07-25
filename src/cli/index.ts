@@ -8,6 +8,7 @@ import { VERSION } from '../version.js';
 import { portFilePath, pidFilePath, dataDir, ensureDirs } from '../paths.js';
 import { JobSchema } from '../schemas/job.js';
 import { CrontickError } from '../errors.js';
+import { createClient } from '../client.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -28,31 +29,8 @@ function getPort(): number {
   return port;
 }
 
-async function api(
-  method: string,
-  path: string,
-  body?: unknown,
-): Promise<unknown> {
-  const port = getPort();
-  const url = `http://127.0.0.1:${port}${path}`;
-  const options: RequestInit = {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-  };
-  if (body !== undefined) options.body = JSON.stringify(body);
-  const res = await fetch(url, options);
-  const text = await res.text();
-  let data: unknown;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new CrontickError('PARSE_ERROR', `Unexpected response: ${text.slice(0, 200)}`);
-  }
-  if (!res.ok) {
-    const err = (data as { error?: { code?: string; message?: string } })?.error;
-    throw new CrontickError(err?.code ?? 'API_ERROR', err?.message ?? `HTTP ${res.status}`);
-  }
-  return data;
+function client(allowStart = true) {
+  return createClient({ daemonScript: daemonScript(), allowStart });
 }
 
 // ── Output helpers ────────────────────────────────────────────────────────────
@@ -214,7 +192,7 @@ program
         throw new CrontickError('VALIDATION_ERROR', 'Invalid job', parsed.error.format());
       }
 
-      const result = await api('POST', '/api/jobs', parsed.data);
+      const result = await client().createJob(parsed.data);
       print(result, !!(program.opts() as { json?: boolean }).json);
     } catch (err) {
       handleError(err);
@@ -228,7 +206,7 @@ program
   .description('List all jobs')
   .action(async () => {
     try {
-      const jobs = await api('GET', '/api/jobs');
+      const jobs = await client().listJobs();
       print(jobs, !!(program.opts() as { json?: boolean }).json);
     } catch (err) {
       handleError(err);
@@ -242,7 +220,7 @@ program
   .description('Get a job by ID')
   .action(async (id: string) => {
     try {
-      const job = await api('GET', `/api/jobs/${encodeURIComponent(id)}`);
+      const job = await client().getJob(id);
       print(job, !!(program.opts() as { json?: boolean }).json);
     } catch (err) {
       handleError(err);
@@ -256,7 +234,7 @@ program
   .description('Enable a job')
   .action(async (id: string) => {
     try {
-      const result = await api('POST', `/api/jobs/${encodeURIComponent(id)}/enable`);
+      const result = await client().enableJob(id);
       print(result, !!(program.opts() as { json?: boolean }).json);
     } catch (err) {
       handleError(err);
@@ -268,7 +246,7 @@ program
   .description('Disable a job')
   .action(async (id: string) => {
     try {
-      const result = await api('POST', `/api/jobs/${encodeURIComponent(id)}/disable`);
+      const result = await client().disableJob(id);
       print(result, !!(program.opts() as { json?: boolean }).json);
     } catch (err) {
       handleError(err);
@@ -280,7 +258,7 @@ program
   .description('Delete a job')
   .action(async (id: string) => {
     try {
-      const result = await api('DELETE', `/api/jobs/${encodeURIComponent(id)}`);
+      const result = await client().deleteJob(id);
       print(result, !!(program.opts() as { json?: boolean }).json);
     } catch (err) {
       handleError(err);
@@ -294,7 +272,7 @@ program
   .description('Trigger an immediate run of a job')
   .action(async (id: string) => {
     try {
-      const result = await api('POST', `/api/jobs/${encodeURIComponent(id)}/run`);
+      const result = await client().runNow(id);
       print(result, !!(program.opts() as { json?: boolean }).json);
     } catch (err) {
       handleError(err);
@@ -311,7 +289,7 @@ program
   .action(async (runId: string, opts) => {
     try {
       const useJson = !!(program.opts() as { json?: boolean }).json;
-      const logs = await api('GET', `/api/runs/${encodeURIComponent(runId)}/logs`) as Array<{
+      const logs = await client().getLogs(runId) as Array<{
         stream: string;
         ts: number;
         data: string;
@@ -339,7 +317,7 @@ program
   .option('--out <file>', 'Output file (default: stdout)')
   .action(async (opts) => {
     try {
-      const data = await api('GET', '/api/export');
+      const data = await client().exportJobs();
       const json = JSON.stringify(data, null, 2);
       if (opts.out) {
         writeFileSync(resolve(process.cwd(), opts.out as string), json, 'utf-8');
@@ -359,7 +337,8 @@ program
     try {
       const raw = readFileSync(resolve(process.cwd(), file), 'utf-8');
       const data = JSON.parse(raw);
-      const result = await api('POST', '/api/import', data);
+      const jobs = Array.isArray(data) ? data : (data as { jobs?: unknown[] }).jobs;
+      const result = await client().importJobs(Array.isArray(jobs) ? jobs : []);
       print(result, !!(program.opts() as { json?: boolean }).json);
     } catch (err) {
       handleError(err);
@@ -406,7 +385,7 @@ program
 
     // Daemon reachable
     try {
-      await api('GET', '/health');
+      await client(false).health({ ensure: false });
       checks.push({ name: 'daemon reachable', ok: true });
     } catch {
       checks.push({ name: 'daemon reachable', ok: false, note: 'not running' });
@@ -520,7 +499,7 @@ daemon
   .description('Show daemon status')
   .action(async () => {
     try {
-      const status = await api('GET', '/api/daemon/status');
+      const status = await client(false).daemonStatus();
       print(status, !!(program.opts() as { json?: boolean }).json);
     } catch {
       console.log('Daemon is not running');
@@ -532,7 +511,7 @@ daemon
   .description('Reload jobs from disk')
   .action(async () => {
     try {
-      const result = await api('POST', '/api/daemon/reload');
+      const result = await client().daemonReload();
       print(result, !!(program.opts() as { json?: boolean }).json);
     } catch (err) {
       handleError(err);
@@ -617,8 +596,7 @@ program
   .option('--open', 'Open in the default browser')
   .action(async (opts) => {
     try {
-      const port = getPort();
-      const url = `http://127.0.0.1:${port}/dashboard`;
+      const url = await client().dashboardUrl();
       if (opts.open as boolean) {
         if (process.platform === 'win32') {
           spawn('cmd', ['/c', 'start', url], { detached: true, stdio: 'ignore' }).unref();

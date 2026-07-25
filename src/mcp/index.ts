@@ -5,137 +5,29 @@
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { readFileSync, existsSync, appendFileSync, statSync, mkdirSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve as pathResolve, join as pathJoin } from 'node:path';
+import { dirname, resolve as pathResolve } from 'node:path';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import { portFilePath, pidFilePath, logsDir, ensureDirs } from '../paths.js';
+import { portFilePath, pidFilePath, ensureDirs } from '../paths.js';
 import { VERSION } from '../version.js';
 import {
   JobSchema,
   ScheduleSchema,
   ActionSchema,
 } from '../schemas/job.js';
+import { ensureDaemon, resolveDaemonBaseUrl } from '../daemon/ensure.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// ── Daemon URL resolution ─────────────────────────────────────────────────────
-
-function getDaemonBaseUrl(): string {
-  const envUrl = process.env['CRONTICK_DAEMON_URL'];
-  if (envUrl) return envUrl.replace(/\/$/, '');
-  const pf = portFilePath();
-  if (!existsSync(pf)) throw new DaemonUnavailableError('Port file not found.');
-  const port = parseInt(readFileSync(pf, 'utf-8').trim(), 10);
-  if (isNaN(port) || port <= 0) throw new DaemonUnavailableError('Invalid port in port file.');
-  return `http://127.0.0.1:${port}`;
-}
-
-class DaemonUnavailableError extends Error {
-  constructor(detail: string) {
-    super(
-      `Daemon is not running (${detail}) — run: crontick daemon start`,
-    );
-    this.name = 'DaemonUnavailableError';
-  }
-}
 
 function daemonScript(): string {
   return pathResolve(__dirname, '../daemon/index.js');
 }
 
-function appendDaemonStartLog(text: string): void {
-  try {
-    mkdirSync(logsDir(), { recursive: true });
-    const logPath = pathJoin(logsDir(), 'daemon.ensure.log');
-    let size = 0;
-    try { size = statSync(logPath).size; } catch { /* new file */ }
-    if (size < 256 * 1024) {
-      appendFileSync(logPath, `[${new Date().toISOString()}] ${text}\n`);
-    }
-  } catch { /* ignore log errors */ }
-}
-
-function waitForPortFile(maxMs = 10_000, getStderr?: () => string): Promise<void> {
-  const start = Date.now();
-  return new Promise((resolve, reject) => {
-    const check = () => {
-      if (existsSync(portFilePath())) {
-        // Verify it's a valid port
-        try {
-          const port = parseInt(readFileSync(portFilePath(), 'utf-8').trim(), 10);
-          if (!isNaN(port) && port > 0) return resolve();
-        } catch { /* retry */ }
-      }
-      if (Date.now() - start > maxMs) {
-        const stderr = getStderr?.() ?? '';
-        const hint = stderr ? `\nDaemon start stderr: ${stderr.slice(0, 500)}` : '';
-        return reject(new DaemonUnavailableError(`Timed out waiting for daemon to start.${hint}`));
-      }
-      setTimeout(check, 200);
-    };
-    check();
-  });
-}
-
-async function ensureDaemon(): Promise<void> {
-  // Check if already running
-  try {
-    const base = getDaemonBaseUrl();
-    const res = await fetch(`${base}/health`, {
-      signal: AbortSignal.timeout(2000),
-    });
-    if (res.ok) return;
-  } catch { /* not running or not responding */ }
-
-  if (process.env['CRONTICK_MCP_NO_DAEMON_START'] === '1') {
-    throw new DaemonUnavailableError(
-      'CRONTICK_MCP_NO_DAEMON_START=1 is set — start the daemon manually: crontick daemon start',
-    );
-  }
-
-  // Start daemon
-  ensureDirs();
-  const script = daemonScript();
-  if (!existsSync(script)) {
-    throw new DaemonUnavailableError(
-      `Daemon script not found. Run: npm run build`,
-    );
-  }
-  const stderrChunks: Buffer[] = [];
-  const child = spawn(process.execPath, [script], {
-    detached: true,
-    stdio: ['ignore', 'ignore', 'pipe'],
-    env: process.env,
-  });
-  if (child.stderr) {
-    child.stderr.on('data', (chunk: Buffer) => {
-      if (Buffer.concat(stderrChunks).length < 4096) stderrChunks.push(chunk);
-    });
-    // unref so the MCP process can exit even if the daemon stderr pipe stays open
-    (child.stderr as NodeJS.ReadableStream & { unref?(): void }).unref?.();
-  }
-  child.unref();
-
-  const getStderr = (): string => {
-    const raw = Buffer.concat(stderrChunks).toString('utf-8');
-    return raw.length > 4096 ? raw.slice(0, 4096) + '…' : raw;
-  };
-
-  try {
-    await waitForPortFile(10_000, getStderr);
-  } catch (err) {
-    const stderr = getStderr();
-    if (stderr) appendDaemonStartLog(`ensureDaemon failed:\n${stderr}`);
-    throw err;
-  }
-}
-
 // ── API client ────────────────────────────────────────────────────────────────
 
 async function callDaemon(method: string, path: string, body?: unknown): Promise<unknown> {
-  const base = getDaemonBaseUrl();
+  const base = await resolveDaemonBaseUrl();
   const res = await fetch(`${base}${path}`, {
     method,
     headers: { 'Content-Type': 'application/json' },
@@ -190,7 +82,10 @@ function errResult(err: unknown): ToolResult {
 
 async function toolWrap(fn: () => Promise<unknown>): Promise<ToolResult> {
   try {
-    await ensureDaemon();
+    await ensureDaemon({
+      daemonScript: daemonScript(),
+      allowStart: process.env['CRONTICK_MCP_NO_DAEMON_START'] !== '1',
+    });
     const result = await fn();
     return okResult(result);
   } catch (err) {
@@ -473,7 +368,15 @@ export function createMcpServer(): McpServer {
         'Get the daemon process status: PID, version, uptime, job counts, run stats, Node version, and platform.',
       inputSchema: {},
     },
-    async () => toolWrap(() => callDaemon('GET', '/health')),
+    async () => {
+      try {
+        const status = await callDaemon('GET', '/health');
+        return okResult(status);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return okResult({ running: false, error: redactForLlm(msg) });
+      }
+    },
   );
 
   server.registerTool(
@@ -513,32 +416,7 @@ export function createMcpServer(): McpServer {
             }
           }, 100);
         });
-        // Start new daemon
-        const script = daemonScript();
-        const restartChunks: Buffer[] = [];
-        const child = spawn(process.execPath, [script], {
-          detached: true,
-          stdio: ['ignore', 'ignore', 'pipe'],
-          env: process.env,
-        });
-        if (child.stderr) {
-          child.stderr.on('data', (chunk: Buffer) => {
-            if (Buffer.concat(restartChunks).length < 4096) restartChunks.push(chunk);
-          });
-          (child.stderr as NodeJS.ReadableStream & { unref?(): void }).unref?.();
-        }
-        child.unref();
-        const getRestartStderr = (): string => {
-          const raw = Buffer.concat(restartChunks).toString('utf-8');
-          return raw.length > 4096 ? raw.slice(0, 4096) + '…' : raw;
-        };
-        try {
-          await waitForPortFile(10_000, getRestartStderr);
-        } catch (err) {
-          const stderr = getRestartStderr();
-          if (stderr) appendDaemonStartLog(`daemon restart failed:\n${stderr}`);
-          throw err;
-        }
+        await ensureDaemon({ daemonScript: daemonScript() });
         return { ok: true, message: 'Daemon restarted successfully.' };
       }),
   );
@@ -577,7 +455,7 @@ export function createMcpServer(): McpServer {
     },
     async () =>
       toolWrap(async () => {
-        const base = getDaemonBaseUrl();
+        const base = await resolveDaemonBaseUrl();
         return {
           url: `${base}/dashboard`,
           message: `Dashboard available at: ${base}/dashboard — open in your browser.`,
@@ -627,7 +505,7 @@ export function createMcpServer(): McpServer {
       });
 
       try {
-        const base = getDaemonBaseUrl();
+        const base = await resolveDaemonBaseUrl();
         const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(2000) });
         if (res.ok) {
           daemonReachable = true;
@@ -641,7 +519,7 @@ export function createMcpServer(): McpServer {
 
       // Dashboard reachable
       try {
-        const base = getDaemonBaseUrl();
+        const base = await resolveDaemonBaseUrl();
         const dashRes = await fetch(`${base}/dashboard`, { signal: AbortSignal.timeout(2000) });
         const text = await dashRes.text();
         checks.push({
@@ -678,7 +556,7 @@ export function createMcpServer(): McpServer {
     },
     async () => {
       try {
-        await ensureDaemon();
+        await ensureDaemon({ daemonScript: daemonScript() });
         const jobs = (await callDaemon('GET', '/api/jobs')) as Array<{ id: string }>;
         const ids = Array.isArray(jobs) ? jobs.map((j) => j.id) : [];
         return {
@@ -718,7 +596,7 @@ export function createMcpServer(): McpServer {
     async (uri, variables) => {
       const id = Array.isArray(variables.id) ? variables.id[0] : variables.id;
       try {
-        await ensureDaemon();
+        await ensureDaemon({ daemonScript: daemonScript() });
         const job = await callDaemon('GET', `/api/jobs/${encodeURIComponent(String(id ?? ''))}`);
         return {
           contents: [
@@ -755,7 +633,7 @@ export function createMcpServer(): McpServer {
     async (uri, variables) => {
       const id = Array.isArray(variables.id) ? variables.id[0] : variables.id;
       try {
-        await ensureDaemon();
+        await ensureDaemon({ daemonScript: daemonScript() });
         const run = await callDaemon('GET', `/api/runs/${encodeURIComponent(String(id ?? ''))}`);
         return {
           contents: [
@@ -792,7 +670,7 @@ export function createMcpServer(): McpServer {
     async (uri, variables) => {
       const id = Array.isArray(variables.id) ? variables.id[0] : variables.id;
       try {
-        await ensureDaemon();
+        await ensureDaemon({ daemonScript: daemonScript() });
         const logs = (await callDaemon(
           'GET',
           `/api/runs/${encodeURIComponent(String(id ?? ''))}/logs`,
@@ -905,7 +783,7 @@ Always confirm before calling crontick_job_delete or crontick_job_disable.`,
       let logInfo = 'Logs unavailable.';
 
       try {
-        await ensureDaemon();
+        await ensureDaemon({ daemonScript: daemonScript() });
         const run = await callDaemon('GET', `/api/runs/${encodeURIComponent(args.runId)}`);
         runInfo = JSON.stringify(run, null, 2);
       } catch (err) {
@@ -978,3 +856,4 @@ main().catch((err) => {
   process.stderr.write(`[crontick-mcp] Fatal: ${err instanceof Error ? err.message : String(err)}\n`);
   process.exit(1);
 });
+

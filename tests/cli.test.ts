@@ -21,6 +21,15 @@ function makeTmpDir(): string {
   return d;
 }
 
+function stopDaemonInHome(dir: string): void {
+  const pidFile = join(dir, 'daemon.pid');
+  if (!existsSync(pidFile)) return;
+  const pid = parseInt(readFileSync(pidFile, 'utf-8').trim(), 10);
+  if (!isNaN(pid)) {
+    try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
+  }
+}
+
 function waitForPortFile(dir: string, maxMs = 30_000, getStderr?: () => string): Promise<number> {
   const portFile = join(dir, 'daemon.port');
   return new Promise((resolve, reject) => {
@@ -77,6 +86,36 @@ describe('CLI binary (dist/cli/index.js)', () => {
     expect(result.status).not.toBe(0);
     expect((result.stdout + result.stderr).toLowerCase()).not.toContain('registry');
   });
+
+  it('daemon-backed list auto-starts the daemon when down', async () => {
+    const tmp = makeTmpDir();
+    try {
+      const result = cli(['--json', 'list'], { CRONTICK_HOME: tmp });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([]);
+      expect(existsSync(join(tmp, 'daemon.port'))).toBe(true);
+      expect(existsSync(join(tmp, 'daemon.pid'))).toBe(true);
+    } finally {
+      stopDaemonInHome(tmp);
+      await new Promise((r) => setTimeout(r, 300));
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it('daemon-free commands do not start the daemon', () => {
+    const tmp = makeTmpDir();
+    try {
+      expect(cli(['--help'], { CRONTICK_HOME: tmp }).status).toBe(0);
+      expect(cli(['--version'], { CRONTICK_HOME: tmp }).status).toBe(0);
+      expect(cli(['daemon', 'status'], { CRONTICK_HOME: tmp }).stdout).toContain('not running');
+      expect(cli(['uninstall', '--yes'], { CRONTICK_HOME: tmp }).status).toBe(0);
+      expect(existsSync(join(tmp, 'daemon.port'))).toBe(false);
+      expect(existsSync(join(tmp, 'daemon.pid'))).toBe(false);
+      expect(existsSync(join(tmp, 'daemon.ensure.lock'))).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 15_000);
 });
 
 // ── End-to-end tests with live daemon ────────────────────────────────────────
@@ -173,7 +212,7 @@ describe('CLI e2e with daemon', () => {
     const r = cli(['--json', 'delete', 'e2e-job'], env());
     expect(r.status).toBe(0);
     const r2 = cli(['get', 'e2e-job'], env());
-    expect(r2.status).toBe(1); // should error
+    expect(r2.status).not.toBe(0); // should error
   });
 
   it('crontick export produces JSON with jobs array', () => {

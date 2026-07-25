@@ -14,7 +14,6 @@ import {
 } from './schemas/job.js';
 
 export interface CrontickClientOptions extends EnsureDaemonOptions {
-  autoStart?: boolean;
   requestTimeoutMs?: number;
   cwd?: string;
 }
@@ -30,7 +29,7 @@ export class CrontickClient {
   async ensure(): Promise<DaemonInfo> {
     const info = await ensureDaemon({
       ...this.options,
-      allowStart: this.options.autoStart ?? this.options.allowStart ?? true,
+      allowStart: this.options.allowStart ?? true,
     });
     this.cachedBaseUrl = info.baseUrl;
     return info;

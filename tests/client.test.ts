@@ -200,7 +200,7 @@ describe('CrontickClient', () => {
   it('validates create/import jobs before posting', async () => {
     makeHome();
     const server = await startHealthOnlyServer();
-    const client = createClient({ daemonUrl: server.baseUrl, autoStart: false });
+    const client = createClient({ daemonUrl: server.baseUrl, allowStart: false });
 
     await expect(client.createJob({ ...testJob, id: 'not valid' })).rejects.toBeInstanceOf(Error);
     await expect(client.importJobs([{ ...testJob, id: 'also invalid' }])).rejects.toBeInstanceOf(Error);
