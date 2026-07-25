@@ -1,20 +1,35 @@
 export { VERSION } from './version.js';
 export { CrontickError } from './errors.js';
-export { ensureDaemon, resolveDaemonBaseUrl } from './daemon/ensure.js';
-export type { DaemonInfo, EnsureDaemonOptions } from './daemon/ensure.js';
 export { CrontickClient, createClient } from './client.js';
-export type { CrontickClientOptions } from './client.js';
-export { normalizeJobInput } from './job-input.js';
-export type { ActionInput, JobCreateInput, NormalizeJobInputOptions, PromptActionInput } from './job-input.js';
+export type {
+  CrontickClientOptions,
+  JobStats,
+  LogEntry,
+  LogsResult,
+  StatsSummary,
+} from './client.js';
 export {
-  dataDir,
-  jobsDir,
-  runsDbPath,
-  logsDir,
-  configPath,
-  pidFilePath,
-  portFilePath,
-  ensureDirs,
-} from './paths.js';
-export { JobSchema, PromptActionSchema, PromptEngineSchema } from './schemas/job.js';
+  buildJobFromCreateOptions,
+  buildJobPatchFromUpdateOptions,
+  normalizeJobInput,
+  normalizeJobPatch,
+} from './job-input.js';
+export type {
+  ActionInput,
+  JobCreateCliOptions,
+  JobCreateInput,
+  JobPatchCliOptions,
+  JobPatchInput,
+  NormalizeJobInputOptions,
+  PromptActionInput,
+} from './job-input.js';
+export { jobJsonSchema } from './schema-json.js';
+export {
+  JobSchema,
+  PromptActionSchema,
+  PromptEngineSchema,
+  ScheduleSchema,
+} from './schemas/job.js';
 export type { Job, JobInput, Schedule, Action, PromptAction, PromptEngine } from './schemas/job.js';
+export { SURFACE_CAPABILITIES } from './surface.js';
+export type { SurfaceCapability } from './surface.js';

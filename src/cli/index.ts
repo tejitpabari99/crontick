@@ -1,56 +1,37 @@
 import { Command } from 'commander';
 import { spawn, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { VERSION } from '../version.js';
-import { portFilePath, pidFilePath, dataDir, ensureDirs } from '../paths.js';
-import { JobSchema } from '../schemas/job.js';
+import { dataDir } from '../paths.js';
 import { CrontickError } from '../errors.js';
 import { createClient } from '../client.js';
-import { normalizeJobInput, type JobCreateInput } from '../job-input.js';
+import { buildJobPatchFromUpdateOptions, type JobCreateCliOptions, type JobPatchCliOptions } from '../job-input.js';
+import { readLiveDaemonPid } from '../daemon/lifecycle.js';
+import type { Schedule } from '../schemas/job.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// ── API client ────────────────────────────────────────────────────────────────
-
-function getPort(): number {
-  const pf = portFilePath();
-  if (!existsSync(pf)) {
-    throw new CrontickError(
-      'DAEMON_NOT_RUNNING',
-      'Daemon is not running. Start it with: crontick daemon start',
-    );
-  }
-  const port = parseInt(readFileSync(pf, 'utf-8').trim(), 10);
-  if (isNaN(port)) {
-    throw new CrontickError('DAEMON_NOT_RUNNING', 'Could not read daemon port file');
-  }
-  return port;
+function daemonScript(): string {
+  return resolve(__dirname, '../daemon/index.js');
 }
 
-function readLiveDaemonPid(): number | undefined {
-  const pidFile = pidFilePath();
-  if (!existsSync(pidFile)) return undefined;
-  const pid = parseInt(readFileSync(pidFile, 'utf-8').trim(), 10);
-  if (isNaN(pid) || pid <= 0) return undefined;
-  try {
-    process.kill(pid, 0);
-    return pid;
-  } catch {
-    return undefined;
-  }
+function mcpScript(): string {
+  return resolve(__dirname, '../mcp/index.js');
 }
 
 function client(allowStart = true) {
-  return createClient({ daemonScript: daemonScript(), allowStart });
+  return createClient({ daemonScript: daemonScript(), allowStart, mcpScript: mcpScript(), cwd: process.cwd() });
 }
 
-// ── Output helpers ────────────────────────────────────────────────────────────
+function useJson(): boolean {
+  return !!(program.opts() as { json?: boolean }).json;
+}
 
-function print(data: unknown, useJson: boolean): void {
-  if (useJson) {
+function print(data: unknown, json = useJson()): void {
+  if (json) {
     console.log(JSON.stringify(data, null, 2));
     return;
   }
@@ -63,93 +44,130 @@ function print(data: unknown, useJson: boolean): void {
     const keys = Object.keys(rows[0]);
     console.log(keys.join('\t'));
     for (const row of rows) {
-      console.log(
-        keys
-          .map((k) => {
-            const v = row[k];
-            return v !== null && typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
-          })
-          .join('\t'),
-      );
+      console.log(keys.map((key) => display(row[key])).join('\t'));
     }
-  } else if (data !== null && typeof data === 'object') {
-    const obj = data as Record<string, unknown>;
-    for (const [key, value] of Object.entries(obj)) {
-      const display =
-        value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value ?? '');
-      console.log(`${key}: ${display}`);
-    }
-  } else {
-    console.log(String(data ?? ''));
+    return;
   }
+  if (data !== null && typeof data === 'object') {
+    for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+      console.log(`${key}: ${display(value)}`);
+    }
+    return;
+  }
+  console.log(String(data ?? ''));
+}
+
+function display(value: unknown): string {
+  return value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value ?? '');
 }
 
 function handleError(err: unknown): never {
   if (err instanceof CrontickError) {
     console.error(`Error [${err.code}]: ${err.message}`);
+  } else if (err instanceof Error) {
+    console.error(`Error: ${err.message}`);
   } else {
     console.error(`Error: ${String(err)}`);
   }
   process.exit(1);
 }
 
-function assertFileModeExclusive(opts: Record<string, unknown>, rawArgs: string[]): void {
-  const conflicting =
-    rawArgs.length > 0
-    || opts.cron !== undefined
-    || opts.every !== undefined
-    || opts.at !== undefined
-    || opts.tz !== undefined
-    || opts.script !== undefined
-    || opts.exec !== undefined
-    || opts.prompt !== undefined
-    || opts.promptFile !== undefined
-    || opts.engine !== undefined
-    || opts.sessionId !== undefined
-    || opts.reuseSession !== undefined
-    || opts.shell !== 'auto'
-    || opts.envFile !== undefined
-    || opts.timeout !== undefined
-    || opts.overlap !== 'skip'
-    || opts.retry !== undefined
-    || opts.desc !== undefined;
-
-  if (conflicting) {
-    throw new CrontickError(
-      'VALIDATION_ERROR',
-      '--file is mutually exclusive with schedule, action, prompt, session, and raw engine arguments',
-    );
-  }
+function commonJobOptions(command: Command): Command {
+  return command
+    .option('--cron <expr>', 'Cron expression (e.g. "0 9 * * *")')
+    .option('--every <sec>', 'Interval in seconds', parseInteger)
+    .option('--at <iso>', 'One-shot run-at ISO-8601 time')
+    .option('--tz <tz>', 'Timezone for cron schedule')
+    .option('--script <body>', 'Inline script body')
+    .option('--exec <cmd>', 'Command to exec (use -- for args)')
+    .option('--prompt <text>', 'Prompt text for a prompt action')
+    .option('--prompt-file <path>', 'UTF-8 .txt file to read into the prompt')
+    .option('--engine <engine>', 'Prompt engine: copilot|agency (default: copilot)')
+    .option('--session-id <id>', 'Reuse this prompt engine session every run')
+    .option('--reuse-session', 'Capture the first successful run session id and reuse it')
+    .option('--file <path>', 'Load job JSON from a file')
+    .option('--shell <shell>', 'Shell: auto|bash|pwsh|cmd', 'auto')
+    .option('--env-file <path>', 'Load extra environment variables from a .env file')
+    .option('--timeout <sec>', 'Timeout in seconds', parseInteger)
+    .option('--overlap <policy>', 'Overlap policy: skip|queue|cancel-previous', 'skip')
+    .option('--retry <max>', 'Retry count', parseInteger)
+    .option('--desc <description>', 'Job description');
 }
 
-// ── Daemon helpers ────────────────────────────────────────────────────────────
-
-function daemonScript(): string {
-  // In dist: __dirname = dist/cli/, daemon is at dist/daemon/index.js
-  // In source via ts-node/vitest: paths differ, but tests build first
-  return resolve(__dirname, '../daemon/index.js');
+function collectJobOptions(id: string, engineArgs: string[], opts: Record<string, unknown>): JobCreateCliOptions {
+  return {
+    id,
+    rawArgs: Array.isArray(engineArgs) ? engineArgs : [],
+    file: stringOption(opts.file),
+    cron: stringOption(opts.cron),
+    every: numberOption(opts.every),
+    at: stringOption(opts.at),
+    tz: stringOption(opts.tz),
+    script: stringOption(opts.script),
+    exec: stringOption(opts.exec),
+    prompt: stringOption(opts.prompt),
+    promptFile: stringOption(opts.promptFile),
+    engine: stringOption(opts.engine),
+    sessionId: stringOption(opts.sessionId),
+    reuseSession: booleanOption(opts.reuseSession),
+    shell: stringOption(opts.shell),
+    envFile: stringOption(opts.envFile),
+    timeout: numberOption(opts.timeout),
+    overlap: stringOption(opts.overlap),
+    retry: numberOption(opts.retry),
+    desc: stringOption(opts.desc),
+  };
 }
 
-function waitForPort(timeout = 10_000): Promise<number> {
-  const start = Date.now();
-  return new Promise((resolve, reject) => {
-    const check = () => {
-      try {
-        const port = getPort();
-        resolve(port);
-      } catch {
-        if (Date.now() - start > timeout) {
-          reject(new CrontickError('DAEMON_TIMEOUT', 'Timed out waiting for daemon to start'));
-        } else {
-          setTimeout(check, 200);
-        }
-      }
-    };
-    check();
-  });
+function collectPatchOptions(engineArgs: string[], opts: Record<string, unknown>): JobPatchCliOptions {
+  if (opts.enable && opts.disable) throw new CrontickError('VALIDATION_ERROR', '--enable and --disable are mutually exclusive');
+  return {
+    rawArgs: Array.isArray(engineArgs) ? engineArgs : [],
+    file: stringOption(opts.file),
+    cron: stringOption(opts.cron),
+    every: numberOption(opts.every),
+    at: stringOption(opts.at),
+    tz: stringOption(opts.tz),
+    script: stringOption(opts.script),
+    exec: stringOption(opts.exec),
+    prompt: stringOption(opts.prompt),
+    promptFile: stringOption(opts.promptFile),
+    engine: stringOption(opts.engine),
+    sessionId: stringOption(opts.sessionId),
+    reuseSession: booleanOption(opts.reuseSession),
+    shell: stringOption(opts.shell),
+    envFile: stringOption(opts.envFile),
+    timeout: numberOption(opts.timeout),
+    overlap: stringOption(opts.overlap),
+    retry: numberOption(opts.retry),
+    desc: stringOption(opts.desc),
+    enabled: opts.enable ? true : opts.disable ? false : undefined,
+  };
 }
 
-// ── Program ───────────────────────────────────────────────────────────────────
+function parseInteger(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed)) throw new InvalidArgumentError(`Invalid integer: ${value}`);
+  return parsed;
+}
+
+class InvalidArgumentError extends Error {}
+
+function stringOption(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function numberOption(value: unknown): number | undefined {
+  return typeof value === 'number' ? value : undefined;
+}
+
+function booleanOption(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function parseScheduleJson(raw: string): Schedule {
+  return JSON.parse(raw) as Schedule;
+}
 
 const program = new Command();
 
@@ -159,249 +177,108 @@ program
   .version(VERSION)
   .option('--json', 'Output as JSON');
 
-// ── new ───────────────────────────────────────────────────────────────────────
-
-program
-  .command('new <id> [engineArgs...]')
-  .description('Create a new job')
-  .option('--cron <expr>', 'Cron expression (e.g. "0 9 * * *")')
-  .option('--every <sec>', 'Interval in seconds', parseInt)
-  .option('--at <iso>', 'One-shot run-at ISO-8601 time')
-  .option('--tz <tz>', 'Timezone for cron schedule')
-  .option('--script <body>', 'Inline script body')
-  .option('--exec <cmd>', 'Command to exec (use -- for args)')
-  .option('--prompt <text>', 'Prompt text for a prompt action')
-  .option('--prompt-file <path>', 'UTF-8 .txt file to read into the prompt')
-  .option('--engine <engine>', 'Prompt engine: copilot|agency (default: copilot)')
-  .option('--session-id <id>', 'Reuse this prompt engine session every run')
-  .option('--reuse-session', 'Capture the first successful run session id and reuse it')
-  .option('--file <path>', 'Load full job from JSON file')
-  .option('--shell <shell>', 'Shell: auto|bash|pwsh|cmd', 'auto')
-  .option('--env-file <path>', 'Load extra environment variables from a .env file')
-  .option('--timeout <sec>', 'Timeout in seconds', parseInt)
-  .option('--overlap <policy>', 'Overlap policy: skip|queue|cancel-previous', 'skip')
-  .option('--retry <max>', 'Retry count', parseInt)
-  .option('--desc <description>', 'Job description')
+commonJobOptions(program.command('new <id> [engineArgs...]').description('Create a new job'))
   .action(async (id: string, engineArgs: string[], opts) => {
     try {
-      let jobData: JobCreateInput;
-      const rawArgs = Array.isArray(engineArgs) ? engineArgs : [];
-
-      if (opts.file) {
-        assertFileModeExclusive(opts, rawArgs);
-        const filePath = resolve(process.cwd(), opts.file as string);
-        const raw = readFileSync(filePath, 'utf-8');
-        jobData = JSON.parse(raw) as JobCreateInput;
-        jobData = normalizeJobInput(jobData, {
-          cwd: process.cwd(),
-          fileBaseDir: dirname(filePath),
-        });
-      } else {
-        // Build schedule
-        let schedule: unknown;
-        if (opts.cron) {
-          schedule = { kind: 'cron', cron: opts.cron as string, tz: opts.tz as string | undefined };
-        } else if (opts.every) {
-          schedule = { kind: 'interval', everySec: opts.every as number };
-        } else if (opts.at) {
-          schedule = { kind: 'one-shot', runAt: opts.at as string };
-        } else {
-          throw new CrontickError('MISSING_ARG', 'Provide --cron, --every <sec>, or --at <iso>');
-        }
-
-        // Build action
-        let action: unknown;
-        const actionSourceCount = [opts.script, opts.exec, opts.prompt, opts.promptFile].filter(
-          (value) => value !== undefined,
-        ).length;
-        if (actionSourceCount !== 1) {
-          throw new CrontickError(
-            'MISSING_ARG',
-            'Provide exactly one action source: --script, --exec, --prompt, or --prompt-file',
-          );
-        }
-
-        const promptMode = opts.prompt !== undefined || opts.promptFile !== undefined;
-        if (!promptMode && rawArgs.length > 0) {
-          throw new CrontickError('VALIDATION_ERROR', 'Raw engine args after -- are valid only with prompt mode');
-        }
-        if (!promptMode && (opts.engine !== undefined || opts.sessionId !== undefined || opts.reuseSession)) {
-          throw new CrontickError('VALIDATION_ERROR', 'Prompt engine/session flags are valid only with prompt mode');
-        }
-        if (opts.sessionId !== undefined && opts.reuseSession) {
-          throw new CrontickError('VALIDATION_ERROR', 'sessionId and reuseSession are mutually exclusive');
-        }
-
-        if (opts.script) {
-          action = {
-            kind: 'script',
-            script: opts.script as string,
-            shell: opts.shell as string,
-            envFile: opts.envFile as string | undefined,
-            timeoutSec: opts.timeout as number | undefined,
-          };
-        } else if (opts.exec) {
-          const parts = (opts.exec as string).split(/\s+/);
-          action = {
-            kind: 'exec',
-            command: parts[0],
-            args: parts.slice(1),
-            envFile: opts.envFile as string | undefined,
-            timeoutSec: opts.timeout as number | undefined,
-          };
-        } else if (promptMode) {
-          action = {
-            kind: 'prompt',
-            prompt: opts.prompt as string | undefined,
-            promptFile: opts.promptFile as string | undefined,
-            engine: opts.engine as string | undefined,
-            args: rawArgs,
-            sessionId: opts.sessionId as string | undefined,
-            reuseSession: opts.reuseSession as boolean | undefined,
-            envFile: opts.envFile as string | undefined,
-            timeoutSec: opts.timeout as number | undefined,
-          };
-        } else {
-          throw new CrontickError('MISSING_ARG', 'Provide --script, --exec, --prompt, or --prompt-file');
-        }
-
-        jobData = {
-          id,
-          description: opts.desc as string | undefined,
-          schedule,
-          action,
-          overlap: opts.overlap as string,
-          retry: opts.retry !== undefined ? { max: opts.retry as number, backoffSec: 30 } : undefined,
-        } as JobCreateInput;
-        jobData = normalizeJobInput(jobData, { cwd: process.cwd() });
-      }
-
-      const parsed = JobSchema.safeParse(jobData);
-      if (!parsed.success) {
-        throw new CrontickError('VALIDATION_ERROR', 'Invalid job', parsed.error.format());
-      }
-
-      const result = await client().createJob(parsed.data);
-      print(result, !!(program.opts() as { json?: boolean }).json);
+      const result = await client().createJobFromCliOptions(collectJobOptions(id, engineArgs, opts));
+      print(result);
     } catch (err) {
       handleError(err);
     }
   });
 
-// ── list ──────────────────────────────────────────────────────────────────────
-
-program
-  .command('list')
-  .description('List all jobs')
-  .action(async () => {
+commonJobOptions(program.command('update <id> [engineArgs...]').description('Update an existing job'))
+  .option('--enable', 'Enable the job')
+  .option('--disable', 'Disable the job')
+  .action(async (id: string, engineArgs: string[], opts) => {
     try {
-      const jobs = await client().listJobs();
-      print(jobs, !!(program.opts() as { json?: boolean }).json);
+      const patch = buildJobPatchFromUpdateOptions(collectPatchOptions(engineArgs, opts), { cwd: process.cwd() });
+      const result = await client().updateJob(id, patch);
+      print(result);
     } catch (err) {
       handleError(err);
     }
   });
 
-// ── get ───────────────────────────────────────────────────────────────────────
+program.command('list').description('List all jobs').action(async () => {
+  try { print(await client().listJobs()); } catch (err) { handleError(err); }
+});
 
-program
-  .command('get <id>')
-  .description('Get a job by ID')
-  .action(async (id: string) => {
+program.command('get <id>').description('Get a job by ID').action(async (id: string) => {
+  try { print(await client().getJob(id)); } catch (err) { handleError(err); }
+});
+
+program.command('enable <id>').description('Enable a job').action(async (id: string) => {
+  try { print(await client().enableJob(id)); } catch (err) { handleError(err); }
+});
+
+program.command('disable <id>').description('Disable a job').action(async (id: string) => {
+  try { print(await client().disableJob(id)); } catch (err) { handleError(err); }
+});
+
+program.command('delete <id>').description('Delete a job').action(async (id: string) => {
+  try { print(await client().deleteJob(id)); } catch (err) { handleError(err); }
+});
+
+program.command('run-now <id>').description('Trigger an immediate run of a job').action(async (id: string) => {
+  try { print(await client().runNow(id)); } catch (err) { handleError(err); }
+});
+
+program.command('cancel-run <runId>').description('Cancel an in-progress run').action(async (runId: string) => {
+  try { print(await client().cancelRun(runId)); } catch (err) { handleError(err); }
+});
+
+const runs = program.command('runs').description('Inspect run history');
+runs.command('list')
+  .description('List recent runs')
+  .option('--job <id>', 'Filter by job ID')
+  .option('--limit <n>', 'Maximum runs to return', parseInteger)
+  .option('--since <ms>', 'Only runs since epoch milliseconds', parseInteger)
+  .action(async (opts) => {
     try {
-      const job = await client().getJob(id);
-      print(job, !!(program.opts() as { json?: boolean }).json);
-    } catch (err) {
-      handleError(err);
-    }
+      print(await client().listRuns({ jobId: opts.job as string | undefined, limit: opts.limit as number | undefined, since: opts.since as number | undefined }));
+    } catch (err) { handleError(err); }
   });
+runs.command('get <runId>').description('Get a run by ID').action(async (runId: string) => {
+  try { print(await client().getRun(runId)); } catch (err) { handleError(err); }
+});
 
-// ── enable / disable / delete ─────────────────────────────────────────────────
-
-program
-  .command('enable <id>')
-  .description('Enable a job')
-  .action(async (id: string) => {
-    try {
-      const result = await client().enableJob(id);
-      print(result, !!(program.opts() as { json?: boolean }).json);
-    } catch (err) {
-      handleError(err);
-    }
-  });
-
-program
-  .command('disable <id>')
-  .description('Disable a job')
-  .action(async (id: string) => {
-    try {
-      const result = await client().disableJob(id);
-      print(result, !!(program.opts() as { json?: boolean }).json);
-    } catch (err) {
-      handleError(err);
-    }
-  });
-
-program
-  .command('delete <id>')
-  .description('Delete a job')
-  .action(async (id: string) => {
-    try {
-      const result = await client().deleteJob(id);
-      print(result, !!(program.opts() as { json?: boolean }).json);
-    } catch (err) {
-      handleError(err);
-    }
-  });
-
-// ── run-now ───────────────────────────────────────────────────────────────────
-
-program
-  .command('run-now <id>')
-  .description('Trigger an immediate run of a job')
-  .action(async (id: string) => {
-    try {
-      const result = await client().runNow(id);
-      print(result, !!(program.opts() as { json?: boolean }).json);
-    } catch (err) {
-      handleError(err);
-    }
-  });
-
-// ── logs ──────────────────────────────────────────────────────────────────────
-
-program
-  .command('logs <runId>')
+program.command('logs <runId>')
   .description('Get logs for a run')
-  .option('--follow', 'Follow (SSE stream) — not implemented in CLI yet; use --tail')
-  .option('--tail <n>', 'Show last N lines', parseInt)
+  .option('--tail <n>', 'Show last N lines', parseInteger)
+  .option('--lines <n>', 'Show last N lines', parseInteger)
   .action(async (runId: string, opts) => {
     try {
-      const useJson = !!(program.opts() as { json?: boolean }).json;
-      const logs = await client().getLogs(runId) as Array<{
-        stream: string;
-        ts: number;
-        data: string;
-      }>;
-      const lines = (Array.isArray(logs) ? logs : []) as Array<{ stream: string; ts: number; data: string }>;
-      const tail = opts.tail as number | undefined;
-      const display = tail ? lines.slice(-tail) : lines;
-      if (useJson) {
-        console.log(JSON.stringify(display, null, 2));
+      const result = await client().getLogs(runId, { lines: (opts.tail ?? opts.lines) as number | undefined });
+      if (useJson()) {
+        console.log(JSON.stringify(result, null, 2));
       } else {
-        for (const entry of display) {
-          process.stdout.write(`[${entry.stream}] ${entry.data}`);
-        }
+        for (const entry of result.lines) process.stdout.write(`[${entry.stream}] ${entry.data}`);
       }
-    } catch (err) {
-      handleError(err);
-    }
+    } catch (err) { handleError(err); }
   });
 
-// ── export / import ───────────────────────────────────────────────────────────
+const schedule = program.command('schedule').description('Validate and preview schedules');
+schedule.command('validate <scheduleJson>').description('Validate a schedule JSON object').action(async (scheduleJson: string) => {
+  try { print(await client().validateSchedule(parseScheduleJson(scheduleJson))); } catch (err) { handleError(err); }
+});
+schedule.command('preview <scheduleJson>')
+  .description('Preview upcoming fire times for a schedule JSON object')
+  .option('-n, --lines <n>', 'Number of fire times to return', parseInteger)
+  .option('--tz <tz>', 'Timezone override')
+  .action(async (scheduleJson: string, opts) => {
+    try { print(await client().previewSchedule({ schedule: parseScheduleJson(scheduleJson), n: opts.lines as number | undefined, tz: opts.tz as string | undefined })); } catch (err) { handleError(err); }
+  });
 
-program
-  .command('export')
+const stats = program.command('stats').description('Show job/run statistics');
+stats.command('summary').description('Show aggregate statistics').action(async () => {
+  try { print(await client().statsSummary()); } catch (err) { handleError(err); }
+});
+stats.command('job <id>').description('Show statistics for one job').action(async (id: string) => {
+  try { print(await client().statsJob(id)); } catch (err) { handleError(err); }
+});
+
+program.command('export')
   .description('Export all jobs')
   .option('--out <file>', 'Output file (default: stdout)')
   .action(async (opts) => {
@@ -414,258 +291,78 @@ program
       } else {
         console.log(json);
       }
-    } catch (err) {
-      handleError(err);
-    }
+    } catch (err) { handleError(err); }
   });
 
-program
-  .command('import <file>')
-  .description('Import jobs from a JSON file')
-  .action(async (file: string) => {
-    try {
-      const raw = readFileSync(resolve(process.cwd(), file), 'utf-8');
-      const data = JSON.parse(raw);
-      const jobs = Array.isArray(data) ? data : (data as { jobs?: unknown[] }).jobs;
-      const result = await client().importJobs(Array.isArray(jobs) ? jobs : []);
-      print(result, !!(program.opts() as { json?: boolean }).json);
-    } catch (err) {
-      handleError(err);
+program.command('import <file>').description('Import jobs from a JSON file').action(async (file: string) => {
+  try {
+    const filePath = resolve(process.cwd(), file);
+    const data = JSON.parse(readFileSync(filePath, 'utf-8')) as { jobs?: unknown[] } | unknown[];
+    const jobs = Array.isArray(data) ? data : data.jobs;
+    print(await client().importJobs(Array.isArray(jobs) ? jobs : [], { fileBaseDir: dirname(filePath) }));
+  } catch (err) { handleError(err); }
+});
+
+program.command('doctor').description('Check system health').action(async () => {
+  try {
+    const result = await client(false).doctor({ mcpScript: mcpScript() });
+    if (useJson()) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      for (const check of result.checks) {
+        console.log(`${check.ok ? '✓' : '✗'} ${check.name}${check.note ? ` (${check.note})` : ''}`);
+      }
     }
-  });
-
-// ── doctor ────────────────────────────────────────────────────────────────────
-
-program
-  .command('doctor')
-  .description('Check system health')
-  .action(async () => {
-    const checks: Array<{ name: string; ok: boolean; note?: string }> = [];
-
-    // Node version
-    const major = parseInt(process.versions.node.split('.')[0], 10);
-    checks.push({
-      name: 'Node.js >= 22.5',
-      ok: major >= 22,
-      note: `v${process.versions.node}`,
-    });
-
-    // SQLite availability
-    try {
-      const { DatabaseSync } = await import('node:sqlite');
-      new DatabaseSync(':memory:').close();
-      checks.push({ name: 'node:sqlite', ok: true });
-    } catch (err) {
-      checks.push({ name: 'node:sqlite', ok: false, note: String(err) });
-    }
-
-    // Data dir
-    try {
-      ensureDirs();
-      checks.push({ name: 'data dir writable', ok: true });
-    } catch (err) {
-      checks.push({ name: 'data dir writable', ok: false, note: String(err) });
-    }
-
-    // Port file
-    const portFile = portFilePath();
-    const portFileExists = existsSync(portFile);
-    checks.push({ name: 'port file readable', ok: portFileExists, note: portFileExists ? portFile : 'not found' });
-
-    // Daemon reachable
-    try {
-      await client(false).health({ ensure: false });
-      checks.push({ name: 'daemon reachable', ok: true });
-    } catch {
-      checks.push({ name: 'daemon reachable', ok: false, note: 'not running' });
-    }
-
-    // Dashboard reachable
-    try {
-      const port2 = getPort();
-      const dashRes = await fetch(`http://127.0.0.1:${port2}/dashboard`, {
-        signal: AbortSignal.timeout(2000),
-      });
-      const text = await dashRes.text();
-      checks.push({
-        name: 'dashboard reachable',
-        ok: dashRes.status === 200 && text.includes('crontick'),
-        note: dashRes.status === 200 ? 'ok' : `HTTP ${dashRes.status}`,
-      });
-    } catch {
-      checks.push({ name: 'dashboard reachable', ok: false, note: 'daemon not running or no dashboard' });
-    }
-
-    // MCP server binary
-    const mcpScript = resolve(__dirname, '../mcp/index.js');
-    checks.push({
-      name: 'MCP server binary',
-      ok: existsSync(mcpScript),
-      note: mcpScript,
-    });
-
-    // MCP server --help smoke test
-    try {
-      const result = spawnSync(process.execPath, [mcpScript, '--help'], {
-        timeout: 5000,
-        encoding: 'utf-8',
-        env: { ...process.env, CRONTICK_MCP_NO_DAEMON_START: '1' },
-      });
-      // --help exits 0 on commander; if exit code is 0 or it printed help text it's fine
-      const helpOk = result.status === 0 || (result.stdout ?? '').includes('stdio');
-      checks.push({ name: 'MCP server --help', ok: helpOk });
-    } catch (err) {
-      checks.push({ name: 'MCP server --help', ok: false, note: String(err) });
-    }
-
-    for (const c of checks) {
-      const icon = c.ok ? '✓' : '✗';
-      console.log(`${icon} ${c.name}${c.note ? ` (${c.note})` : ''}`);
-    }
-
-    const failed = checks.filter((c) => !c.ok);
-    if (failed.length > 0) process.exit(1);
-  });
-
-// ── daemon ────────────────────────────────────────────────────────────────────
+    if (!result.ok) process.exit(1);
+  } catch (err) { handleError(err); }
+});
 
 const daemon = program.command('daemon').description('Manage the crontick daemon');
-
-daemon
-  .command('start')
-  .description('Start the daemon (detached by default)')
+daemon.command('start')
+  .description('Start the daemon')
   .option('--foreground', 'Run in foreground (blocking)')
   .action(async (opts) => {
     try {
-      const script = daemonScript();
-      if (!existsSync(script)) {
-        throw new CrontickError('NOT_BUILT', `Daemon script not found: ${script}. Run: npm run build`);
-      }
-
-      if (opts.foreground as boolean) {
-        // Run inline (blocking — for testing/debugging)
-        const result = spawnSync(process.execPath, [script], {
-          stdio: 'inherit',
-          env: process.env,
-        });
-        process.exit(result.status ?? 0);
-      } else {
-        const child = spawn(process.execPath, [script], {
-          detached: true,
-          stdio: 'ignore',
-          env: process.env,
-        });
-        child.unref();
-        console.log(`Starting daemon (pid will be written to port file)…`);
-        const port = await waitForPort();
-        console.log(`Daemon started on port ${port}`);
-      }
-    } catch (err) {
-      handleError(err);
-    }
+      const result = await client().daemonStart({ foreground: opts.foreground as boolean | undefined });
+      if (opts.foreground) process.exit(result.foregroundExitCode ?? 0);
+      console.log(result.started ? `Daemon started on port ${String(result.port ?? '')}` : `Daemon already running on port ${String(result.port ?? '')}`);
+    } catch (err) { handleError(err); }
   });
+daemon.command('stop').description('Stop the daemon').action(async () => {
+  try { console.log((await client(false).daemonStop()).message); } catch (err) { handleError(err); }
+});
+daemon.command('status').description('Show daemon status').action(async () => {
+  try { print(await client(false).daemonStatus()); } catch { console.log('Daemon is not running'); }
+});
+daemon.command('reload').description('Reload jobs from disk').action(async () => {
+  try { print(await client().daemonReload()); } catch (err) { handleError(err); }
+});
+daemon.command('restart').description('Restart the daemon').action(async () => {
+  try {
+    const result = await client().daemonRestart();
+    console.log(`Daemon restarted on port ${String(result.port ?? '')}`);
+  } catch (err) { handleError(err); }
+});
 
-daemon
-  .command('stop')
-  .description('Stop the daemon')
-  .action(async () => {
-    try {
-      const pidFile = pidFilePath();
-      if (!existsSync(pidFile)) {
-        console.log('Daemon is not running');
-        return;
-      }
-      const pid = parseInt(readFileSync(pidFile, 'utf-8').trim(), 10);
-      process.kill(pid, 'SIGTERM');
-      console.log(`Sent SIGTERM to daemon (pid ${pid})`);
-    } catch (err) {
-      handleError(err);
-    }
-  });
-
-daemon
-  .command('status')
-  .description('Show daemon status')
-  .action(async () => {
-    try {
-      const status = await client(false).daemonStatus();
-      print(status, !!(program.opts() as { json?: boolean }).json);
-    } catch {
-      console.log('Daemon is not running');
-    }
-  });
-
-daemon
-  .command('reload')
-  .description('Reload jobs from disk')
-  .action(async () => {
-    try {
-      const result = await client().daemonReload();
-      print(result, !!(program.opts() as { json?: boolean }).json);
-    } catch (err) {
-      handleError(err);
-    }
-  });
-
-daemon
-  .command('restart')
-  .description('Restart the daemon')
-  .action(async () => {
-    try {
-      // Stop if running
-      const pidFile = pidFilePath();
-      if (existsSync(pidFile)) {
-        const pid = parseInt(readFileSync(pidFile, 'utf-8').trim(), 10);
-        try {
-          process.kill(pid, 'SIGTERM');
-          await new Promise((r) => setTimeout(r, 1000));
-        } catch {
-          // ignore
-        }
-      }
-
-      // Start
-      const script = daemonScript();
-      const child = spawn(process.execPath, [script], {
-        detached: true,
-        stdio: 'ignore',
-        env: process.env,
-      });
-      child.unref();
-      const port = await waitForPort();
-      console.log(`Daemon restarted on port ${port}`);
-    } catch (err) {
-      handleError(err);
-    }
-  });
-
-// ── uninstall ─────────────────────────────────────────────────────────────────
-
-program
-  .command('uninstall')
+program.command('uninstall')
   .description('Optionally delete all crontick data')
   .option('--purge', 'Also delete the data directory (jobs, runs, config)')
   .option('--yes', 'Skip confirmation prompts')
   .action(async (opts) => {
     try {
-
       if (opts.purge as boolean) {
         const dir = dataDir();
         const livePid = readLiveDaemonPid();
         if (livePid !== undefined) {
-          throw new CrontickError(
-            'DAEMON_RUNNING',
-            `Daemon appears to be running (pid ${livePid}). Run: crontick daemon stop before uninstall --purge`,
-          );
+          throw new CrontickError('DAEMON_RUNNING', `Daemon appears to be running (pid ${livePid}). Run: crontick daemon stop before uninstall --purge`);
         }
-
         let confirmed = opts.yes as boolean;
         if (!confirmed) {
-          confirmed = await new Promise<boolean>((resolve) => {
+          confirmed = await new Promise<boolean>((resolveAnswer) => {
             const rl = createInterface({ input: process.stdin, output: process.stdout });
             rl.question(`Delete all crontick data at ${dir}? [y/N] `, (answer) => {
               rl.close();
-              resolve(answer.trim().toLowerCase() === 'y');
+              resolveAnswer(answer.trim().toLowerCase() === 'y');
             });
           });
         }
@@ -676,19 +373,12 @@ program
           console.log('Skipped data directory deletion.');
         }
       } else {
-        console.log(
-          'Data directory preserved. Run `crontick uninstall --purge` to also delete it.',
-        );
+        console.log('Data directory preserved. Run `crontick uninstall --purge` to also delete it.');
       }
-    } catch (err) {
-      handleError(err);
-    }
+    } catch (err) { handleError(err); }
   });
 
-// ── dashboard ─────────────────────────────────────────────────────────────────
-
-program
-  .command('dashboard')
+program.command('dashboard')
   .description('Open the crontick dashboard in a browser')
   .option('--open', 'Open in the default browser')
   .action(async (opts) => {
@@ -700,31 +390,20 @@ program
         } else if (process.platform === 'darwin') {
           spawn('open', [url], { detached: true, stdio: 'ignore' }).unref();
         } else {
-          try {
-            spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
-          } catch {
-            // xdg-open not available
-          }
+          spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
         }
         console.log(`Dashboard opened: ${url}`);
       } else {
         console.log(`Dashboard: ${url}`);
       }
-    } catch (err) {
-      handleError(err);
-    }
+    } catch (err) { handleError(err); }
   });
 
-// ── mcp ───────────────────────────────────────────────────────────────────────
-
-program
-  .command('mcp')
+program.command('mcp')
   .description('Start the crontick MCP server on stdio (for use with Claude Desktop, Copilot, Cursor, etc.)')
   .option('--no-daemon-start', 'Do not start the daemon if it is not already running')
   .option('--daemon-url <url>', 'Override the daemon URL (default: resolved from port file)')
-  .addHelpText(
-    'after',
-    `
+  .addHelpText('after', `
 Transport:    stdio (JSON-RPC 2.0 over stdin/stdout)
 Tool prefix:  crontick_
 Daemon start: Daemon is started unless --no-daemon-start or CRONTICK_MCP_NO_DAEMON_START=1 is set
@@ -734,24 +413,18 @@ Example MCP host config (Claude Desktop):
     "mcpServers": {
       "crontick": { "command": "crontick", "args": ["mcp"] }
     }
-  }`,
-  )
+  }`)
   .action((opts) => {
-    const mcpScript = resolve(__dirname, '../mcp/index.js');
-    if (!existsSync(mcpScript)) {
-      console.error(`MCP server script not found: ${mcpScript}. Run: npm run build`);
+    const script = mcpScript();
+    if (!existsSync(script)) {
+      console.error(`MCP server script not found: ${script}. Run: npm run build`);
       process.exit(1);
     }
     const env: NodeJS.ProcessEnv = { ...process.env };
     if (opts.noDaemonStart) env['CRONTICK_MCP_NO_DAEMON_START'] = '1';
     if (opts.daemonUrl) env['CRONTICK_DAEMON_URL'] = opts.daemonUrl as string;
-    const result = spawnSync(process.execPath, [mcpScript], {
-      stdio: 'inherit',
-      env,
-    });
+    const result = spawnSync(process.execPath, [script], { stdio: 'inherit', env });
     process.exit(result.status ?? 0);
   });
-
-// ── parse ─────────────────────────────────────────────────────────────────────
 
 program.parse();

@@ -5,16 +5,55 @@ import {
   type DaemonInfo,
   type EnsureDaemonOptions,
 } from './daemon/ensure.js';
+import { restartDaemon, startDaemon, stopDaemon, type DaemonRestartResult, type DaemonStartResult, type DaemonStopResult } from './daemon/lifecycle.js';
+import { ScheduleSchema, type Job, type Schedule } from './schemas/job.js';
 import {
-  ScheduleSchema,
-  type Job,
-  type Schedule,
-} from './schemas/job.js';
-import { normalizeJobInput, type JobCreateInput } from './job-input.js';
+  buildJobFromCreateOptions,
+  normalizeJobInput,
+  normalizeJobPatch,
+  type JobCreateCliOptions,
+  type JobCreateInput,
+  type JobPatchInput,
+  type NormalizeJobInputOptions,
+} from './job-input.js';
+import { runDoctorChecks, type DoctorOptions, type DoctorResult } from './doctor.js';
+import { jobJsonSchema } from './schema-json.js';
 
 export interface CrontickClientOptions extends EnsureDaemonOptions {
   requestTimeoutMs?: number;
   cwd?: string;
+  startDaemon?: boolean;
+  mcpScript?: string;
+}
+
+export interface LogEntry {
+  runId?: string;
+  stream: string;
+  ts: number;
+  data: string;
+}
+
+export interface LogsResult {
+  runId: string;
+  lines: LogEntry[];
+}
+
+export interface StatsSummary {
+  totalJobs: number;
+  enabledJobs: number;
+  totalRuns: number;
+  succeeded: number;
+  failed: number;
+  avgDurationMs: number | null;
+}
+
+export interface JobStats {
+  jobId: string;
+  totalRuns: number;
+  succeeded: number;
+  failed: number;
+  lastStatus: string | null;
+  lastRunAt: number | null;
 }
 
 export class CrontickClient {
@@ -28,7 +67,7 @@ export class CrontickClient {
   async ensure(): Promise<DaemonInfo> {
     const info = await ensureDaemon({
       ...this.options,
-      allowStart: this.options.allowStart ?? true,
+      allowStart: this.shouldStartDaemon(),
     });
     this.cachedBaseUrl = info.baseUrl;
     return info;
@@ -38,9 +77,13 @@ export class CrontickClient {
     return this.request('GET', '/health', undefined, { ensure: options.ensure ?? false });
   }
 
-  async createJob(input: Job | JobCreateInput): Promise<Job> {
-    const job = normalizeJobInput(input as JobCreateInput, { cwd: this.options.cwd });
+  async createJob(input: Job | JobCreateInput, options: NormalizeJobInputOptions = {}): Promise<Job> {
+    const job = normalizeJobInput(input as JobCreateInput, this.normalizeOptions(options));
     return this.request<Job>('POST', '/api/jobs', job);
+  }
+
+  async createJobFromCliOptions(input: JobCreateCliOptions): Promise<Job> {
+    return this.createJob(buildJobFromCreateOptions(input, { cwd: this.options.cwd ?? process.cwd() }));
   }
 
   async listJobs(): Promise<Job[]> {
@@ -51,21 +94,10 @@ export class CrontickClient {
     return this.request<Job>('GET', `/api/jobs/${encodeURIComponent(id)}`);
   }
 
-  async updateJob(id: string, patch: Partial<JobCreateInput>): Promise<Job> {
-    if (patch.action) {
-      const existing = await this.getJob(id);
-      const normalized = normalizeJobInput(
-        {
-          ...existing,
-          ...patch,
-          id,
-          action: patch.action,
-        } as JobCreateInput,
-        { cwd: this.options.cwd },
-      );
-      return this.request<Job>('PUT', `/api/jobs/${encodeURIComponent(id)}`, normalized);
-    }
-    return this.request<Job>('PUT', `/api/jobs/${encodeURIComponent(id)}`, patch);
+  async updateJob(id: string, patch: JobPatchInput, options: NormalizeJobInputOptions = {}): Promise<Job> {
+    const existing = await this.getJob(id);
+    const normalized = normalizeJobPatch(id, existing, patch, this.normalizeOptions(options));
+    return this.request<Job>('PUT', `/api/jobs/${encodeURIComponent(id)}`, normalized);
   }
 
   async deleteJob(id: string): Promise<{ ok: true }> {
@@ -84,6 +116,10 @@ export class CrontickClient {
     return this.request<{ runId: string }>('POST', `/api/jobs/${encodeURIComponent(id)}/run`);
   }
 
+  async cancelRun(runId: string): Promise<{ ok: true; canceled: boolean }> {
+    return this.request<{ ok: true; canceled: boolean }>('POST', `/api/runs/${encodeURIComponent(runId)}/cancel`);
+  }
+
   async getRun(runId: string): Promise<unknown> {
     return this.request('GET', `/api/runs/${encodeURIComponent(runId)}`);
   }
@@ -97,19 +133,18 @@ export class CrontickClient {
     return this.request<unknown[]>('GET', `/api/runs${qs ? `?${qs}` : ''}`);
   }
 
-  async getLogs(runId: string): Promise<Array<{ stream: string; ts: number; data: string }>> {
-    return this.request<Array<{ stream: string; ts: number; data: string }>>(
-      'GET',
-      `/api/runs/${encodeURIComponent(runId)}/logs`,
-    );
+  async getLogs(runId: string, options: { lines?: number } = {}): Promise<LogsResult> {
+    const logs = await this.request<LogEntry[]>('GET', `/api/runs/${encodeURIComponent(runId)}/logs`);
+    const lines = options.lines !== undefined ? logs.slice(-options.lines) : logs;
+    return { runId, lines };
   }
 
   async exportJobs(): Promise<{ jobs: Job[] }> {
     return this.request<{ jobs: Job[] }>('GET', '/api/export');
   }
 
-  async importJobs(jobs: unknown[]): Promise<unknown> {
-    const normalized = jobs.map((job) => normalizeJobInput(job as JobCreateInput, { cwd: this.options.cwd }));
+  async importJobs(jobs: unknown[], options: NormalizeJobInputOptions = {}): Promise<unknown> {
+    const normalized = jobs.map((job) => normalizeJobInput(job as JobCreateInput, this.normalizeOptions(options)));
     return this.request('POST', '/api/import', { jobs: normalized });
   }
 
@@ -120,8 +155,34 @@ export class CrontickClient {
   async previewSchedule(input: { schedule: Schedule; n?: number; tz?: string }): Promise<unknown> {
     return this.request('POST', '/api/schedules/preview', {
       ...input,
+      n: input.n ?? 5,
       schedule: ScheduleSchema.parse(input.schedule),
     });
+  }
+
+  async statsSummary(): Promise<StatsSummary> {
+    return this.request<StatsSummary>('GET', '/api/stats/summary');
+  }
+
+  async statsJob(id: string): Promise<JobStats> {
+    return this.request<JobStats>('GET', `/api/stats/jobs/${encodeURIComponent(id)}`);
+  }
+
+  async daemonStart(options: { foreground?: boolean } = {}): Promise<DaemonStartResult> {
+    const result = await startDaemon({ ...this.options, allowStart: true, foreground: options.foreground });
+    if (result.baseUrl) this.cachedBaseUrl = result.baseUrl;
+    return result;
+  }
+
+  async daemonStop(): Promise<DaemonStopResult> {
+    this.cachedBaseUrl = undefined;
+    return stopDaemon({ env: this.options.env });
+  }
+
+  async daemonRestart(): Promise<DaemonRestartResult> {
+    const result = await restartDaemon({ ...this.options, allowStart: true });
+    this.cachedBaseUrl = result.baseUrl;
+    return result;
   }
 
   async daemonReload(): Promise<{ ok: true }> {
@@ -132,10 +193,23 @@ export class CrontickClient {
     return this.request('GET', '/api/daemon/status', undefined, { ensure: false });
   }
 
+  async doctor(options: DoctorOptions = {}): Promise<DoctorResult> {
+    return runDoctorChecks({
+      daemonUrl: options.daemonUrl ?? this.options.daemonUrl,
+      mcpScript: options.mcpScript ?? this.options.mcpScript,
+      env: options.env ?? this.options.env,
+      checkMcpHelp: options.checkMcpHelp,
+    });
+  }
+
   async dashboardUrl(options: { open?: false } = {}): Promise<string> {
     void options;
     const baseUrl = await this.baseUrl({ ensure: true });
     return `${baseUrl}/dashboard`;
+  }
+
+  jobJsonSchema(): unknown {
+    return jobJsonSchema();
   }
 
   private async request<T = unknown>(
@@ -180,6 +254,14 @@ export class CrontickClient {
     });
     this.cachedBaseUrl = baseUrl;
     return baseUrl;
+  }
+
+  private normalizeOptions(options: NormalizeJobInputOptions): NormalizeJobInputOptions {
+    return { cwd: this.options.cwd, ...options };
+  }
+
+  private shouldStartDaemon(): boolean {
+    return this.options.startDaemon ?? this.options.allowStart ?? true;
   }
 }
 

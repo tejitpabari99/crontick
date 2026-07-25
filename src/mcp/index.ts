@@ -5,18 +5,12 @@
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve as pathResolve } from 'node:path';
-import { zodToJsonSchema } from 'zod-to-json-schema';
-import { portFilePath, pidFilePath, ensureDirs } from '../paths.js';
 import { VERSION } from '../version.js';
-import {
-  JobSchema,
-  ScheduleSchema,
-  ActionSchema,
-} from '../schemas/job.js';
-import { ensureDaemon, resolveDaemonBaseUrl } from '../daemon/ensure.js';
+import { ScheduleSchema } from '../schemas/job.js';
+import { JobCreateInputSchema, JobPatchInputSchema } from '../job-input.js';
+import { createClient } from '../client.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -28,35 +22,18 @@ function allowDaemonStart(): boolean {
   return process.env['CRONTICK_MCP_NO_DAEMON_START'] !== '1';
 }
 
-async function ensureMcpDaemon(): Promise<void> {
-  await ensureDaemon({
-    daemonScript: daemonScript(),
-    allowStart: allowDaemonStart(),
-  });
+function mcpScript(): string {
+  return pathResolve(__dirname, '../mcp/index.js');
 }
 
-// ── API client ────────────────────────────────────────────────────────────────
-
-async function callDaemon(method: string, path: string, body?: unknown): Promise<unknown> {
-  const base = await resolveDaemonBaseUrl();
-  const res = await fetch(`${base}${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(30_000),
+function mcpClient(allowStart = allowDaemonStart()) {
+  return createClient({
+    daemonScript: daemonScript(),
+    allowStart,
+    startDaemon: allowStart,
+    mcpScript: mcpScript(),
+    cwd: process.cwd(),
   });
-  const text = await res.text();
-  let data: unknown;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new Error(`Daemon returned non-JSON: ${text.slice(0, 200)}`);
-  }
-  if (!res.ok) {
-    const err = (data as { error?: { code?: string; message?: string } })?.error;
-    throw new Error(`[${err?.code ?? 'API_ERROR'}] ${err?.message ?? `HTTP ${res.status}`}`);
-  }
-  return data;
 }
 
 // ── Tool result helpers ───────────────────────────────────────────────────────
@@ -97,7 +74,6 @@ function redactedErrorMessage(err: unknown): string {
 
 async function toolWrap(fn: () => Promise<unknown>): Promise<ToolResult> {
   try {
-    await ensureMcpDaemon();
     const result = await fn();
     return okResult(result);
   } catch (err) {
@@ -106,8 +82,6 @@ async function toolWrap(fn: () => Promise<unknown>): Promise<ToolResult> {
 }
 
 // ── MCP server setup ──────────────────────────────────────────────────────────
-
-const kebabCase = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export function createMcpServer(): McpServer {
   const server = new McpServer({
@@ -123,25 +97,10 @@ export function createMcpServer(): McpServer {
       description:
         'Create and schedule a new cron job. Provide the full job definition including id, schedule (kind: cron|interval|one-shot), and action (kind: script|exec|prompt). Prompt actions use prompt, optional engine (copilot|agency), args, sessionId, or reuseSession. Validate the schedule first with crontick_schedule_validate.',
       inputSchema: {
-        id: z.string().regex(kebabCase, 'Job ID must be kebab-case (e.g. "my-job")'),
-        description: z.string().optional(),
-        enabled: z.boolean().optional(),
-        schedule: ScheduleSchema,
-        action: ActionSchema,
-        catchup: z.enum(['run-once', 'run-all', 'skip']).optional(),
-        overlap: z.enum(['skip', 'queue', 'cancel-previous']).optional(),
-        retry: z
-          .object({ max: z.number().int().min(0), backoffSec: z.number().positive() })
-          .optional(),
-        budgets: z
-          .object({
-            maxRunsPerDay: z.number().int().positive().nullable(),
-            maxTokensPerRun: z.number().int().positive().nullable(),
-          })
-          .optional(),
+...JobCreateInputSchema.shape,
       },
     },
-    async (args) => toolWrap(() => callDaemon('POST', '/api/jobs', args)),
+    async (args) => toolWrap(() => mcpClient().createJob(args)),
   );
 
   server.registerTool(
@@ -150,7 +109,7 @@ export function createMcpServer(): McpServer {
       description: 'List all scheduled jobs with their current status and next run time.',
       inputSchema: {},
     },
-    async () => toolWrap(() => callDaemon('GET', '/api/jobs')),
+    async () => toolWrap(() => mcpClient().listJobs()),
   );
 
   server.registerTool(
@@ -159,8 +118,7 @@ export function createMcpServer(): McpServer {
       description: 'Get the full definition and status of a specific job by ID.',
       inputSchema: { id: z.string() },
     },
-    async (args) =>
-      toolWrap(() => callDaemon('GET', `/api/jobs/${encodeURIComponent(args.id)}`)),
+    async (args) => toolWrap(() => mcpClient().getJob(args.id)),
   );
 
   server.registerTool(
@@ -169,29 +127,13 @@ export function createMcpServer(): McpServer {
       description:
         'Update an existing job. Provide the job ID and any fields to change (partial update is merged with existing definition). Action can be script, exec, or prompt.',
       inputSchema: {
-        id: z.string(),
-        description: z.string().optional(),
-        enabled: z.boolean().optional(),
-        schedule: ScheduleSchema.optional(),
-        action: ActionSchema.optional(),
-        catchup: z.enum(['run-once', 'run-all', 'skip']).optional(),
-        overlap: z.enum(['skip', 'queue', 'cancel-previous']).optional(),
-        retry: z
-          .object({ max: z.number().int().min(0), backoffSec: z.number().positive() })
-          .optional(),
-        budgets: z
-          .object({
-            maxRunsPerDay: z.number().int().positive().nullable(),
-            maxTokensPerRun: z.number().int().positive().nullable(),
-          })
-          .optional(),
+id: z.string(),
+        ...JobPatchInputSchema.shape,
       },
     },
     async (args) => {
       const { id, ...patch } = args;
-      return toolWrap(() =>
-        callDaemon('PUT', `/api/jobs/${encodeURIComponent(id)}`, patch),
-      );
+return toolWrap(() => mcpClient().updateJob(id, patch));
     },
   );
 
@@ -202,8 +144,7 @@ export function createMcpServer(): McpServer {
         'Permanently delete a job and all its run history. This cannot be undone — confirm with the user first.',
       inputSchema: { id: z.string() },
     },
-    async (args) =>
-      toolWrap(() => callDaemon('DELETE', `/api/jobs/${encodeURIComponent(args.id)}`)),
+    async (args) => toolWrap(() => mcpClient().deleteJob(args.id)),
   );
 
   server.registerTool(
@@ -212,10 +153,7 @@ export function createMcpServer(): McpServer {
       description: 'Enable a disabled job so it will run on its next scheduled time.',
       inputSchema: { id: z.string() },
     },
-    async (args) =>
-      toolWrap(() =>
-        callDaemon('POST', `/api/jobs/${encodeURIComponent(args.id)}/enable`),
-      ),
+    async (args) => toolWrap(() => mcpClient().enableJob(args.id)),
   );
 
   server.registerTool(
@@ -224,10 +162,7 @@ export function createMcpServer(): McpServer {
       description: 'Disable a job so it will not run until re-enabled.',
       inputSchema: { id: z.string() },
     },
-    async (args) =>
-      toolWrap(() =>
-        callDaemon('POST', `/api/jobs/${encodeURIComponent(args.id)}/disable`),
-      ),
+    async (args) => toolWrap(() => mcpClient().disableJob(args.id)),
   );
 
   server.registerTool(
@@ -237,10 +172,7 @@ export function createMcpServer(): McpServer {
         'Trigger an immediate run of a job, bypassing its schedule. Returns a runId to track progress with crontick_run_get.',
       inputSchema: { id: z.string() },
     },
-    async (args) =>
-      toolWrap(() =>
-        callDaemon('POST', `/api/jobs/${encodeURIComponent(args.id)}/run`),
-      ),
+    async (args) => toolWrap(() => mcpClient().runNow(args.id)),
   );
 
   server.registerTool(
@@ -249,10 +181,7 @@ export function createMcpServer(): McpServer {
       description: 'Cancel an in-progress run by its run ID.',
       inputSchema: { runId: z.string() },
     },
-    async (args) =>
-      toolWrap(() =>
-        callDaemon('POST', `/api/runs/${encodeURIComponent(args.runId)}/cancel`),
-      ),
+    async (args) => toolWrap(() => mcpClient().cancelRun(args.runId)),
   );
 
   // ── Runs ───────────────────────────────────────────────────────────────────
@@ -267,14 +196,7 @@ export function createMcpServer(): McpServer {
         since: z.number().int().optional(),
       },
     },
-    async (args) => {
-      const params = new URLSearchParams();
-      if (args.jobId) params.set('jobId', args.jobId);
-      if (args.limit !== undefined) params.set('limit', String(args.limit));
-      if (args.since !== undefined) params.set('since', String(args.since));
-      const qs = params.toString();
-      return toolWrap(() => callDaemon('GET', `/api/runs${qs ? `?${qs}` : ''}`));
-    },
+    async (args) => toolWrap(() => mcpClient().listRuns(args)),
   );
 
   server.registerTool(
@@ -283,10 +205,7 @@ export function createMcpServer(): McpServer {
       description: 'Get the details and current status of a specific run by run ID.',
       inputSchema: { runId: z.string() },
     },
-    async (args) =>
-      toolWrap(() =>
-        callDaemon('GET', `/api/runs/${encodeURIComponent(args.runId)}`),
-      ),
+    async (args) => toolWrap(() => mcpClient().getRun(args.runId)),
   );
 
   server.registerTool(
@@ -299,16 +218,7 @@ export function createMcpServer(): McpServer {
         lines: z.number().int().positive().default(50),
       },
     },
-    async (args) =>
-      toolWrap(async () => {
-        const logs = (await callDaemon(
-          'GET',
-          `/api/runs/${encodeURIComponent(args.runId)}/logs`,
-        )) as Array<{ stream: string; ts: number; data: string }>;
-        const all = Array.isArray(logs) ? logs : [];
-        const tail = all.slice(-args.lines);
-        return { runId: args.runId, lines: tail };
-      }),
+    async (args) => toolWrap(() => mcpClient().getLogs(args.runId, { lines: args.lines })),
   );
 
   // ── Schedules ─────────────────────────────────────────────────────────────
@@ -322,8 +232,7 @@ export function createMcpServer(): McpServer {
         schedule: ScheduleSchema,
       },
     },
-    async (args) =>
-      toolWrap(() => callDaemon('POST', '/api/schedules/validate', args.schedule)),
+    async (args) => toolWrap(() => mcpClient().validateSchedule(args.schedule)),
   );
 
   server.registerTool(
@@ -337,14 +246,7 @@ export function createMcpServer(): McpServer {
         tz: z.string().optional(),
       },
     },
-    async (args) =>
-      toolWrap(() =>
-        callDaemon('POST', '/api/schedules/preview', {
-          schedule: args.schedule,
-          n: args.n,
-          tz: args.tz,
-        }),
-      ),
+    async (args) => toolWrap(() => mcpClient().previewSchedule({ schedule: args.schedule, n: args.n, tz: args.tz })),
   );
 
   // ── Stats ──────────────────────────────────────────────────────────────────
@@ -356,7 +258,7 @@ export function createMcpServer(): McpServer {
         'Get an aggregate summary of all jobs: total count, enabled count, run history, success/failure counts, average duration.',
       inputSchema: {},
     },
-    async () => toolWrap(() => callDaemon('GET', '/api/stats/summary')),
+    async () => toolWrap(() => mcpClient().statsSummary()),
   );
 
   server.registerTool(
@@ -365,10 +267,7 @@ export function createMcpServer(): McpServer {
       description: 'Get run statistics for a specific job: total runs, success/failure rates, last status.',
       inputSchema: { id: z.string() },
     },
-    async (args) =>
-      toolWrap(() =>
-        callDaemon('GET', `/api/stats/jobs/${encodeURIComponent(args.id)}`),
-      ),
+    async (args) => toolWrap(() => mcpClient().statsJob(args.id)),
   );
 
   // ── Daemon ─────────────────────────────────────────────────────────────────
@@ -382,8 +281,7 @@ export function createMcpServer(): McpServer {
     },
     async () => {
       try {
-        const status = await callDaemon('GET', '/health');
-        return okResult(status);
+        return okResult(await mcpClient(false).daemonStatus());
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return okResult({ running: false, error: redactForLlm(msg) });
@@ -398,7 +296,7 @@ export function createMcpServer(): McpServer {
         'Reload job definitions from disk without restarting the daemon. Use after manually editing job files.',
       inputSchema: {},
     },
-    async () => toolWrap(() => callDaemon('POST', '/api/daemon/reload')),
+    async () => toolWrap(() => mcpClient().daemonReload()),
   );
 
   server.registerTool(
@@ -408,29 +306,7 @@ export function createMcpServer(): McpServer {
         'Restart the crontick daemon (stop + start). Running jobs will be interrupted. Confirm with the user before calling.',
       inputSchema: {},
     },
-    async () =>
-      toolWrap(async () => {
-        // Kill existing daemon
-        const pidFile = pidFilePath();
-        if (existsSync(pidFile)) {
-          try {
-            const pid = parseInt(readFileSync(pidFile, 'utf-8').trim(), 10);
-            if (!isNaN(pid)) process.kill(pid, 'SIGTERM');
-          } catch { /* already dead */ }
-        }
-        // Wait for port file to disappear (up to 3s)
-        await new Promise<void>((res) => {
-          const deadline = Date.now() + 3000;
-          const poll = setInterval(() => {
-            if (!existsSync(portFilePath()) || Date.now() > deadline) {
-              clearInterval(poll);
-              res();
-            }
-          }, 100);
-        });
-        await ensureDaemon({ daemonScript: daemonScript() });
-        return { ok: true, message: 'Daemon restarted successfully.' };
-      }),
+    async () => toolWrap(() => mcpClient().daemonRestart()),
   );
 
   // ── Admin ──────────────────────────────────────────────────────────────────
@@ -442,7 +318,7 @@ export function createMcpServer(): McpServer {
         'Export all job definitions as a JSON object. Use this to back up or migrate jobs.',
       inputSchema: {},
     },
-    async () => toolWrap(() => callDaemon('GET', '/api/export')),
+    async () => toolWrap(() => mcpClient().exportJobs()),
   );
 
   server.registerTool(
@@ -454,8 +330,7 @@ export function createMcpServer(): McpServer {
         jobs: z.array(z.unknown()),
       },
     },
-    async (args) =>
-      toolWrap(() => callDaemon('POST', '/api/import', { jobs: args.jobs })),
+    async (args) => toolWrap(() => mcpClient().importJobs(args.jobs)),
   );
 
   server.registerTool(
@@ -467,11 +342,8 @@ export function createMcpServer(): McpServer {
     },
     async () =>
       toolWrap(async () => {
-        const base = await resolveDaemonBaseUrl();
-        return {
-          url: `${base}/dashboard`,
-          message: `Dashboard available at: ${base}/dashboard — open in your browser.`,
-        };
+        const url = await mcpClient().dashboardUrl();
+        return { url, message: `Dashboard available at: ${url} — open in your browser.` };
       }),
   );
 
@@ -479,79 +351,10 @@ export function createMcpServer(): McpServer {
     'crontick_doctor',
     {
       description:
-        'Run a suite of health checks: Node.js version, SQLite, data directory, daemon connectivity, dashboard reachability, daemon connectivity, dashboard reachability, and MCP server availability.',
+        'Run a suite of health checks: Node.js version, SQLite, data directory, daemon connectivity, dashboard reachability, and MCP server availability.',
       inputSchema: {},
     },
-    async () => {
-      const checks: Array<{ name: string; ok: boolean; note?: string }> = [];
-
-      // Node version
-      const major = parseInt(process.versions.node.split('.')[0], 10);
-      checks.push({ name: 'Node.js >= 22.5', ok: major >= 22, note: `v${process.versions.node}` });
-
-      // SQLite
-      try {
-        const { DatabaseSync } = await import('node:sqlite');
-        new (DatabaseSync as new (path: string) => { close(): void })(':memory:').close();
-        checks.push({ name: 'node:sqlite', ok: true });
-      } catch (err) {
-        checks.push({ name: 'node:sqlite', ok: false, note: String(err) });
-      }
-
-      // Data dir
-      try {
-        ensureDirs();
-        checks.push({ name: 'data dir writable', ok: true });
-      } catch (err) {
-        checks.push({ name: 'data dir writable', ok: false, note: String(err) });
-      }
-
-      // Port file + daemon
-      const portFile = portFilePath();
-      const portFileExists = existsSync(portFile);
-      checks.push({
-        name: 'port file readable',
-        ok: portFileExists,
-        note: portFileExists ? portFile : 'not found',
-      });
-
-      try {
-        const base = await resolveDaemonBaseUrl();
-        const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(2000) });
-        if (res.ok) {
-          checks.push({ name: 'daemon reachable', ok: true });
-        } else {
-          checks.push({ name: 'daemon reachable', ok: false, note: `HTTP ${res.status}` });
-        }
-      } catch {
-        checks.push({ name: 'daemon reachable', ok: false, note: 'not running' });
-      }
-
-      // Dashboard reachable
-      try {
-        const base = await resolveDaemonBaseUrl();
-        const dashRes = await fetch(`${base}/dashboard`, { signal: AbortSignal.timeout(2000) });
-        const text = await dashRes.text();
-        checks.push({
-          name: 'dashboard reachable',
-          ok: dashRes.status === 200 && text.includes('crontick'),
-          note: dashRes.status === 200 ? 'ok' : `HTTP ${dashRes.status}`,
-        });
-      } catch {
-        checks.push({ name: 'dashboard reachable', ok: false, note: 'daemon not running or no dashboard' });
-      }
-
-      // MCP server binary
-      const mcpScript = pathResolve(__dirname, '../mcp/index.js');
-      checks.push({
-        name: 'MCP server binary',
-        ok: existsSync(mcpScript),
-        note: mcpScript,
-      });
-
-      const allOk = checks.every((c) => c.ok);
-      return okResult({ ok: allOk, checks });
-    },
+    async () => toolWrap(() => mcpClient(false).doctor({ mcpScript: mcpScript() })),
   );
 
   // ── Resources ─────────────────────────────────────────────────────────────
@@ -566,8 +369,7 @@ export function createMcpServer(): McpServer {
     },
     async () => {
       try {
-        await ensureMcpDaemon();
-        const jobs = (await callDaemon('GET', '/api/jobs')) as Array<{ id: string }>;
+        const jobs = await mcpClient().listJobs();
         const ids = Array.isArray(jobs) ? jobs.map((j) => j.id) : [];
         return {
           contents: [
@@ -606,8 +408,7 @@ export function createMcpServer(): McpServer {
     async (uri, variables) => {
       const id = Array.isArray(variables.id) ? variables.id[0] : variables.id;
       try {
-        await ensureMcpDaemon();
-        const job = await callDaemon('GET', `/api/jobs/${encodeURIComponent(String(id ?? ''))}`);
+        const job = await mcpClient().getJob(String(id ?? ''));
         return {
           contents: [
             {
@@ -643,8 +444,7 @@ export function createMcpServer(): McpServer {
     async (uri, variables) => {
       const id = Array.isArray(variables.id) ? variables.id[0] : variables.id;
       try {
-        await ensureMcpDaemon();
-        const run = await callDaemon('GET', `/api/runs/${encodeURIComponent(String(id ?? ''))}`);
+        const run = await mcpClient().getRun(String(id ?? ''));
         return {
           contents: [
             {
@@ -680,14 +480,8 @@ export function createMcpServer(): McpServer {
     async (uri, variables) => {
       const id = Array.isArray(variables.id) ? variables.id[0] : variables.id;
       try {
-        await ensureMcpDaemon();
-        const logs = (await callDaemon(
-          'GET',
-          `/api/runs/${encodeURIComponent(String(id ?? ''))}/logs`,
-        )) as Array<{ stream: string; data: string; ts: number }>;
-        const text = Array.isArray(logs)
-          ? logs.map((l) => `[${l.stream}] ${l.data}`).join('')
-          : '';
+        const logs = await mcpClient().getLogs(String(id ?? ''));
+        const text = logs.lines.map((line) => `[${line.stream}] ${line.data}`).join('');
         return {
           contents: [{ uri: uri.href, mimeType: 'text/plain', text }],
         };
@@ -705,7 +499,7 @@ export function createMcpServer(): McpServer {
     'crontick://schemas/job',
     { description: 'JSON Schema for a crontick job definition', mimeType: 'application/json' },
     async () => {
-      const schema = zodToJsonSchema(JobSchema as unknown as Parameters<typeof zodToJsonSchema>[0], { name: 'CrontickJob' });
+      const schema = mcpClient(false).jobJsonSchema();
       return {
         contents: [
           {
@@ -793,22 +587,17 @@ Always confirm before calling crontick_job_delete or crontick_job_disable.`,
       let logInfo = 'Logs unavailable.';
 
       try {
-        await ensureMcpDaemon();
-        const run = await callDaemon('GET', `/api/runs/${encodeURIComponent(args.runId)}`);
+        const run = await mcpClient().getRun(args.runId);
         runInfo = JSON.stringify(run, null, 2);
       } catch (err) {
         runInfo = `Error fetching run: ${redactedErrorMessage(err)}`;
       }
 
       try {
-        const logs = (await callDaemon(
-          'GET',
-          `/api/runs/${encodeURIComponent(args.runId)}/logs`,
-        )) as Array<{ stream: string; data: string }>;
-        const lines = Array.isArray(logs) ? logs.slice(-100) : [];
+        const logs = await mcpClient().getLogs(args.runId, { lines: 100 });
         logInfo =
-          lines.length > 0
-            ? lines.map((l) => `[${l.stream}] ${l.data}`).join('')
+          logs.lines.length > 0
+            ? logs.lines.map((line) => `[${line.stream}] ${line.data}`).join('')
             : '(no log output)';
       } catch (err) {
         logInfo = `Error fetching logs: ${redactedErrorMessage(err)}`;
