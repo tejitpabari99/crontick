@@ -15,14 +15,24 @@ crontick doctor
 
 If `npm install` fails with an SSL handshake error, see the [troubleshooting guide](./troubleshooting.md#npm-install-fails).
 
-## Start the daemon
+## Daemon lifecycle
 
 ```sh
 crontick daemon start
 crontick daemon status
 ```
 
-The daemon writes its port and pid files into the crontick data directory and serves the local dashboard on `127.0.0.1` only.
+Most daemon-backed commands demand-start the daemon, so an explicit `daemon start` is optional.
+Demand-start means crontick tries one best-effort start/reconnect with a short bounded retry when a
+CLI/MCP/client operation needs the daemon and no healthy daemon is reachable.
+
+crontick does **not** supervise or keep alive the daemon. It does not install an OS service, login
+item, or watchdog. If the daemon dies while idle, scheduled jobs pause; the next daemon-backed
+operation will try to start it again. To recover immediately, run `crontick daemon start`, then
+`crontick doctor`. If startup fails, inspect the data-directory `logs/daemon.ensure.log`.
+
+The daemon writes its port and pid files into the crontick data directory and serves the local
+dashboard on `127.0.0.1` only.
 
 ## Create your first job
 
@@ -40,24 +50,31 @@ crontick new cleanup-temp `
   --shell pwsh
 ```
 
+Prompt job example:
+
+```powershell
+crontick new daily-summary `
+  --cron "0 9 * * *" `
+  --prompt "Summarize repository status and mention risky changes" `
+  --engine copilot `
+  --reuse-session `
+  -- --silent --add-dir Q:\Repos\crontick
+```
+
+Use `--prompt-file .\prompt.txt` for UTF-8 `.txt` prompts. Everything after `--` is stored as raw
+engine arguments.
+
 ## View runs and logs
 
 ```sh
 crontick run-now hello-every-5m
+crontick runs list --job hello-every-5m --limit 5
 crontick logs <run-id> --tail 50
-crontick dashboard
+crontick stats job hello-every-5m
+crontick dashboard start --open
+crontick dashboard data --runs-limit 10
 ```
 
-## Windows autostart
-
-v1 supports managed autostart on Windows via `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` and a generated hidden VBS shim.
-
-```powershell
-crontick autostart install
-crontick autostart status
-```
-
-On macOS and Linux, `crontick autostart status` and the API return manual instructions for now.
 
 ## Copilot plugin / MCP usage
 
@@ -76,5 +93,3 @@ Example MCP host config:
   }
 }
 ```
-
-See [mcp.md](mcp.md) for tools, resources, prompts, and autostart behavior.

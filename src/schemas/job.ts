@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { promptRuntimeValidationMessage } from '../prompt-runtime.js';
+import { EngineNameSchema } from './config.js';
 
 // ── Schedule ──────────────────────────────────────────────────────────────────
 
@@ -27,39 +29,54 @@ export const ScheduleSchema = z.discriminatedUnion('kind', [
 
 // ── Action ────────────────────────────────────────────────────────────────────
 
-export const ScriptActionSchema = z.object({
-  kind: z.literal('script'),
-  script: z.string().min(1),
-  shell: z.enum(['auto', 'bash', 'pwsh', 'cmd']).default('auto'),
+const CommonActionFields = {
   cwd: z.string().optional(),
   env: z.record(z.string(), z.string()).optional(),
   envFile: z.string().optional(),
   timeoutSec: z.number().positive().optional(),
-});
+};
+
+export const ScriptActionSchema = z.object({
+  kind: z.literal('script'),
+  script: z.string().min(1),
+  shell: z.enum(['auto', 'bash', 'pwsh', 'cmd']).default('auto'),
+  ...CommonActionFields,
+}).strict();
 
 export const ExecActionSchema = z.object({
   kind: z.literal('exec'),
   command: z.string().min(1),
   args: z.array(z.string()).default([]),
-  cwd: z.string().optional(),
-  env: z.record(z.string(), z.string()).optional(),
-  envFile: z.string().optional(),
-  timeoutSec: z.number().positive().optional(),
-  // shell is intentionally absent: exec always uses shell=false to prevent injection
-});
+  ...CommonActionFields,
+}).strict();
 
-export const ActionSchema = z.discriminatedUnion('kind', [ScriptActionSchema, ExecActionSchema]);
+export const PromptEngineSchema = EngineNameSchema;
+
+export const PromptActionBaseSchema = z.object({
+  kind: z.literal('prompt'),
+  prompt: z.string().min(1),
+  engine: PromptEngineSchema.optional(),
+  args: z.array(z.string()).default([]),
+  sessionId: z.string().min(1).optional(),
+  reuseSession: z.boolean().default(false),
+  ...CommonActionFields,
+}).strict();
+
+export const PromptActionSchema = PromptActionBaseSchema.superRefine(addPromptRuntimeIssues);
+
+export const ActionSchema = z.discriminatedUnion('kind', [
+  ScriptActionSchema,
+  ExecActionSchema,
+  PromptActionBaseSchema,
+]).superRefine((action, ctx) => {
+  if (action.kind === 'prompt') addPromptRuntimeIssues(action, ctx);
+});
 
 // ── Supporting types ──────────────────────────────────────────────────────────
 
 export const RetrySchema = z.object({
   max: z.number().int().min(0).default(0),
   backoffSec: z.number().positive().default(30),
-});
-
-export const BudgetsSchema = z.object({
-  maxRunsPerDay: z.number().int().positive().nullable().default(null),
-  maxTokensPerRun: z.number().int().positive().nullable().default(null),
 });
 
 // ── Job ───────────────────────────────────────────────────────────────────────
@@ -72,13 +89,24 @@ export const JobSchema = z.object({
   enabled: z.boolean().default(true),
   schedule: ScheduleSchema,
   action: ActionSchema,
-  catchup: z.enum(['run-once', 'run-all', 'skip']).default('skip'),
   overlap: z.enum(['skip', 'queue', 'cancel-previous']).default('skip'),
   retry: RetrySchema.default({ max: 0, backoffSec: 30 }),
-  budgets: BudgetsSchema.default({ maxRunsPerDay: null, maxTokensPerRun: null }),
 });
 
 export type Job = z.infer<typeof JobSchema>;
 export type JobInput = z.input<typeof JobSchema>;
 export type Schedule = z.infer<typeof ScheduleSchema>;
 export type Action = z.infer<typeof ActionSchema>;
+export type PromptAction = z.infer<typeof PromptActionBaseSchema>;
+export type PromptEngine = z.infer<typeof PromptEngineSchema>;
+
+function addPromptRuntimeIssues(action: z.infer<typeof PromptActionBaseSchema>, ctx: z.RefinementCtx): void {
+  const message = promptRuntimeValidationMessage(action);
+  if (message) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: message.includes('Windows-safe') ? ['prompt'] : ['args'],
+      message,
+    });
+  }
+}

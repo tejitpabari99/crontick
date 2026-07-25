@@ -1,6 +1,5 @@
 /**
  * Rebrand check: no stale legacy product-name references in src/, plugin/, tests/.
- * Does NOT check docs/plan/v1/ (historical artifacts).
  */
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';

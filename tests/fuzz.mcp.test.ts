@@ -47,6 +47,16 @@ describe('fuzz: MCP tool input validation', () => {
             schedule: { kind: 'cron', cron: '* * * * *' },
             action: { kind: 'exec', command: 'echo', args: [] },
           }),
+          fc.constant({
+            id: 'valid-prompt',
+            schedule: { kind: 'cron', cron: '* * * * *' },
+            action: { kind: 'prompt', prompt: 'hello', engine: 'copilot', args: ['--silent'] },
+          }),
+          fc.constant({
+            id: 'invalid-prompt',
+            schedule: { kind: 'cron', cron: '* * * * *' },
+            action: { kind: 'prompt', prompt: 'hello', sessionId: 'sess-12345678', reuseSession: true },
+          }),
         ),
         (input) => {
           const result = JobSchema.safeParse(input);

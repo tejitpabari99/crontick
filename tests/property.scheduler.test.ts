@@ -8,10 +8,8 @@ function makeOneShotJob(id: string, runAt: string) {
     enabled: true,
     schedule: { kind: 'one-shot' as const, runAt },
     action: { kind: 'exec' as const, command: 'echo', args: [] },
-    catchup: 'skip' as const,
     overlap: 'skip' as const,
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
   };
 }
 

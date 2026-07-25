@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 const CLI_SCRIPT = resolve('dist/cli/index.js');
@@ -26,6 +26,8 @@ describe('crontick doctor', () => {
       expect(output).toMatch(/Node\.js/);
       expect(output).toMatch(/sqlite/i);
       expect(result.status !== null).toBe(true);
+      expect(existsSync(join(dir, 'daemon.port'))).toBe(false);
+      expect(existsSync(join(dir, 'daemon.pid'))).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -10,12 +10,14 @@ import {
   rmSync,
   readFileSync,
   existsSync,
+  writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { jobJsonSchemaText } from '../src/schema-json.js';
 
 const DAEMON_SCRIPT = join(process.cwd(), 'dist', 'daemon', 'index.js');
 const MCP_SCRIPT = join(process.cwd(), 'dist', 'mcp', 'index.js');
@@ -49,6 +51,15 @@ function makeTmpDir(): string {
   mkdirSync(join(d, 'jobs'), { recursive: true });
   mkdirSync(join(d, 'logs'), { recursive: true });
   return d;
+}
+
+function stopDaemonInHome(dir: string): void {
+  const pidFile = join(dir, 'daemon.pid');
+  if (!existsSync(pidFile)) return;
+  const pid = parseInt(readFileSync(pidFile, 'utf-8').trim(), 10);
+  if (!isNaN(pid)) {
+    try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
+  }
 }
 
 function waitForPortFile(dir: string, maxMs = 30_000, getStderr?: () => string): Promise<number> {
@@ -128,11 +139,10 @@ describe('MCP server — full contract', () => {
     expect(typeof info?.version).toBe('string');
   });
 
-  it('capabilities include tools, resources, prompts', () => {
+  it('capabilities include tools and resources', () => {
     const caps = client.getServerCapabilities();
     expect(caps?.tools).toBeDefined();
     expect(caps?.resources).toBeDefined();
-    expect(caps?.prompts).toBeDefined();
   });
 
   // ── Tools list ──────────────────────────────────────────────────────────────
@@ -157,13 +167,22 @@ describe('MCP server — full contract', () => {
     'crontick_daemon_status',
     'crontick_daemon_reload',
     'crontick_daemon_restart',
-    'crontick_autostart_status',
-    'crontick_autostart_install',
-    'crontick_autostart_remove',
     'crontick_export',
     'crontick_import',
-    'crontick_dashboard_open',
+    'crontick_dashboard_start',
+    'crontick_dashboard_status',
+    'crontick_dashboard_data',
+    'crontick_dashboard_stop',
     'crontick_doctor',
+    'crontick_config_get',
+    'crontick_config_set',
+    'crontick_config_unset',
+    'crontick_config_engine_list',
+    'crontick_config_engine_add',
+    'crontick_config_engine_update',
+    'crontick_config_engine_remove',
+    'crontick_config_init',
+    'crontick_config_validate',
   ];
 
   it('tools/list returns all catalog tools with crontick_ prefix', async () => {
@@ -174,6 +193,7 @@ describe('MCP server — full contract', () => {
     }
     for (const tool of result.tools) {
       expect(tool.name).toMatch(/^crontick_/);
+      expect(tool.name).not.toContain('auto' + 'start');
     }
   });
 
@@ -197,6 +217,61 @@ describe('MCP server — full contract', () => {
     });
     expect(isError).toBe(false);
     expect((json as { id: string }).id).toBe(testJobId);
+    expect(readFileSync(join(dir, 'jobs', `${testJobId}.schema.json`), 'utf-8')).toBe(jobJsonSchemaText());
+  });
+
+  it('crontick_job_create accepts prompt actions', async () => {
+    const { json, isError } = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-prompt-job',
+      description: 'MCP prompt job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'prompt', prompt: 'hello', engine: 'copilot', args: ['--silent'] },
+    });
+    expect(isError).toBe(false);
+    expect((json as { action: unknown }).action).toMatchObject({
+      kind: 'prompt',
+      prompt: 'hello',
+      engine: 'copilot',
+      args: ['--silent'],
+    });
+  });
+
+  it('crontick_job_create reports session precedence notices from core', async () => {
+    const { json, isError } = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-session-precedence-job',
+      description: 'MCP prompt session precedence job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'prompt', prompt: 'hello', sessionId: 'sess-mcpprec1', reuseSession: true },
+    });
+    expect(isError).toBe(false);
+    expect(json).toMatchObject({
+      result: {
+        action: {
+          kind: 'prompt',
+          sessionId: 'sess-mcpprec1',
+          reuseSession: false,
+        },
+      },
+      notices: [expect.stringContaining('reuseSession was ignored')],
+    });
+  });
+
+  it('crontick_job_create accepts promptFile through the shared client schema', async () => {
+    const promptPath = join(dir, 'mcp-prompt.txt');
+    writeFileSync(promptPath, 'hello from mcp prompt file', 'utf-8');
+    const { json, isError } = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-prompt-file-job',
+      description: 'MCP prompt file job',
+      schedule: { kind: 'cron', cron: '0 10 * * *' },
+      action: { kind: 'prompt', promptFile: promptPath, engine: 'copilot' },
+    });
+    expect(isError).toBe(false);
+    expect((json as { action: unknown }).action).toMatchObject({
+      kind: 'prompt',
+      prompt: 'hello from mcp prompt file',
+      engine: 'copilot',
+    });
+    expect((json as { action: Record<string, unknown> }).action).not.toHaveProperty('promptFile');
   });
 
   it('crontick_job_list returns the created job', async () => {
@@ -314,6 +389,22 @@ describe('MCP server — full contract', () => {
     expect(typeof (json as { totalJobs: number }).totalJobs).toBe('number');
   });
 
+  // ── Dashboard tools ─────────────────────────────────────────────────────────
+
+  it('dashboard tools expose start/status/data through the same response shapes', async () => {
+    const start = await callTool(client, 'crontick_dashboard_start');
+    expect(start.isError).toBe(false);
+    expect(start.json).toMatchObject({ ok: true, running: true, url: expect.stringContaining('/dashboard') });
+
+    const status = await callTool(client, 'crontick_dashboard_status');
+    expect(status.isError).toBe(false);
+    expect(status.json).toMatchObject({ ok: true, running: true, url: expect.stringContaining('/dashboard') });
+
+    const data = await callTool(client, 'crontick_dashboard_data', { runsLimit: 5 });
+    expect(data.isError).toBe(false);
+    expect(data.json).toMatchObject({ stats: { totalJobs: expect.any(Number) }, jobs: expect.any(Array), runs: expect.any(Array) });
+  });
+
   // ── Admin tools ──────────────────────────────────────────────────────────────
 
   it('crontick_export returns jobs array', async () => {
@@ -330,14 +421,29 @@ describe('MCP server — full contract', () => {
     expect(data.checks.length).toBeGreaterThan(0);
   });
 
-  // ── Autostart stubs ───────────────────────────────────────────────────────────
+  it('config tools can initialize, edit, validate, and list engines', async () => {
+    expect((await callTool(client, 'crontick_config_get')).isError).toBe(false);
+    expect((await callTool(client, 'crontick_config_init', { force: true })).isError).toBe(false);
+    expect((await callTool(client, 'crontick_config_engine_add', {
+      name: 'agency',
+      engine: { command: 'agency', args: ['cp'], env: { LOGS: 'XYZ' } },
+    })).isError).toBe(false);
+    const engines = await callTool(client, 'crontick_config_engine_list');
+    expect(engines.isError).toBe(false);
+    expect((engines.json as Record<string, unknown>)).toHaveProperty('agency');
+    expect((await callTool(client, 'crontick_config_set', { path: 'defaultEngine', value: 'agency' })).isError).toBe(false);
+    expect((await callTool(client, 'crontick_config_unset', { path: 'engines.agency.env' })).isError).toBe(false);
+    expect((await callTool(client, 'crontick_config_validate')).json).toMatchObject({ ok: true });
+  });
 
-  it('crontick_autostart_status returns backend and installed fields', async () => {
-    const { json, isError } = await callTool(client, 'crontick_autostart_status');
+  it('tool verbose option returns MCP diagnostics without stderr protocol pollution', async () => {
+    const { json, isError } = await callTool(client, 'crontick_config_get', { verbose: true });
     expect(isError).toBe(false);
-    const d = json as Record<string, unknown>;
-    expect(typeof d['backend']).toBe('string');
-    expect(typeof d['installed']).toBe('boolean');
+    expect(json).toMatchObject({
+      result: { engines: expect.any(Object) },
+      diagnostics: expect.any(Array),
+    });
+    expect((json as { diagnostics: Array<{ level: string }> }).diagnostics.some((event) => event.level === 'debug')).toBe(true);
   });
 
   // ── Resources ──────────────────────────────────────────────────────────────
@@ -346,17 +452,7 @@ describe('MCP server — full contract', () => {
     const result = await client.listResources();
     expect(result.resources.length).toBeGreaterThan(0);
     const uris = result.resources.map((r) => r.uri);
-    expect(uris).toContain('crontick://jobs');
     expect(uris).toContain('crontick://schemas/job');
-  });
-
-  it('resources/read crontick://jobs returns job ID list', async () => {
-    const result = await client.readResource({ uri: 'crontick://jobs' });
-    expect(result.contents.length).toBeGreaterThanOrEqual(1);
-    const item = result.contents[0] as { uri: string; text?: string; mimeType?: string };
-    const text = item.text ?? '';
-    const data = JSON.parse(text) as { jobIds: string[] };
-    expect(Array.isArray(data.jobIds)).toBe(true);
   });
 
   it('resources/read crontick://schemas/job returns valid JSON schema', async () => {
@@ -367,45 +463,6 @@ describe('MCP server — full contract', () => {
     expect(text.length).toBeGreaterThan(10);
     const schema = JSON.parse(text) as Record<string, unknown>;
     expect(schema).toBeDefined();
-  });
-
-  // ── Prompts ─────────────────────────────────────────────────────────────────
-
-  it('prompts/list returns both prompts', async () => {
-    const result = await client.listPrompts();
-    const names = result.prompts.map((p) => p.name);
-    expect(names).toContain('create-scheduled-script');
-    expect(names).toContain('investigate-failed-run');
-  });
-
-  it('prompts/get create-scheduled-script returns template mentioning action.kind', async () => {
-    const result = await client.getPrompt({
-      name: 'create-scheduled-script',
-      arguments: { intent: 'back up my home folder every night at 2am', os: 'unix' },
-    });
-    expect(result.messages.length).toBeGreaterThan(0);
-    const msg = result.messages[0];
-    const contentText =
-      msg.content.type === 'text'
-        ? (msg.content as { type: string; text: string }).text
-        : '';
-    expect(contentText).toContain('action.kind');
-    expect(contentText).toContain('crontick_job_create');
-  });
-
-  it('prompts/get investigate-failed-run returns diagnostic template', async () => {
-    const result = await client.getPrompt({
-      name: 'investigate-failed-run',
-      arguments: { runId: 'nonexistent-run-id' },
-    });
-    expect(result.messages.length).toBeGreaterThan(0);
-    const msg = result.messages[0];
-    const contentText =
-      msg.content.type === 'text'
-        ? (msg.content as { type: string; text: string }).text
-        : '';
-    expect(contentText).toContain('nonexistent-run-id');
-    expect(contentText.toLowerCase()).toContain('diagnos');
   });
 
   // ── Error paths ─────────────────────────────────────────────────────────────
@@ -424,12 +481,18 @@ describe('MCP server — full contract', () => {
       expect(err).toBeDefined();
     }
   });
+
+  it('crontick_dashboard_stop stops the daemon-backed dashboard server', async () => {
+    const { json, isError } = await callTool(client, 'crontick_dashboard_stop');
+    expect(isError).toBe(false);
+    expect(json).toMatchObject({ ok: true, stopped: expect.any(Boolean) });
+  });
 });
 
-// ── Autostart-off path ────────────────────────────────────────────────────────
+// ── Daemon-start-off path ────────────────────────────────────────────────────
 
-describe('MCP server — CRONTICK_MCP_NO_AUTOSTART path', () => {
-  it('tool call returns actionable error when daemon is not running and autostart is off', async () => {
+describe('MCP server — CRONTICK_MCP_START_DAEMON path', () => {
+  it('daemon status reports not running without starting the daemon', async () => {
     const isolatedDir = makeTmpDir();
     let isolatedTransport: StdioClientTransport | undefined;
     let isolatedClient: Client | undefined;
@@ -441,25 +504,104 @@ describe('MCP server — CRONTICK_MCP_NO_AUTOSTART path', () => {
         env: {
           ...process.env,
           CRONTICK_HOME: isolatedDir,
-          CRONTICK_MCP_NO_AUTOSTART: '1',
+          CRONTICK_MCP_START_DAEMON: '0',
+          CRONTICK_DAEMON_URL: 'http://127.0.0.1:9',
         },
         stderr: 'pipe',
       });
       isolatedClient = new Client(
-        { name: 'test-client-noauto', version: '0.0.0' },
+        { name: 'test-client-nostart', version: '0.0.0' },
         { capabilities: {} },
       );
       await isolatedClient.connect(isolatedTransport);
 
-      const { text, isError } = await callTool(isolatedClient, 'crontick_daemon_status');
-      expect(isError).toBe(true);
+      const { json, text, isError } = await callTool(isolatedClient, 'crontick_daemon_status');
+      expect(isError).toBe(false);
+      expect((json as { running?: boolean }).running).toBe(false);
       // Must NOT leak 127.0.0.1:port to the LLM
       expect(text).not.toMatch(/127\.0\.0\.1:\d+/);
-      // Must mention how to start or daemon/autostart
-      expect(text.toLowerCase()).toMatch(/start|daemon|autostart/);
+      expect(existsSync(join(isolatedDir, 'daemon.port'))).toBe(false);
+      expect(existsSync(join(isolatedDir, 'daemon.pid'))).toBe(false);
     } finally {
       try { await isolatedClient?.close(); } catch { /* ignore */ }
       try { await isolatedTransport?.close(); } catch { /* ignore */ }
+      try { rmSync(isolatedDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  }, TIMEOUT_MS);
+
+  it('tool calls report not running without starting the daemon', async () => {
+    const isolatedDir = makeTmpDir();
+    let isolatedTransport: StdioClientTransport | undefined;
+    let isolatedClient: Client | undefined;
+
+    try {
+      isolatedTransport = new StdioClientTransport({
+        command: process.execPath,
+        args: [MCP_SCRIPT],
+        env: {
+          ...process.env,
+          CRONTICK_HOME: isolatedDir,
+          CRONTICK_MCP_START_DAEMON: '0',
+          CRONTICK_DAEMON_URL: 'http://127.0.0.1:9',
+        },
+        stderr: 'pipe',
+      });
+      isolatedClient = new Client(
+        { name: 'test-client-tool-nostart', version: '0.0.0' },
+        { capabilities: {} },
+      );
+      await isolatedClient.connect(isolatedTransport);
+
+      const result = await isolatedClient.callTool({ name: 'crontick_job_list', arguments: {} });
+      const content = (result as { content: Array<{ text?: string }> }).content;
+      const item = content[0];
+      const data = JSON.parse(item.text ?? '{}') as { error?: string };
+      expect(data.error).toContain('Daemon is not reachable');
+      expect(data.error).toContain('<daemon-addr>');
+      expect(data.error).not.toContain('127.0.0.1:9');
+      expect(existsSync(join(isolatedDir, 'daemon.port'))).toBe(false);
+      expect(existsSync(join(isolatedDir, 'daemon.pid'))).toBe(false);
+      expect(existsSync(join(isolatedDir, 'daemon.ensure.lock'))).toBe(false);
+    } finally {
+      try { await isolatedClient?.close(); } catch { /* ignore */ }
+      try { await isolatedTransport?.close(); } catch { /* ignore */ }
+      stopDaemonInHome(isolatedDir);
+      try { rmSync(isolatedDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  }, TIMEOUT_MS);
+});
+
+describe('MCP server — daemon-backed tools start daemon on demand', () => {
+  it('job list starts a persistent daemon when down', async () => {
+    const isolatedDir = makeTmpDir();
+    let isolatedTransport: StdioClientTransport | undefined;
+    let isolatedClient: Client | undefined;
+
+    try {
+      isolatedTransport = new StdioClientTransport({
+        command: process.execPath,
+        args: [MCP_SCRIPT],
+        env: {
+          ...process.env,
+          CRONTICK_HOME: isolatedDir,
+        },
+        stderr: 'pipe',
+      });
+      isolatedClient = new Client(
+        { name: 'test-client-start', version: '0.0.0' },
+        { capabilities: {} },
+      );
+      await isolatedClient.connect(isolatedTransport);
+
+      const { json, isError } = await callTool(isolatedClient, 'crontick_job_list');
+      expect(isError).toBe(false);
+      expect(json).toEqual([]);
+      expect(existsSync(join(isolatedDir, 'daemon.port'))).toBe(true);
+      expect(existsSync(join(isolatedDir, 'daemon.pid'))).toBe(true);
+    } finally {
+      try { await isolatedClient?.close(); } catch { /* ignore */ }
+      try { await isolatedTransport?.close(); } catch { /* ignore */ }
+      stopDaemonInHome(isolatedDir);
       try { rmSync(isolatedDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
   }, TIMEOUT_MS);

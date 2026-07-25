@@ -11,19 +11,9 @@ crontick supports three schedule kinds through the CLI, daemon API, and MCP serv
 Notes:
 
 - Standard 5-field cron expressions are expected for user-facing configuration.
-- Croner parsing is used under the hood, so aliases and some extended forms are accepted.
+- Croner parsing is used under the hood, so its standard aliases and extended forms are accepted.
 - Use `crontick_schedule_validate` or `POST /api/schedules/validate` before creating jobs.
 - Use preview to confirm the next fire times.
-
-### Supported aliases
-
-- `@yearly`, `@annually`
-- `@monthly`
-- `@weekly`
-- `@daily`, `@midnight`
-- `@noon`
-- `@hourly`
-- `@every_minute`
 
 ## `interval`
 
@@ -44,14 +34,6 @@ One-shot jobs fire once in the future and then remove their timer entry.
 ## Time zones
 
 Only cron schedules use `tz`. Interval and one-shot schedules use their numeric delay or absolute timestamp directly.
-
-## Catchup policy
-
-`catchup` controls what happens when the daemon was offline:
-
-- `skip` — do nothing for missed fires
-- `run-once` — emit a single catchup tick
-- `run-all` — emit all missed ticks (bounded internally)
 
 ## Preview examples
 

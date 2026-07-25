@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { platform, tmpdir } from 'node:os';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { Runner } from '../src/daemon/runner.js';
 import { Store } from '../src/daemon/store.js';
 import type { Job } from '../src/schemas/job.js';
@@ -25,28 +28,99 @@ function execJob(id: string, command: string, args: string[], opts?: Partial<Job
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
     action: { kind: 'exec', command, args },
-    catchup: 'skip',
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
-    budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
     ...opts,
   };
+}
+
+function promptJob(id: string, action: Partial<Extract<Job['action'], { kind: 'prompt' }>> = {}): Job {
+  return {
+    id,
+    enabled: true,
+    schedule: { kind: 'cron', cron: '* * * * *' },
+    action: {
+      kind: 'prompt',
+      prompt: 'hello',
+      engine: 'copilot',
+      args: [],
+      reuseSession: false,
+      ...action,
+    },
+    overlap: 'skip',
+    retry: { max: 0, backoffSec: 30 },
+  };
+}
+
+interface SpawnCall {
+  cmd: string;
+  args: string[];
+  opts?: SpawnOptions;
+}
+
+function fakeSpawn(outputs: Array<{ stdout?: string; stderr?: string; code?: number; beforeClose?: () => void }>) {
+  const calls: SpawnCall[] = [];
+  const spawnFn = (cmd: string, args?: readonly string[], opts?: SpawnOptions): ChildProcess => {
+    calls.push({ cmd, args: [...(args ?? [])], opts });
+    const child = new EventEmitter() as ChildProcess;
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    Object.assign(child, {
+      stdout,
+      stderr,
+      pid: 12345,
+      kill: () => true,
+    });
+    const output = outputs[Math.min(calls.length - 1, outputs.length - 1)] ?? {};
+    queueMicrotask(() => {
+      if (output.stdout) stdout.write(output.stdout);
+      if (output.stderr) stderr.write(output.stderr);
+      stdout.end();
+      stderr.end();
+      output.beforeClose?.();
+      child.emit('close', output.code ?? 0, null);
+    });
+    return child;
+  };
+  return { calls, spawnFn };
+}
+
+function fakeSpawnError(error: NodeJS.ErrnoException) {
+  const calls: SpawnCall[] = [];
+  const spawnFn = (cmd: string, args?: readonly string[], opts?: SpawnOptions): ChildProcess => {
+    calls.push({ cmd, args: [...(args ?? [])], opts });
+    const child = new EventEmitter() as ChildProcess;
+    Object.assign(child, {
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      pid: 12345,
+      kill: () => true,
+    });
+    queueMicrotask(() => child.emit('error', error));
+    return child;
+  };
+  return { calls, spawnFn };
 }
 
 describe('Runner', () => {
   let dir: string;
   let store: Store;
   let runner: Runner;
+  let previousHome: string | undefined;
 
   beforeEach(() => {
     dir = makeTmpDir();
     mkdirSync(join(dir, 'jobs'), { recursive: true });
+    previousHome = process.env['CRONTICK_HOME'];
+    process.env['CRONTICK_HOME'] = dir;
     store = makeStore(dir);
     runner = new Runner();
   });
 
   afterEach(() => {
     store.close();
+    if (previousHome === undefined) delete process.env['CRONTICK_HOME'];
+    else process.env['CRONTICK_HOME'] = previousHome;
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -99,26 +173,24 @@ describe('Runner', () => {
   // ── script kind ─────────────────────────────────────────────────────────────
 
   it('script: executes inline script body', async () => {
+    const isWindows = platform() === 'win32';
     const job: Job = {
       id: 'script-job',
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },
       action: {
         kind: 'script',
-        // Use node shebang for cross-platform
-        script: `#!/usr/bin/env node\nprocess.stdout.write('from-script\\n');\n`,
-        shell: 'auto',
+        script: isWindows ? '@echo from-script\r\n' : 'printf "from-script\\n"\n',
+        shell: isWindows ? 'cmd' : 'bash',
       },
-      catchup: 'skip',
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
-      budgets: { maxRunsPerDay: null, maxTokensPerRun: null },
     };
     const run = store.insertRun(job.id);
     await runner.run(job, run.id, store);
-    // Either success or failed depending on pwsh availability, but no crash
     const updated = store.getRun(run.id)!;
-    expect(['success', 'failed']).toContain(updated.status);
+    expect(updated.status).toBe('success');
+    expect(store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('')).toContain('from-script');
   });
 
   // ── Timeout ──────────────────────────────────────────────────────────────────
@@ -198,25 +270,6 @@ describe('Runner', () => {
     expect(['canceled', 'failed']).toContain(store.getRun(run1.id)?.status);
   }, 15000);
 
-  // ── Budget ───────────────────────────────────────────────────────────────────
-
-  it('budget: maxRunsPerDay=1 cancels second run on same day', async () => {
-    const job = execJob(
-      'budget-job',
-      node,
-      ['-e', 'process.exit(0)'],
-      { budgets: { maxRunsPerDay: 1, maxTokensPerRun: null } },
-    );
-
-    const run1 = store.insertRun(job.id);
-    await runner.run(job, run1.id, store);
-    expect(store.getRun(run1.id)?.status).toBe('success');
-
-    const run2 = store.insertRun(job.id);
-    await runner.run(job, run2.id, store);
-    expect(store.getRun(run2.id)?.status).toBe('canceled');
-  });
-
   // ── cancelRun ────────────────────────────────────────────────────────────────
 
   it('cancelRun returns false for unknown run', () => {
@@ -285,10 +338,275 @@ describe('Runner', () => {
       action: { kind: 'exec', command: 'echo', args: [], shell: true },
     };
     const result = JobSchema.safeParse(jobData);
-    // Zod strips unknown fields by default, so parse succeeds but shell is absent
-    if (result.success) {
-      expect((result.data.action as Record<string, unknown>).shell).toBeUndefined();
+    expect(result.success).toBe(false);
+    // Either way shell:true cannot reach runner
+  });
+
+  // ── prompt kind ─────────────────────────────────────────────────────────────
+
+  it('prompt: builds Copilot command line without shell expansion', async () => {
+    const fake = fakeSpawn([{ stdout: 'ok\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-copilot', {
+      prompt: 'hello $(echo INJECTED)',
+      args: ['--silent', '--add-dir', 'Q:\\Repos\\crontick', '--flag', 'one', '--flag', 'two'],
+    });
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(store.getRun(run.id)?.status).toBe('success');
+    expect(fake.calls[0]).toMatchObject({
+      cmd: 'copilot',
+      args: [
+        'hello $(echo INJECTED)',
+        '--silent',
+        '--add-dir',
+        'Q:\\Repos\\crontick',
+        '--flag',
+        'one',
+        '--flag',
+        'two',
+      ],
+    });
+    expect(fake.calls[0].opts?.shell).toBe(false);
+  });
+
+  it('prompt: passes leading-dash prompts as a single argv value', async () => {
+    const fake = fakeSpawn([{ stdout: 'ok\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-leading-dash', { prompt: '- summarize this' });
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(fake.calls[0].args[0]).toBe('- summarize this');
+    expect(store.getRun(run.id)?.status).toBe('success');
+  });
+
+  it('prompt: builds Agency command line', async () => {
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({
+      defaultEngine: 'copilot',
+      engines: {
+        copilot: { command: 'copilot', args: [] },
+        agency: { command: 'agency', args: ['cp'] },
+      },
+    }), 'utf-8');
+    const fake = fakeSpawn([{ stdout: 'ok\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-agency', {
+      engine: 'agency',
+      args: ['--profile', 'dev'],
+    });
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(fake.calls[0]).toMatchObject({
+      cmd: 'agency',
+      args: ['cp', 'hello', '--profile', 'dev'],
+    });
+    expect(store.getRun(run.id)?.status).toBe('success');
+  });
+
+  it('prompt: reports a helpful error when the engine binary is missing', async () => {
+    const error = Object.assign(new Error('spawn copilot ENOENT'), { code: 'ENOENT' });
+    const fake = fakeSpawnError(error);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-missing-engine');
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(store.getRun(run.id)).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('Prompt engine "copilot" command "copilot" was not found on PATH'),
+    });
+  });
+
+  it('prompt: forwards explicit session id every run after raw args', async () => {
+    const fake = fakeSpawn([{ stdout: 'ok\n' }, { stdout: 'ok\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-session', {
+      args: ['--silent'],
+      sessionId: 'sess-12345678',
+    });
+
+    await runner.run(job, store.insertRun(job.id).id, store);
+    await runner.run(job, store.insertRun(job.id).id, store);
+
+    expect(fake.calls).toHaveLength(2);
+    expect(fake.calls[0].args).toEqual(['hello', '--silent', '--session-id=sess-12345678']);
+    expect(fake.calls[1].args).toEqual(['hello', '--silent', '--session-id=sess-12345678']);
+  });
+
+  it('prompt: explicit session id wins over reuseSession and logs a notice', async () => {
+    const fake = fakeSpawn([{ stdout: 'ok\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-session-precedence', {
+      sessionId: 'sess-12345678',
+      reuseSession: true,
+    });
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(fake.calls[0].args).toEqual(['hello', '--session-id=sess-12345678']);
+    expect(store.getJob(job.id)?.action).toMatchObject({
+      kind: 'prompt',
+      sessionId: 'sess-12345678',
+      reuseSession: false,
+    });
+    expect(store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('')).not.toContain('captured session id');
+  });
+
+  it('prompt: captures and persists a reusable session id after first successful run', async () => {
+    const fake = fakeSpawn([{ stdout: 'session id: sess-abcdefgh\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-reuse', { reuseSession: true });
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(store.getRun(run.id)?.status).toBe('success');
+    const stored = store.getJob(job.id)!;
+    expect(stored.action).toMatchObject({
+      kind: 'prompt',
+      sessionId: 'sess-abcdefgh',
+      reuseSession: false,
+    });
+    expect(store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('')).toContain('captured session id');
+  });
+
+  it('prompt: captures a session id from the rolling transcript tail after long output', async () => {
+    const fake = fakeSpawn([{ stdout: `${'x'.repeat(140 * 1024)}\nsession id: sess-tail1234\n` }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-reuse-tail', { reuseSession: true });
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(store.getRun(run.id)?.status).toBe('success');
+    expect(store.getJob(job.id)?.action).toMatchObject({
+      kind: 'prompt',
+      sessionId: 'sess-tail1234',
+      reuseSession: false,
+    });
+  });
+
+  it('prompt: skips session persistence when the job is deleted before write-back', async () => {
+    const job = promptJob('prompt-reuse-deleted', { reuseSession: true });
+    const fake = fakeSpawn([
+      {
+        stdout: 'session id: sess-delete1\n',
+        beforeClose: () => {
+          store.deleteJob(job.id);
+        },
+      },
+    ]);
+    runner = new Runner(fake.spawnFn as never);
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(store.getRun(run.id)?.status).toBe('success');
+    expect(store.getJob(job.id)).toBeUndefined();
+  });
+
+  it('prompt: skips session persistence when the prompt action changed before write-back', async () => {
+    const job = promptJob('prompt-reuse-updated', { reuseSession: true });
+    const fake = fakeSpawn([
+      {
+        stdout: 'session id: sess-update1\n',
+        beforeClose: () => {
+          store.upsertJob(promptJob(job.id, { prompt: 'changed', reuseSession: true }));
+        },
+      },
+    ]);
+    runner = new Runner(fake.spawnFn as never);
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(store.getRun(run.id)?.status).toBe('success');
+    expect(store.getJob(job.id)?.action).toMatchObject({
+      kind: 'prompt',
+      prompt: 'changed',
+      reuseSession: true,
+    });
+  });
+
+  it('prompt: turns session persistence failures into failed run results', async () => {
+    const fake = fakeSpawn([{ stdout: 'session id: sess-failure1\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-reuse-persist-fail', { reuseSession: true });
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+    const original = store.tryCapturePromptSession.bind(store);
+    store.tryCapturePromptSession = () => {
+      throw new Error('disk denied');
+    };
+
+    try {
+      await runner.run(job, run.id, store);
+    } finally {
+      store.tryCapturePromptSession = original;
     }
-    // If rejected that is also acceptable — either way shell:true cannot reach runner
+
+    expect(store.getRun(run.id)).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('SESSION_PERSIST_FAILED'),
+    });
+    expect(store.getJob(job.id)?.action).toMatchObject({ kind: 'prompt', reuseSession: true });
+  });
+
+  it('prompt: reuses a previously persisted session id', async () => {
+    const fake = fakeSpawn([{ stdout: 'ok\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-reuse-existing', {
+      sessionId: 'sess-abcdefgh',
+      reuseSession: false,
+    });
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(fake.calls[0].args).toEqual(['hello', '--session-id=sess-abcdefgh']);
+    expect(store.getRun(run.id)?.status).toBe('success');
+  });
+
+  it('prompt: fails reuse contract when a successful first run emits no session id', async () => {
+    const fake = fakeSpawn([{ stdout: 'ok but no id\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-reuse-missing', { reuseSession: true });
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(store.getRun(run.id)).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('SESSION_ID_NOT_FOUND'),
+    });
+    expect(store.getJob(job.id)?.action).toMatchObject({ kind: 'prompt', reuseSession: true });
+  });
+
+  it('prompt: does not persist a session id when the engine fails', async () => {
+    const fake = fakeSpawn([{ stdout: 'session id: sess-abcdefgh\n', code: 7 }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-reuse-fail', { reuseSession: true });
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(store.getRun(run.id)).toMatchObject({ status: 'failed', exitCode: 7 });
+    expect(store.getJob(job.id)?.action).toMatchObject({ kind: 'prompt', reuseSession: true });
   });
 });

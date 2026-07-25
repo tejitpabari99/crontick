@@ -26,9 +26,7 @@ if (packInfo) {
     { name: 'dist/mcp/index.js', required: true },
     { name: 'dist/daemon/index.js', required: true },
     { name: 'dist/index.js', required: true },
-    { name: 'dist/index.cjs', required: true },
     { name: 'dist/index.d.ts', required: true },
-    { name: 'dist/index.d.cts', required: true },
     { name: 'src/skill/SKILL.md', required: true },
     { name: 'plugin/install.mjs', required: true },
     { name: 'README.md', required: true },
@@ -47,12 +45,11 @@ if (packInfo) {
     (file) =>
       file.includes('/tests/')
       || file.includes('\\tests\\')
-      || file.includes('/docs/plan/')
       || file.endsWith('.test.js')
       || file.endsWith('.test.ts'),
   );
   if (testFiles.length > 0) {
-    console.error('\n✗ Test/plan files should not be in the package:');
+    console.error('\n✗ Test files should not be in the package:');
     for (const file of testFiles) console.error(`  - ${file}`);
     allOk = false;
   } else {

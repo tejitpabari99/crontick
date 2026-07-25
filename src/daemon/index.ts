@@ -17,6 +17,7 @@ import { Store } from './store.js';
 import { Scheduler } from './scheduler.js';
 import { Runner } from './runner.js';
 import { createApiServer } from './api.js';
+import { createLogger, isVerboseEnv, type LogEvent } from '../logger.js';
 
 // ── SQLite shim ───────────────────────────────────────────────────────────────
 
@@ -37,13 +38,31 @@ if (needsSqliteShim) {
 
   let logFile: string | null = null;
 
-  function log(level: 'info' | 'warn' | 'error', msg: string, data?: unknown): void {
-    const line = JSON.stringify({ ts: new Date().toISOString(), level, msg, ...(data ? { data } : {}) });
-    process.stderr.write(line + '\n');
+  function isEpipeError(err: unknown): boolean {
+    return err instanceof Error && (err as NodeJS.ErrnoException).code === 'EPIPE';
+  }
+
+  function writeStderr(line: string): void {
+    try {
+      process.stderr.write(line);
+    } catch (err) {
+      if (!isEpipeError(err)) throw err;
+    }
+  }
+
+  process.stderr.on('error', (err) => {
+    if (!isEpipeError(err)) throw err;
+  });
+
+  function writeLogEvent(event: LogEvent): void {
+    const line = JSON.stringify(event);
+    writeStderr(line + '\n');
     if (logFile) {
       try { appendFileSync(logFile, line + '\n'); } catch { /* ignore */ }
     }
   }
+
+  const logger = createLogger({ verbose: isVerboseEnv(), component: 'daemon', sink: writeLogEvent });
 
   // ── Single-instance guard ───────────────────────────────────────────────────
 
@@ -55,10 +74,10 @@ if (needsSqliteShim) {
       if (!isNaN(existingPid)) {
         try {
           process.kill(existingPid, 0);
-          log('error', 'Daemon already running', { pid: existingPid });
+          logger.error('Daemon already running', { pid: existingPid });
           process.exit(1);
         } catch {
-          log('warn', 'Removing stale PID file', { pid: existingPid });
+          logger.warn('Removing stale PID file', { pid: existingPid });
         }
       }
     } catch { /* ignore */ }
@@ -70,32 +89,39 @@ if (needsSqliteShim) {
     }
   }
 
+  process.on('uncaughtException', (err) => {
+    if (isEpipeError(err)) return;
+    logger.error('Fatal daemon error', { error: String(err) });
+    cleanup();
+    process.exit(1);
+  });
+
   // ── Main ────────────────────────────────────────────────────────────────────
 
   async function main(): Promise<void> {
     ensureDirs();
     const today = new Date().toISOString().slice(0, 10);
     logFile = join(logsDir(), `daemon-${today}.log`);
-    log('info', 'Starting crontick daemon', { pid: process.pid, node: process.version });
+    logger.info('Starting crontick daemon', { pid: process.pid, node: process.version, verbose: logger.isDebugEnabled(), logFile });
 
     checkSingleInstance();
     writeFileSync(pidFilePath(), String(process.pid), 'utf-8');
 
-    const store = new Store(runsDbPath(), jobsDir());
+    const store = new Store(runsDbPath(), jobsDir(), logger);
     store.open();
     const reconciled = store.reconcileOrphanRuns();
     if (reconciled > 0) {
-      log('warn', `Reconciled ${reconciled} orphaned run(s) from previous daemon session`);
+      logger.warn(`Reconciled ${reconciled} orphaned run(s) from previous daemon session`);
     }
     store.loadJobsFromDisk();
     const jobs = store.listJobs();
-    log('info', `Loaded ${jobs.length} job(s) from disk`);
+    logger.info(`Loaded ${jobs.length} job(s) from disk`);
 
-    const scheduler = new Scheduler();
-    const runner = new Runner();
+    const scheduler = new Scheduler(logger);
+    const runner = new Runner(undefined, logger);
 
     for (const job of jobs) {
-      if (job.enabled) scheduler.schedule(job, store);
+      if (job.enabled) scheduler.schedule(job);
     }
 
     scheduler.on('tick', ({ jobId, plannedAt }) => {
@@ -103,23 +129,23 @@ if (needsSqliteShim) {
       if (!job || !job.enabled) return;
       const run = store.insertRun(jobId, plannedAt.getTime());
       runner.run(job, run.id, store).catch((err: unknown) => {
-        log('error', 'Runner error', { jobId, error: String(err) });
+        logger.error('Runner error', { jobId, error: String(err) });
       });
     });
 
     async function reload(): Promise<void> {
-      log('info', 'Reloading jobs from disk');
+      logger.info('Reloading jobs from disk');
       scheduler.unscheduleAll();
       store.loadJobsFromDisk();
       const reloaded = store.listJobs();
       for (const job of reloaded) {
-        if (job.enabled) scheduler.schedule(job, store);
+        if (job.enabled) scheduler.schedule(job);
       }
-      log('info', `Reloaded ${reloaded.length} job(s)`);
+      logger.info(`Reloaded ${reloaded.length} job(s)`);
     }
 
     const startedAt = new Date();
-    const ctx = { store, scheduler, runner, startedAt, port: 0, reload };
+    const ctx = { store, scheduler, runner, startedAt, port: 0, reload, logger };
     const server = createApiServer(ctx);
 
     await new Promise<void>((resolve, reject) => {
@@ -128,7 +154,7 @@ if (needsSqliteShim) {
         const port = typeof addr === 'object' && addr ? addr.port : 0;
         ctx.port = port;
         writeFileSync(portFilePath(), String(port), 'utf-8');
-        log('info', `API listening on 127.0.0.1:${port}`);
+        logger.info(`API listening on 127.0.0.1:${port}`);
         resolve();
       });
       server.on('error', reject);
@@ -138,23 +164,23 @@ if (needsSqliteShim) {
     async function shutdown(signal: string): Promise<void> {
       if (shuttingDown) return;
       shuttingDown = true;
-      log('info', `Received ${signal}, shutting down`);
+      logger.info(`Received ${signal}, shutting down`);
       server.close();
       scheduler.unscheduleAll();
       await new Promise<void>((r) => setTimeout(r, 100));
       store.close();
       cleanup();
-      log('info', 'Daemon stopped');
+      logger.info('Daemon stopped');
       process.exit(0);
     }
 
     process.on('SIGINT', () => void shutdown('SIGINT'));
     process.on('SIGTERM', () => void shutdown('SIGTERM'));
-    log('info', 'Daemon ready');
+    logger.info('Daemon ready');
   }
 
   main().catch((err: unknown) => {
-    process.stderr.write(`Fatal daemon error: ${String(err)}\n`);
+    logger.error('Fatal daemon error', { error: String(err) });
     cleanup();
     process.exit(1);
   });
