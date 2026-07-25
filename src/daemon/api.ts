@@ -15,6 +15,7 @@ import type { Runner } from './runner.js';
 import { JobSchema } from '../schemas/job.js';
 import { CrontickError } from '../errors.js';
 import { VERSION } from '../version.js';
+import { applyConfigDefaults } from '../job-input.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -105,8 +106,9 @@ async function handleRequest(
       if (!parsed.success) {
         return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid job', parsed.error.format());
       }
-      ctx.store.upsertJob(parsed.data);
-      const stored = ctx.store.getJob(parsed.data.id) ?? parsed.data;
+      const job = applyConfigDefaults(parsed.data);
+      ctx.store.upsertJob(job);
+      const stored = ctx.store.getJob(job.id) ?? job;
       ctx.scheduler.schedule(stored, ctx.store);
       return sendJson(res, 201, stored);
     }
@@ -131,8 +133,9 @@ async function handleRequest(
         if (!parsed.success) {
           return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid job', parsed.error.format());
         }
-        ctx.store.upsertJob(parsed.data);
-        const stored = ctx.store.getJob(id) ?? parsed.data;
+        const job = applyConfigDefaults(parsed.data);
+        ctx.store.upsertJob(job);
+        const stored = ctx.store.getJob(id) ?? job;
         ctx.scheduler.schedule(stored, ctx.store);
         return sendJson(res, 200, stored);
       }
@@ -309,9 +312,10 @@ async function handleRequest(
       for (const raw of jobs) {
         const parsed = JobSchema.safeParse(raw);
         if (parsed.success) {
-          ctx.store.upsertJob(parsed.data);
-          ctx.scheduler.schedule(parsed.data, ctx.store);
-          results.push({ id: parsed.data.id, ok: true });
+          const job = applyConfigDefaults(parsed.data);
+          ctx.store.upsertJob(job);
+          ctx.scheduler.schedule(job, ctx.store);
+          results.push({ id: job.id, ok: true });
         } else {
           results.push({ id: String(raw?.id ?? '?'), ok: false, error: 'validation failed' });
         }

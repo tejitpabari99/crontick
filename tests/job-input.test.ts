@@ -110,10 +110,11 @@ describe('normalizeJobInput', () => {
     expect(JobSchema.safeParse(baseJob({ kind: 'prompt', prompt: 'x', script: 'echo hi' })).success).toBe(false);
   });
 
-  it('validates prompt engine enum', () => {
+  it('validates prompt engine names', () => {
     expect(JobSchema.safeParse(baseJob({ kind: 'prompt', prompt: 'x', engine: 'copilot' })).success).toBe(true);
     expect(JobSchema.safeParse(baseJob({ kind: 'prompt', prompt: 'x', engine: 'agency' })).success).toBe(true);
-    expect(JobSchema.safeParse(baseJob({ kind: 'prompt', prompt: 'x', engine: 'openai' })).success).toBe(false);
+    expect(JobSchema.safeParse(baseJob({ kind: 'prompt', prompt: 'x', engine: 'openai' })).success).toBe(true);
+    expect(JobSchema.safeParse(baseJob({ kind: 'prompt', prompt: 'x', engine: 'bad engine' })).success).toBe(false);
   });
 
   it('rejects raw prompt passthrough args that collide with managed prompt/session flags', () => {

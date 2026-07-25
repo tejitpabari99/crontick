@@ -7,6 +7,7 @@ import type { Job, PromptAction } from '../schemas/job.js';
 import type { Store, RunStatus } from './store.js';
 import { CrontickError } from '../errors.js';
 import { extractSessionId } from './prompt-session.js';
+import { buildPromptRunCommand } from '../config.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -215,6 +216,7 @@ export class Runner {
       let promptCaptureAction: PromptAction | undefined;
       let promptSessionJob = job;
       let promptEngineBinary: string | undefined;
+      let promptEnv: Record<string, string> = {};
 
       if (action.kind === 'script') {
         // Write script to temp file
@@ -244,7 +246,6 @@ export class Runner {
         const latestAction =
           promptSessionJob.action.kind === 'prompt' ? promptSessionJob.action : action;
         const sessionId = latestAction.sessionId ?? action.sessionId;
-        const sessionArgs = sessionId ? [`--session-id=${sessionId}`] : [];
         capturePromptSession = latestAction.reuseSession && !sessionId;
         promptCaptureAction = capturePromptSession ? latestAction : undefined;
         if (sessionId && latestAction.reuseSession) {
@@ -255,20 +256,16 @@ export class Runner {
           );
         }
 
-        if (latestAction.engine === 'agency') {
-          cmd = 'agency';
-          promptEngineBinary = cmd;
-          args = ['cp', `--prompt=${latestAction.prompt}`, ...(latestAction.args ?? []), ...sessionArgs];
-        } else {
-          cmd = 'copilot';
-          promptEngineBinary = cmd;
-          args = [`--prompt=${latestAction.prompt}`, ...(latestAction.args ?? []), ...sessionArgs];
-        }
+        const runCommand = buildPromptRunCommand({ ...latestAction, sessionId });
+        cmd = runCommand.command;
+        promptEngineBinary = runCommand.engine;
+        args = runCommand.args;
+        promptEnv = runCommand.env;
       }
 
       const spawnOpts: Parameters<typeof spawn>[2] = {
         cwd: action.cwd ?? process.cwd(),
-        env: { ...process.env, ...(action.env ?? {}) } as NodeJS.ProcessEnv,
+        env: { ...process.env, ...promptEnv, ...(action.env ?? {}) } as NodeJS.ProcessEnv,
         signal,
         shell: false,
       };
@@ -285,6 +282,7 @@ export class Runner {
           const envFileVars = parseEnvFile(fileContents);
           spawnOpts.env = {
             ...process.env,
+            ...promptEnv,
             ...envFileVars,
             ...(action.env ?? {}),
           } as NodeJS.ProcessEnv;
@@ -406,7 +404,7 @@ export class Runner {
           } else if (err.code === 'ENOENT' && promptEngineBinary) {
             finish({
               status: 'failed',
-              error: `Prompt engine "${promptEngineBinary}" was not found on PATH. Install it or update PATH before the next run.`,
+              error: `Prompt engine "${promptEngineBinary}" command "${cmd}" was not found on PATH. Install it, update PATH, or change engines.${promptEngineBinary}.command in crontick config before the next run.`,
             });
           } else {
             finish({ status: 'failed', error: err.message });

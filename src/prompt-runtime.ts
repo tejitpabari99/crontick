@@ -13,7 +13,7 @@ export const RESERVED_PROMPT_ARGS = new Set([
 
 export interface PromptRuntimeValidationInput {
   prompt: string;
-  engine?: 'copilot' | 'agency';
+  engine?: string;
   args?: string[];
   sessionId?: string;
 }
@@ -35,11 +35,7 @@ export function promptRuntimeValidationMessage(action: PromptRuntimeValidationIn
 
 export function promptRuntimeArgv(action: PromptRuntimeValidationInput): string[] {
   const args = action.args ?? [];
-  const engine = action.engine ?? 'copilot';
-  const argv =
-    engine === 'agency'
-      ? ['agency', 'cp', `--prompt=${action.prompt}`, ...args]
-      : ['copilot', `--prompt=${action.prompt}`, ...args];
+  const argv = [action.engine ?? 'copilot', action.prompt, ...args];
   if (action.sessionId) argv.push(`--session-id=${action.sessionId}`);
   return argv;
 }

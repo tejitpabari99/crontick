@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { promptRuntimeValidationMessage } from '../prompt-runtime.js';
+import { EngineNameSchema } from './config.js';
 
 // ── Schedule ──────────────────────────────────────────────────────────────────
 
@@ -49,12 +50,12 @@ export const ExecActionSchema = z.object({
   ...CommonActionFields,
 }).strict();
 
-export const PromptEngineSchema = z.enum(['copilot', 'agency']);
+export const PromptEngineSchema = EngineNameSchema;
 
 export const PromptActionBaseSchema = z.object({
   kind: z.literal('prompt'),
   prompt: z.string().min(1),
-  engine: PromptEngineSchema.default('copilot'),
+  engine: PromptEngineSchema.optional(),
   args: z.array(z.string()).default([]),
   sessionId: z.string().min(1).optional(),
   reuseSession: z.boolean().default(false),

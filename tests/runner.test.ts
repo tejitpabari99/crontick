@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { platform, tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
@@ -110,16 +110,21 @@ describe('Runner', () => {
   let dir: string;
   let store: Store;
   let runner: Runner;
+  let previousHome: string | undefined;
 
   beforeEach(() => {
     dir = makeTmpDir();
     mkdirSync(join(dir, 'jobs'), { recursive: true });
+    previousHome = process.env['CRONTICK_HOME'];
+    process.env['CRONTICK_HOME'] = dir;
     store = makeStore(dir);
     runner = new Runner();
   });
 
   afterEach(() => {
     store.close();
+    if (previousHome === undefined) delete process.env['CRONTICK_HOME'];
+    else process.env['CRONTICK_HOME'] = previousHome;
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -379,7 +384,7 @@ describe('Runner', () => {
     expect(fake.calls[0]).toMatchObject({
       cmd: 'copilot',
       args: [
-        '--prompt=hello $(echo INJECTED)',
+        'hello $(echo INJECTED)',
         '--silent',
         '--add-dir',
         'Q:\\Repos\\crontick',
@@ -392,7 +397,7 @@ describe('Runner', () => {
     expect(fake.calls[0].opts?.shell).toBe(false);
   });
 
-  it('prompt: passes leading-dash prompts as a single long prompt option', async () => {
+  it('prompt: passes leading-dash prompts as a single argv value', async () => {
     const fake = fakeSpawn([{ stdout: 'ok\n' }]);
     runner = new Runner(fake.spawnFn as never);
     const job = promptJob('prompt-leading-dash', { prompt: '- summarize this' });
@@ -400,11 +405,18 @@ describe('Runner', () => {
 
     await runner.run(job, run.id, store);
 
-    expect(fake.calls[0].args[0]).toBe('--prompt=- summarize this');
+    expect(fake.calls[0].args[0]).toBe('- summarize this');
     expect(store.getRun(run.id)?.status).toBe('success');
   });
 
   it('prompt: builds Agency command line', async () => {
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({
+      defaultEngine: 'copilot',
+      engines: {
+        copilot: { command: 'copilot', args: [] },
+        agency: { command: 'agency', args: ['cp'] },
+      },
+    }), 'utf-8');
     const fake = fakeSpawn([{ stdout: 'ok\n' }]);
     runner = new Runner(fake.spawnFn as never);
     const job = promptJob('prompt-agency', {
@@ -417,7 +429,7 @@ describe('Runner', () => {
 
     expect(fake.calls[0]).toMatchObject({
       cmd: 'agency',
-      args: ['cp', '--prompt=hello', '--profile', 'dev'],
+      args: ['cp', 'hello', '--profile', 'dev'],
     });
     expect(store.getRun(run.id)?.status).toBe('success');
   });
@@ -433,7 +445,7 @@ describe('Runner', () => {
 
     expect(store.getRun(run.id)).toMatchObject({
       status: 'failed',
-      error: expect.stringContaining('Prompt engine "copilot" was not found on PATH'),
+      error: expect.stringContaining('Prompt engine "copilot" command "copilot" was not found on PATH'),
     });
   });
 
@@ -449,8 +461,8 @@ describe('Runner', () => {
     await runner.run(job, store.insertRun(job.id).id, store);
 
     expect(fake.calls).toHaveLength(2);
-    expect(fake.calls[0].args).toEqual(['--prompt=hello', '--silent', '--session-id=sess-12345678']);
-    expect(fake.calls[1].args).toEqual(['--prompt=hello', '--silent', '--session-id=sess-12345678']);
+    expect(fake.calls[0].args).toEqual(['hello', '--silent', '--session-id=sess-12345678']);
+    expect(fake.calls[1].args).toEqual(['hello', '--silent', '--session-id=sess-12345678']);
   });
 
   it('prompt: explicit session id wins over reuseSession and logs a notice', async () => {
@@ -465,7 +477,7 @@ describe('Runner', () => {
 
     await runner.run(job, run.id, store);
 
-    expect(fake.calls[0].args).toEqual(['--prompt=hello', '--session-id=sess-12345678']);
+    expect(fake.calls[0].args).toEqual(['hello', '--session-id=sess-12345678']);
     expect(store.getJob(job.id)?.action).toMatchObject({
       kind: 'prompt',
       sessionId: 'sess-12345678',
@@ -590,7 +602,7 @@ describe('Runner', () => {
 
     await runner.run(job, run.id, store);
 
-    expect(fake.calls[0].args).toEqual(['--prompt=hello', '--session-id=sess-abcdefgh']);
+    expect(fake.calls[0].args).toEqual(['hello', '--session-id=sess-abcdefgh']);
     expect(store.getRun(run.id)?.status).toBe('success');
   });
 

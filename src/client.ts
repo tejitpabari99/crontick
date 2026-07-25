@@ -19,6 +19,21 @@ import {
 import { runDoctorChecks, type DoctorOptions, type DoctorResult } from './doctor.js';
 import { jobJsonSchema } from './schema-json.js';
 import { uninstall, type UninstallResult } from './uninstall.js';
+import {
+  addEngine,
+  getConfigValue,
+  initConfig,
+  listEngines,
+  loadConfig,
+  removeConfigValue,
+  removeEngine,
+  setConfigValue,
+  updateEngine,
+  validateConfigFile,
+  type ConfigValidationResult,
+  type CrontickConfig,
+  type EngineConfig,
+} from './config.js';
 
 export interface CrontickClientOptions extends Omit<EnsureDaemonOptions, 'startDaemon'> {
   requestTimeoutMs?: number;
@@ -214,6 +229,46 @@ export class CrontickClient {
     return jobJsonSchema();
   }
 
+  getConfig(): CrontickConfig {
+    return loadConfig({ env: this.options.env });
+  }
+
+  getConfigValue(path?: string): unknown {
+    return getConfigValue(path, { env: this.options.env });
+  }
+
+  setConfigValue(path: string, value: unknown): CrontickConfig {
+    return setConfigValue(path, value, { env: this.options.env });
+  }
+
+  removeConfigValue(path: string): CrontickConfig {
+    return removeConfigValue(path, { env: this.options.env });
+  }
+
+  listEngines(): Record<string, EngineConfig> {
+    return listEngines({ env: this.options.env });
+  }
+
+  addEngine(name: string, engine: EngineConfig): CrontickConfig {
+    return addEngine(name, engine, { env: this.options.env });
+  }
+
+  updateEngine(name: string, engine: Partial<EngineConfig>): CrontickConfig {
+    return updateEngine(name, engine, { env: this.options.env });
+  }
+
+  removeEngine(name: string): CrontickConfig {
+    return removeEngine(name, { env: this.options.env });
+  }
+
+  initConfig(options: { force?: boolean } = {}): { path: string; config: CrontickConfig; created: boolean } {
+    return initConfig({ env: this.options.env, force: options.force });
+  }
+
+  validateConfig(path?: string): ConfigValidationResult {
+    return validateConfigFile({ env: this.options.env, path });
+  }
+
   async uninstall(options: { purge?: boolean } = {}): Promise<UninstallResult> {
     return uninstall({ purge: options.purge, env: this.options.env });
   }
@@ -282,6 +337,7 @@ export class CrontickClient {
   private normalizeOptions(options: NormalizeJobInputOptions): NormalizeJobInputOptions {
     return {
       cwd: this.options.cwd,
+      env: this.options.env,
       ...options,
       onNotice: (message) => {
         this.notices.push(message);

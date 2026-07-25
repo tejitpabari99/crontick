@@ -14,6 +14,8 @@ import {
   type Job,
   type JobInput,
 } from './schemas/job.js';
+import { EngineNameSchema } from './schemas/config.js';
+import { loadConfig } from './config.js';
 import { promptRuntimeValidationMessage } from './prompt-runtime.js';
 
 export const PromptActionInputSchema = PromptActionBaseSchema.omit({ prompt: true }).extend({
@@ -51,6 +53,7 @@ export interface NormalizeJobInputOptions {
   cwd?: string;
   fileBaseDir?: string;
   maxPromptFileBytes?: number;
+  env?: NodeJS.ProcessEnv;
   onNotice?: (message: string) => void;
 }
 
@@ -98,6 +101,17 @@ export function normalizeJobInput(
     throw new CrontickError('VALIDATION_ERROR', 'Invalid job', parsed.error.format());
   }
   return parsed.data;
+}
+
+export function applyConfigDefaults(job: Job, options: NormalizeJobInputOptions = {}): Job {
+  if (job.action.kind !== 'prompt' || job.action.engine !== undefined) return job;
+  return {
+    ...job,
+    action: {
+      ...job.action,
+      engine: loadConfig({ env: options.env }).defaultEngine,
+    },
+  };
 }
 
 export function normalizeJobPatch(
@@ -194,6 +208,12 @@ function normalizeActionInput(action: ActionInput, options: NormalizeJobInputOpt
     ...rest,
     prompt: prompt ?? readPromptFile(promptFile!, options),
   };
+  if (normalized.engine === undefined) {
+    normalized = {
+      ...normalized,
+      engine: loadConfig({ env: options.env }).defaultEngine,
+    };
+  }
   if (typeof normalized.sessionId === 'string' && normalized.reuseSession === true) {
     options.onNotice?.(
       'reuseSession was ignored because an explicit sessionId was provided; crontick will reuse the explicit session id.',
@@ -211,7 +231,7 @@ function validatePromptActionRuntimeArgs(action: Record<string, unknown>): void 
   const args = Array.isArray(action.args) ? action.args.filter(isString) : [];
   const message = promptRuntimeValidationMessage({
     prompt: typeof action.prompt === 'string' ? action.prompt : '',
-    engine: action.engine === 'agency' ? 'agency' : 'copilot',
+    engine: typeof action.engine === 'string' ? action.engine : 'copilot',
     args,
     sessionId: typeof action.sessionId === 'string' ? action.sessionId : undefined,
   });
@@ -343,9 +363,11 @@ function actionShell(shell: string | undefined): 'auto' | 'bash' | 'pwsh' | 'cmd
   throw new CrontickError('VALIDATION_ERROR', 'Shell must be auto, bash, pwsh, or cmd');
 }
 
-function promptEngine(engine: string | undefined): 'copilot' | 'agency' | undefined {
-  if (engine === undefined || engine === 'copilot' || engine === 'agency') return engine;
-  throw new CrontickError('VALIDATION_ERROR', 'Prompt engine must be copilot or agency');
+function promptEngine(engine: string | undefined): string | undefined {
+  if (engine === undefined) return undefined;
+  const parsed = EngineNameSchema.safeParse(engine);
+  if (parsed.success) return parsed.data;
+  throw new CrontickError('VALIDATION_ERROR', 'Prompt engine must be a valid engine name from crontick config');
 }
 
 function isString(value: unknown): value is string {

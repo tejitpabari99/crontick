@@ -31,7 +31,7 @@ const validJobArb = fc.record({
     fc.record({
       kind: fc.constant('prompt' as const),
       prompt: fc.string({ minLength: 1, maxLength: 100 }),
-      engine: fc.constantFrom('copilot' as const, 'agency' as const),
+      engine: fc.constantFrom('copilot' as const, 'agency' as const, 'openai' as const),
       args: fc.array(fc.string({ maxLength: 20 }), { maxLength: 5 }),
     }),
   ),
@@ -92,7 +92,6 @@ describe('property: JobSchema', () => {
 
     expect(parsed.action).toMatchObject({
       kind: 'prompt',
-      engine: 'copilot',
       args: [],
       reuseSession: false,
     });

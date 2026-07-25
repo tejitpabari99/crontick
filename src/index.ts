@@ -11,6 +11,7 @@ export type {
 export {
   buildJobFromCreateOptions,
   buildJobPatchFromUpdateOptions,
+  applyConfigDefaults,
   normalizeJobInput,
   normalizeJobPatch,
 } from './job-input.js';
@@ -23,7 +24,26 @@ export type {
   NormalizeJobInputOptions,
   PromptActionInput,
 } from './job-input.js';
-export { jobJsonSchema, jobJsonSchemaText } from './schema-json.js';
+export { configJsonSchema, configJsonSchemaText, jobJsonSchema, jobJsonSchemaText } from './schema-json.js';
+export {
+  BUILT_IN_CONFIG,
+  addEngine,
+  buildPromptRunCommand,
+  configFilePath,
+  getConfigValue,
+  initConfig,
+  listEngines,
+  loadConfig,
+  readConfigFile,
+  removeConfigValue,
+  removeEngine,
+  setConfigValue,
+  updateEngine,
+  validateConfigFile,
+  writeConfigFile,
+} from './config.js';
+export { ConfigSchema, EngineConfigSchema } from './schemas/config.js';
+export type { CrontickConfig, EngineConfig } from './schemas/config.js';
 export {
   JobSchema,
   PromptActionSchema,
