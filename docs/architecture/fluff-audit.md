@@ -1,7 +1,7 @@
 # Fluff audit
 
 Date: 2026-07-25
-Branch: users/tejitpabari/prompt-cron-daemon-autostart
+Branch: current feature branch
 
 Owner intent: start with strong basics; less surface means less to test. Architecture constraint: one core with thin CLI/MCP/client shims, no drift between surfaces.
 
@@ -9,9 +9,9 @@ Owner intent: start with strong basics; less surface means less to test. Archite
 
 | Verdict | Count |
 |---|---:|
-| REMOVE | 8 |
+| REMOVE | 10 |
 | COLLAPSE | 2 |
-| KEEP | 7 |
+| KEEP | 5 |
 
 ## Candidates
 
@@ -32,5 +32,6 @@ Owner intent: start with strong basics; less surface means less to test. Archite
 | KEEP | Medium | Dashboard lifecycle/data | `src\surface.ts:31-34`, `src\client.ts:246-276`, `src\mcp\index.ts:371-411`, `src\cli\index.ts:537-572`. | Dashboard is explicitly protected; it is thin over core data and tested for drift. |
 | KEEP | Medium | Prompt session-id and reuse handling | `src\schemas\job.ts:60-61`, `src\job-input.ts:217-225`, `src\daemon\runner.ts:240-259`, `src\daemon\store.ts:146-162`. | Session-id handling is explicitly protected and central for prompt jobs. |
 | KEEP | Medium | Timeout/env/envFile/cwd action fields | `src\schemas\job.ts:32-37`, `src\daemon\runner.ts:264-295`, `docs\security.md:35`. | These are safety/operational basics: process location, time bounding, and secrets via environment instead of prompt text. |
-| KEEP | High | Retry, overlap policy, and maxRunsPerDay budgets | `src\schemas\job.ts:77-99`, `src\daemon\runner.ts:82-190`, `tests\integration.retry.test.ts:15-66`, `tests\integration.overlap.test.ts:34-91`, `tests\integration.budget.test.ts:1-129`. | They are more advanced than CRUD, but they are actively consumed, heavily tested, and provide safety under repeated schedules. Leave for owner decision rather than delete in this pass. |
-| KEEP | Medium | Catchup field | `src\schemas\job.ts:96`, `src\daemon\scheduler.ts:182-203`, `src\daemon\scheduler.ts:213-227`, `docs\schedules.md:50-54`. | It is extra scheduler behavior, but default is `skip` and deleting persisted behavior plus tests is higher-risk. Owner should decide separately. |
+| REMOVE | High | maxRunsPerDay budgets | Done: removed the job schema field, runner enforcement, store counter, docs, and budget-only tests after owner decision. Retry and overlap remain. | Speculative per-job budget behavior is not needed before any public install. |
+| REMOVE | Medium | Catchup field | Done: removed the job schema field, scheduler backfill branches, catchup helper logic, docs, and catchup-only store lookup usage after owner decision. Scheduler now always skips missed offline fires. | The previous default was `skip`; unconditional skip keeps current basics while deleting unused policy surface. |
+| REMOVE | Medium | CommonJS package output | Done: `tsup` is ESM-only and package entry points/exports no longer expose CJS. | No install base requires CommonJS compatibility, and CJS output caused `import.meta` build warnings. |

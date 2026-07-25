@@ -8,8 +8,8 @@ const { version } = JSON.parse(readFileSync('./package.json', 'utf-8')) as { ver
  * Vite 5 strips the `node:` prefix from newer built-ins such as `node:sqlite`
  * before its module resolver runs, then fails with "Does the file exist?".
  * This plugin intercepts both `sqlite` and `node:sqlite`, returns a virtual
- * module that re-exports the built-in via `createRequire` (synchronous CJS
- * path — no top-level await required).
+ * module that re-exports the built-in via `createRequire`; this avoids Vite
+ * recursively resolving the virtual module back to itself.
  */
 const nodeSqlitePlugin: Plugin = {
   name: 'node-sqlite',
@@ -23,8 +23,6 @@ const nodeSqlitePlugin: Plugin = {
     if (id === '\0virtual:node-sqlite') {
       return [
         "import { createRequire } from 'module';",
-        // Use process.cwd()+'/x.js' as the base path — for built-in modules",
-        // the base path is irrelevant; any valid path works.",
         "const _req = createRequire(process.cwd() + '/x.js');",
         "const _mod = _req('node:sqlite');",
         'export const DatabaseSync = _mod.DatabaseSync;',

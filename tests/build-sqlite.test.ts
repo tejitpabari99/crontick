@@ -11,12 +11,12 @@ function collectJsFiles(dir: string): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) files.push(...collectJsFiles(full));
-    else if (entry.name.endsWith('.js') || entry.name.endsWith('.cjs')) files.push(full);
+    else if (entry.name.endsWith('.js')) files.push(full);
   }
   return files;
 }
 
-const BARE_SQLITE_RE = /(from\s+|import\(|require\()(['"])sqlite\2/;
+const BARE_SQLITE_RE = /(from\s+|import\()(['"])sqlite\2/;
 
 describe('dist/ has no bare sqlite references', () => {
   const distRoot = join(process.cwd(), 'dist');
