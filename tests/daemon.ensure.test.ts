@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import http from 'node:http';
+import { spawn, type ChildProcess } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -9,6 +10,7 @@ import {
 } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { ensureDaemon, resolveDaemonBaseUrl } from '../src/daemon/ensure.js';
 import { CrontickError } from '../src/errors.js';
 
@@ -93,6 +95,15 @@ function killHomeDaemon(home: string): void {
   }
 }
 
+function waitForExit(child: ChildProcess): Promise<{ code: number | null; signal: NodeJS.Signals | null; stderr: string }> {
+  const stderrChunks: string[] = [];
+  child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk.toString()));
+  return new Promise((resolveExit, rejectExit) => {
+    child.on('error', rejectExit);
+    child.on('exit', (code, signal) => resolveExit({ code, signal, stderr: stderrChunks.join('') }));
+  });
+}
+
 async function expectRejectCode(promise: Promise<unknown>, code: string): Promise<CrontickError> {
   try {
     await promise;
@@ -152,6 +163,73 @@ describe('ensureDaemon', () => {
     expect(info.port).toBeGreaterThan(0);
     expect(existsSync(join(home, 'daemon.port'))).toBe(true);
   });
+
+  it('starts daemon stdio through a durable log file after launcher exit', async () => {
+    const home = makeHome();
+    const script = writeFakeDaemon(
+      home,
+      'stderr-daemon.mjs',
+      [
+        "import http from 'node:http';",
+        "import { appendFileSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';",
+        "import { join } from 'node:path';",
+        'const home = process.env.CRONTICK_HOME;',
+        "mkdirSync(join(home, 'logs'), { recursive: true });",
+        "const server = http.createServer((_req, res) => {",
+        "  res.writeHead(200, { 'Content-Type': 'application/json' });",
+        '  const port = server.address() && typeof server.address() === "object" ? server.address().port : undefined;',
+        '  res.end(JSON.stringify({ ok: true, pid: process.pid, port }));',
+        '});',
+        'function cleanup() {',
+        "  try { unlinkSync(join(home, 'daemon.port')); } catch {}",
+        "  try { unlinkSync(join(home, 'daemon.pid')); } catch {}",
+        '}',
+        "process.on('uncaughtException', (err) => {",
+        "  appendFileSync(join(home, 'uncaught.txt'), `${err && err.code ? err.code : String(err)}\\n`);",
+        '  cleanup();',
+        '  process.exit(1);',
+        '});',
+        "server.listen(0, '127.0.0.1', () => {",
+        '  const port = server.address() && typeof server.address() === "object" ? server.address().port : 0;',
+        "  writeFileSync(join(home, 'daemon.pid'), String(process.pid), 'utf-8');",
+        "  writeFileSync(join(home, 'daemon.port'), String(port), 'utf-8');",
+        "  process.stderr.write('daemon ready on stderr\\n');",
+        '});',
+        'let tick = 0;',
+        'const interval = setInterval(() => {',
+        '  tick += 1;',
+        "  process.stderr.write(`daemon tick ${tick}\\n`);",
+        "  appendFileSync(join(home, 'ticks.txt'), `${tick}\\n`);",
+        '}, 50);',
+        "process.on('SIGTERM', () => { clearInterval(interval); cleanup(); server.close(() => process.exit(0)); });",
+        "process.on('SIGINT', () => { clearInterval(interval); cleanup(); server.close(() => process.exit(0)); });",
+      ].join('\n'),
+    );
+    const launcher = join(home, 'launcher.mjs');
+    const ensureUrl = pathToFileURL(join(process.cwd(), 'dist', 'index.js')).href;
+    writeFileSync(
+      launcher,
+      [
+        `import { ensureDaemon } from ${JSON.stringify(ensureUrl)};`,
+        `await ensureDaemon({ daemonScript: ${JSON.stringify(script)}, startupTimeoutMs: 5000 });`,
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const launcherProc = spawn(process.execPath, [launcher], {
+      env: { ...process.env, CRONTICK_HOME: home },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    const launcherExit = await waitForExit(launcherProc);
+
+    expect(launcherExit).toMatchObject({ code: 0, signal: null });
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+    expect(existsSync(join(home, 'uncaught.txt'))).toBe(false);
+    const port = Number(readFileSync(join(home, 'daemon.port'), 'utf-8'));
+    const health = await fetch(`http://127.0.0.1:${port}/health`).then((res) => res.ok).catch(() => false);
+    expect(health).toBe(true);
+    expect(readFileSync(join(home, 'logs', 'daemon.ensure.log'), 'utf-8')).toContain('daemon tick');
+  }, 10_000);
 
   it('fails clearly when the daemon script is missing', async () => {
     const home = makeHome();
@@ -218,6 +296,24 @@ describe('ensureDaemon', () => {
     });
 
     expect(info.started).toBe(false);
+  });
+
+  it('keeps an unparseable recent start lock instead of deleting a live owner window', async () => {
+    const home = makeHome();
+    const lockPath = join(home, 'daemon.ensure.lock');
+    writeFileSync(lockPath, '', 'utf-8');
+    setTimeout(() => {
+      void startHealthServer(home);
+    }, 500);
+
+    const info = await ensureDaemon({
+      daemonScript: join(home, 'missing.mjs'),
+      startupTimeoutMs: 2_000,
+      lockTimeoutMs: 5_000,
+    });
+
+    expect(info.started).toBe(false);
+    expect(existsSync(lockPath)).toBe(true);
   });
 
   it('removes a stale lock before starting', async () => {

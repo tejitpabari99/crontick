@@ -37,9 +37,25 @@ if (needsSqliteShim) {
 
   let logFile: string | null = null;
 
+  function isEpipeError(err: unknown): boolean {
+    return err instanceof Error && (err as NodeJS.ErrnoException).code === 'EPIPE';
+  }
+
+  function writeStderr(line: string): void {
+    try {
+      process.stderr.write(line);
+    } catch (err) {
+      if (!isEpipeError(err)) throw err;
+    }
+  }
+
+  process.stderr.on('error', (err) => {
+    if (!isEpipeError(err)) throw err;
+  });
+
   function log(level: 'info' | 'warn' | 'error', msg: string, data?: unknown): void {
     const line = JSON.stringify({ ts: new Date().toISOString(), level, msg, ...(data ? { data } : {}) });
-    process.stderr.write(line + '\n');
+    writeStderr(line + '\n');
     if (logFile) {
       try { appendFileSync(logFile, line + '\n'); } catch { /* ignore */ }
     }
@@ -69,6 +85,13 @@ if (needsSqliteShim) {
       try { if (existsSync(p)) unlinkSync(p); } catch { /* ignore */ }
     }
   }
+
+  process.on('uncaughtException', (err) => {
+    if (isEpipeError(err)) return;
+    writeStderr(`Fatal daemon error: ${String(err)}\n`);
+    cleanup();
+    process.exit(1);
+  });
 
   // ── Main ────────────────────────────────────────────────────────────────────
 
@@ -154,7 +177,7 @@ if (needsSqliteShim) {
   }
 
   main().catch((err: unknown) => {
-    process.stderr.write(`Fatal daemon error: ${String(err)}\n`);
+    writeStderr(`Fatal daemon error: ${String(err)}\n`);
     cleanup();
     process.exit(1);
   });

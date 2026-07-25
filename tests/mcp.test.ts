@@ -477,6 +477,43 @@ describe('MCP server — CRONTICK_MCP_NO_DAEMON_START path', () => {
       try { rmSync(isolatedDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
   }, TIMEOUT_MS);
+
+  it('resource reads report not running without starting the daemon', async () => {
+    const isolatedDir = makeTmpDir();
+    let isolatedTransport: StdioClientTransport | undefined;
+    let isolatedClient: Client | undefined;
+
+    try {
+      isolatedTransport = new StdioClientTransport({
+        command: process.execPath,
+        args: [MCP_SCRIPT],
+        env: {
+          ...process.env,
+          CRONTICK_HOME: isolatedDir,
+          CRONTICK_MCP_NO_DAEMON_START: '1',
+        },
+        stderr: 'pipe',
+      });
+      isolatedClient = new Client(
+        { name: 'test-client-resource-nostart', version: '0.0.0' },
+        { capabilities: {} },
+      );
+      await isolatedClient.connect(isolatedTransport);
+
+      const result = await isolatedClient.readResource({ uri: 'crontick://jobs' });
+      const item = result.contents[0] as { text?: string };
+      const data = JSON.parse(item.text ?? '{}') as { error?: string };
+      expect(data.error).toContain('Daemon is not running');
+      expect(existsSync(join(isolatedDir, 'daemon.port'))).toBe(false);
+      expect(existsSync(join(isolatedDir, 'daemon.pid'))).toBe(false);
+      expect(existsSync(join(isolatedDir, 'daemon.ensure.lock'))).toBe(false);
+    } finally {
+      try { await isolatedClient?.close(); } catch { /* ignore */ }
+      try { await isolatedTransport?.close(); } catch { /* ignore */ }
+      stopDaemonInHome(isolatedDir);
+      try { rmSync(isolatedDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  }, TIMEOUT_MS);
 });
 
 describe('MCP server — daemon-backed tools start daemon on demand', () => {

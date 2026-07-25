@@ -24,6 +24,17 @@ function daemonScript(): string {
   return pathResolve(__dirname, '../daemon/index.js');
 }
 
+function allowDaemonStart(): boolean {
+  return process.env['CRONTICK_MCP_NO_DAEMON_START'] !== '1';
+}
+
+async function ensureMcpDaemon(): Promise<void> {
+  await ensureDaemon({
+    daemonScript: daemonScript(),
+    allowStart: allowDaemonStart(),
+  });
+}
+
 // ── API client ────────────────────────────────────────────────────────────────
 
 async function callDaemon(method: string, path: string, body?: unknown): Promise<unknown> {
@@ -82,10 +93,7 @@ function errResult(err: unknown): ToolResult {
 
 async function toolWrap(fn: () => Promise<unknown>): Promise<ToolResult> {
   try {
-    await ensureDaemon({
-      daemonScript: daemonScript(),
-      allowStart: process.env['CRONTICK_MCP_NO_DAEMON_START'] !== '1',
-    });
+    await ensureMcpDaemon();
     const result = await fn();
     return okResult(result);
   } catch (err) {
@@ -554,7 +562,7 @@ export function createMcpServer(): McpServer {
     },
     async () => {
       try {
-        await ensureDaemon({ daemonScript: daemonScript() });
+        await ensureMcpDaemon();
         const jobs = (await callDaemon('GET', '/api/jobs')) as Array<{ id: string }>;
         const ids = Array.isArray(jobs) ? jobs.map((j) => j.id) : [];
         return {
@@ -594,7 +602,7 @@ export function createMcpServer(): McpServer {
     async (uri, variables) => {
       const id = Array.isArray(variables.id) ? variables.id[0] : variables.id;
       try {
-        await ensureDaemon({ daemonScript: daemonScript() });
+        await ensureMcpDaemon();
         const job = await callDaemon('GET', `/api/jobs/${encodeURIComponent(String(id ?? ''))}`);
         return {
           contents: [
@@ -631,7 +639,7 @@ export function createMcpServer(): McpServer {
     async (uri, variables) => {
       const id = Array.isArray(variables.id) ? variables.id[0] : variables.id;
       try {
-        await ensureDaemon({ daemonScript: daemonScript() });
+        await ensureMcpDaemon();
         const run = await callDaemon('GET', `/api/runs/${encodeURIComponent(String(id ?? ''))}`);
         return {
           contents: [
@@ -668,7 +676,7 @@ export function createMcpServer(): McpServer {
     async (uri, variables) => {
       const id = Array.isArray(variables.id) ? variables.id[0] : variables.id;
       try {
-        await ensureDaemon({ daemonScript: daemonScript() });
+        await ensureMcpDaemon();
         const logs = (await callDaemon(
           'GET',
           `/api/runs/${encodeURIComponent(String(id ?? ''))}/logs`,
@@ -781,7 +789,7 @@ Always confirm before calling crontick_job_delete or crontick_job_disable.`,
       let logInfo = 'Logs unavailable.';
 
       try {
-        await ensureDaemon({ daemonScript: daemonScript() });
+        await ensureMcpDaemon();
         const run = await callDaemon('GET', `/api/runs/${encodeURIComponent(args.runId)}`);
         runInfo = JSON.stringify(run, null, 2);
       } catch (err) {

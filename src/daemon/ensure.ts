@@ -1,6 +1,5 @@
 import * as childProcess from 'node:child_process';
 import {
-  appendFileSync,
   closeSync,
   existsSync,
   openSync,
@@ -124,21 +123,28 @@ async function startDaemonAndWait(args: {
     );
   }
 
-  const stderrChunks: Buffer[] = [];
   let childError: Error | undefined;
   let childExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+  const ensureLogPath = join(logsDir(), 'daemon.ensure.log');
+  const logStartOffset = logFileSize(ensureLogPath);
+  const stdoutFd = openSync(ensureLogPath, 'a');
+  const stderrFd = openSync(ensureLogPath, 'a');
 
   let child: childProcess.ChildProcess;
   try {
     child = childProcess.spawn(process.execPath, [daemonScript], {
       detached: true,
-      stdio: ['ignore', 'ignore', 'pipe'],
+      stdio: ['ignore', stdoutFd, stderrFd],
       shell: false,
       env,
     });
   } catch (err) {
+    closeLogFd(stdoutFd);
+    closeLogFd(stderrFd);
     throw new CrontickError('DAEMON_START_FAILED', `Failed to start daemon: ${String(err)}`);
   }
+  closeLogFd(stdoutFd);
+  closeLogFd(stderrFd);
 
   child.on('error', (err) => {
     childError = err;
@@ -147,10 +153,6 @@ async function startDaemonAndWait(args: {
     childExit = { code, signal };
   });
 
-  child.stderr?.on('data', (chunk: Buffer) => {
-    if (Buffer.concat(stderrChunks).length < STDERR_LIMIT) stderrChunks.push(chunk);
-  });
-  (child.stderr as NodeJS.ReadableStream & { unref?(): void } | undefined)?.unref?.();
   child.unref();
 
   const deadline = Date.now() + startupTimeoutMs;
@@ -158,16 +160,14 @@ async function startDaemonAndWait(args: {
     const healthy = await probePortFile(healthTimeoutMs);
     if (healthy) return { ...healthy, started: true };
     if (childError) {
-      const stderr = capturedStderr(stderrChunks);
-      writeEnsureLog(stderr);
+      const stderr = readEnsureLogTail(ensureLogPath, logStartOffset);
       throw new CrontickError(
         'DAEMON_START_FAILED',
         `Failed to start daemon: ${childError.message}${stderrHint(stderr)}`,
       );
     }
     if (childExit) {
-      const stderr = capturedStderr(stderrChunks);
-      writeEnsureLog(stderr);
+      const stderr = readEnsureLogTail(ensureLogPath, logStartOffset);
       throw new CrontickError(
         'DAEMON_START_FAILED',
         `Daemon exited before becoming healthy (code ${String(childExit.code)}, signal ${String(childExit.signal)})${stderrHint(stderr)}`,
@@ -176,8 +176,7 @@ async function startDaemonAndWait(args: {
     await sleep(POLL_MS);
   }
 
-  const stderr = capturedStderr(stderrChunks);
-  writeEnsureLog(stderr);
+  const stderr = readEnsureLogTail(ensureLogPath, logStartOffset);
   throw new CrontickError('DAEMON_TIMEOUT', `Timed out waiting for daemon health${stderrHint(stderr)}`);
 }
 
@@ -269,9 +268,10 @@ function cleanupStaleLock(lockPath: string, lockTimeoutMs: number): void {
     if (stale) unlinkSync(lockPath);
   } catch {
     try {
-      unlinkSync(lockPath);
+      const stale = Date.now() - statSync(lockPath).mtimeMs > lockTimeoutMs;
+      if (stale) unlinkSync(lockPath);
     } catch {
-      // ignore
+      // ignore absent/racing locks
     }
   }
 }
@@ -293,22 +293,34 @@ function releaseLock(lockPath: string): void {
   }
 }
 
-function capturedStderr(chunks: Buffer[]): string {
-  const raw = Buffer.concat(chunks).toString('utf-8');
-  return raw.length > STDERR_LIMIT ? `${raw.slice(0, STDERR_LIMIT)}…` : raw;
+function logFileSize(path: string): number {
+  try {
+    return statSync(path).size;
+  } catch {
+    return 0;
+  }
+}
+
+function closeLogFd(fd: number): void {
+  try {
+    closeSync(fd);
+  } catch {
+    // ignore
+  }
+}
+
+function readEnsureLogTail(path: string, startOffset: number): string {
+  try {
+    const raw = readFileSync(path);
+    const tail = raw.subarray(Math.min(startOffset, raw.length)).toString('utf-8');
+    return tail.length > STDERR_LIMIT ? `${tail.slice(0, STDERR_LIMIT)}…` : tail;
+  } catch {
+    return '';
+  }
 }
 
 function stderrHint(stderr: string): string {
   return stderr ? `\nDaemon stderr: ${stderr.slice(0, 500)}` : '';
-}
-
-function writeEnsureLog(stderr: string): void {
-  if (!stderr) return;
-  try {
-    appendFileSync(join(logsDir(), 'daemon.ensure.log'), `[${new Date().toISOString()}] ${stderr}\n`);
-  } catch {
-    // ignore logging failures
-  }
 }
 
 function sleep(ms: number): Promise<void> {
