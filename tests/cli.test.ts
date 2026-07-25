@@ -549,4 +549,29 @@ describe('CLI e2e with daemon', () => {
     // Either empty list message or a table header â€” neither starts with [ or {
     expect(first === '[' || first === '{').toBe(false);
   });
+
+  it('dashboard commands render human output and JSON through the client path', () => {
+    const start = cli(['--json', 'dashboard', 'start'], env());
+    expect(start.status, start.stderr).toBe(0);
+    expect(JSON.parse(start.stdout)).toMatchObject({ ok: true, running: true, url: expect.stringContaining('/dashboard') });
+
+    const status = cli(['dashboard', 'status'], env());
+    expect(status.status, status.stderr).toBe(0);
+    expect(status.stdout).toContain('Dashboard running:');
+
+    const dataJson = cli(['--json', 'dashboard', 'data', '--runs-limit', '5'], env());
+    expect(dataJson.status, dataJson.stderr).toBe(0);
+    expect(JSON.parse(dataJson.stdout)).toMatchObject({ stats: { totalJobs: expect.any(Number) }, jobs: expect.any(Array), runs: expect.any(Array) });
+
+    const dataHuman = cli(['dashboard', 'data', '--runs-limit', '5'], env());
+    expect(dataHuman.status, dataHuman.stderr).toBe(0);
+    expect(dataHuman.stdout).toContain('Jobs');
+    expect(dataHuman.stdout).toContain('Recent runs');
+  });
+
+  it('dashboard stop returns the shared stop result', () => {
+    const r = cli(['--json', 'dashboard', 'stop'], env());
+    expect(r.status, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout)).toMatchObject({ ok: true, stopped: expect.any(Boolean) });
+  });
 });

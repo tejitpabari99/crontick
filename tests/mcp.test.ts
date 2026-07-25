@@ -170,7 +170,10 @@ describe('MCP server — full contract', () => {
     'crontick_daemon_restart',
     'crontick_export',
     'crontick_import',
-    'crontick_dashboard_open',
+    'crontick_dashboard_start',
+    'crontick_dashboard_status',
+    'crontick_dashboard_data',
+    'crontick_dashboard_stop',
     'crontick_doctor',
     'crontick_config_get',
     'crontick_config_set',
@@ -387,6 +390,22 @@ describe('MCP server — full contract', () => {
     expect(typeof (json as { totalJobs: number }).totalJobs).toBe('number');
   });
 
+  // ── Dashboard tools ─────────────────────────────────────────────────────────
+
+  it('dashboard tools expose start/status/data through the same response shapes', async () => {
+    const start = await callTool(client, 'crontick_dashboard_start');
+    expect(start.isError).toBe(false);
+    expect(start.json).toMatchObject({ ok: true, running: true, url: expect.stringContaining('/dashboard') });
+
+    const status = await callTool(client, 'crontick_dashboard_status');
+    expect(status.isError).toBe(false);
+    expect(status.json).toMatchObject({ ok: true, running: true, url: expect.stringContaining('/dashboard') });
+
+    const data = await callTool(client, 'crontick_dashboard_data', { runsLimit: 5 });
+    expect(data.isError).toBe(false);
+    expect(data.json).toMatchObject({ stats: { totalJobs: expect.any(Number) }, jobs: expect.any(Array), runs: expect.any(Array) });
+  });
+
   // ── Admin tools ──────────────────────────────────────────────────────────────
 
   it('crontick_export returns jobs array', async () => {
@@ -508,6 +527,12 @@ describe('MCP server — full contract', () => {
       // Protocol-level error is also acceptable
       expect(err).toBeDefined();
     }
+  });
+
+  it('crontick_dashboard_stop stops the daemon-backed dashboard server', async () => {
+    const { json, isError } = await callTool(client, 'crontick_dashboard_stop');
+    expect(isError).toBe(false);
+    expect(json).toMatchObject({ ok: true, stopped: expect.any(Boolean) });
   });
 });
 

@@ -121,6 +121,19 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/stats/summary') return json(res, 200, { totalJobs: jobs.size, enabledJobs: [...jobs.values()].filter(j => j.enabled !== false).length, totalRuns: runs.size, succeeded: 0, failed: 0, avgDurationMs: null });
   const statsMatch = url.pathname.match(/^\\/api\\/stats\\/jobs\\/([^/]+)$/);
   if (req.method === 'GET' && statsMatch) return json(res, 200, { jobId: decodeURIComponent(statsMatch[1]), totalRuns: 0, succeeded: 0, failed: 0, lastStatus: null, lastRunAt: null });
+  if (req.method === 'GET' && url.pathname === '/api/dashboard/status') {
+    const port = server.address() && typeof server.address() === 'object' ? server.address().port : 0;
+    return json(res, 200, { ok: true, running: true, url: 'http://127.0.0.1:' + port + '/dashboard', port, pid: process.pid, daemon: { pid: process.pid } });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/dashboard') {
+    return json(res, 200, {
+      generatedAt: Date.now(),
+      health: { ok: true, product: 'crontick', version: 'test', uptimeSec: 1, pid: process.pid, port: 0, node: process.versions.node, platform: process.platform, jobs: { total: jobs.size, enabled: jobs.size }, runs: { last24h: runs.size, failures24h: 0 } },
+      stats: { totalJobs: jobs.size, enabledJobs: jobs.size, totalRuns: runs.size, succeeded: 0, failed: 0, avgDurationMs: null },
+      jobs: [...jobs.values()].map((job) => ({ id: job.id, description: job.description ?? null, enabled: job.enabled !== false, scheduleLabel: job.schedule?.cron ?? 'schedule', actionKind: job.action?.kind ?? 'exec', lastStatus: null, lastRunAt: null, nextRunAt: null, job })),
+      runs: [...runs.values()].map((run) => ({ ...run, endedAt: null, durationMs: null, exitCode: null, error: null })),
+    });
+  }
   if (req.method === 'GET' && url.pathname === '/api/export') return json(res, 200, { jobs: [...jobs.values()] });
   if (req.method === 'POST' && url.pathname === '/api/import') {
     const body = await readBody(req);
@@ -159,6 +172,15 @@ async function startHealthOnlyServer(): Promise<{ baseUrl: string; close: () => 
   const close = () => new Promise<void>((resolveClose) => server.close(() => resolveClose()));
   cleanupFns.push(close);
   return { baseUrl: `http://127.0.0.1:${port}`, close };
+}
+
+async function closedPortUrl(): Promise<string> {
+  const server = http.createServer();
+  await new Promise<void>((resolveServer) => server.listen(0, '127.0.0.1', resolveServer));
+  const addr = server.address();
+  const port = typeof addr === 'object' && addr ? addr.port : 0;
+  await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+  return `http://127.0.0.1:${port}`;
 }
 
 function killHomeDaemon(home: string): void {
@@ -209,6 +231,32 @@ describe('CrontickClient', () => {
     expect(existsSync(join(home, 'daemon.pid'))).toBe(false);
   });
 
+  it('reports actionable dashboard daemon-down errors without starting', async () => {
+    const home = makeHome();
+    const client = createClient({ daemonScript: join(home, 'missing.mjs') });
+
+    await expect(client.dashboardStatus()).rejects.toMatchObject({
+      code: 'DAEMON_NOT_RUNNING',
+      message: expect.stringContaining('crontick dashboard start'),
+    });
+    await expect(client.dashboardData()).rejects.toMatchObject({
+      code: 'DAEMON_NOT_RUNNING',
+      message: expect.stringContaining('crontick dashboard start'),
+    });
+    expect(existsSync(join(home, 'daemon.port'))).toBe(false);
+  });
+
+  it('includes the probed dashboard port when a configured daemon URL is unreachable', async () => {
+    makeHome();
+    const baseUrl = await closedPortUrl();
+    const client = createClient({ daemonUrl: baseUrl, startDaemon: false, requestTimeoutMs: 200 });
+
+    await expect(client.dashboardStatus()).rejects.toMatchObject({
+      code: 'DAEMON_REQUEST_FAILED',
+      message: expect.stringContaining(`${baseUrl}/api/dashboard/status`),
+    });
+  });
+
   it('validates create/import jobs before posting', async () => {
     makeHome();
     const server = await startHealthOnlyServer();
@@ -241,7 +289,9 @@ describe('CrontickClient', () => {
     await expect(client.validateSchedule(testJob.schedule)).resolves.toMatchObject({ ok: true });
     await expect(client.previewSchedule({ schedule: testJob.schedule, n: 1 })).resolves.toMatchObject({ next: [] });
     await expect(client.daemonReload()).resolves.toMatchObject({ ok: true });
-    await expect(client.dashboardUrl()).resolves.toMatch(/\/dashboard$/);
+    await expect(client.dashboardStart()).resolves.toMatchObject({ ok: true, running: true, startedDaemon: false });
+    await expect(client.dashboardStatus()).resolves.toMatchObject({ ok: true, running: true });
+    await expect(client.dashboardData({ runsLimit: 5 })).resolves.toMatchObject({ stats: { totalJobs: expect.any(Number) } });
     await expect(client.deleteJob(testJob.id)).resolves.toMatchObject({ ok: true });
   });
 
