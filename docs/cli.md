@@ -36,7 +36,7 @@ Commands:
   doctor                                 Check system health
   daemon                                 Manage the crontick daemon
   uninstall [options]                    Optionally delete all crontick data
-  dashboard [options]                    Open the crontick dashboard in a browser
+  dashboard                              Manage the crontick dashboard
   mcp [options]                          Start the crontick MCP server on stdio (for use with Claude Desktop, Copilot, Cursor, etc.)
   help [command]                         display help for command
 ```
@@ -562,12 +562,65 @@ Options:
 ## dashboard
 
 ```text
-Usage: crontick dashboard [options]
+Usage: crontick dashboard [options] [command]
 
-Open the crontick dashboard in a browser
+Manage the crontick dashboard
+
+Options:
+  -h, --help       display help for command
+
+Commands:
+  start [options]  Start the dashboard server
+  status           Show dashboard status
+  data [options]   Return the dashboard data model
+  stop             Stop the dashboard server
+  help [command]   display help for command
+```
+
+## dashboard start
+
+```text
+Usage: crontick dashboard start [options]
+
+Start the dashboard server
 
 Options:
   --open      Open in the default browser
+  -h, --help  display help for command
+```
+
+## dashboard status
+
+```text
+Usage: crontick dashboard status [options]
+
+Show dashboard status
+
+Options:
+  -h, --help  display help for command
+```
+
+## dashboard data
+
+```text
+Usage: crontick dashboard data [options]
+
+Return the dashboard data model
+
+Options:
+  --job <id>        Filter runs by job ID
+  --runs-limit <n>  Maximum recent runs to return
+  -h, --help        display help for command
+```
+
+## dashboard stop
+
+```text
+Usage: crontick dashboard stop [options]
+
+Stop the dashboard server
+
+Options:
   -h, --help  display help for command
 ```
 

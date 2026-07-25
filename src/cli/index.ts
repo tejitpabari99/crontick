@@ -65,6 +65,45 @@ function display(value: unknown): string {
   return value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value ?? '');
 }
 
+function openDashboardUrl(url: string): void {
+  if (process.platform === 'win32') {
+    spawn('cmd', ['/c', 'start', url], { detached: true, stdio: 'ignore' }).unref();
+  } else if (process.platform === 'darwin') {
+    spawn('open', [url], { detached: true, stdio: 'ignore' }).unref();
+  } else {
+    spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
+  }
+}
+
+function printDashboardData(data: unknown): void {
+  const model = data as {
+    stats?: { totalJobs?: number; enabledJobs?: number; totalRuns?: number; failed?: number };
+    jobs?: Array<{ id: string; enabled: boolean; scheduleLabel: string; actionKind: string; lastStatus?: string | null }>;
+    runs?: Array<{ id: string; jobId: string; status: string; startedAt: number }>;
+  };
+  const stats = model.stats;
+  if (stats) {
+    console.log(`Jobs: ${stats.enabledJobs ?? 0}/${stats.totalJobs ?? 0} enabled`);
+    console.log(`Runs: ${stats.totalRuns ?? 0} total, ${stats.failed ?? 0} failed`);
+  }
+  console.log('');
+  console.log('Jobs');
+  if (!model.jobs || model.jobs.length === 0) console.log('(no jobs)');
+  else {
+    for (const job of model.jobs) {
+      console.log(`- ${job.id} [${job.enabled ? 'enabled' : 'disabled'}] ${job.actionKind} ${job.scheduleLabel} last=${job.lastStatus ?? '—'}`);
+    }
+  }
+  console.log('');
+  console.log('Recent runs');
+  if (!model.runs || model.runs.length === 0) console.log('(no runs)');
+  else {
+    for (const run of model.runs) {
+      console.log(`- ${run.id} ${run.jobId} ${run.status} ${new Date(run.startedAt).toISOString()}`);
+    }
+  }
+}
+
 function handleError(err: unknown): never {
   if (err instanceof CrontickError) {
     console.error(`Error [${err.code}]: ${err.message}`);
@@ -468,26 +507,46 @@ program.command('uninstall')
     } catch (err) { handleError(err); }
   });
 
-program.command('dashboard')
-  .description('Open the crontick dashboard in a browser')
+const dashboard = program.command('dashboard').description('Manage the crontick dashboard');
+dashboard.command('start')
+  .description('Start the dashboard server')
   .option('--open', 'Open in the default browser')
   .action(async (opts) => {
     try {
-      const url = await client().dashboardUrl();
-      if (opts.open as boolean) {
-        if (process.platform === 'win32') {
-          spawn('cmd', ['/c', 'start', url], { detached: true, stdio: 'ignore' }).unref();
-        } else if (process.platform === 'darwin') {
-          spawn('open', [url], { detached: true, stdio: 'ignore' }).unref();
-        } else {
-          spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
-        }
-        console.log(`Dashboard opened: ${url}`);
-      } else {
-        console.log(`Dashboard: ${url}`);
-      }
+      const result = await client().dashboardStart();
+      if (opts.open as boolean) openDashboardUrl(result.url);
+      if (useJson()) print(result, true);
+      else console.log(`Dashboard ${opts.open ? 'opened' : 'running'}: ${result.url}`);
     } catch (err) { handleError(err); }
   });
+dashboard.command('status').description('Show dashboard status').action(async () => {
+  try {
+    const result = await client(false).dashboardStatus();
+    if (useJson()) print(result, true);
+    else console.log(`Dashboard ${result.running ? 'running' : 'stopped'}: ${result.url}`);
+  } catch (err) { handleError(err); }
+});
+dashboard.command('data')
+  .description('Return the dashboard data model')
+  .option('--job <id>', 'Filter runs by job ID')
+  .option('--runs-limit <n>', 'Maximum recent runs to return', parseInteger)
+  .action(async (opts) => {
+    try {
+      const result = await client(false).dashboardData({
+        jobId: opts.job as string | undefined,
+        runsLimit: opts.runsLimit as number | undefined,
+      });
+      if (useJson()) print(result, true);
+      else printDashboardData(result);
+    } catch (err) { handleError(err); }
+  });
+dashboard.command('stop').description('Stop the dashboard server').action(async () => {
+  try {
+    const result = await client(false).dashboardStop();
+    if (useJson()) print(result, true);
+    else console.log(result.message);
+  } catch (err) { handleError(err); }
+});
 
 program.command('mcp')
   .description('Start the crontick MCP server on stdio (for use with Claude Desktop, Copilot, Cursor, etc.)')

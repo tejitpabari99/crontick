@@ -163,8 +163,8 @@ Build a drift matrix for changed capabilities:
   `crontick_job_cancel_run`, `crontick_run_*` vs `runNow/getRun/listRuns/getLogs`.
 - Schedules: `crontick_schedule_validate`, `crontick_schedule_preview` vs
   `validateSchedule()`, `previewSchedule()`; add CLI only if humans need it.
-- Daemon/dashboard/doctor: CLI `daemon *`, `dashboard`, `doctor`, `mcp` vs MCP
-  `crontick_daemon_*`, `crontick_dashboard_open`, `crontick_doctor` vs client
+- Daemon/dashboard/doctor: CLI `daemon *`, `dashboard *`, `doctor`, `mcp` vs MCP
+  `crontick_daemon_*`, `crontick_dashboard_*`, `crontick_doctor` vs client
   lifecycle methods.
 
 For each changed capability, mark CLI, MCP, and client as **present**,

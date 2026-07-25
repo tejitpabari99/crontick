@@ -32,6 +32,7 @@
 - `src/cli/index.ts` — Commander CLI adapter over `CrontickClient`
 - `src/client.ts` — exported programmatic client and shared daemon transport surface
 - `src/doctor.ts` — shared structured health checks for CLI/MCP/client
+- `src/dashboard.ts` — shared dashboard status/data model and asset resolution
 - `src/schema-json.ts` — shared JSON Schema generation for job resources
 - `src/daemon/index.ts` — daemon startup, single-instance guard, reload, signal handling
 - `src/daemon/api.ts` — loopback-only HTTP API and dashboard serving
@@ -60,7 +61,7 @@ scheduled jobs pause until the next daemon-backed operation or `crontick daemon 
 4. Scheduler registers cron/interval/one-shot timers.
 5. On tick, daemon inserts a queued run and Runner executes a `script`, `exec`, or `prompt` action.
 6. Runner appends redacted stdout/stderr chunks to SQLite.
-7. Client/core exposes run state, logs, stats, health, doctor, and daemon lifecycle; CLI/MCP format those results.
+7. Client/core exposes run state, logs, stats, health, dashboard status/data, doctor, and daemon lifecycle; CLI/MCP format those results.
 
 ## Persistence
 

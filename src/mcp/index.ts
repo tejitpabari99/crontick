@@ -343,17 +343,46 @@ return toolWrapClient((client) => client.updateJob(id, patch));
   );
 
   server.registerTool(
-    'crontick_dashboard_open',
+    'crontick_dashboard_start',
     {
       description:
-        'Get the URL for the crontick dashboard web UI. Open it in a browser to view jobs and run history visually.',
+        'Start the crontick dashboard server and return its URL. The dashboard is served by the local daemon.',
       inputSchema: {},
     },
-    async () =>
-      toolWrap(async () => {
-        const url = await mcpClient().dashboardUrl();
-        return { url, message: `Dashboard available at: ${url} — open in your browser.` };
-      }),
+    async () => toolWrap(() => mcpClient().dashboardStart()),
+  );
+
+  server.registerTool(
+    'crontick_dashboard_status',
+    {
+      description:
+        'Return dashboard server status without starting it. If it is down, start it with crontick_dashboard_start.',
+      inputSchema: {},
+    },
+    async () => toolWrap(() => mcpClient(false).dashboardStatus()),
+  );
+
+  server.registerTool(
+    'crontick_dashboard_data',
+    {
+      description:
+        'Return the core dashboard data model: health, aggregate stats, jobs, and recent runs.',
+      inputSchema: {
+        jobId: z.string().optional(),
+        runsLimit: z.number().int().positive().optional(),
+      },
+    },
+    async (args) => toolWrap(() => mcpClient(false).dashboardData(args)),
+  );
+
+  server.registerTool(
+    'crontick_dashboard_stop',
+    {
+      description:
+        'Stop the daemon-backed dashboard server. This also stops the local daemon because the dashboard is served by it.',
+      inputSchema: {},
+    },
+    async () => toolWrap(() => mcpClient(false).dashboardStop()),
   );
 
   server.registerTool(

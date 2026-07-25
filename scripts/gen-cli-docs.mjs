@@ -54,6 +54,10 @@ const sections = [
   { title: 'daemon reload', cmd: ['daemon', 'reload', '--help'] },
   { title: 'daemon restart', cmd: ['daemon', 'restart', '--help'] },
   { title: 'dashboard', cmd: ['dashboard', '--help'] },
+  { title: 'dashboard start', cmd: ['dashboard', 'start', '--help'] },
+  { title: 'dashboard status', cmd: ['dashboard', 'status', '--help'] },
+  { title: 'dashboard data', cmd: ['dashboard', 'data', '--help'] },
+  { title: 'dashboard stop', cmd: ['dashboard', 'stop', '--help'] },
   { title: 'uninstall', cmd: ['uninstall', '--help'] },
   { title: 'mcp', cmd: ['mcp', '--help'] },
 ];

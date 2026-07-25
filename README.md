@@ -31,6 +31,7 @@ crontick new prompt-report --cron "0 9 * * *" --prompt "Summarize repo status" -
 crontick list
 crontick runs list --limit 10
 crontick stats summary
+crontick dashboard start --open
 crontick mcp --help
 ```
 
@@ -55,7 +56,7 @@ Engine startup is configured in `.crontick\config.json`; see
 
 The public client is the source of truth for behavior. CLI commands and MCP tools are thin adapters
 over the same methods, including create/update, run inspection, logs, schedule validation/preview,
-stats, doctor, and daemon lifecycle helpers.
+stats, dashboard lifecycle/data, doctor, and daemon lifecycle helpers.
 
 ## Security model
 

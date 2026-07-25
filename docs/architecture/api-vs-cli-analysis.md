@@ -39,12 +39,12 @@ Current real layering:
 - `package.json` ships three binaries (`crontick`, `crontick-daemon`, `crontick-mcp`) and a package root export for `createClient()` / `CrontickClient` (`package.json:20-34`).
 - `src\index.ts` exports the client, daemon ensure helpers, schemas, paths, and types (`src\index.ts:1-20`). This already makes more than the CLI a public package surface.
 - The CLI imports `createClient()` and core job builders. Its handlers parse flags, call client/core methods, and render output.
-- Daemon-backed CLI commands now call client methods for create/update/list/get, enable/disable/delete, run/cancel/run inspection/logs, schedule validation/preview, stats, doctor, daemon lifecycle, import/export, and dashboard URL.
+- Daemon-backed CLI commands now call client methods for create/update/list/get, enable/disable/delete, run/cancel/run inspection/logs, schedule validation/preview, stats, doctor, daemon lifecycle, import/export, and dashboard lifecycle/data.
 - `new` and `update` delegate schedule/action construction, prompt-file normalization, prompt/session validation, and job validation to shared core helpers in `src\job-input.ts`.
 - The client is the daemon-aware source of truth: it normalizes create/update/import inputs, owns all daemon endpoint calls, ensures or controls daemon lifecycle, runs doctor checks, serves schema generation, and maps daemon errors to `CrontickError`.
 - The daemon HTTP API is the actual process boundary. `src\daemon\api.ts` accepts loopback-only requests, validates persisted job JSON, then calls Store/Scheduler/Runner (`src\daemon\api.ts:46-55`, `98-170`, `223-317`).
 - The daemon process owns durable state and execution: it opens the store, loads jobs, schedules enabled jobs, listens on an ephemeral `127.0.0.1` port, and writes the port file (`src\daemon\index.ts:98-154`).
-- The MCP server uses `CrontickClient` for daemon-backed tools, resources, doctor checks, dashboard URL, lifecycle operations, and shared job schema generation. It keeps only MCP-specific tool schemas, resources, prompts, redaction, and JSON formatting.
+- The MCP server uses `CrontickClient` for daemon-backed tools, resources, doctor checks, dashboard lifecycle/data, lifecycle operations, and shared job schema generation. It keeps only MCP-specific tool schemas, resources, prompts, redaction, and JSON formatting.
 
 ## HTTP daemon API as a third surface
 
@@ -67,7 +67,7 @@ This makes the client more, not less, important. The client hides daemon start/p
 | AI agent / MCP client | MCP tools/resources/prompts | CLI fallback when MCP unavailable | Tool schemas, confirmable destructive actions, schedule preview, resources/logs, prompt workflows | MCP is the native AI surface. It exposes intent-specific tools and resources rather than asking an LLM to synthesize shell commands. |
 | Bundled skill / Copilot plugin | MCP first; CLI fallback/install/doctor | Programmatic API if future extension code embeds crontick | Install verification, teach LLM workflow, validate/preview before creation | `plugin\install.mjs` uses `crontick doctor`; `src\skill\SKILL.md` prefers MCP tools and uses CLI examples/fallback (`plugin\install.mjs:73-74`, `src\skill\SKILL.md:95-108`, `254-286`). |
 | Daemon process | Internal HTTP handlers + Store/Scheduler/Runner | None | Local process boundary, durable state, scheduling, run execution | The daemon should not call the CLI or public client; it owns the authoritative state machine. |
-| Dashboard/static UI | Internal HTTP API | Future public client if dashboard is split out | Read jobs/runs/stats from same local daemon | Today the dashboard is served by the daemon and can use internal HTTP because it is part of the same product package. |
+| Dashboard/static UI | Core dashboard model via daemon endpoint | Public client dashboardStart/status/data/stop | Read the shared dashboard model from the local daemon | The dashboard is served by the daemon, but data aggregation lives in src\dashboard.ts and is exposed consistently through client, CLI, and MCP. |
 
 ## Option analysis
 

@@ -62,8 +62,14 @@ is resolved and read by the shared client/core before the normalized job is pers
 - `crontick_daemon_restart`
 - `crontick_export`
 - `crontick_import`
-- `crontick_dashboard_open`
 - `crontick_doctor`
+
+### Dashboard
+
+- `crontick_dashboard_start`
+- `crontick_dashboard_status`
+- `crontick_dashboard_data`
+- `crontick_dashboard_stop`
 
 ### Config
 

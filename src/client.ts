@@ -20,6 +20,14 @@ import { runDoctorChecks, type DoctorOptions, type DoctorResult } from './doctor
 import { jobJsonSchema } from './schema-json.js';
 import { uninstall, type UninstallResult } from './uninstall.js';
 import {
+  dashboardDaemonDownError,
+  type DashboardData,
+  type DashboardOptions,
+  type DashboardStartResult,
+  type DashboardStatus,
+  type DashboardStopResult,
+} from './dashboard.js';
+import {
   addEngine,
   getConfigValue,
   initConfig,
@@ -219,10 +227,36 @@ export class CrontickClient {
     });
   }
 
-  async dashboardUrl(options: { open?: false } = {}): Promise<string> {
-    void options;
-    const baseUrl = await this.baseUrl({ ensure: true });
-    return `${baseUrl}/dashboard`;
+  async dashboardStart(): Promise<DashboardStartResult> {
+    const info = await this.ensure();
+    const status = await this.request<DashboardStatus>('GET', '/api/dashboard/status', undefined, { ensure: false });
+    return { ...status, startedDaemon: info.started };
+  }
+
+  async dashboardStop(): Promise<DashboardStopResult> {
+    return this.daemonStop();
+  }
+
+  async dashboardStatus(): Promise<DashboardStatus> {
+    try {
+      return await this.request<DashboardStatus>('GET', '/api/dashboard/status', undefined, { ensure: false });
+    } catch (err) {
+      if (err instanceof CrontickError && err.code === 'DAEMON_NOT_RUNNING') {
+        throw dashboardDaemonDownError('dashboardStatus');
+      }
+      throw err;
+    }
+  }
+
+  async dashboardData(options: DashboardOptions = {}): Promise<DashboardData> {
+    try {
+      return await this.request<DashboardData>('GET', `/api/dashboard${dashboardQuery(options)}`, undefined, { ensure: false });
+    } catch (err) {
+      if (err instanceof CrontickError && err.code === 'DAEMON_NOT_RUNNING') {
+        throw dashboardDaemonDownError('dashboardData');
+      }
+      throw err;
+    }
   }
 
   jobJsonSchema(): unknown {
@@ -292,7 +326,7 @@ export class CrontickClient {
       res = await this.fetchRequest(baseUrl, method, path, body);
     } catch (err) {
       if (!ensure || !this.shouldStartDaemon() || this.options.daemonUrl) {
-        throw this.daemonRequestError(method, path, err);
+        throw this.daemonRequestError(baseUrl, method, path, err);
       }
       this.cachedBaseUrl = undefined;
       const restarted = await this.ensure();
@@ -300,7 +334,7 @@ export class CrontickClient {
       try {
         res = await this.fetchRequest(restarted.baseUrl, method, path, body);
       } catch (retryErr) {
-        throw this.daemonRequestError(method, path, retryErr);
+        throw this.daemonRequestError(restarted.baseUrl, method, path, retryErr);
       }
     }
     const text = await res.text();
@@ -364,11 +398,11 @@ export class CrontickClient {
     });
   }
 
-  private daemonRequestError(method: string, path: string, err: unknown): CrontickError {
+  private daemonRequestError(baseUrl: string, method: string, path: string, err: unknown): CrontickError {
     return new CrontickError(
       'DAEMON_REQUEST_FAILED',
-      `Failed to reach the crontick daemon while attempting ${method} ${path}: ${errorMessage(err)}. crontick attempted a demand-start/reconnect when allowed. Run "crontick daemon start" and inspect the daemon ensure log under the crontick data directory logs folder if this continues.`,
-      { method, path },
+      `Failed to reach the crontick daemon at ${baseUrl}${path} while attempting ${method}: ${errorMessage(err)}. crontick attempted a demand-start/reconnect when allowed. Run "crontick daemon start" and inspect the daemon ensure log under the crontick data directory logs folder if this continues.`,
+      { baseUrl, method, path },
     );
   }
 }
@@ -383,4 +417,12 @@ async function boundedBackoff(): Promise<void> {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function dashboardQuery(options: DashboardOptions): string {
+  const params = new URLSearchParams();
+  if (options.jobId) params.set('jobId', options.jobId);
+  if (options.runsLimit !== undefined) params.set('runsLimit', String(options.runsLimit));
+  const qs = params.toString();
+  return qs ? `?${qs}` : '';
 }

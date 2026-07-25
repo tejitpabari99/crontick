@@ -52,7 +52,7 @@
 - `daemonReload()`
 - `daemonStatus()`
 - `doctor(options?)`
-- `dashboardUrl(options?)`
+- `dashboardStart(options?)`, `dashboardStatus()`, `dashboardData(options?)`, `dashboardStop()`
 - `jobJsonSchema()`
 
 ## Change order

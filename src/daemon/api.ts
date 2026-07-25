@@ -1,14 +1,6 @@
 import http from 'node:http';
-import { createReadStream, existsSync as fsExistsSync, statSync } from 'node:fs';
-import {
-  extname,
-  resolve as pathResolve,
-  join as pathJoin,
-  normalize,
-  sep as pathSep,
-} from 'node:path';
+import { createReadStream } from 'node:fs';
 import { URL } from 'node:url';
-import { fileURLToPath } from 'node:url';
 import type { Store } from './store.js';
 import type { Scheduler } from './scheduler.js';
 import type { Runner } from './runner.js';
@@ -16,20 +8,17 @@ import { JobSchema } from '../schemas/job.js';
 import { CrontickError } from '../errors.js';
 import { VERSION } from '../version.js';
 import { applyConfigDefaults } from '../job-input.js';
+import {
+  buildDashboardData,
+  buildDashboardStats,
+  dashboardStatusFromDaemon,
+  resolveDashboardAsset,
+} from '../dashboard.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const SSE_POLL_MS = 200;
-const MIME_TYPES: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.png': 'image/png',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-};
 
 // ── Context shared with handlers ──────────────────────────────────────────────
 
@@ -72,27 +61,7 @@ async function handleRequest(
   try {
     // ── Health ───────────────────────────────────────────────────────────────
     if (method === 'GET' && path === '/health') {
-      const jobs = ctx.store.listJobs();
-      const since24h = Date.now() - 24 * 60 * 60 * 1000;
-      const runs24h = ctx.store.listRuns({ since: since24h });
-      return sendJson(res, 200, {
-        ok: true,
-        product: 'crontick',
-        version: VERSION,
-        uptimeSec: Math.floor((Date.now() - ctx.startedAt.getTime()) / 1000),
-        pid: process.pid,
-        port: ctx.port,
-        jobs: {
-          total: jobs.length,
-          enabled: jobs.filter((j) => j.enabled).length,
-        },
-        runs: {
-          last24h: runs24h.length,
-          failures24h: runs24h.filter((r) => r.status === 'failed').length,
-        },
-        node: process.versions.node,
-        platform: process.platform,
-      });
+      return sendJson(res, 200, buildDashboardData({ ...ctx, pid: process.pid }, { runsLimit: 1 }).health);
     }
 
     // ── Jobs ─────────────────────────────────────────────────────────────────
@@ -254,19 +223,7 @@ async function handleRequest(
     if (method === 'GET' && path === '/api/stats/summary') {
       const jobs = ctx.store.listJobs();
       const runs = ctx.store.listRuns({ limit: 1000 });
-      const failed = runs.filter((r) => r.status === 'failed').length;
-      const succeeded = runs.filter((r) => r.status === 'success').length;
-      return sendJson(res, 200, {
-        totalJobs: jobs.length,
-        enabledJobs: jobs.filter((j) => j.enabled).length,
-        totalRuns: runs.length,
-        succeeded,
-        failed,
-        avgDurationMs:
-          runs.length > 0
-            ? Math.round(runs.reduce((s, r) => s + (r.durationMs ?? 0), 0) / runs.length)
-            : null,
-      });
+      return sendJson(res, 200, buildDashboardStats(jobs, runs));
     }
 
     const statsJobMatch = path.match(/^\/api\/stats\/jobs\/([^/]+)$/);
@@ -324,6 +281,28 @@ async function handleRequest(
     }
 
     // ── Dashboard ─────────────────────────────────────────────────────────────
+    if (method === 'GET' && path === '/api/dashboard/status') {
+      return sendJson(
+        res,
+        200,
+        dashboardStatusFromDaemon(
+          { ...ctx, pid: process.pid },
+          `http://127.0.0.1:${ctx.port}`,
+          {
+            pid: process.pid,
+            uptimeSec: Math.floor((Date.now() - ctx.startedAt.getTime()) / 1000),
+            jobs: ctx.store.listJobs().length,
+          },
+        ),
+      );
+    }
+
+    if (method === 'GET' && path === '/api/dashboard') {
+      const runsLimit = optionalPositiveInt(url.searchParams.get('runsLimit'), 'runsLimit');
+      const jobId = url.searchParams.get('jobId') ?? undefined;
+      return sendJson(res, 200, buildDashboardData({ ...ctx, pid: process.pid }, { runsLimit, jobId }));
+    }
+
     if (method === 'GET' && (path === '/' || path === '/dashboard' || path.startsWith('/dashboard/'))) {
       return serveDashboard(res, path);
     }
@@ -384,58 +363,18 @@ function streamLogs(
   });
 }
 
-function dashboardDir(): string {
-  const moduleDir = pathResolve(fileURLToPath(import.meta.url), '..');
-  return pathResolve(moduleDir, '../dashboard');
-}
-
 function serveDashboard(
   res: http.ServerResponse,
   reqPath: string,
 ): void {
-  const dashDir = dashboardDir();
-  const indexFile = pathJoin(dashDir, 'index.html');
+  const asset = resolveDashboardAsset(reqPath);
 
-  let filePath: string;
-  if (reqPath === '/' || reqPath === '/dashboard' || reqPath === '/dashboard/') {
-    filePath = indexFile;
-  } else {
-    const sub = reqPath.startsWith('/dashboard/') ? reqPath.slice('/dashboard'.length) : reqPath;
-    const normalizedSub = normalize(sub).replace(/^[/\\]+/, '');
-    filePath = pathResolve(dashDir, normalizedSub);
-  }
-
-  if (filePath !== indexFile && !filePath.startsWith(`${dashDir}${pathSep}`)) {
-    res.writeHead(400, { 'Content-Type': 'text/plain' });
-    res.end('Bad Request');
-    return;
-  }
-
-  if (!fsExistsSync(filePath)) {
-    filePath = indexFile;
-  }
-
-  if (!fsExistsSync(filePath)) {
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Not Found');
-    return;
-  }
-
-  const stat = statSync(filePath);
-  if (!stat.isFile()) {
-    res.writeHead(403, { 'Content-Type': 'text/plain' });
-    res.end('Forbidden');
-    return;
-  }
-
-  const ext = extname(filePath).toLowerCase();
-  const contentType = MIME_TYPES[ext] ?? 'application/octet-stream';
   res.writeHead(200, {
-    'Content-Type': contentType,
-    'Content-Length': stat.size,
+    'Content-Type': asset.contentType,
+    'Content-Length': asset.size,
     'Cache-Control': 'no-cache',
   });
-  createReadStream(filePath).pipe(res);
+  createReadStream(asset.filePath).pipe(res);
 }
 
 function sseEvent(res: http.ServerResponse, data: unknown): void {
@@ -443,6 +382,19 @@ function sseEvent(res: http.ServerResponse, data: unknown): void {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function optionalPositiveInt(raw: string | null, field: string): number | undefined {
+  if (raw === null) return undefined;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new CrontickError(
+      'VALIDATION_ERROR',
+      `Invalid ${field} ${raw}. Provide a positive integer, then retry: crontick dashboard data --runs-limit <n>`,
+      { field, value: raw, action: 'crontick dashboard data --runs-limit <n>' },
+    );
+  }
+  return parsed;
+}
 
 async function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {

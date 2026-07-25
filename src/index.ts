@@ -51,6 +51,17 @@ export {
   ScheduleSchema,
 } from './schemas/job.js';
 export type { Job, JobInput, Schedule, Action, PromptAction, PromptEngine } from './schemas/job.js';
+export type {
+  DashboardData,
+  DashboardHealth,
+  DashboardJob,
+  DashboardOptions,
+  DashboardRun,
+  DashboardStartResult,
+  DashboardStats,
+  DashboardStatus,
+  DashboardStopResult,
+} from './dashboard.js';
 export { SURFACE_CAPABILITIES } from './surface.js';
 export type { SurfaceCapability } from './surface.js';
 export type { UninstallResult, UninstallOptions } from './uninstall.js';

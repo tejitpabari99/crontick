@@ -270,7 +270,7 @@ copilot -p "Review overnight failures." --add-dir Q:\Repos\crontick --session-id
 | `crontick_daemon_status` | Current daemon status without manual setup |
 | `crontick_daemon_reload` | Reload job definitions from disk |
 | `crontick_import` | Import normalized jobs from JSON |
-| `crontick_dashboard_open` | Get the local dashboard URL |
+| `crontick_dashboard_start` / `crontick_dashboard_status` / `crontick_dashboard_data` / `crontick_dashboard_stop` | Manage the local dashboard and inspect its shared data model |
 | `crontick_doctor` | Health check for Node.js, SQLite, data dir, and daemon |
 
 
