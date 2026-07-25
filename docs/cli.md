@@ -30,6 +30,7 @@ Commands:
   logs [options] <runId>                 Get logs for a run
   schedule                               Validate and preview schedules
   stats                                  Show job/run statistics
+  config                                 Inspect and edit crontick config
   export [options]                       Export all jobs
   import <file>                          Import jobs from a JSON file
   doctor                                 Check system health
@@ -56,7 +57,8 @@ Options:
   --exec <cmd>          Command to exec (use -- for args)
   --prompt <text>       Prompt text for a prompt action
   --prompt-file <path>  UTF-8 .txt file to read into the prompt
-  --engine <engine>     Prompt engine: copilot|agency (default: copilot)
+  --engine <engine>     Configured prompt engine name (default: config
+                        defaultEngine)
   --session-id <id>     Reuse this prompt engine session every run
   --reuse-session       Capture the first successful run session id and reuse
                         it
@@ -87,7 +89,8 @@ Options:
   --exec <cmd>          Command to exec (use -- for args)
   --prompt <text>       Prompt text for a prompt action
   --prompt-file <path>  UTF-8 .txt file to read into the prompt
-  --engine <engine>     Prompt engine: copilot|agency (default: copilot)
+  --engine <engine>     Configured prompt engine name (default: config
+                        defaultEngine)
   --session-id <id>     Reuse this prompt engine session every run
   --reuse-session       Capture the first successful run session id and reuse
                         it
@@ -309,6 +312,139 @@ Options:
 Usage: crontick stats job [options] <id>
 
 Show statistics for one job
+
+Options:
+  -h, --help  display help for command
+```
+
+## config
+
+```text
+Usage: crontick config [options] [command]
+
+Inspect and edit crontick config
+
+Options:
+  -h, --help          display help for command
+
+Commands:
+  get [path]          Get the effective config or one config value
+  set <path> <value>  Set one config value; value is JSON when possible
+  unset <path>        Remove one config value
+  init [options]      Create the default config file
+  validate [path]     Validate the config file
+  engines             List and edit configured engines
+  help [command]      display help for command
+```
+
+## config get
+
+```text
+Usage: crontick config get [options] [path]
+
+Get the effective config or one config value
+
+Options:
+  -h, --help  display help for command
+```
+
+## config set
+
+```text
+Usage: crontick config set [options] <path> <value>
+
+Set one config value; value is JSON when possible
+
+Options:
+  -h, --help  display help for command
+```
+
+## config unset
+
+```text
+Usage: crontick config unset [options] <path>
+
+Remove one config value
+
+Options:
+  -h, --help  display help for command
+```
+
+## config init
+
+```text
+Usage: crontick config init [options]
+
+Create the default config file
+
+Options:
+  --force     Replace an existing config file
+  -h, --help  display help for command
+```
+
+## config validate
+
+```text
+Usage: crontick config validate [options] [path]
+
+Validate the config file
+
+Options:
+  -h, --help  display help for command
+```
+
+## config engines
+
+```text
+Usage: crontick config engines [options] [command]
+
+List and edit configured engines
+
+Options:
+  -h, --help               display help for command
+
+Commands:
+  add [options] <name>     Add an engine
+  update [options] <name>  Update an engine
+  remove <name>            Remove an engine
+```
+
+## config engines add
+
+```text
+Usage: crontick config engines add [options] <name>
+
+Add an engine
+
+Options:
+  --command <cmd>    Engine executable
+  --arg <arg>        Default engine argument; repeatable
+  --env <KEY=VALUE>  Default engine environment variable; repeatable
+  -h, --help         display help for command
+```
+
+## config engines update
+
+```text
+Usage: crontick config engines update [options] <name>
+
+Update an engine
+
+Options:
+  --command <cmd>    Engine executable
+  --arg <arg>        Default engine argument; repeatable. Replaces the current
+                     args when provided.
+  --env <KEY=VALUE>  Default engine environment variable; repeatable. Replaces
+                     current env when provided.
+  -h, --help         display help for command
+```
+
+## config engines remove
+
+```text
+Usage: crontick config engines remove [options] <name>
+
+Remove an engine
 
 Options:
   -h, --help  display help for command

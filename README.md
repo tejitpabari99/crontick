@@ -41,7 +41,7 @@ at the moment it dies. If the daemon exits while idle, scheduled jobs do not run
 daemon-backed CLI/MCP/client operation starts it again. Recover with `crontick daemon start`, then
 inspect `crontick doctor` and the data-directory `logs/daemon.ensure.log` if startup fails.
 
-Prompt jobs use `--prompt <text>` or `--prompt-file <path.txt>`, optional `--engine copilot|agency`,
+Prompt jobs use `--prompt <text>` or `--prompt-file <path.txt>`, optional `--engine <configured-engine>`,
 and either `--session-id <id>` or `--reuse-session` for shared context. Explicit `--session-id` wins;
 if both are supplied, crontick stores the explicit id and reports that `reuseSession` was ignored.
 Arguments after `--` are passed through verbatim to the prompt engine, for example:
@@ -49,6 +49,9 @@ Arguments after `--` are passed through verbatim to the prompt engine, for examp
 ```sh
 crontick new daily-summary --cron "0 9 * * *" --prompt-file .\summary.txt --engine agency --reuse-session -- --add-dir Q:\Repos\crontick --allow-all-tools
 ```
+
+Engine startup is configured in `.crontick\config.json`; see
+[Configuration](docs/configuration.md).
 
 The public client is the source of truth for behavior. CLI commands and MCP tools are thin adapters
 over the same methods, including create/update, run inspection, logs, schedule validation/preview,
@@ -67,6 +70,7 @@ logs are redacted for common secret patterns before they are returned by the API
 - [MCP usage](docs/mcp.md)
 - [Schedules](docs/schedules.md)
 - [Actions](docs/actions.md)
+- [Configuration](docs/configuration.md)
 - [Security](docs/security.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Architecture](docs/architecture.md)

@@ -38,7 +38,7 @@ Use `exec` for safer argv-based invocation when you do not need a shell.
 
 ## `prompt`
 
-First-class prompt execution through Copilot or Agency. Prompt actions are spawned with
+First-class prompt execution through a configured engine. Prompt actions are spawned with
 `shell=false` and raw engine args are passed as argv elements without parsing.
 
 ```json
@@ -56,7 +56,7 @@ First-class prompt execution through Copilot or Agency. Prompt actions are spawn
 Fields:
 
 - `prompt` — required persisted prompt text
-- `engine` — `copilot` or `agency`; defaults to `copilot`
+- `engine` — configured engine name; defaults to `defaultEngine` from config
 - `args` — raw engine arguments preserved in order, including duplicates
 - `sessionId` — explicit engine session id to pass every run
 - `reuseSession` — when no `sessionId` is set, capture the first successful run's session id,
@@ -73,10 +73,14 @@ Session precedence is deterministic:
 CLI and programmatic client input may use `promptFile` as creation sugar. It must point to a UTF-8
 `.txt` file; the file is read before persistence and exports contain only `prompt`.
 
-Command lines produced by the runner:
+Command lines produced by the runner use the configured engine startup:
 
-- Copilot: `copilot --prompt=<prompt> <args...> [--session-id=<id>]`
-- Agency: `agency cp --prompt=<prompt> <args...> [--session-id=<id>]`
+- General form: `<engine.command> <engine.args...> <prompt> <args...> [--session-id=<id>]`
+- Example Copilot config with `args: ["-p"]`: `copilot -p <prompt> <args...>`
+- Example Agency config with `args: ["cp", "--logs-dir=Q:\\Logs"]`:
+  `agency cp --logs-dir=Q:\Logs <prompt> <args...>`
+
+See [Configuration](configuration.md) for engine setup.
 
 ## Environment
 

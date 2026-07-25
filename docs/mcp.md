@@ -37,8 +37,8 @@ until the next daemon-backed operation or an explicit `crontick daemon start`.
 - `crontick_job_cancel_run`
 
 `crontick_job_create` and `crontick_job_update` accept action kinds `script`, `exec`, and `prompt`.
-Prompt actions use exactly one of `prompt` or `promptFile`, optional `engine` (`copilot` or
-`agency`), raw `args`, and session controls. Explicit `sessionId` wins over `reuseSession`; if both
+Prompt actions use exactly one of `prompt` or `promptFile`, optional configured `engine`, raw
+`args`, and session controls. Explicit `sessionId` wins over `reuseSession`; if both
 are provided, the shared client/core stores `reuseSession: false` and returns a notice. `promptFile`
 is resolved and read by the shared client/core before the normalized job is persisted.
 
@@ -65,12 +65,25 @@ is resolved and read by the shared client/core before the normalized job is pers
 - `crontick_dashboard_open`
 - `crontick_doctor`
 
+### Config
+
+- `crontick_config_get`
+- `crontick_config_set`
+- `crontick_config_unset`
+- `crontick_config_engine_list`
+- `crontick_config_engine_add`
+- `crontick_config_engine_update`
+- `crontick_config_engine_remove`
+- `crontick_config_init`
+- `crontick_config_validate`
+
 ## Resources
 
 - `crontick://jobs`
 - `crontick://jobs/{id}`
 - `crontick://runs/{id}`
 - `crontick://runs/{id}/log`
+- `crontick://config/effective`
 - `crontick://schemas/job`
 
 ## Prompts
