@@ -30,6 +30,25 @@ function stopDaemonInHome(dir: string): void {
   }
 }
 
+function readPidFile(dir: string): number | undefined {
+  const pidFile = join(dir, 'daemon.pid');
+  if (!existsSync(pidFile)) return undefined;
+  const pid = parseInt(readFileSync(pidFile, 'utf-8').trim(), 10);
+  return !isNaN(pid) && pid > 0 ? pid : undefined;
+}
+
+async function waitForPidExit(pid: number, maxMs = 5_000): Promise<void> {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
 function waitForPortFile(dir: string, maxMs = 30_000, getStderr?: () => string): Promise<number> {
   const portFile = join(dir, 'daemon.port');
   return new Promise((resolve, reject) => {
@@ -101,6 +120,35 @@ describe('CLI binary (dist/cli/index.js)', () => {
       rmSync(tmp, { recursive: true, force: true });
     }
   }, 15_000);
+
+  it('ENS-CLI-002: next daemon-backed command re-ensures after daemon crash', async () => {
+    const tmp = makeTmpDir();
+    try {
+      const first = cli(['--json', 'list'], { CRONTICK_HOME: tmp });
+      expect(first.status, first.stderr).toBe(0);
+      const firstPid = readPidFile(tmp);
+      expect(firstPid).toBeGreaterThan(0);
+      if (firstPid) {
+        try {
+          process.kill(firstPid, 'SIGTERM');
+        } catch {
+          // ignore crash races
+        }
+        await waitForPidExit(firstPid);
+      }
+
+      const second = cli(['--json', 'list'], { CRONTICK_HOME: tmp });
+      expect(second.status, second.stderr).toBe(0);
+      expect(JSON.parse(second.stdout)).toEqual([]);
+      const secondPid = readPidFile(tmp);
+      expect(secondPid).toBeGreaterThan(0);
+      expect(secondPid).not.toBe(firstPid);
+    } finally {
+      stopDaemonInHome(tmp);
+      await new Promise((r) => setTimeout(r, 300));
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   it('daemon-free commands do not start the daemon', () => {
     const tmp = makeTmpDir();
@@ -175,6 +223,15 @@ describe('CLI e2e with daemon', () => {
     });
   });
 
+  it('crontick new accepts a leading-dash prompt value', () => {
+    const r = cli(['--json', 'new', 'prompt-leading-dash-cli-job', '--cron', '0 9 * * *', '--prompt=- summarize'], env());
+    expect(r.status, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout).action).toMatchObject({
+      kind: 'prompt',
+      prompt: '- summarize',
+    });
+  });
+
   it('crontick new creates a prompt job from file with raw passthrough args', () => {
     const promptPath = join(dir, 'prompt.txt');
     writeFileSync(promptPath, 'Prompt from file', 'utf-8');
@@ -228,6 +285,33 @@ describe('CLI e2e with daemon', () => {
       sessionId: 'sess-12345678',
       reuseSession: false,
     });
+  });
+
+  it('crontick new rejects managed prompt/session flags in raw engine args', () => {
+    const r = cli([
+      'new',
+      'prompt-reserved-arg-job',
+      '--cron',
+      '0 11 * * *',
+      '--prompt',
+      'hello',
+      '--',
+      '--session-id=sess-12345678',
+    ], env());
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain('prompt/session flag');
+  });
+
+  it('crontick new reports a clear error for prompt argv beyond the Windows-safe limit', () => {
+    const r = cli([
+      'new',
+      'prompt-argv-limit-job',
+      '--cron',
+      '0 11 * * *',
+      `--prompt=${'x'.repeat(31_000)}`,
+    ], env());
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain('Windows-safe command line limit');
   });
 
   it('crontick new rejects prompt-only flags outside prompt mode', () => {

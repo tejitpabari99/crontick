@@ -455,6 +455,7 @@ describe('MCP server — CRONTICK_MCP_NO_DAEMON_START path', () => {
           ...process.env,
           CRONTICK_HOME: isolatedDir,
           CRONTICK_MCP_NO_DAEMON_START: '1',
+          CRONTICK_DAEMON_URL: 'http://127.0.0.1:9',
         },
         stderr: 'pipe',
       });
@@ -491,6 +492,7 @@ describe('MCP server — CRONTICK_MCP_NO_DAEMON_START path', () => {
           ...process.env,
           CRONTICK_HOME: isolatedDir,
           CRONTICK_MCP_NO_DAEMON_START: '1',
+          CRONTICK_DAEMON_URL: 'http://127.0.0.1:9',
         },
         stderr: 'pipe',
       });
@@ -503,7 +505,9 @@ describe('MCP server — CRONTICK_MCP_NO_DAEMON_START path', () => {
       const result = await isolatedClient.readResource({ uri: 'crontick://jobs' });
       const item = result.contents[0] as { text?: string };
       const data = JSON.parse(item.text ?? '{}') as { error?: string };
-      expect(data.error).toContain('Daemon is not running');
+      expect(data.error).toContain('Daemon is not reachable');
+      expect(data.error).toContain('<daemon-addr>');
+      expect(data.error).not.toContain('127.0.0.1:9');
       expect(existsSync(join(isolatedDir, 'daemon.port'))).toBe(false);
       expect(existsSync(join(isolatedDir, 'daemon.pid'))).toBe(false);
       expect(existsSync(join(isolatedDir, 'daemon.ensure.lock'))).toBe(false);

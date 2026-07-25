@@ -83,12 +83,16 @@ export function redactForLlm(msg: string): string {
 }
 
 function errResult(err: unknown): ToolResult {
-  const msg = err instanceof Error ? err.message : String(err);
-  const redacted = redactForLlm(msg);
+  const redacted = redactedErrorMessage(err);
   return {
     content: [{ type: 'text', text: JSON.stringify({ error: redacted }, null, 2) }],
     isError: true,
   };
+}
+
+function redactedErrorMessage(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  return redactForLlm(msg);
 }
 
 async function toolWrap(fn: () => Promise<unknown>): Promise<ToolResult> {
@@ -580,7 +584,7 @@ export function createMcpServer(): McpServer {
             {
               uri: 'crontick://jobs',
               mimeType: 'application/json',
-              text: JSON.stringify({ error: String(err) }, null, 2),
+              text: JSON.stringify({ error: redactedErrorMessage(err) }, null, 2),
             },
           ],
         };
@@ -619,7 +623,7 @@ export function createMcpServer(): McpServer {
             {
               uri: uri.href,
               mimeType: 'application/json',
-              text: JSON.stringify({ error: String(err) }, null, 2),
+              text: JSON.stringify({ error: redactedErrorMessage(err) }, null, 2),
             },
           ],
         };
@@ -656,7 +660,7 @@ export function createMcpServer(): McpServer {
             {
               uri: uri.href,
               mimeType: 'application/json',
-              text: JSON.stringify({ error: String(err) }, null, 2),
+              text: JSON.stringify({ error: redactedErrorMessage(err) }, null, 2),
             },
           ],
         };
@@ -689,7 +693,7 @@ export function createMcpServer(): McpServer {
         };
       } catch (err) {
         return {
-          contents: [{ uri: uri.href, mimeType: 'text/plain', text: `Error: ${String(err)}` }],
+          contents: [{ uri: uri.href, mimeType: 'text/plain', text: `Error: ${redactedErrorMessage(err)}` }],
         };
       }
     },
@@ -793,7 +797,7 @@ Always confirm before calling crontick_job_delete or crontick_job_disable.`,
         const run = await callDaemon('GET', `/api/runs/${encodeURIComponent(args.runId)}`);
         runInfo = JSON.stringify(run, null, 2);
       } catch (err) {
-        runInfo = `Error fetching run: ${String(err)}`;
+        runInfo = `Error fetching run: ${redactedErrorMessage(err)}`;
       }
 
       try {
@@ -807,7 +811,7 @@ Always confirm before calling crontick_job_delete or crontick_job_disable.`,
             ? lines.map((l) => `[${l.stream}] ${l.data}`).join('')
             : '(no log output)';
       } catch (err) {
-        logInfo = `Error fetching logs: ${String(err)}`;
+        logInfo = `Error fetching logs: ${redactedErrorMessage(err)}`;
       }
 
       return {

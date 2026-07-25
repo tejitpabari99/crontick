@@ -31,6 +31,17 @@ export interface NormalizeJobInputOptions {
 }
 
 const DEFAULT_MAX_PROMPT_FILE_BYTES = 1024 * 1024;
+const WINDOWS_COMMAND_LINE_LIMIT = 32_767;
+const SAFE_PROMPT_COMMAND_LINE_LIMIT = 30_000;
+const RESERVED_PROMPT_ARGS = new Set([
+  '-p',
+  '--prompt',
+  '--session-id',
+  '-r',
+  '--resume',
+  '--continue',
+  '--connect',
+]);
 
 export function normalizeJobInput(
   input: JobCreateInput,
@@ -62,10 +73,62 @@ function normalizeActionInput(action: ActionInput, options: NormalizeJobInputOpt
 
   const { promptFile: _promptFile, ...rest } = action;
   void _promptFile;
-  return {
+  const normalized = {
     ...rest,
     prompt: prompt ?? readPromptFile(promptFile!, options),
   };
+  validatePromptActionRuntimeArgs(normalized);
+  return {
+    ...normalized,
+  };
+}
+
+function validatePromptActionRuntimeArgs(action: Record<string, unknown>): void {
+  const args = Array.isArray(action.args) ? action.args : [];
+  const reserved = args.find((arg) => typeof arg === 'string' && isReservedPromptArg(arg));
+  if (reserved) {
+    throw new CrontickError(
+      'VALIDATION_ERROR',
+      `Raw prompt engine args cannot include crontick-managed prompt/session flag: ${reserved}`,
+    );
+  }
+
+  const prompt = typeof action.prompt === 'string' ? action.prompt : '';
+  const sessionId = typeof action.sessionId === 'string' ? action.sessionId : undefined;
+  const engine = action.engine === 'agency' ? 'agency' : 'copilot';
+  const argv =
+    engine === 'agency'
+      ? ['agency', 'cp', `--prompt=${prompt}`, ...args.filter(isString)]
+      : ['copilot', `--prompt=${prompt}`, ...args.filter(isString)];
+  if (sessionId) argv.push(`--session-id=${sessionId}`);
+
+  const estimatedLength = estimateWindowsCommandLineLength(argv);
+  if (estimatedLength > SAFE_PROMPT_COMMAND_LINE_LIMIT) {
+    throw new CrontickError(
+      'VALIDATION_ERROR',
+      `Prompt plus engine arguments exceed the Windows-safe command line limit (${estimatedLength}/${WINDOWS_COMMAND_LINE_LIMIT} characters). Shorten the prompt or arguments.`,
+    );
+  }
+}
+
+function isReservedPromptArg(arg: string): boolean {
+  return RESERVED_PROMPT_ARGS.has(arg)
+    || arg.startsWith('--prompt=')
+    || arg.startsWith('--session-id=')
+    || arg.startsWith('--resume=')
+    || arg.startsWith('--connect=');
+}
+
+function estimateWindowsCommandLineLength(argv: string[]): number {
+  return argv.reduce((total, arg, index) => total + (index === 0 ? 0 : 1) + quoteForWindowsEstimate(arg).length, 0);
+}
+
+function quoteForWindowsEstimate(arg: string): string {
+  return /[\s"]/.test(arg) ? `"${arg.replace(/(\\*)"/g, '$1$1\\"')}"` : arg;
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === 'string';
 }
 
 function readPromptFile(promptFile: string, options: NormalizeJobInputOptions): string {

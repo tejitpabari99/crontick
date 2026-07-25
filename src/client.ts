@@ -174,7 +174,10 @@ export class CrontickClient {
       return (await this.ensure()).baseUrl;
     }
     if (this.cachedBaseUrl) return this.cachedBaseUrl;
-    const baseUrl = await resolveDaemonBaseUrl({ daemonUrl: this.options.daemonUrl });
+    const baseUrl = await resolveDaemonBaseUrl({
+      daemonUrl: this.options.daemonUrl,
+      env: this.options.env,
+    });
     this.cachedBaseUrl = baseUrl;
     return baseUrl;
   }

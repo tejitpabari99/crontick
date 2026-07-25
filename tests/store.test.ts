@@ -81,6 +81,44 @@ describe('Store', () => {
     });
   });
 
+  it('tryCapturePromptSession only updates an unchanged reusable prompt job', () => {
+    const base = promptJob('prompt-capture');
+    const job = { ...base, action: { ...base.action, reuseSession: true } } as Job;
+    store.upsertJob(job);
+
+    expect(
+      store.tryCapturePromptSession(
+        job.id,
+        job.action as Extract<Job['action'], { kind: 'prompt' }>,
+        'sess-12345678',
+      ),
+    ).toBe(true);
+    expect(store.getJob(job.id)?.action).toMatchObject({
+      kind: 'prompt',
+      sessionId: 'sess-12345678',
+      reuseSession: false,
+    });
+
+    const original = promptJob('prompt-capture-updated');
+    const originalAction = original.action as Extract<Job['action'], { kind: 'prompt' }>;
+    store.upsertJob({
+      ...original,
+      action: { ...originalAction, prompt: 'Changed', reuseSession: true },
+    });
+    expect(
+      store.tryCapturePromptSession(
+        original.id,
+        originalAction,
+        'sess-abcdefgh',
+      ),
+    ).toBe(false);
+    expect(store.getJob(original.id)?.action).toMatchObject({
+      kind: 'prompt',
+      prompt: 'Changed',
+      reuseSession: true,
+    });
+  });
+
   it('listJobs returns all jobs', () => {
     for (let i = 0; i < 3; i++) store.upsertJob(execJob(`job-${i}`));
     expect(store.listJobs()).toHaveLength(3);

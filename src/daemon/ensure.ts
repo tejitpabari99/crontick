@@ -35,13 +35,15 @@ const DEFAULT_HEALTH_TIMEOUT_MS = 2_000;
 const DEFAULT_LOCK_TIMEOUT_MS = 15_000;
 const POLL_MS = 100;
 const STDERR_LIMIT = 4096;
+const HEALTH_PRODUCT = 'crontick';
 
-export async function resolveDaemonBaseUrl(options: { daemonUrl?: string } = {}): Promise<string> {
-  const envUrl = process.env['CRONTICK_DAEMON_URL'];
+export async function resolveDaemonBaseUrl(options: { daemonUrl?: string; env?: NodeJS.ProcessEnv } = {}): Promise<string> {
+  const env = { ...process.env, ...(options.env ?? {}) };
+  const envUrl = env['CRONTICK_DAEMON_URL'];
   const explicit = options.daemonUrl ?? envUrl;
   if (explicit) return normalizeBaseUrl(explicit);
 
-  const port = readPortFile();
+  const port = readPortFile(env);
   if (port === undefined) {
     throw new CrontickError('DAEMON_NOT_RUNNING', 'Daemon is not running');
   }
@@ -49,7 +51,7 @@ export async function resolveDaemonBaseUrl(options: { daemonUrl?: string } = {})
 }
 
 export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<DaemonInfo> {
-  const env = options.env ?? process.env;
+  const env = { ...process.env, ...(options.env ?? {}) };
   const startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
   const healthTimeoutMs = options.healthTimeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS;
   const lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
@@ -63,7 +65,7 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<D
     throw new CrontickError('DAEMON_NOT_RUNNING', `Daemon is not reachable at ${baseUrl}`);
   }
 
-  const existing = await probePortFile(healthTimeoutMs);
+  const existing = await probePortFile(env, healthTimeoutMs);
   if (existing) return { ...existing, started: false };
 
   if (!allowStart) {
@@ -73,19 +75,19 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<D
     );
   }
 
-  ensureDirs();
-  const lockPath = join(dataDir(), 'daemon.ensure.lock');
+  ensureDirs(env);
+  const lockPath = join(dataDir(env), 'daemon.ensure.lock');
   const deadline = Date.now() + startupTimeoutMs;
   let ownsLock = false;
 
   try {
     while (Date.now() < deadline) {
-      const current = await probePortFile(healthTimeoutMs);
+      const current = await probePortFile(env, healthTimeoutMs);
       if (current) return { ...current, started: false };
 
       ownsLock = tryAcquireLock(lockPath);
       if (ownsLock) {
-        const rechecked = await probePortFile(healthTimeoutMs);
+        const rechecked = await probePortFile(env, healthTimeoutMs);
         if (rechecked) return { ...rechecked, started: false };
 
         return await startDaemonAndWait({
@@ -125,8 +127,12 @@ async function startDaemonAndWait(args: {
 
   let childError: Error | undefined;
   let childExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
-  const ensureLogPath = join(logsDir(), 'daemon.ensure.log');
+  const ensureLogPath = join(logsDir(env), 'daemon.ensure.log');
   const logStartOffset = logFileSize(ensureLogPath);
+  const startedPidPath = pidFilePath(env);
+  const startedPortPath = portFilePath(env);
+  const initialPidFile = readOptionalFile(startedPidPath);
+  const initialPortFile = readOptionalFile(startedPortPath);
   const stdoutFd = openSync(ensureLogPath, 'a');
   const stderrFd = openSync(ensureLogPath, 'a');
 
@@ -155,33 +161,48 @@ async function startDaemonAndWait(args: {
 
   child.unref();
 
-  const deadline = Date.now() + startupTimeoutMs;
-  while (Date.now() < deadline) {
-    const healthy = await probePortFile(healthTimeoutMs);
-    if (healthy) return { ...healthy, started: true };
-    if (childError) {
-      const stderr = readEnsureLogTail(ensureLogPath, logStartOffset);
-      throw new CrontickError(
-        'DAEMON_START_FAILED',
-        `Failed to start daemon: ${childError.message}${stderrHint(stderr)}`,
-      );
+  try {
+    const deadline = Date.now() + startupTimeoutMs;
+    while (Date.now() < deadline) {
+      const healthy = await probePortFile(env, healthTimeoutMs);
+      if (healthy) return { ...healthy, started: true };
+      if (childError) {
+        const stderr = readEnsureLogTail(ensureLogPath, logStartOffset);
+        throw new CrontickError(
+          'DAEMON_START_FAILED',
+          `Failed to start daemon: ${childError.message}${stderrHint(stderr)}`,
+        );
+      }
+      if (childExit) {
+        const stderr = readEnsureLogTail(ensureLogPath, logStartOffset);
+        throw new CrontickError(
+          'DAEMON_START_FAILED',
+          `Daemon exited before becoming healthy (code ${String(childExit.code)}, signal ${String(childExit.signal)})${stderrHint(stderr)}`,
+        );
+      }
+      await sleep(POLL_MS);
     }
-    if (childExit) {
-      const stderr = readEnsureLogTail(ensureLogPath, logStartOffset);
-      throw new CrontickError(
-        'DAEMON_START_FAILED',
-        `Daemon exited before becoming healthy (code ${String(childExit.code)}, signal ${String(childExit.signal)})${stderrHint(stderr)}`,
-      );
-    }
-    await sleep(POLL_MS);
-  }
 
-  const stderr = readEnsureLogTail(ensureLogPath, logStartOffset);
-  throw new CrontickError('DAEMON_TIMEOUT', `Timed out waiting for daemon health${stderrHint(stderr)}`);
+    const stderr = readEnsureLogTail(ensureLogPath, logStartOffset);
+    throw new CrontickError('DAEMON_TIMEOUT', `Timed out waiting for daemon health${stderrHint(stderr)}`);
+  } catch (err) {
+    await terminateStartedProcess(child, () => childExit !== undefined);
+    cleanupStartedFiles({
+      childPid: child.pid,
+      pidPath: startedPidPath,
+      portPath: startedPortPath,
+      initialPidFile,
+      initialPortFile,
+    });
+    throw err;
+  }
 }
 
-async function probePortFile(healthTimeoutMs: number): Promise<Omit<DaemonInfo, 'started'> | undefined> {
-  const port = readPortFile();
+async function probePortFile(
+  env: NodeJS.ProcessEnv,
+  healthTimeoutMs: number,
+): Promise<Omit<DaemonInfo, 'started'> | undefined> {
+  const port = readPortFile(env);
   if (port === undefined) return undefined;
   const baseUrl = `http://127.0.0.1:${port}`;
   const healthy = await probeHealth(baseUrl, healthTimeoutMs);
@@ -196,12 +217,35 @@ async function probeHealth(
   try {
     const res = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) return { ok: false };
-    const data = (await res.json().catch(() => ({}))) as { pid?: unknown; port?: unknown };
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: unknown;
+      product?: unknown;
+      name?: unknown;
+      pid?: unknown;
+      port?: unknown;
+    };
+    const product = data.product ?? data.name;
+    if (
+      data.ok !== true
+      || product !== HEALTH_PRODUCT
+      || typeof data.pid !== 'number'
+      || !Number.isInteger(data.pid)
+      || data.pid <= 0
+      || typeof data.port !== 'number'
+      || !Number.isInteger(data.port)
+      || data.port <= 0
+    ) {
+      return { ok: false };
+    }
+    const expectedPort = Number(new URL(baseUrl).port);
+    if (Number.isInteger(expectedPort) && expectedPort > 0 && data.port !== expectedPort) {
+      return { ok: false };
+    }
     return {
       ok: true,
       info: {
-        pid: typeof data.pid === 'number' ? data.pid : readPidFile(),
-        port: typeof data.port === 'number' ? data.port : parsePortFromUrl(baseUrl),
+        pid: data.pid,
+        port: data.port,
       },
     };
   } catch {
@@ -220,31 +264,81 @@ function normalizeBaseUrl(url: string): string {
   return url.replace(/\/+$/, '');
 }
 
-function readPortFile(): number | undefined {
+function readPortFile(env: NodeJS.ProcessEnv = process.env): number | undefined {
   try {
-    const port = parseInt(readFileSync(portFilePath(), 'utf-8').trim(), 10);
+    const port = parseInt(readFileSync(portFilePath(env), 'utf-8').trim(), 10);
     return Number.isInteger(port) && port > 0 ? port : undefined;
   } catch {
     return undefined;
   }
 }
 
-function readPidFile(): number | undefined {
+function readOptionalFile(path: string): string | undefined {
   try {
-    const pid = parseInt(readFileSync(pidFilePath(), 'utf-8').trim(), 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+    return readFileSync(path, 'utf-8');
   } catch {
     return undefined;
   }
 }
 
-function parsePortFromUrl(baseUrl: string): number | undefined {
+async function terminateStartedProcess(
+  child: childProcess.ChildProcess,
+  hasExited: () => boolean,
+): Promise<void> {
+  if (hasExited()) return;
   try {
-    const port = Number(new URL(baseUrl).port);
-    return Number.isInteger(port) && port > 0 ? port : undefined;
+    child.kill('SIGTERM');
   } catch {
-    return undefined;
+    // ignore termination races
   }
+  const exited = await waitForChildExit(hasExited, 2_000);
+  if (exited) return;
+  try {
+    child.kill('SIGKILL');
+  } catch {
+    // ignore termination races
+  }
+  await waitForChildExit(hasExited, 1_000);
+}
+
+function cleanupStartedFiles(args: {
+  childPid?: number;
+  pidPath: string;
+  portPath: string;
+  initialPidFile?: string;
+  initialPortFile?: string;
+}): void {
+  const currentPidFile = readOptionalFile(args.pidPath);
+  const pidBelongsToChild =
+    args.childPid !== undefined && currentPidFile?.trim() === String(args.childPid);
+  if (pidBelongsToChild || (args.initialPidFile === undefined && currentPidFile !== undefined)) {
+    try {
+      unlinkSync(args.pidPath);
+    } catch {
+      // ignore cleanup races
+    }
+  }
+
+  const currentPortFile = readOptionalFile(args.portPath);
+  if (
+    pidBelongsToChild
+    || (args.initialPortFile === undefined && currentPortFile !== undefined)
+  ) {
+    try {
+      unlinkSync(args.portPath);
+    } catch {
+      // ignore cleanup races
+    }
+  }
+}
+
+async function waitForChildExit(hasExited: () => boolean, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (hasExited()) return true;
+    await sleep(50);
+  }
+  return hasExited();
 }
 
 function tryAcquireLock(lockPath: string): boolean {

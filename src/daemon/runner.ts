@@ -3,7 +3,7 @@ import { writeFileSync, unlinkSync, existsSync, mkdirSync, readFileSync } from '
 import { tmpdir, platform } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { Job } from '../schemas/job.js';
+import type { Job, PromptAction } from '../schemas/job.js';
 import type { Store, RunStatus } from './store.js';
 import { CrontickError } from '../errors.js';
 import { extractSessionId } from './prompt-session.js';
@@ -212,6 +212,7 @@ export class Runner {
       let args: string[];
 
       let capturePromptSession = false;
+      let promptCaptureAction: PromptAction | undefined;
       let promptSessionJob = job;
       let promptEngineBinary: string | undefined;
 
@@ -238,22 +239,23 @@ export class Runner {
         cmd = action.command;
         args = action.args ?? [];
       } else {
-        const latestJob = store.getJob(job.id) ?? job;
-        if (latestJob.action.kind === 'prompt') promptSessionJob = latestJob;
+        const latestJob = store.getJob(job.id);
+        if (latestJob?.action.kind === 'prompt') promptSessionJob = latestJob;
         const latestAction =
           promptSessionJob.action.kind === 'prompt' ? promptSessionJob.action : action;
         const sessionId = latestAction.sessionId ?? action.sessionId;
-        const sessionArgs = sessionId ? ['--session-id', sessionId] : [];
-        capturePromptSession = action.reuseSession && !sessionId;
+        const sessionArgs = sessionId ? [`--session-id=${sessionId}`] : [];
+        capturePromptSession = latestAction.reuseSession && !sessionId;
+        promptCaptureAction = capturePromptSession ? latestAction : undefined;
 
-        if (action.engine === 'agency') {
+        if (latestAction.engine === 'agency') {
           cmd = 'agency';
           promptEngineBinary = cmd;
-          args = ['cp', '-p', action.prompt, ...(action.args ?? []), ...sessionArgs];
+          args = ['cp', `--prompt=${latestAction.prompt}`, ...(latestAction.args ?? []), ...sessionArgs];
         } else {
           cmd = 'copilot';
           promptEngineBinary = cmd;
-          args = ['-p', action.prompt, ...(action.args ?? []), ...sessionArgs];
+          args = [`--prompt=${latestAction.prompt}`, ...(latestAction.args ?? []), ...sessionArgs];
         }
       }
 
@@ -288,82 +290,119 @@ export class Runner {
         spawnOpts.timeout = action.timeoutSec * 1000;
       }
 
-      const transcriptChunks: Buffer[] = [];
-      let transcriptBytes = 0;
+      const maxTranscriptBytes = 128 * 1024;
+      let transcriptTail = Buffer.alloc(0);
       const appendTranscript = (chunk: Buffer) => {
         if (!capturePromptSession) return;
-        const remaining = 128 * 1024 - transcriptBytes;
-        if (remaining <= 0) return;
-        const kept = chunk.byteLength > remaining ? chunk.subarray(0, remaining) : chunk;
-        transcriptChunks.push(Buffer.from(kept));
-        transcriptBytes += kept.byteLength;
+        transcriptTail = Buffer.concat([transcriptTail, chunk]);
+        if (transcriptTail.byteLength > maxTranscriptBytes) {
+          transcriptTail = transcriptTail.subarray(transcriptTail.byteLength - maxTranscriptBytes);
+        }
       };
 
       const result = await new Promise<RunResult>((resolve) => {
         const child = this.spawnFn(cmd, args, spawnOpts);
         const startedAt = Date.now();
+        const captureAction = promptCaptureAction;
+        let settled = false;
+        const finish = (runResult: RunResult) => {
+          if (settled) return;
+          settled = true;
+          resolve(runResult);
+        };
+        const failFromCallback = (err: unknown) => {
+          finish({ status: 'failed', error: `RUNNER_CALLBACK_FAILED: ${errorMessage(err)}` });
+          try {
+            if (!signal.aborted) child.kill('SIGTERM');
+          } catch {
+            // ignore termination races
+          }
+        };
 
         child.stdout?.on('data', (chunk: Buffer) => {
-          appendTranscript(chunk);
-          store.appendLog(runId, 'stdout', safeRedact(chunk));
+          try {
+            appendTranscript(chunk);
+            store.appendLog(runId, 'stdout', safeRedact(chunk));
+          } catch (err) {
+            failFromCallback(err);
+          }
         });
 
         child.stderr?.on('data', (chunk: Buffer) => {
-          appendTranscript(chunk);
-          store.appendLog(runId, 'stderr', safeRedact(chunk));
+          try {
+            appendTranscript(chunk);
+            store.appendLog(runId, 'stderr', safeRedact(chunk));
+          } catch (err) {
+            failFromCallback(err);
+          }
         });
 
         child.on('close', (code, sig) => {
           const durationMs = Date.now() - startedAt;
-          if (sig === 'SIGTERM' || sig === 'SIGKILL') {
-            resolve({ status: 'canceled', error: `killed by signal ${sig}` });
+          if (signal.aborted) {
+            finish({ status: 'canceled', error: 'aborted' });
+          } else if (sig === 'SIGTERM' || sig === 'SIGKILL') {
+            finish({ status: 'canceled', error: `killed by signal ${sig}` });
           } else if (code === null) {
-            resolve({ status: 'failed', error: 'process exited without code' });
+            finish({ status: 'failed', error: 'process exited without code' });
           } else {
             const result: RunResult = {
               status: code === 0 ? 'success' : 'failed',
               exitCode: code,
             };
             if (result.status === 'success' && capturePromptSession) {
-              const sessionId = extractSessionId(Buffer.concat(transcriptChunks).toString('utf-8'));
+              const sessionId = extractSessionId(transcriptTail.toString('utf-8'));
               if (!sessionId) {
-                resolve({
+                finish({
                   status: 'failed',
                   exitCode: code,
                   error: 'SESSION_ID_NOT_FOUND: prompt engine output did not include a session id',
                 });
                 return;
               }
-              const latestJob = store.getJob(job.id) ?? promptSessionJob;
-              if (latestJob.action.kind === 'prompt') {
-                store.upsertJob({
-                  ...latestJob,
-                  action: {
-                    ...latestJob.action,
-                    sessionId,
-                    reuseSession: false,
-                  },
-                });
+              if (captureAction) {
+                let persisted = false;
+                try {
+                  persisted = store.tryCapturePromptSession(job.id, captureAction, sessionId);
+                } catch (err) {
+                  finish({
+                    status: 'failed',
+                    exitCode: code,
+                    error: `SESSION_PERSIST_FAILED: ${errorMessage(err)}`,
+                  });
+                  return;
+                }
+                if (persisted) {
+                  try {
+                    store.appendLog(runId, 'stdout', Buffer.from(`[crontick] captured session id: ${sessionId}\n`, 'utf-8'));
+                  } catch (err) {
+                    finish({
+                      status: 'failed',
+                      exitCode: code,
+                      error: `SESSION_PERSIST_FAILED: ${errorMessage(err)}`,
+                    });
+                    return;
+                  }
+                }
               }
-              store.appendLog(runId, 'stdout', Buffer.from(`[crontick] captured session id: ${sessionId}\n`, 'utf-8'));
             }
-            resolve(result);
+            finish(result);
           }
           void durationMs; // consumed below via store
         });
 
         child.on('error', (err: NodeJS.ErrnoException) => {
           if (err.code === 'ABORT_ERR' || signal.aborted) {
-            resolve({ status: 'canceled', error: 'aborted' });
+            finish({ status: 'canceled', error: 'aborted' });
           } else if (err.code === 'ETIMEDOUT') {
-            resolve({ status: 'timeout', error: 'timed out' });
+            finish({ status: 'timeout', error: 'timed out' });
           } else if (err.code === 'ENOENT' && promptEngineBinary) {
-            resolve({
+            finish({
               status: 'failed',
               error: `Prompt engine "${promptEngineBinary}" was not found on PATH. Install it or update PATH before the next run.`,
             });
           } else {
-            resolve({ status: 'failed', error: err.message });
+            finish({ status: 'failed', error: err.message });
           }
         });
       });
@@ -433,6 +472,10 @@ function resolveShellExt(shell: string): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 export { CrontickError };

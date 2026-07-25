@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { writeFileSync, readFileSync, unlinkSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { runsDbPath, jobsDir } from '../paths.js';
-import { JobSchema, type Job } from '../schemas/job.js';
+import { JobSchema, type Job, type PromptAction } from '../schemas/job.js';
 import { CrontickError } from '../errors.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -133,6 +133,23 @@ export class Store {
     // File-based persistence: jobs dir is source of truth
     const filePath = join(this.jobsPath, `${job.id}.json`);
     writeFileSync(filePath, json, 'utf-8');
+  }
+
+  tryCapturePromptSession(jobId: string, expectedAction: PromptAction, sessionId: string): boolean {
+    const current = this.getJob(jobId);
+    if (!current || current.action.kind !== 'prompt') return false;
+    if (!isSamePromptCaptureTarget(current.action, expectedAction)) return false;
+    if (!current.action.reuseSession || current.action.sessionId) return false;
+
+    this.upsertJob({
+      ...current,
+      action: {
+        ...current.action,
+        sessionId,
+        reuseSession: false,
+      },
+    });
+    return true;
   }
 
   getJob(id: string): Job | undefined {
@@ -360,4 +377,16 @@ function rowToLog(row: DbLogRow): RunLog {
     ts: row.ts,
     chunk: Buffer.from(row.chunk),
   };
+}
+
+function isSamePromptCaptureTarget(current: PromptAction, expected: PromptAction): boolean {
+  return (
+    current.prompt === expected.prompt
+    && current.engine === expected.engine
+    && JSON.stringify(current.args ?? []) === JSON.stringify(expected.args ?? [])
+    && current.cwd === expected.cwd
+    && current.envFile === expected.envFile
+    && current.timeoutSec === expected.timeoutSec
+    && JSON.stringify(current.env ?? {}) === JSON.stringify(expected.env ?? {})
+  );
 }

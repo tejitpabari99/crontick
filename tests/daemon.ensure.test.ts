@@ -38,7 +38,7 @@ async function startHealthServer(home?: string): Promise<{ baseUrl: string; port
     const addr = server.address();
     const serverPort = typeof addr === 'object' && addr ? addr.port : undefined;
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, pid: process.pid, port: serverPort }));
+    res.end(JSON.stringify({ ok: true, product: 'crontick', pid: process.pid, port: serverPort }));
   });
   await new Promise<void>((resolveServer) => server.listen(0, '127.0.0.1', resolveServer));
   const addr = server.address();
@@ -62,7 +62,7 @@ const delay = Number(process.env.FAKE_DAEMON_DELAY_MS ?? '0');
 const server = http.createServer((_req, res) => {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   const port = server.address() && typeof server.address() === 'object' ? server.address().port : undefined;
-  res.end(JSON.stringify({ ok: true, pid: process.pid, port }));
+  res.end(JSON.stringify({ ok: true, product: 'crontick', pid: process.pid, port }));
 });
 function cleanup() {
   try { unlinkSync(join(home, 'daemon.port')); } catch {}
@@ -92,6 +92,15 @@ function killHomeDaemon(home: string): void {
     } catch {
       // ignore
     }
+  }
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -153,6 +162,24 @@ describe('ensureDaemon', () => {
     expect(info.started).toBe(false);
   });
 
+  it('rejects a foreign health payload on a reused port', async () => {
+    const home = makeHome();
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, pid: process.pid }));
+    });
+    await new Promise<void>((resolveServer) => server.listen(0, '127.0.0.1', resolveServer));
+    cleanupFns.push(() => new Promise<void>((resolveClose) => server.close(() => resolveClose())));
+    const addr = server.address();
+    const port = typeof addr === 'object' && addr ? addr.port : 0;
+    writeFileSync(join(home, 'daemon.port'), String(port), 'utf-8');
+
+    await expectRejectCode(
+      ensureDaemon({ allowStart: false, daemonScript: join(home, 'missing.mjs') }),
+      'DAEMON_NOT_RUNNING',
+    );
+  });
+
   it('starts a missing daemon and waits for health', async () => {
     const home = makeHome();
     const script = writeFakeDaemon(home);
@@ -178,7 +205,7 @@ describe('ensureDaemon', () => {
         "const server = http.createServer((_req, res) => {",
         "  res.writeHead(200, { 'Content-Type': 'application/json' });",
         '  const port = server.address() && typeof server.address() === "object" ? server.address().port : undefined;',
-        '  res.end(JSON.stringify({ ok: true, pid: process.pid, port }));',
+        "  res.end(JSON.stringify({ ok: true, product: 'crontick', pid: process.pid, port }));",
         '});',
         'function cleanup() {',
         "  try { unlinkSync(join(home, 'daemon.port')); } catch {}",
@@ -255,6 +282,52 @@ describe('ensureDaemon', () => {
     expect(readFileSync(join(home, 'logs', 'daemon.ensure.log'), 'utf-8')).toContain('boom');
   });
 
+  it('cleans up a hung start that writes pid and port but never becomes healthy', async () => {
+    const home = makeHome();
+    const hung = writeFakeDaemon(
+      home,
+      'hung-daemon.mjs',
+      [
+        "import http from 'node:http';",
+        "import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs';",
+        "import { join } from 'node:path';",
+        'const home = process.env.CRONTICK_HOME;',
+        "mkdirSync(join(home, 'logs'), { recursive: true });",
+        "writeFileSync(join(home, 'daemon.pid'), String(process.pid), 'utf-8');",
+        "writeFileSync(join(home, 'spawned-pid.txt'), String(process.pid), 'utf-8');",
+        'const server = http.createServer((_req, res) => {',
+        "  res.writeHead(200, { 'Content-Type': 'application/json' });",
+        '  const port = server.address() && typeof server.address() === "object" ? server.address().port : 0;',
+        '  res.end(JSON.stringify({ ok: true, pid: process.pid, port }));',
+        '});',
+        "server.listen(0, '127.0.0.1', () => {",
+        '  const port = server.address() && typeof server.address() === "object" ? server.address().port : 0;',
+        "  writeFileSync(join(home, 'daemon.port'), String(port), 'utf-8');",
+        '});',
+        'function cleanup() {',
+        "  try { unlinkSync(join(home, 'daemon.port')); } catch {}",
+        "  try { unlinkSync(join(home, 'daemon.pid')); } catch {}",
+        '}',
+        "process.on('SIGTERM', () => { cleanup(); server.close(() => process.exit(0)); });",
+        "process.on('SIGINT', () => { cleanup(); server.close(() => process.exit(0)); });",
+      ].join('\n'),
+    );
+
+    await expectRejectCode(
+      ensureDaemon({ daemonScript: hung, startupTimeoutMs: 800, healthTimeoutMs: 50 }),
+      'DAEMON_TIMEOUT',
+    );
+
+    const spawnedPid = Number(readFileSync(join(home, 'spawned-pid.txt'), 'utf-8'));
+    expect(pidAlive(spawnedPid)).toBe(false);
+    expect(existsSync(join(home, 'daemon.port'))).toBe(false);
+    expect(existsSync(join(home, 'daemon.pid'))).toBe(false);
+
+    const good = writeFakeDaemon(home, 'good-daemon.mjs');
+    const info = await ensureDaemon({ daemonScript: good, startupTimeoutMs: 5_000 });
+    expect(info.started).toBe(true);
+  }, 10_000);
+
   it('does not start when allowStart is false', async () => {
     const home = makeHome();
 
@@ -280,6 +353,25 @@ describe('ensureDaemon', () => {
     expect(results.every((r) => r.baseUrl === results[0].baseUrl)).toBe(true);
     expect(readFileSync(join(home, 'start-count.txt'), 'utf-8').trim().split(/\r?\n/)).toHaveLength(1);
     expect(existsSync(join(home, 'daemon.ensure.lock'))).toBe(false);
+  });
+
+  it('uses the same CRONTICK_HOME from options.env for locks, polling, and the child daemon', async () => {
+    const processHome = makeHome();
+    const envHome = join(scratchRoot, randomUUID());
+    mkdirSync(envHome, { recursive: true });
+    cleanupFns.push(() => {
+      killHomeDaemon(envHome);
+      rmSync(envHome, { recursive: true, force: true });
+    });
+    const script = writeFakeDaemon(envHome);
+    const env = { ...process.env, CRONTICK_HOME: envHome };
+
+    const info = await ensureDaemon({ daemonScript: script, env, startupTimeoutMs: 5_000 });
+
+    expect(info.started).toBe(true);
+    expect(existsSync(join(envHome, 'daemon.port'))).toBe(true);
+    expect(existsSync(join(processHome, 'daemon.port'))).toBe(false);
+    expect(existsSync(join(processHome, 'daemon.ensure.lock'))).toBe(false);
   });
 
   it('waits when another process owns the start lock and health appears', async () => {

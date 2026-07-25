@@ -61,7 +61,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
   if (req.method === 'GET' && url.pathname === '/health') {
     const port = server.address() && typeof server.address() === 'object' ? server.address().port : 0;
-    return json(res, 200, { ok: true, pid: process.pid, port });
+    return json(res, 200, { ok: true, product: 'crontick', pid: process.pid, port });
   }
   if (req.method === 'GET' && url.pathname === '/api/daemon/status') return json(res, 200, { pid: process.pid });
   if (req.method === 'POST' && url.pathname === '/api/daemon/reload') return json(res, 200, { ok: true });
@@ -139,7 +139,9 @@ process.on('SIGINT', () => { cleanup(); server.close(() => process.exit(0)); });
 async function startHealthOnlyServer(): Promise<{ baseUrl: string; close: () => Promise<void> }> {
   const server = http.createServer((_req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, pid: process.pid }));
+    const addr = server.address();
+    const port = typeof addr === 'object' && addr ? addr.port : 0;
+    res.end(JSON.stringify({ ok: true, product: 'crontick', pid: process.pid, port }));
   });
   await new Promise<void>((resolveServer) => server.listen(0, '127.0.0.1', resolveServer));
   const addr = server.address();

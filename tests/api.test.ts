@@ -84,6 +84,7 @@ describe('Daemon HTTP API', () => {
     const { status, data } = await apiCall(port, 'GET', '/health');
     expect(status).toBe(200);
     expect((data as { ok: boolean }).ok).toBe(true);
+    expect((data as { product: string }).product).toBe('crontick');
     expect(typeof (data as { version: string }).version).toBe('string');
     expect(typeof (data as { uptimeSec: number }).uptimeSec).toBe('number');
   });
@@ -141,6 +142,15 @@ describe('Daemon HTTP API', () => {
       action: { kind: 'prompt', prompt: 'x', sessionId: 'sess-12345678', reuseSession: true },
     });
     expect(sessionMix.status).toBe(400);
+  });
+
+  it('POST /api/jobs rejects reserved prompt passthrough flags', async () => {
+    const result = await apiCall(port, 'POST', '/api/jobs', {
+      id: 'api-prompt-reserved-flag',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'prompt', prompt: 'hello', args: ['--prompt=override'] },
+    });
+    expect(result.status).toBe(400);
   });
 
   it('GET /api/jobs lists jobs', async () => {

@@ -72,6 +72,7 @@ describe('/health extended shape', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as Record<string, unknown>;
     expect(body.ok).toBe(true);
+    expect(body.product).toBe('crontick');
     expect(typeof body.version).toBe('string');
     expect(typeof body.uptimeSec).toBe('number');
     expect(typeof body.pid).toBe('number');

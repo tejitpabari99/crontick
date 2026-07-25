@@ -51,6 +51,18 @@ export const ExecActionSchema = z.object({
 
 export const PromptEngineSchema = z.enum(['copilot', 'agency']);
 
+const WINDOWS_COMMAND_LINE_LIMIT = 32_767;
+const SAFE_PROMPT_COMMAND_LINE_LIMIT = 30_000;
+const RESERVED_PROMPT_ARGS = new Set([
+  '-p',
+  '--prompt',
+  '--session-id',
+  '-r',
+  '--resume',
+  '--continue',
+  '--connect',
+]);
+
 const PromptActionBaseSchema = z.object({
   kind: z.literal('prompt'),
   prompt: z.string().min(1),
@@ -69,6 +81,7 @@ export const PromptActionSchema = PromptActionBaseSchema.superRefine((action, ct
       message: 'sessionId and reuseSession are mutually exclusive',
     });
   }
+  addPromptRuntimeIssues(action, ctx);
 });
 
 export const ActionSchema = z.discriminatedUnion('kind', [
@@ -83,6 +96,7 @@ export const ActionSchema = z.discriminatedUnion('kind', [
       message: 'sessionId and reuseSession are mutually exclusive',
     });
   }
+  if (action.kind === 'prompt') addPromptRuntimeIssues(action, ctx);
 });
 
 // ── Supporting types ──────────────────────────────────────────────────────────
@@ -119,3 +133,44 @@ export type Schedule = z.infer<typeof ScheduleSchema>;
 export type Action = z.infer<typeof ActionSchema>;
 export type PromptAction = z.infer<typeof PromptActionBaseSchema>;
 export type PromptEngine = z.infer<typeof PromptEngineSchema>;
+
+function addPromptRuntimeIssues(action: z.infer<typeof PromptActionBaseSchema>, ctx: z.RefinementCtx): void {
+  const reserved = action.args.find(isReservedPromptArg);
+  if (reserved) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['args'],
+      message: `Raw prompt engine args cannot include crontick-managed prompt/session flag: ${reserved}`,
+    });
+  }
+
+  const argv =
+    action.engine === 'agency'
+      ? ['agency', 'cp', `--prompt=${action.prompt}`, ...action.args]
+      : ['copilot', `--prompt=${action.prompt}`, ...action.args];
+  if (action.sessionId) argv.push(`--session-id=${action.sessionId}`);
+  const estimatedLength = estimateWindowsCommandLineLength(argv);
+  if (estimatedLength > SAFE_PROMPT_COMMAND_LINE_LIMIT) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['prompt'],
+      message: `Prompt plus engine arguments exceed the Windows-safe command line limit (${estimatedLength}/${WINDOWS_COMMAND_LINE_LIMIT} characters). Shorten the prompt or arguments.`,
+    });
+  }
+}
+
+function isReservedPromptArg(arg: string): boolean {
+  return RESERVED_PROMPT_ARGS.has(arg)
+    || arg.startsWith('--prompt=')
+    || arg.startsWith('--session-id=')
+    || arg.startsWith('--resume=')
+    || arg.startsWith('--connect=');
+}
+
+function estimateWindowsCommandLineLength(argv: string[]): number {
+  return argv.reduce((total, arg, index) => total + (index === 0 ? 0 : 1) + quoteForWindowsEstimate(arg).length, 0);
+}
+
+function quoteForWindowsEstimate(arg: string): string {
+  return /[\s"]/.test(arg) ? `"${arg.replace(/(\\*)"/g, '$1$1\\"')}"` : arg;
+}

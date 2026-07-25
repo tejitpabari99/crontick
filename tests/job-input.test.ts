@@ -111,4 +111,19 @@ describe('normalizeJobInput', () => {
     expect(JobSchema.safeParse(baseJob({ kind: 'prompt', prompt: 'x', engine: 'agency' })).success).toBe(true);
     expect(JobSchema.safeParse(baseJob({ kind: 'prompt', prompt: 'x', engine: 'openai' })).success).toBe(false);
   });
+
+  it('rejects raw prompt passthrough args that collide with managed prompt/session flags', () => {
+    for (const arg of ['-p', '--prompt', '--prompt=x', '--session-id', '--session-id=sess-12345678']) {
+      expect(() => normalizeJobInput(baseJob({ kind: 'prompt', prompt: 'x', args: [arg] }))).toThrow(
+        /prompt\/session flag/,
+      );
+    }
+  });
+
+  it('rejects prompt argv that exceeds the Windows-safe command line limit', () => {
+    const prompt = 'x'.repeat(31_000);
+    expect(() => normalizeJobInput(baseJob({ kind: 'prompt', prompt }))).toThrow(
+      /Windows-safe command line limit/,
+    );
+  });
 });

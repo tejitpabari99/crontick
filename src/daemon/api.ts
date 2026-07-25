@@ -76,6 +76,7 @@ async function handleRequest(
       const runs24h = ctx.store.listRuns({ since: since24h });
       return sendJson(res, 200, {
         ok: true,
+        product: 'crontick',
         version: VERSION,
         uptimeSec: Math.floor((Date.now() - ctx.startedAt.getTime()) / 1000),
         pid: process.pid,

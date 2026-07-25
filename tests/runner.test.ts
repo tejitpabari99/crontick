@@ -62,7 +62,7 @@ interface SpawnCall {
   opts?: SpawnOptions;
 }
 
-function fakeSpawn(outputs: Array<{ stdout?: string; stderr?: string; code?: number }>) {
+function fakeSpawn(outputs: Array<{ stdout?: string; stderr?: string; code?: number; beforeClose?: () => void }>) {
   const calls: SpawnCall[] = [];
   const spawnFn = (cmd: string, args?: readonly string[], opts?: SpawnOptions): ChildProcess => {
     calls.push({ cmd, args: [...(args ?? [])], opts });
@@ -81,6 +81,7 @@ function fakeSpawn(outputs: Array<{ stdout?: string; stderr?: string; code?: num
       if (output.stderr) stderr.write(output.stderr);
       stdout.end();
       stderr.end();
+      output.beforeClose?.();
       child.emit('close', output.code ?? 0, null);
     });
     return child;
@@ -377,9 +378,30 @@ describe('Runner', () => {
     expect(store.getRun(run.id)?.status).toBe('success');
     expect(fake.calls[0]).toMatchObject({
       cmd: 'copilot',
-      args: ['-p', 'hello $(echo INJECTED)', '--silent', '--add-dir', 'Q:\\Repos\\crontick', '--flag', 'one', '--flag', 'two'],
+      args: [
+        '--prompt=hello $(echo INJECTED)',
+        '--silent',
+        '--add-dir',
+        'Q:\\Repos\\crontick',
+        '--flag',
+        'one',
+        '--flag',
+        'two',
+      ],
     });
     expect(fake.calls[0].opts?.shell).toBe(false);
+  });
+
+  it('prompt: passes leading-dash prompts as a single long prompt option', async () => {
+    const fake = fakeSpawn([{ stdout: 'ok\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-leading-dash', { prompt: '- summarize this' });
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(fake.calls[0].args[0]).toBe('--prompt=- summarize this');
+    expect(store.getRun(run.id)?.status).toBe('success');
   });
 
   it('prompt: builds Agency command line', async () => {
@@ -395,7 +417,7 @@ describe('Runner', () => {
 
     expect(fake.calls[0]).toMatchObject({
       cmd: 'agency',
-      args: ['cp', '-p', 'hello', '--profile', 'dev'],
+      args: ['cp', '--prompt=hello', '--profile', 'dev'],
     });
     expect(store.getRun(run.id)?.status).toBe('success');
   });
@@ -427,8 +449,8 @@ describe('Runner', () => {
     await runner.run(job, store.insertRun(job.id).id, store);
 
     expect(fake.calls).toHaveLength(2);
-    expect(fake.calls[0].args).toEqual(['-p', 'hello', '--silent', '--session-id', 'sess-12345678']);
-    expect(fake.calls[1].args).toEqual(['-p', 'hello', '--silent', '--session-id', 'sess-12345678']);
+    expect(fake.calls[0].args).toEqual(['--prompt=hello', '--silent', '--session-id=sess-12345678']);
+    expect(fake.calls[1].args).toEqual(['--prompt=hello', '--silent', '--session-id=sess-12345678']);
   });
 
   it('prompt: captures and persists a reusable session id after first successful run', async () => {
@@ -450,6 +472,91 @@ describe('Runner', () => {
     expect(store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('')).toContain('captured session id');
   });
 
+  it('prompt: captures a session id from the rolling transcript tail after long output', async () => {
+    const fake = fakeSpawn([{ stdout: `${'x'.repeat(140 * 1024)}\nsession id: sess-tail1234\n` }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-reuse-tail', { reuseSession: true });
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(store.getRun(run.id)?.status).toBe('success');
+    expect(store.getJob(job.id)?.action).toMatchObject({
+      kind: 'prompt',
+      sessionId: 'sess-tail1234',
+      reuseSession: false,
+    });
+  });
+
+  it('prompt: skips session persistence when the job is deleted before write-back', async () => {
+    const job = promptJob('prompt-reuse-deleted', { reuseSession: true });
+    const fake = fakeSpawn([
+      {
+        stdout: 'session id: sess-delete1\n',
+        beforeClose: () => {
+          store.deleteJob(job.id);
+        },
+      },
+    ]);
+    runner = new Runner(fake.spawnFn as never);
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(store.getRun(run.id)?.status).toBe('success');
+    expect(store.getJob(job.id)).toBeUndefined();
+  });
+
+  it('prompt: skips session persistence when the prompt action changed before write-back', async () => {
+    const job = promptJob('prompt-reuse-updated', { reuseSession: true });
+    const fake = fakeSpawn([
+      {
+        stdout: 'session id: sess-update1\n',
+        beforeClose: () => {
+          store.upsertJob(promptJob(job.id, { prompt: 'changed', reuseSession: true }));
+        },
+      },
+    ]);
+    runner = new Runner(fake.spawnFn as never);
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(store.getRun(run.id)?.status).toBe('success');
+    expect(store.getJob(job.id)?.action).toMatchObject({
+      kind: 'prompt',
+      prompt: 'changed',
+      reuseSession: true,
+    });
+  });
+
+  it('prompt: turns session persistence failures into failed run results', async () => {
+    const fake = fakeSpawn([{ stdout: 'session id: sess-failure1\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = promptJob('prompt-reuse-persist-fail', { reuseSession: true });
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+    const original = store.tryCapturePromptSession.bind(store);
+    store.tryCapturePromptSession = () => {
+      throw new Error('disk denied');
+    };
+
+    try {
+      await runner.run(job, run.id, store);
+    } finally {
+      store.tryCapturePromptSession = original;
+    }
+
+    expect(store.getRun(run.id)).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('SESSION_PERSIST_FAILED'),
+    });
+    expect(store.getJob(job.id)?.action).toMatchObject({ kind: 'prompt', reuseSession: true });
+  });
+
   it('prompt: reuses a previously persisted session id', async () => {
     const fake = fakeSpawn([{ stdout: 'ok\n' }]);
     runner = new Runner(fake.spawnFn as never);
@@ -462,7 +569,7 @@ describe('Runner', () => {
 
     await runner.run(job, run.id, store);
 
-    expect(fake.calls[0].args).toEqual(['-p', 'hello', '--session-id', 'sess-abcdefgh']);
+    expect(fake.calls[0].args).toEqual(['--prompt=hello', '--session-id=sess-abcdefgh']);
     expect(store.getRun(run.id)?.status).toBe('success');
   });
 
