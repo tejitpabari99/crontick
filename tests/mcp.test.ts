@@ -10,6 +10,7 @@ import {
   rmSync,
   readFileSync,
   existsSync,
+  writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -220,6 +221,24 @@ describe('MCP server — full contract', () => {
       engine: 'copilot',
       args: ['--silent'],
     });
+  });
+
+  it('crontick_job_create accepts promptFile through the shared client schema', async () => {
+    const promptPath = join(dir, 'mcp-prompt.txt');
+    writeFileSync(promptPath, 'hello from mcp prompt file', 'utf-8');
+    const { json, isError } = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-prompt-file-job',
+      description: 'MCP prompt file job',
+      schedule: { kind: 'cron', cron: '0 10 * * *' },
+      action: { kind: 'prompt', promptFile: promptPath, engine: 'copilot' },
+    });
+    expect(isError).toBe(false);
+    expect((json as { action: unknown }).action).toMatchObject({
+      kind: 'prompt',
+      prompt: 'hello from mcp prompt file',
+      engine: 'copilot',
+    });
+    expect((json as { action: Record<string, unknown> }).action).not.toHaveProperty('promptFile');
   });
 
   it('crontick_job_list returns the created job', async () => {

@@ -33,8 +33,9 @@ Environment variables:
 - `crontick_job_cancel_run`
 
 `crontick_job_create` and `crontick_job_update` accept action kinds `script`, `exec`, and `prompt`.
-Prompt actions use `prompt`, optional `engine` (`copilot` or `agency`), raw `args`, and either
-`sessionId` or `reuseSession`.
+Prompt actions use exactly one of `prompt` or `promptFile`, optional `engine` (`copilot` or
+`agency`), raw `args`, and either `sessionId` or `reuseSession`. `promptFile` is resolved and read
+by the shared client/core before the normalized job is persisted.
 
 ### Runs
 
@@ -74,5 +75,6 @@ Prompt actions use `prompt`, optional `engine` (`copilot` or `agency`), raw `arg
 
 ## Validation model
 
-Tool input is validated with Zod before daemon calls are made. Invalid inputs return structured MCP tool errors instead of crashing the server.
-
+Tool schemas are derived from the shared core/client schemas. The MCP server validates tool input,
+then calls `CrontickClient`; normalization, prompt runtime checks, daemon lifecycle, doctor checks,
+and JSON schema generation all live in shared core modules.

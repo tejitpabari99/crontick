@@ -17,14 +17,13 @@ flowchart TD
   Skill[Bundled skill / plugin] --> MCP
   Skill --> CLI
 
-  CLI -->|job CRUD, run, logs, import/export, dashboard URL, reload/status| Client
-  CLI -->|daemon start/stop/restart, mcp launcher, doctor checks| CLILocal[CLI-local process/filesystem helpers]
-  MCP -->|ensureDaemon import| Ensure[src\daemon\ensure.ts]
-  MCP -->|local callDaemon fetch wrapper| HTTP[loopback HTTP daemon API]
-  Client --> Ensure
+  CLI -->|parse args + render| Client
+  CLI -->|mcp launcher, browser open, import/export files| CLILocal[CLI-local UX helpers]
+  MCP -->|tool schemas + resources + prompts| Client
+  Client --> Ensure[src\daemon\ensure.ts]
+  Client --> Lifecycle[src\daemon\lifecycle.ts]
+  Client --> Doctor[src\doctor.ts]
   Client -->|fetch JSON| HTTP
-  CLILocal --> Ensure
-  CLILocal --> HTTP
 
   HTTP --> Api[src\daemon\api.ts\ncreateApiServer]
   Api --> Store[src\daemon\store.ts\nJob JSON + SQLite]
@@ -39,13 +38,13 @@ Current real layering:
 
 - `package.json` ships three binaries (`crontick`, `crontick-daemon`, `crontick-mcp`) and a package root export for `createClient()` / `CrontickClient` (`package.json:20-34`).
 - `src\index.ts` exports the client, daemon ensure helpers, schemas, paths, and types (`src\index.ts:1-20`). This already makes more than the CLI a public package surface.
-- The CLI imports `createClient()` and `normalizeJobInput()` (`src\cli\index.ts:11-12`). Its `client()` helper creates `CrontickClient` with the built daemon script path (`src\cli\index.ts:46-48`).
-- Most daemon-backed CLI commands call client methods: `list`, `get`, `enable`, `disable`, `delete`, `run-now`, `logs`, `export`, `import`, `daemon status`, `daemon reload`, and `dashboard` (`src\cli\index.ts:298`, `312`, `326`, `338`, `350`, `364`, `381`, `409`, `430`, `591`, `603`, `696`).
-- `new` is an adapter-heavy CLI command: it parses flags, builds schedule/action objects, handles `--file`, normalizes prompt files, validates `JobSchema`, and then calls `client().createJob()` (`src\cli\index.ts:185-285`).
-- The client is a daemon-aware HTTP wrapper: it normalizes create/update/import inputs, ensures the daemon by default, resolves the loopback URL, sends JSON via `fetch`, and maps daemon errors to `CrontickError` (`src\client.ts:28-43`, `54-68`, `111-124`, `141-183`).
+- The CLI imports `createClient()` and core job builders. Its handlers parse flags, call client/core methods, and render output.
+- Daemon-backed CLI commands now call client methods for create/update/list/get, enable/disable/delete, run/cancel/run inspection/logs, schedule validation/preview, stats, doctor, daemon lifecycle, import/export, and dashboard URL.
+- `new` and `update` delegate schedule/action construction, prompt-file normalization, prompt/session validation, and job validation to shared core helpers in `src\job-input.ts`.
+- The client is the daemon-aware source of truth: it normalizes create/update/import inputs, owns all daemon endpoint calls, ensures or controls daemon lifecycle, runs doctor checks, serves schema generation, and maps daemon errors to `CrontickError`.
 - The daemon HTTP API is the actual process boundary. `src\daemon\api.ts` accepts loopback-only requests, validates persisted job JSON, then calls Store/Scheduler/Runner (`src\daemon\api.ts:46-55`, `98-170`, `223-317`).
 - The daemon process owns durable state and execution: it opens the store, loads jobs, schedules enabled jobs, listens on an ephemeral `127.0.0.1` port, and writes the port file (`src\daemon\index.ts:98-154`).
-- The MCP server does **not** use `CrontickClient` today. It imports `ensureDaemon()` / `resolveDaemonBaseUrl()`, but defines its own `callDaemon()` fetch wrapper and hard-codes daemon endpoints in tool/resource handlers (`src\mcp\index.ts:19`, `31-60`, `120-459`, `559-700`).
+- The MCP server uses `CrontickClient` for daemon-backed tools, resources, doctor checks, dashboard URL, lifecycle operations, and shared job schema generation. It keeps only MCP-specific tool schemas, resources, prompts, redaction, and JSON formatting.
 
 ## HTTP daemon API as a third surface
 
@@ -127,14 +126,14 @@ Both is the right product architecture, but only if the implementation keeps one
 
 ## Duplication and drift found
 
-| Area | Evidence | Impact | Suggested direction |
+| Area | Current status | Impact | Direction |
 |---|---|---|---|
-| CLI create normalizes and validates before calling client, while client also normalizes and validates create input | CLI file mode normalizes at `src\cli\index.ts:190-198`; flag mode normalizes at `src\cli\index.ts:268-279`; CLI validates `JobSchema` at `src\cli\index.ts:279-284`; client normalizes again at `src\client.ts:41-43` through `normalizeJobInput()` (`src\job-input.ts:46-59`). | Mostly safe, but validation errors and prompt-file base-dir behavior can diverge. The CLI is not a pure adapter for create. | Let CLI parse flags into `JobCreateInput` and delegate all normalization/validation to a client/core method that accepts per-call normalization options, or explicitly document CLI-only file-relative behavior. |
-| CLI supports JSON-file-relative `promptFile`; client only has constructor-level `cwd` | CLI passes `fileBaseDir: dirname(filePath)` for `--file` (`src\cli\index.ts:190-198`). Client options expose only `cwd` (`src\client.ts:15-18`) and `createJob()` passes that to normalization (`src\client.ts:41-43`). | A Node caller importing a job JSON from disk cannot get the exact same relative prompt-file semantics without pre-normalizing itself. | Add optional per-call normalization options, e.g. `createJob(input, { fileBaseDir })`, or add an import helper to the client. |
-| MCP duplicates the client's HTTP transport instead of using the client | MCP defines `callDaemon()` (`src\mcp\index.ts:40-60`) and each tool hard-codes endpoints (`src\mcp\index.ts:144`, `153`, `162-164`, `192-194`, `205-207`, `215-229`, `240-254`, `270-276`, `325-347`, `368-370`, `401`, `445`, `457-458`). | Endpoint/default/error behavior can drift from `CrontickClient.request()` (`src\client.ts:141-183`). It also means client coverage does not prove MCP behavior. | Add missing client methods and have MCP call the client while preserving MCP-specific schemas, redaction, and confirmation language. |
-| Client is narrower than MCP/HTTP | Client has run/log/import/export/schedule/reload/status methods (`src\client.ts:83-132`) but lacks MCP-exposed cancel-run and stats methods, while API supports cancel/stats (`src\daemon\api.ts:197-201`, `249-280`) and MCP exposes them (`src\mcp\index.ts:246-256`, `352-371`). | MCP currently has a reason to bypass the client. Public embedders cannot use all daemon capabilities without direct HTTP. | Fill client parity gaps first: `cancelRun`, `statsSummary`, `statsJob`, and possibly a typed `doctor()` result. |
-| CLI and MCP duplicate doctor checks | CLI doctor builds Node/SQLite/data-dir/port/daemon/dashboard/MCP checks (`src\cli\index.ts:443-519`). MCP doctor repeats Node/SQLite/data-dir/port/daemon/dashboard/MCP checks (`src\mcp\index.ts:478-554`). | Diagnostics can drift; MCP description already contains repeated wording (`src\mcp\index.ts:481-482`). | Extract a shared no-start doctor service used by CLI and MCP. |
-| Daemon start/restart logic is split across CLI and ensure | CLI `daemon start` spawns the daemon and waits for a port file (`src\cli\index.ts:535-561`); CLI `daemon restart` repeats stop/spawn/wait (`src\cli\index.ts:611-636`); shared ensure has a richer lock/health/start path (`src\daemon\ensure.ts:53-112`, `114-199`). | Explicit lifecycle commands may behave differently from demand-start paths under races or failures. | Reuse shared start/probe helpers for explicit daemon commands while preserving the command semantics (`start` starts, `restart` restarts, `status` never starts). |
+| CLI create/update normalization | Resolved into shared `src\job-input.ts` builders and `CrontickClient.createJobFromCliOptions()` / `updateJob()`. | CLI no longer owns domain validation or prompt-file normalization. | Keep CLI as parse/render only. |
+| JSON-file-relative `promptFile` | Resolved with per-call normalization options for create/update/import. | CLI, client, and MCP can share prompt-file semantics. | Keep prompt file reads in core/client helpers. |
+| MCP daemon transport | Resolved: MCP tools/resources call `CrontickClient` instead of a local HTTP wrapper. | Endpoint/default/error behavior has one source. | Maintain drift tests for tool/client parity. |
+| Client capability gaps | Resolved: client exposes cancel, stats, doctor, daemon lifecycle, logs options, and schema generation. | Embedders can use every public daemon-backed capability without raw HTTP. | Add client methods before new CLI/MCP tools. |
+| Doctor duplication | Resolved in `src\doctor.ts`. | Health semantics and check names are shared. | Shims only render structured checks. |
+| Daemon lifecycle duplication | Resolved in `src\daemon\lifecycle.ts`. | Explicit start/stop/restart reuse shared core behavior. | Shims only call lifecycle methods and print results. |
 
 ## Recommendation
 
@@ -166,14 +165,11 @@ This aligns with the intended design artifacts: shared daemon ensure, caller-sid
 
 Do not start by deleting surfaces. Instead, reduce drift in small, behavior-preserving steps:
 
-1. Add missing `CrontickClient` methods for existing HTTP/MCP capabilities: `cancelRun()`, `statsSummary()`, `statsJob()`, and a typed no-start `doctor()` helper.
-2. Add per-call normalization options or an import helper so client callers can match CLI `--file` prompt-file resolution.
-3. Refactor MCP tools/resources to construct a `CrontickClient` and call client methods. Keep MCP schemas/descriptions/redaction intact.
-4. Extract shared doctor checks into a module used by CLI and MCP; keep `doctor` no-start.
-5. Refactor CLI `new` so command code only parses CLI syntax and delegates normalization/validation to the client/core. Preserve current output and error text where tests depend on it.
-6. Reuse shared daemon start/probe helpers from `src\daemon\ensure.ts` for explicit CLI/MCP restart paths, while keeping `daemon status`, `doctor`, and help/version no-start.
-7. Add/keep parity tests for CLI/client/MCP create/update/import, prompt-file sugar, schedule preview/validation, daemon start policy, and error messages.
-8. Update public docs after code refactors so the documented architecture says: CLI and MCP are adapters over the client/core; HTTP is internal.
+1. Add client methods first for any new public capability.
+2. Add shared core validation/builders before adding CLI flags or MCP schemas.
+3. Keep MCP tools/resources on `CrontickClient`; do not add raw daemon endpoint calls.
+4. Keep CLI commands as argument parsing, local file/stdout UX, and client calls.
+5. Extend the surface drift test whenever a capability is intentionally added or removed.
 
 ## Public release implications
 
@@ -190,7 +186,7 @@ Document as internal or advanced unless intentionally committed to semver:
 
 - Loopback HTTP endpoint paths and response shapes.
 - pid/port file locations and daemon lock files.
-- Low-level path helpers and daemon ensure helpers exported from `src\index.ts` (`src\index.ts:3-18`). If these remain exported for v1, either document them as stable advanced APIs or narrow the export surface before v1.
+- Low-level path helpers and daemon ensure helpers are internal module imports; the package root exports the client/core surface, schemas/types, and schema generation helper.
 
 The public-release message should be: use the CLI if you are a human or shell script, use MCP if you are an AI host/agent, and use `createClient()` if you are writing Node/TypeScript. Do not integrate by scraping daemon port files or calling the daemon HTTP API directly.
 

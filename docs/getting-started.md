@@ -60,7 +60,9 @@ engine arguments.
 
 ```sh
 crontick run-now hello-every-5m
+crontick runs list --job hello-every-5m --limit 5
 crontick logs <run-id> --tail 50
+crontick stats job hello-every-5m
 crontick dashboard
 ```
 

@@ -76,7 +76,7 @@ function waitForPortFile(dir: string, maxMs = 30_000, getStderr?: () => string):
   });
 }
 
-// ── Basic CLI tests (no daemon needed) ───────────────────────────────────────
+// â”€â”€ Basic CLI tests (no daemon needed) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('CLI binary (dist/cli/index.js)', () => {
   it('--version prints a non-empty version string', () => {
@@ -96,7 +96,7 @@ describe('CLI binary (dist/cli/index.js)', () => {
     const tmp = makeTmpDir();
     const result = cli(['doctor'], { CRONTICK_HOME: tmp });
     rmSync(tmp, { recursive: true, force: true });
-    // doctor always exits with a code — 0 = all ok, 1 = some checks failed
+    // doctor always exits with a code â€” 0 = all ok, 1 = some checks failed
     expect([0, 1]).toContain(result.status);
   });
 
@@ -179,7 +179,7 @@ describe('CLI binary (dist/cli/index.js)', () => {
   });
 });
 
-// ── End-to-end tests with live daemon ────────────────────────────────────────
+// â”€â”€ End-to-end tests with live daemon â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('CLI e2e with daemon', () => {
   let dir: string;
@@ -354,6 +354,13 @@ describe('CLI e2e with daemon', () => {
     expect(data.id).toBe('e2e-job');
   });
 
+  it('crontick update changes a job through the client/core path', () => {
+    const r = cli(['--json', 'update', 'e2e-job', '--desc', 'updated from cli'], env());
+    expect(r.status, r.stderr).toBe(0);
+    const data = JSON.parse(r.stdout);
+    expect(data.description).toBe('updated from cli');
+  });
+
   it('crontick disable disables the job', () => {
     const r = cli(['--json', 'disable', 'e2e-job'], env());
     expect(r.status).toBe(0);
@@ -368,11 +375,23 @@ describe('CLI e2e with daemon', () => {
     expect(data.enabled).toBe(true);
   });
 
-  it('crontick run-now triggers a run', () => {
+  it('crontick run-now triggers a run and run commands inspect it', () => {
     const r = cli(['--json', 'run-now', 'e2e-job'], env());
     expect(r.status).toBe(0);
-    const data = JSON.parse(r.stdout);
+    const data = JSON.parse(r.stdout) as { runId: string };
     expect(typeof data.runId).toBe('string');
+
+    const getRun = cli(['--json', 'runs', 'get', data.runId], env());
+    expect(getRun.status, getRun.stderr).toBe(0);
+    expect(JSON.parse(getRun.stdout).id).toBe(data.runId);
+
+    const listRuns = cli(['--json', 'runs', 'list', '--job', 'e2e-job', '--limit', '5'], env());
+    expect(listRuns.status, listRuns.stderr).toBe(0);
+    expect(Array.isArray(JSON.parse(listRuns.stdout))).toBe(true);
+
+    const cancel = cli(['--json', 'cancel-run', data.runId], env());
+    expect(cancel.status, cancel.stderr).toBe(0);
+    expect(JSON.parse(cancel.stdout)).toMatchObject({ ok: true });
   });
 
   it('crontick logs works for a completed run', async () => {
@@ -388,15 +407,15 @@ describe('CLI e2e with daemon', () => {
     expect([0, 1]).toContain(r.status); // may have no output if exec exits immediately
   }, 8000);
 
-  it('crontick logs --json outputs a JSON array', async () => {
+  it('crontick logs --json outputs a unified log result', async () => {
     const runR = cli(['--json', 'run-now', 'e2e-job'], env());
     const runData = JSON.parse(runR.stdout) as { runId: string };
     const runId = runData.runId;
     await new Promise((r) => setTimeout(r, 2000));
-    const r = cli(['--json', 'logs', runId], env());
+    const r = cli(['--json', 'logs', runId, '--lines', '5'], env());
     expect(r.status).toBe(0);
     const data = JSON.parse(r.stdout);
-    expect(Array.isArray(data)).toBe(true);
+    expect(data).toMatchObject({ runId, lines: expect.any(Array) });
   }, 8000);
 
   it('crontick delete removes the job', () => {
@@ -413,6 +432,28 @@ describe('CLI e2e with daemon', () => {
     expect(Array.isArray(data.jobs)).toBe(true);
   });
 
+  it('crontick schedule and stats commands expose client capabilities', () => {
+    const scheduleJson = JSON.stringify({ kind: 'cron', cron: '0 9 * * *' });
+    const validate = cli(['--json', 'schedule', 'validate', scheduleJson], env());
+    expect(validate.status, validate.stderr).toBe(0);
+    expect(JSON.parse(validate.stdout)).toMatchObject({ ok: true });
+
+    const preview = cli(['--json', 'schedule', 'preview', scheduleJson, '--lines', '2'], env());
+    expect(preview.status, preview.stderr).toBe(0);
+    expect(JSON.parse(preview.stdout).next).toHaveLength(2);
+
+    const create = cli(['--json', 'new', 'stats-cli-job', '--cron', '0 1 * * *', '--exec', `${process.execPath} -e process.exit(0)`], env());
+    expect(create.status, create.stderr).toBe(0);
+
+    const summary = cli(['--json', 'stats', 'summary'], env());
+    expect(summary.status, summary.stderr).toBe(0);
+    expect(typeof JSON.parse(summary.stdout).totalJobs).toBe('number');
+
+    const job = cli(['--json', 'stats', 'job', 'stats-cli-job'], env());
+    expect(job.status, job.stderr).toBe(0);
+    expect(JSON.parse(job.stdout).jobId).toBe('stats-cli-job');
+  });
+
   it('crontick daemon status shows daemon info', () => {
     const r = cli(['--json', 'daemon', 'status'], env());
     expect(r.status).toBe(0);
@@ -427,7 +468,7 @@ describe('CLI e2e with daemon', () => {
     expect(r.stdout).toContain('daemon reachable');
   });
 
-  // ── --json flag behaviour ─────────────────────────────────────────────────
+  // â”€â”€ --json flag behaviour â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   it('list --json output parses as JSON array', () => {
     // Create a fresh job so the list is non-empty
@@ -443,7 +484,7 @@ describe('CLI e2e with daemon', () => {
     expect(r.status).toBe(0);
     const trimmed = r.stdout.trim();
     const first = trimmed[0];
-    // Either empty list message or a table header — neither starts with [ or {
+    // Either empty list message or a table header â€” neither starts with [ or {
     expect(first === '[' || first === '{').toBe(false);
   });
 });

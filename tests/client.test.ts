@@ -63,7 +63,7 @@ const server = http.createServer(async (req, res) => {
     const port = server.address() && typeof server.address() === 'object' ? server.address().port : 0;
     return json(res, 200, { ok: true, product: 'crontick', pid: process.pid, port });
   }
-  if (req.method === 'GET' && url.pathname === '/api/daemon/status') return json(res, 200, { pid: process.pid });
+  if (req.method === 'GET' && url.pathname === '/api/daemon/status') return json(res, 200, { pid: process.pid, version: 'test', uptimeSec: 1, jobs: jobs.size });
   if (req.method === 'POST' && url.pathname === '/api/daemon/reload') return json(res, 200, { ok: true });
   if (req.method === 'GET' && url.pathname === '/api/jobs') return json(res, 200, [...jobs.values()]);
   if (req.method === 'POST' && url.pathname === '/api/jobs') {
@@ -108,9 +108,17 @@ const server = http.createServer(async (req, res) => {
   const runMatch = url.pathname.match(/^\\/api\\/runs\\/([^/]+)(\\/.*)?$/);
   if (runMatch) {
     const runId = decodeURIComponent(runMatch[1]);
-    if (runMatch[2] === '/logs') return json(res, 200, [{ stream: 'stdout', ts: Date.now(), data: 'ok\\n' }]);
+    if (runMatch[2] === '/cancel' && req.method === 'POST') {
+      const run = runs.get(runId) ?? { id: runId, status: 'queued' };
+      runs.set(runId, { ...run, status: 'canceled' });
+      return json(res, 200, { ok: true, canceled: true });
+    }
+    if (runMatch[2] === '/logs') return json(res, 200, [{ runId, stream: 'stdout', ts: Date.now(), data: 'ok\\n' }]);
     return json(res, 200, runs.get(runId) ?? { id: runId, status: 'queued' });
   }
+  if (req.method === 'GET' && url.pathname === '/api/stats/summary') return json(res, 200, { totalJobs: jobs.size, enabledJobs: [...jobs.values()].filter(j => j.enabled !== false).length, totalRuns: runs.size, succeeded: 0, failed: 0, avgDurationMs: null });
+  const statsMatch = url.pathname.match(/^\\/api\\/stats\\/jobs\\/([^/]+)$/);
+  if (req.method === 'GET' && statsMatch) return json(res, 200, { jobId: decodeURIComponent(statsMatch[1]), totalRuns: 0, succeeded: 0, failed: 0, lastStatus: null, lastRunAt: null });
   if (req.method === 'GET' && url.pathname === '/api/export') return json(res, 200, { jobs: [...jobs.values()] });
   if (req.method === 'POST' && url.pathname === '/api/import') {
     const body = await readBody(req);
@@ -222,7 +230,10 @@ describe('CrontickClient', () => {
     expect(run.runId).toMatch(/^run-/);
     await expect(client.getRun(run.runId)).resolves.toMatchObject({ id: run.runId });
     await expect(client.listRuns({ jobId: testJob.id })).resolves.toEqual(expect.any(Array));
-    await expect(client.getLogs(run.runId)).resolves.toEqual(expect.any(Array));
+    await expect(client.cancelRun(run.runId)).resolves.toMatchObject({ ok: true, canceled: true });
+    await expect(client.getLogs(run.runId)).resolves.toMatchObject({ runId: run.runId, lines: expect.any(Array) });
+    await expect(client.statsSummary()).resolves.toMatchObject({ totalJobs: expect.any(Number) });
+    await expect(client.statsJob(testJob.id)).resolves.toMatchObject({ jobId: testJob.id });
     await expect(client.exportJobs()).resolves.toMatchObject({ jobs: expect.any(Array) });
     await expect(client.importJobs([{ ...testJob, id: 'imported-client-job' }])).resolves.toMatchObject({ imported: 1 });
     await expect(client.validateSchedule(testJob.schedule)).resolves.toMatchObject({ ok: true });
@@ -230,6 +241,25 @@ describe('CrontickClient', () => {
     await expect(client.daemonReload()).resolves.toMatchObject({ ok: true });
     await expect(client.dashboardUrl()).resolves.toMatch(/\/dashboard$/);
     await expect(client.deleteJob(testJob.id)).resolves.toMatchObject({ ok: true });
+  });
+
+
+  it('exposes doctor and daemon lifecycle helpers', async () => {
+    const home = makeHome();
+    const client = createClient({ daemonScript: writeFakeApiDaemon(home), startupTimeoutMs: 5_000 });
+
+    const started = await client.daemonStart();
+    expect(started.ok).toBe(true);
+    expect(started.port).toBeGreaterThan(0);
+    await expect(client.daemonStatus()).resolves.toMatchObject({ pid: expect.any(Number) });
+
+    const doctor = await client.doctor({ checkMcpHelp: false });
+    expect(Array.isArray(doctor.checks)).toBe(true);
+    expect(doctor.checks.some((check) => check.name === 'daemon reachable')).toBe(true);
+
+    const stopped = await client.daemonStop();
+    expect(stopped.ok).toBe(true);
+    expect(stopped.pid).toBeGreaterThan(0);
   });
 
   it('normalizes prompt jobs and promptFile before posting', async () => {

@@ -12,7 +12,7 @@ running local scheduled jobs on Windows, macOS, and Linux.
 - `crontick` — CLI for jobs, daemon control, logs, doctor, dashboard, and MCP launch
 - `crontick-daemon` — loopback-only local scheduler + runner + HTTP API
 - `crontick-mcp` — stdio MCP server with job, run, schedule, stats, and doctor tools
-- `createClient()` — programmatic client that shares daemon ensure and job validation with the CLI
+- `createClient()` — programmatic client/core used by the CLI, MCP server, tests, and embedders
 - `plugin/install.mjs` — Copilot plugin installer that installs the package and bundled skill
 
 ## v1 scope
@@ -29,6 +29,8 @@ npm install -g crontick
 crontick new hello --cron "*/5 * * * *" --exec "echo hello"
 crontick new prompt-report --cron "0 9 * * *" --prompt "Summarize repo status" -- --silent
 crontick list
+crontick runs list --limit 10
+crontick stats summary
 crontick mcp --help
 ```
 
@@ -42,6 +44,10 @@ passed through verbatim to the prompt engine, for example:
 ```sh
 crontick new daily-summary --cron "0 9 * * *" --prompt-file .\summary.txt --engine agency --reuse-session -- --add-dir Q:\Repos\crontick --allow-all-tools
 ```
+
+The public client is the source of truth for behavior. CLI commands and MCP tools are thin adapters
+over the same methods, including create/update, run inspection, logs, schedule validation/preview,
+stats, doctor, and daemon lifecycle helpers.
 
 ## Security model
 

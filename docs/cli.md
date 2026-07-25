@@ -12,29 +12,32 @@ Usage: crontick [options] [command]
 A standalone cron daemon, CLI, and MCP server for local scheduled jobs.
 
 Options:
-  -V, --version                       output the version number
-  --json                              Output as JSON
-  -h, --help                          display help for command
+  -V, --version                          output the version number
+  --json                                 Output as JSON
+  -h, --help                             display help for command
 
 Commands:
-  new [options] <id> [engineArgs...]  Create a new job
-  list                                List all jobs
-  get <id>                            Get a job by ID
-  enable <id>                         Enable a job
-  disable <id>                        Disable a job
-  delete <id>                         Delete a job
-  run-now <id>                        Trigger an immediate run of a job
-  logs [options] <runId>              Get logs for a run
-  export [options]                    Export all jobs
-  import <file>                       Import jobs from a JSON file
-  doctor                              Check system health
-  daemon                              Manage the crontick daemon
-  uninstall [options]                 Optionally delete all crontick data
-  dashboard [options]                 Open the crontick dashboard in a browser
-  mcp [options]                       Start the crontick MCP server on stdio
-                                      (for use with Claude Desktop, Copilot,
-                                      Cursor, etc.)
-  help [command]                      display help for command
+  new [options] <id> [engineArgs...]     Create a new job
+  update [options] <id> [engineArgs...]  Update an existing job
+  list                                   List all jobs
+  get <id>                               Get a job by ID
+  enable <id>                            Enable a job
+  disable <id>                           Disable a job
+  delete <id>                            Delete a job
+  run-now <id>                           Trigger an immediate run of a job
+  cancel-run <runId>                     Cancel an in-progress run
+  runs                                   Inspect run history
+  logs [options] <runId>                 Get logs for a run
+  schedule                               Validate and preview schedules
+  stats                                  Show job/run statistics
+  export [options]                       Export all jobs
+  import <file>                          Import jobs from a JSON file
+  doctor                                 Check system health
+  daemon                                 Manage the crontick daemon
+  uninstall [options]                    Optionally delete all crontick data
+  dashboard [options]                    Open the crontick dashboard in a browser
+  mcp [options]                          Start the crontick MCP server on stdio (for use with Claude Desktop, Copilot, Cursor, etc.)
+  help [command]                         display help for command
 ```
 
 ## new
@@ -57,7 +60,7 @@ Options:
   --session-id <id>     Reuse this prompt engine session every run
   --reuse-session       Capture the first successful run session id and reuse
                         it
-  --file <path>         Load full job from JSON file
+  --file <path>         Load job JSON from a file
   --shell <shell>       Shell: auto|bash|pwsh|cmd (default: "auto")
   --env-file <path>     Load extra environment variables from a .env file
   --timeout <sec>       Timeout in seconds
@@ -65,6 +68,39 @@ Options:
                         "skip")
   --retry <max>         Retry count
   --desc <description>  Job description
+  -h, --help            display help for command
+```
+
+## update
+
+```text
+Usage: crontick update [options] <id> [engineArgs...]
+
+Update an existing job
+
+Options:
+  --cron <expr>         Cron expression (e.g. "0 9 * * *")
+  --every <sec>         Interval in seconds
+  --at <iso>            One-shot run-at ISO-8601 time
+  --tz <tz>             Timezone for cron schedule
+  --script <body>       Inline script body
+  --exec <cmd>          Command to exec (use -- for args)
+  --prompt <text>       Prompt text for a prompt action
+  --prompt-file <path>  UTF-8 .txt file to read into the prompt
+  --engine <engine>     Prompt engine: copilot|agency (default: copilot)
+  --session-id <id>     Reuse this prompt engine session every run
+  --reuse-session       Capture the first successful run session id and reuse
+                        it
+  --file <path>         Load job JSON from a file
+  --shell <shell>       Shell: auto|bash|pwsh|cmd (default: "auto")
+  --env-file <path>     Load extra environment variables from a .env file
+  --timeout <sec>       Timeout in seconds
+  --overlap <policy>    Overlap policy: skip|queue|cancel-previous (default:
+                        "skip")
+  --retry <max>         Retry count
+  --desc <description>  Job description
+  --enable              Enable the job
+  --disable             Disable the job
   -h, --help            display help for command
 ```
 
@@ -134,6 +170,58 @@ Options:
   -h, --help  display help for command
 ```
 
+## cancel-run
+
+```text
+Usage: crontick cancel-run [options] <runId>
+
+Cancel an in-progress run
+
+Options:
+  -h, --help  display help for command
+```
+
+## runs
+
+```text
+Usage: crontick runs [options] [command]
+
+Inspect run history
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  list [options]  List recent runs
+  get <runId>     Get a run by ID
+  help [command]  display help for command
+```
+
+## runs list
+
+```text
+Usage: crontick runs list [options]
+
+List recent runs
+
+Options:
+  --job <id>    Filter by job ID
+  --limit <n>   Maximum runs to return
+  --since <ms>  Only runs since epoch milliseconds
+  -h, --help    display help for command
+```
+
+## runs get
+
+```text
+Usage: crontick runs get [options] <runId>
+
+Get a run by ID
+
+Options:
+  -h, --help  display help for command
+```
+
 ## logs
 
 ```text
@@ -142,8 +230,87 @@ Usage: crontick logs [options] <runId>
 Get logs for a run
 
 Options:
-  --follow    Follow (SSE stream) — not implemented in CLI yet; use --tail
-  --tail <n>  Show last N lines
+  --tail <n>   Show last N lines
+  --lines <n>  Show last N lines
+  -h, --help   display help for command
+```
+
+## schedule
+
+```text
+Usage: crontick schedule [options] [command]
+
+Validate and preview schedules
+
+Options:
+  -h, --help                        display help for command
+
+Commands:
+  validate <scheduleJson>           Validate a schedule JSON object
+  preview [options] <scheduleJson>  Preview upcoming fire times for a schedule
+                                    JSON object
+  help [command]                    display help for command
+```
+
+## schedule validate
+
+```text
+Usage: crontick schedule validate [options] <scheduleJson>
+
+Validate a schedule JSON object
+
+Options:
+  -h, --help  display help for command
+```
+
+## schedule preview
+
+```text
+Usage: crontick schedule preview [options] <scheduleJson>
+
+Preview upcoming fire times for a schedule JSON object
+
+Options:
+  -n, --lines <n>  Number of fire times to return
+  --tz <tz>        Timezone override
+  -h, --help       display help for command
+```
+
+## stats
+
+```text
+Usage: crontick stats [options] [command]
+
+Show job/run statistics
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  summary         Show aggregate statistics
+  job <id>        Show statistics for one job
+  help [command]  display help for command
+```
+
+## stats summary
+
+```text
+Usage: crontick stats summary [options]
+
+Show aggregate statistics
+
+Options:
+  -h, --help  display help for command
+```
+
+## stats job
+
+```text
+Usage: crontick stats job [options] <id>
+
+Show statistics for one job
+
+Options:
   -h, --help  display help for command
 ```
 
@@ -192,7 +359,7 @@ Options:
   -h, --help       display help for command
 
 Commands:
-  start [options]  Start the daemon (detached by default)
+  start [options]  Start the daemon
   stop             Stop the daemon
   status           Show daemon status
   reload           Reload jobs from disk
@@ -205,7 +372,7 @@ Commands:
 ```text
 Usage: crontick daemon start [options]
 
-Start the daemon (detached by default)
+Start the daemon
 
 Options:
   --foreground  Run in foreground (blocking)

@@ -237,8 +237,8 @@ describe('ensureDaemon', () => {
     writeFileSync(
       launcher,
       [
-        `import { ensureDaemon } from ${JSON.stringify(ensureUrl)};`,
-        `await ensureDaemon({ daemonScript: ${JSON.stringify(script)}, startupTimeoutMs: 5000 });`,
+        `import { createClient } from ${JSON.stringify(ensureUrl)};`,
+        `await createClient({ daemonScript: ${JSON.stringify(script)}, startupTimeoutMs: 5000 }).ensure();`,
       ].join('\n'),
       'utf-8',
     );
