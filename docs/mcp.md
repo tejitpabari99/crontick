@@ -63,6 +63,8 @@ is resolved and read by the shared client/core before the normalized job is pers
 
 ### Daemon and admin
 
+- `crontick_daemon_start`
+- `crontick_daemon_stop`
 - `crontick_daemon_status`
 - `crontick_daemon_reload`
 - `crontick_daemon_restart`

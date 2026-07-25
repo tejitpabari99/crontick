@@ -6,10 +6,26 @@ import { randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { CrontickClient } from '../src/client.js';
-import { SURFACE_CAPABILITIES } from '../src/surface.js';
+import { MCP_TOOLS, SURFACE_CAPABILITIES } from '../src/surface.js';
 
 const CLI = resolve('dist/cli/index.js');
 const MCP = resolve('dist/mcp/index.js');
+const NON_PARITY_CLIENT_METHODS = new Set([
+  'ensure',
+  'health',
+  'createJobFromCliOptions',
+  'jobJsonSchema',
+  'getConfig',
+  'drainNotices',
+  'isVerbose',
+  'request',
+  'baseUrl',
+  'normalizeOptions',
+  'shouldStartDaemon',
+  'effectiveEnv',
+  'fetchRequest',
+  'daemonRequestError',
+]);
 
 function scratchHome(): string {
   const home = resolve('.crontick', 'surface-drift', randomUUID());
@@ -25,6 +41,21 @@ describe('surface capability drift', () => {
         typeof CrontickClient.prototype[capability.clientMethod as keyof CrontickClient],
         `${capability.capability} missing client method ${capability.clientMethod}`,
       ).toBe('function');
+    }
+  });
+
+  it('surface table accounts for every client prototype method', () => {
+    const expected = new Set([
+      ...SURFACE_CAPABILITIES.map((capability) => capability.clientMethod),
+      ...NON_PARITY_CLIENT_METHODS,
+    ]);
+    const actual = Object.getOwnPropertyNames(CrontickClient.prototype)
+      .filter((name) => name !== 'constructor')
+      .filter((name) => typeof CrontickClient.prototype[name as keyof CrontickClient] === 'function')
+      .filter((name) => !name.startsWith('_'));
+
+    for (const method of actual) {
+      expect(expected.has(method), `client method ${method} is missing from SURFACE_CAPABILITIES or NON_PARITY_CLIENT_METHODS`).toBe(true);
     }
   });
 
@@ -79,6 +110,7 @@ describe('surface capability drift', () => {
       await client.connect(transport);
       const listed = await client.listTools();
       const names = new Set(listed.tools.map((tool) => tool.name));
+      expect([...names].filter((name) => name.startsWith('crontick_')).sort()).toEqual([...MCP_TOOLS].sort());
       for (const capability of SURFACE_CAPABILITIES) {
         expect(names.has(capability.mcpTool), `${capability.capability} missing MCP tool ${capability.mcpTool}`).toBe(true);
       }

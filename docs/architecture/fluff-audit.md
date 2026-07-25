@@ -1,7 +1,7 @@
 # Fluff audit
 
 Date: 2026-07-25
-Branch: users/tejitpabari/prompt-cron-daemon-startup
+Branch: users/tejitpabari/prompt-cron-daemon-autostart
 
 Owner intent: start with strong basics; less surface means less to test. Architecture constraint: one core with thin CLI/MCP/client shims, no drift between surfaces.
 
@@ -17,9 +17,9 @@ Owner intent: start with strong basics; less surface means less to test. Archite
 
 | Verdict | Risk | Candidate | Evidence | Justification |
 |---|---|---|---|---|
-| COLLAPSE | Low | Duplicate CLI log count flags | `src\cli\index.ts:361-364` exposes both `--tail` and `--lines` for the same "last N lines" behavior. | Keep the friendlier log term `--tail`; delete `--lines` outright to avoid two names for one option. |
-| COLLAPSE | Low | Schedule preview count flag name | `src\cli\index.ts:380-383` calls the number of previewed fire times `--lines`, while the client/MCP model calls it `n`. | `--limit` is clearer for a count of timestamps; delete the misleading `--lines` CLI flag. |
-| REMOVE | Medium | CLI/client uninstall/purge surface | `src\cli\index.ts:507-532`, `src\client.ts:322-324`, and `src\uninstall.ts:18-55` implement an extra destructive admin flow. | Not part of the core scheduler value proposition; users can remove package/data with standard OS/package-manager commands. Keeping it adds tests and docs for rare behavior. |
+| COLLAPSE | Low | Duplicate CLI log count flags | Done: logs now expose one `--tail` count flag. | Keep one user-facing name for one behavior. |
+| COLLAPSE | Low | Schedule preview count flag name | Done: schedule preview now exposes `--limit` for preview count. | Keep the CLI name aligned with count semantics. |
+| REMOVE | Medium | CLI/client destructive purge surface | Done: users can remove package/data with standard OS/package-manager commands. | Not part of the core scheduler value proposition. |
 | REMOVE | Low | Duplicate MCP read resources for jobs/runs/config | `src\mcp\index.ts:509-656` exposes `crontick://config/effective`, `crontick://jobs`, job/run/log templates, all duplicating tools. | MCP tools already cover list/get/log/config operations through the client; these resources are MCP-only drift-prone convenience surface. |
 | KEEP | Low | MCP `crontick://schemas/job` resource | `src\mcp\index.ts:659-674` serves the shared job JSON schema through `client.jobJsonSchema()`. | Per-job JSON schema generation is explicitly core value and this is the AI-friendly way to inspect the authoritative shape. |
 | REMOVE | Low | MCP prompt templates | `src\mcp\index.ts:679-802` adds `create-scheduled-script` and `investigate-failed-run`. | They are workflow prose, not scheduler primitives; `create-scheduled-script` is script-first while the product is prompt-first, and both duplicate existing tools. |

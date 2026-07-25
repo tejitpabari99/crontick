@@ -24,6 +24,8 @@ export const SURFACE_CAPABILITIES = [
   { capability: 'stats-job', clientMethod: 'statsJob', cliCommand: ['stats', 'job'], mcpTool: 'crontick_stats_job' },
   { capability: 'export', clientMethod: 'exportJobs', cliCommand: ['export'], mcpTool: 'crontick_export' },
   { capability: 'import', clientMethod: 'importJobs', cliCommand: ['import'], mcpTool: 'crontick_import' },
+  { capability: 'daemon-start', clientMethod: 'daemonStart', cliCommand: ['daemon', 'start'], mcpTool: 'crontick_daemon_start' },
+  { capability: 'daemon-stop', clientMethod: 'daemonStop', cliCommand: ['daemon', 'stop'], mcpTool: 'crontick_daemon_stop' },
   { capability: 'daemon-status', clientMethod: 'daemonStatus', cliCommand: ['daemon', 'status'], mcpTool: 'crontick_daemon_status' },
   { capability: 'daemon-reload', clientMethod: 'daemonReload', cliCommand: ['daemon', 'reload'], mcpTool: 'crontick_daemon_reload' },
   { capability: 'daemon-restart', clientMethod: 'daemonRestart', cliCommand: ['daemon', 'restart'], mcpTool: 'crontick_daemon_restart' },

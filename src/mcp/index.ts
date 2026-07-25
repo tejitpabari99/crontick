@@ -305,6 +305,26 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
   // ── Daemon ─────────────────────────────────────────────────────────────────
 
   server.registerTool(
+    'crontick_daemon_start',
+    {
+      description:
+        'Start the local crontick daemon. Returns the daemon port and whether this call started a new process.',
+      inputSchema: withVerbose({}),
+    },
+    async (args) => toolWrap(args, (client) => client.daemonStart()),
+  );
+
+  server.registerTool(
+    'crontick_daemon_stop',
+    {
+      description:
+        'Stop the local crontick daemon. Running jobs will be interrupted. Confirm with the user before calling.',
+      inputSchema: withVerbose({}),
+    },
+    async (args) => toolWrap(args, (client) => client.daemonStop(), false),
+  );
+
+  server.registerTool(
     'crontick_daemon_status',
     {
       description:
