@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
 import { Store } from '../src/daemon/store.js';
 import type { Job } from '../src/schemas/job.js';
 
@@ -326,6 +327,75 @@ describe('Store', () => {
       expect(smallCapStore.getRun(first.id)).toBeUndefined();
       expect(smallCapStore.getRun(second.id)).toBeTruthy();
       expect(smallCapStore.getRun(third.id)).toBeTruthy();
+    } finally {
+      smallCapStore.close();
+    }
+  });
+
+  // node:sqlite rejects a single statement bound with more than 32766
+  // parameters (SQLITE_LIMIT_VARIABLE_NUMBER). A prior unbatched
+  // implementation built one "DELETE ... WHERE id IN (?,?,...)" per eviction
+  // with a placeholder per row, which crashed the startup backfill on any
+  // job whose backlog exceeded that count with "too many SQL variables" —
+  // exactly the databases retention exists to fix, so the daemon could never
+  // start again. This proves the batched eviction actually clears a backlog
+  // well past that threshold, not a scaled-down proxy for it.
+  it('evicts a backlog of far more than 32766 rows for a single job without hitting the SQLite bound-parameter limit', () => {
+    const dbPath = join(dir, 'runs.db');
+    // Close the fixture Store first so schema migrations are already applied
+    // but there is only one writer while we bulk-load raw rows below.
+    store.close();
+
+    const TOTAL_ROWS = 40_000;
+    const CAP = 100;
+    // Bulk insert directly via a raw connection, inside one transaction, so
+    // seeding is fast and bypasses insertRun's own per-row pruneRunsForJob()
+    // call (which would both be slow at this volume and self-defeating,
+    // since it would keep truncating the table as we seed it).
+    const raw = new DatabaseSync(dbPath);
+    raw.exec('BEGIN;');
+    const insert = raw.prepare('INSERT INTO runs (id, job_id, started_at, status) VALUES (?, ?, ?, ?)');
+    for (let i = 0; i < TOTAL_ROWS; i++) {
+      insert.run(`bulk-${i}`, 'job-bulk', i, 'success');
+    }
+    raw.exec('COMMIT;');
+    raw.close();
+
+    const smallCapStore = new Store(dbPath, join(dir, 'jobs'), undefined, CAP);
+    smallCapStore.open();
+    try {
+      const evicted = smallCapStore.pruneAllJobsRunHistory();
+      expect(evicted).toBe(TOTAL_ROWS - CAP);
+      expect(smallCapStore.listRuns({ jobId: 'job-bulk' })).toHaveLength(CAP);
+    } finally {
+      smallCapStore.close();
+    }
+  }, 20_000);
+
+  // Retention is best-effort maintenance and must never break run recording:
+  // a prune failure (disk full, corrupted rows, etc.) must be swallowed so
+  // the run insert still succeeds ("run recorded, prune deferred").
+  it('a failing prune does not fail the run insert', () => {
+    const smallCapStore = new Store(join(dir, 'runs.db'), join(dir, 'jobs'), undefined, 1);
+    smallCapStore.open();
+    try {
+      const first = smallCapStore.insertRun('job-prune-fail');
+      smallCapStore.updateRun(first.id, { status: 'success' });
+
+      // Corrupt the schema via a second raw connection so the next prune's
+      // "DELETE FROM run_logs" throws, without touching the runs table (so
+      // the run INSERT performed by insertRun itself still succeeds).
+      const raw = new DatabaseSync(join(dir, 'runs.db'));
+      raw.exec('DROP TABLE run_logs;');
+      raw.close();
+
+      // This insert pushes job-prune-fail's terminal-run count to 2, over
+      // cap=1, triggering an eviction attempt that throws on the now-missing
+      // run_logs table. insertRun must swallow that and still return the run.
+      const second = smallCapStore.insertRun('job-prune-fail');
+      expect(second.id).toBeTruthy();
+      expect(smallCapStore.getRun(second.id)?.status).toBe('queued');
+      expect(smallCapStore.getRun(first.id)).toBeTruthy(); // eviction never happened; run recorded despite failed prune
     } finally {
       smallCapStore.close();
     }

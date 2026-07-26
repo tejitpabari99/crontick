@@ -119,13 +119,17 @@ describe('Integration: live Scheduler auto-fires ticks into runs (no manual /run
 
     // Poll-until-condition rather than a fixed sleep: wait for two
     // independent terminal runs to prove the scheduler fired more than
-    // once on its own timer, not merely a single coincidental run.
-    const runs = await pollForTerminalRunCount(port, jobId, 2, 6000);
+    // once on its own timer, not merely a single coincidental run. The
+    // outer deadline is generous (well beyond the ~2-3s common case) so a
+    // loaded CI runner doesn't flake — pollForTerminalRunCount still
+    // returns as soon as the condition is met, so the common case isn't
+    // slowed down.
+    const runs = await pollForTerminalRunCount(port, jobId, 2, 20_000);
     expect(runs.length).toBeGreaterThanOrEqual(2);
     for (const run of runs) {
       expect(run.status).toBe('success');
     }
-  }, 12_000);
+  }, 25_000);
 
   it('a cron job (every-minute-equivalent short cron) auto-fires through the live daemon Scheduler', async () => {
     const jobId = 'autofire-cron-tick';
@@ -141,8 +145,8 @@ describe('Integration: live Scheduler auto-fires ticks into runs (no manual /run
     });
     expect(created.status).toBe(201);
 
-    const runs = await pollForTerminalRunCount(port, jobId, 1, 6000);
+    const runs = await pollForTerminalRunCount(port, jobId, 1, 20_000);
     expect(runs.length).toBeGreaterThanOrEqual(1);
     expect(runs[0].status).toBe('success');
-  }, 12_000);
+  }, 25_000);
 });

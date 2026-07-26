@@ -16,7 +16,6 @@ import {
   ExecActionSchema,
   JobSchema,
   PromptActionBaseSchema,
-  RetrySchema,
   ScheduleSchema,
   ScriptActionSchema,
   type Job,
@@ -41,17 +40,71 @@ export const ActionInputSchema = z.discriminatedUnion('kind', [
   PromptActionInputSchema,
 ]);
 
+/**
+ * Script action variant used only inside JobPatchInputSchema: `shell` has no
+ * default here (unlike ScriptActionSchema, used for create). A patch's action
+ * is validated as a whole object, so if `shell` defaulted to 'auto' whenever
+ * omitted, an update that only changes `script` would zod-fill 'auto' and
+ * normalizeJobPatch could never tell that apart from an explicit choice —
+ * silently resetting a customized shell. Leaving it optional/undefined here
+ * lets normalizeJobPatch merge it in from the existing action instead.
+ */
+export const ScriptActionPatchSchema = ScriptActionSchema.extend({
+  shell: z.enum(['auto', 'bash', 'pwsh', 'cmd']).optional(),
+});
+
+/**
+ * Exec action variant used only inside JobPatchInputSchema: `args` has no
+ * default here (unlike ExecActionSchema, used for create), for the same
+ * reason as ScriptActionPatchSchema's `shell` — otherwise a patch that only
+ * changes e.g. `envFile` would zod-fill `args` to `[]` and silently wipe out
+ * existing exec arguments.
+ */
+export const ExecActionPatchSchema = ExecActionSchema.extend({
+  args: z.array(z.string()).optional(),
+});
+
+/**
+ * Prompt action variant used only inside JobPatchInputSchema: `args` and
+ * `reuseSession` have no default here (unlike PromptActionInputSchema, used
+ * for create), for the same reason as above — a patch that only changes
+ * `prompt` would otherwise zod-fill `args` to `[]` and `reuseSession` to
+ * `false`, silently resetting both on every unrelated prompt update.
+ */
+export const PromptActionPatchSchema = PromptActionInputSchema.extend({
+  args: z.array(z.string()).optional(),
+  reuseSession: z.boolean().optional(),
+});
+
+export const ActionPatchInputSchema = z.discriminatedUnion('kind', [
+  ScriptActionPatchSchema,
+  ExecActionPatchSchema,
+  PromptActionPatchSchema,
+]);
+
 export const JobCreateInputSchema = JobSchema.omit({ action: true }).extend({
   action: ActionInputSchema,
+});
+
+/**
+ * Patch-only retry shape: unlike RetrySchema (used for create), both fields
+ * are plain optional with no default — a partial retry patch (e.g. only
+ * `max`) would otherwise zod-fill `backoffSec` back to 30 and silently reset
+ * a customized backoff. normalizeJobPatch merges this onto the existing
+ * retry value field-by-field, the same way it merges action patches.
+ */
+export const RetryPatchSchema = z.object({
+  max: z.number().int().min(0).optional(),
+  backoffSec: z.number().positive().optional(),
 });
 
 export const JobPatchInputSchema = z.object({
   description: z.string().optional(),
   enabled: z.boolean().optional(),
   schedule: ScheduleSchema.optional(),
-  action: ActionInputSchema.optional(),
+  action: ActionPatchInputSchema.optional(),
   overlap: z.enum(['skip', 'queue', 'cancel-previous']).optional(),
-  retry: RetrySchema.optional(),
+  retry: RetryPatchSchema.optional(),
 }).strict();
 
 export type PromptActionInput = z.input<typeof PromptActionInputSchema>;
@@ -103,7 +156,7 @@ export function normalizeJobInput(
 ): Job {
   const normalized = {
     ...input,
-    action: normalizeActionInput(input.action, options),
+    action: normalizeActionInput(input.action, options, true),
   };
 
   const parsed = JobSchema.safeParse(normalized);
@@ -132,14 +185,77 @@ export function normalizeJobPatch(
   patch: JobPatchInput,
   options: NormalizeJobInputOptions = {},
 ): Job {
-  const normalizedPatch = patch.action
-    ? { ...patch, action: normalizeActionInput(patch.action, options) }
-    : patch;
+  let normalizedPatch: JobPatchInput = patch;
+  if (patch.action) {
+    const merged = mergeActionPatch(existing.action, normalizeActionInput(patch.action, options, false));
+    normalizedPatch = { ...normalizedPatch, action: withEngineDefaultForNewPromptAction(existing.action, merged, options) as ActionInput };
+  }
+  if (patch.retry) {
+    normalizedPatch = { ...normalizedPatch, retry: mergeDefinedFields(existing.retry, patch.retry) as Job['retry'] };
+  }
   const parsed = JobSchema.safeParse({ ...existing, ...normalizedPatch, id });
   if (!parsed.success) {
     throw new CrontickError('VALIDATION_ERROR', 'Invalid job', parsed.error.format());
   }
   return parsed.data;
+}
+
+/** Merges a patch object's defined fields onto a copy of the existing object,
+ *  leaving fields the patch left `undefined` untouched. Shared by the action
+ *  merge (mergeActionPatch) and the retry merge (normalizeJobPatch) — both
+ *  exist because a create-time zod `.default()` had to be dropped from the
+ *  matching patch schema (see ScriptActionPatchSchema/ExecActionPatchSchema/
+ *  PromptActionPatchSchema/RetryPatchSchema), and the merge fills the gap
+ *  left by an omitted field from the existing persisted value instead. */
+function mergeDefinedFields(existing: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...existing };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value !== undefined) merged[key] = value;
+  }
+  return merged;
+}
+
+/**
+ * A patch's action is merged field-by-field onto the existing action rather
+ * than replacing it wholesale — otherwise fields the caller didn't mention
+ * (shell, envFile, timeoutSec, args, reuseSession, ...) would be silently
+ * discarded/reset every time any single action field is updated. A `kind`
+ * change (e.g. script -> exec) is a deliberate full replacement: the old
+ * action's fields don't apply to the new kind, so the patch action is used
+ * as-is (and still gets zod's create-time defaults for shell/args/reuseSession
+ * via the final JobSchema.safeParse below, since a kind change is effectively
+ * a fresh action, same as create).
+ */
+function mergeActionPatch(existingAction: unknown, patchAction: unknown): unknown {
+  if (!isRecord(existingAction) || !isRecord(patchAction) || existingAction.kind !== patchAction.kind) {
+    return patchAction;
+  }
+  return mergeDefinedFields(existingAction, patchAction);
+}
+
+/**
+ * Fills the configured default engine for a genuinely new prompt action
+ * introduced via a kind-change patch (e.g. script -> prompt) that didn't
+ * specify --engine. Same-kind prompt updates never need this: their engine
+ * is already preserved by mergeActionPatch. This only fires when the
+ * existing action was NOT already a prompt (a real kind change), so it
+ * never overwrites an engine that mergeActionPatch already carried forward.
+ */
+function withEngineDefaultForNewPromptAction(
+  existingAction: unknown,
+  mergedAction: unknown,
+  options: NormalizeJobInputOptions,
+): unknown {
+  const existingKind = isRecord(existingAction) ? existingAction.kind : undefined;
+  if (
+    !isRecord(mergedAction) ||
+    mergedAction.kind !== 'prompt' ||
+    existingKind === 'prompt' ||
+    mergedAction.engine !== undefined
+  ) {
+    return mergedAction;
+  }
+  return { ...mergedAction, engine: loadConfig({ env: options.env }).defaultEngine };
 }
 
 /** Constructs a full Job from CLI flags; supports --file (JSON) as an alternative to flags. */
@@ -181,7 +297,7 @@ export function buildJobPatchFromUpdateOptions(
     const parsed = JobPatchInputSchema.safeParse(JSON.parse(raw));
     if (!parsed.success) throw new CrontickError('VALIDATION_ERROR', 'Invalid job patch', parsed.error.format());
     return parsed.data.action
-      ? { ...parsed.data, action: normalizeActionInput(parsed.data.action, { ...options, fileBaseDir: dirname(filePath) }) as ActionInput }
+      ? { ...parsed.data, action: normalizeActionInput(parsed.data.action, { ...options, fileBaseDir: dirname(filePath) }, false) as ActionInput }
       : parsed.data;
   }
 
@@ -192,12 +308,11 @@ export function buildJobPatchFromUpdateOptions(
   const schedule = maybeBuildSchedule(input);
   if (schedule !== undefined) patch.schedule = schedule;
   const action = maybeBuildAction(input, rawArgs);
-  if (action !== undefined) patch.action = normalizeActionInput(action, options) as ActionInput;
-  // 'skip' is indistinguishable from Commander's --overlap default (see
-  // commonJobOptions in cli/index.ts), the same ambiguity already handled for
-  // --shell/'auto' in assertFileModeExclusive below — so an unset/default
-  // 'skip' must not overwrite a job's existing overlap policy on update.
-  if (input.overlap !== undefined && input.overlap !== 'skip') patch.overlap = input.overlap as JobPatchInput['overlap'];
+  if (action !== undefined) patch.action = normalizeActionInput(action, options, false) as ActionInput;
+  // Commander no longer supplies a hardcoded default for --overlap (see
+  // commonJobOptions in cli/index.ts), so `undefined` unambiguously means
+  // "not provided" here — overlap is treated like any other optional field.
+  if (input.overlap !== undefined) patch.overlap = input.overlap as JobPatchInput['overlap'];
   if (input.retry !== undefined) patch.retry = { max: input.retry, backoffSec: 30 };
 
   const parsed = JobPatchInputSchema.safeParse(patch);
@@ -208,8 +323,19 @@ export function buildJobPatchFromUpdateOptions(
 /**
  * Normalizes a prompt action input: resolves promptFile, fills engine default,
  * clears redundant reuseSession, and runs runtime validation.
+ *
+ * `isCreate` gates the engine default fill: `engine` has no zod-level
+ * default (see PromptEngineSchema usage in schemas/job.ts), so unlike
+ * shell/args/reuseSession it can't fall back on the final JobSchema parse.
+ * On create, an omitted engine should resolve to the configured default. On
+ * a patch (isCreate: false), filling it here would stamp the config default
+ * onto every same-kind prompt update that doesn't mention --engine, wiping
+ * out a job's existing custom engine. normalizeJobPatch instead merges the
+ * patch action onto the existing action (preserving engine), and only calls
+ * withEngineDefaultForNewPromptAction to fill it for a genuine kind-change
+ * into 'prompt' (which has no existing engine to preserve).
  */
-function normalizeActionInput(action: ActionInput, options: NormalizeJobInputOptions): unknown {
+function normalizeActionInput(action: ActionInput, options: NormalizeJobInputOptions, isCreate: boolean): unknown {
   if (!isRecord(action) || action.kind !== 'prompt') return action;
 
   const prompt = typeof action.prompt === 'string' ? action.prompt : undefined;
@@ -227,7 +353,7 @@ function normalizeActionInput(action: ActionInput, options: NormalizeJobInputOpt
     ...rest,
     prompt: prompt ?? readPromptFile(promptFile!, options),
   };
-  if (normalized.engine === undefined) {
+  if (isCreate && normalized.engine === undefined) {
     normalized = {
       ...normalized,
       engine: loadConfig({ env: options.env }).defaultEngine,
@@ -359,10 +485,10 @@ function assertFileModeExclusive(opts: JobPatchCliOptions, rawArgs: string[]): v
     || opts.engine !== undefined
     || opts.sessionId !== undefined
     || opts.reuseSession !== undefined
-    || opts.shell !== undefined && opts.shell !== 'auto'
+    || opts.shell !== undefined
     || opts.envFile !== undefined
     || opts.timeout !== undefined
-    || opts.overlap !== undefined && opts.overlap !== 'skip'
+    || opts.overlap !== undefined
     || opts.retry !== undefined
     || opts.desc !== undefined
     || opts.enabled !== undefined;
@@ -375,10 +501,9 @@ function assertFileModeExclusive(opts: JobPatchCliOptions, rawArgs: string[]): v
   }
 }
 
-function actionShell(shell: string | undefined): 'auto' | 'bash' | 'pwsh' | 'cmd' {
-  if (shell === 'bash' || shell === 'pwsh' || shell === 'cmd' || shell === 'auto' || shell === undefined) {
-    return shell ?? 'auto';
-  }
+function actionShell(shell: string | undefined): 'auto' | 'bash' | 'pwsh' | 'cmd' | undefined {
+  if (shell === undefined) return undefined;
+  if (shell === 'bash' || shell === 'pwsh' || shell === 'cmd' || shell === 'auto') return shell;
   throw new CrontickError('VALIDATION_ERROR', 'Shell must be auto, bash, pwsh, or cmd');
 }
 

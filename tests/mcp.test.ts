@@ -246,6 +246,207 @@ describe('MCP server — full contract', () => {
     expect(data.overlap).toBe('cancel-previous');
   });
 
+  // ── Overlap / shell parity with the CLI (see tests/cli.test.ts) ──────────────
+  // These mirror the CLI cases above to prove both surfaces resolve the same
+  // patch through the shared normalizeJobPatch/mergeActionPatch core.
+
+  it('crontick_job_update sets overlap to skip when explicitly provided', async () => {
+    const created = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-overlap-cases-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'exec', command: 'echo', args: ['hi'] },
+      overlap: 'queue',
+    });
+    expect(created.isError).toBe(false);
+    expect((created.json as { overlap: string }).overlap).toBe('queue');
+
+    const skipped = await callTool(client, 'crontick_job_update', {
+      id: 'mcp-overlap-cases-job',
+      overlap: 'skip',
+    });
+    expect(skipped.isError).toBe(false);
+    expect((skipped.json as { overlap: string }).overlap).toBe('skip');
+  });
+
+  it('crontick_job_update sets overlap to cancel-previous when explicitly provided', async () => {
+    const updated = await callTool(client, 'crontick_job_update', {
+      id: 'mcp-overlap-cases-job',
+      overlap: 'cancel-previous',
+    });
+    expect(updated.isError).toBe(false);
+    expect((updated.json as { overlap: string }).overlap).toBe('cancel-previous');
+  });
+
+  it('crontick_job_update omitting overlap leaves the existing value alone', async () => {
+    const updated = await callTool(client, 'crontick_job_update', {
+      id: 'mcp-overlap-cases-job',
+      description: 'no overlap field',
+    });
+    expect(updated.isError).toBe(false);
+    const data = updated.json as { overlap: string; description: string };
+    expect(data.overlap).toBe('cancel-previous');
+    expect(data.description).toBe('no overlap field');
+  });
+
+  it('crontick_job_update preserves shell/envFile/timeoutSec when only script is repeated', async () => {
+    const created = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-shell-preserve-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'script', script: 'echo hi', shell: 'cmd', envFile: '.env.test', timeoutSec: 30 },
+    });
+    expect(created.isError).toBe(false);
+
+    const updated = await callTool(client, 'crontick_job_update', {
+      id: 'mcp-shell-preserve-job',
+      action: { kind: 'script', script: 'echo bye' },
+    });
+    expect(updated.isError).toBe(false);
+    expect((updated.json as { action: unknown }).action).toMatchObject({
+      kind: 'script', script: 'echo bye', shell: 'cmd', envFile: '.env.test', timeoutSec: 30,
+    });
+  });
+
+  it('crontick_job_update explicit shell changes the shell', async () => {
+    const updated = await callTool(client, 'crontick_job_update', {
+      id: 'mcp-shell-preserve-job',
+      action: { kind: 'script', script: 'echo again', shell: 'pwsh' },
+    });
+    expect(updated.isError).toBe(false);
+    expect((updated.json as { action: unknown }).action).toMatchObject({ shell: 'pwsh' });
+  });
+
+  it('crontick_job_update switching action kind fully replaces the action', async () => {
+    const updated = await callTool(client, 'crontick_job_update', {
+      id: 'mcp-shell-preserve-job',
+      action: { kind: 'exec', command: 'echo', args: ['done'] },
+    });
+    expect(updated.isError).toBe(false);
+    const data = updated.json as { action: Record<string, unknown> };
+    expect(data.action).toMatchObject({ kind: 'exec', command: 'echo', args: ['done'] });
+    expect(data.action).not.toHaveProperty('shell');
+    expect(data.action).not.toHaveProperty('script');
+  });
+
+  // ── args/reuseSession/retry/engine parity with the CLI (see tests/cli.test.ts) ─
+  // These mirror the CLI --file JSON-patch cases below to prove both surfaces
+  // resolve the same patch through the shared normalizeJobPatch/mergeActionPatch
+  // core (the CLI's flag builder always supplies args/reuseSession/retry
+  // explicitly, so its parity proof for these fields uses --file instead of flags).
+
+  it('crontick_job_update preserves exec args when the patch only changes envFile', async () => {
+    const created = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-exec-args-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'exec', command: 'echo', args: ['a', 'b'] },
+    });
+    expect(created.isError).toBe(false);
+
+    const updated = await callTool(client, 'crontick_job_update', {
+      id: 'mcp-exec-args-job',
+      action: { kind: 'exec', command: 'echo', envFile: '.env.new' },
+    });
+    expect(updated.isError).toBe(false);
+    expect((updated.json as { action: unknown }).action).toMatchObject({
+      kind: 'exec', command: 'echo', args: ['a', 'b'], envFile: '.env.new',
+    });
+  });
+
+  it('crontick_job_update applies explicit exec args when provided', async () => {
+    const updated = await callTool(client, 'crontick_job_update', {
+      id: 'mcp-exec-args-job',
+      action: { kind: 'exec', command: 'echo', args: ['c'] },
+    });
+    expect(updated.isError).toBe(false);
+    expect((updated.json as { action: unknown }).action).toMatchObject({ kind: 'exec', args: ['c'] });
+  });
+
+  it('crontick_job_update preserves prompt args and reuseSession when the patch only changes prompt text', async () => {
+    const created = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-prompt-args-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'prompt', prompt: 'old', args: ['--flag'], reuseSession: true },
+    });
+    expect(created.isError).toBe(false);
+
+    const updated = await callTool(client, 'crontick_job_update', {
+      id: 'mcp-prompt-args-job',
+      action: { kind: 'prompt', prompt: 'new' },
+    });
+    expect(updated.isError).toBe(false);
+    expect((updated.json as { action: unknown }).action).toMatchObject({
+      kind: 'prompt', prompt: 'new', args: ['--flag'], reuseSession: true,
+    });
+  });
+
+  it('crontick_job_update applies explicit prompt args/reuseSession when provided', async () => {
+    const updated = await callTool(client, 'crontick_job_update', {
+      id: 'mcp-prompt-args-job',
+      action: { kind: 'prompt', prompt: 'old', args: [], reuseSession: false },
+    });
+    expect(updated.isError).toBe(false);
+    expect((updated.json as { action: unknown }).action).toMatchObject({ args: [], reuseSession: false });
+  });
+
+  it('crontick_job_update preserves a custom engine on a same-kind prompt update that omits engine', async () => {
+    const created = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-prompt-engine-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'prompt', prompt: 'old', engine: 'agency' },
+    });
+    expect(created.isError).toBe(false);
+
+    const updated = await callTool(client, 'crontick_job_update', {
+      id: 'mcp-prompt-engine-job',
+      action: { kind: 'prompt', prompt: 'new' },
+    });
+    expect(updated.isError).toBe(false);
+    expect((updated.json as { action: unknown }).action).toMatchObject({ kind: 'prompt', engine: 'agency' });
+  });
+
+  it('crontick_job_update fills the configured default engine for a new prompt action introduced via a kind change', async () => {
+    const created = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-kind-change-engine-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'exec', command: 'echo' },
+    });
+    expect(created.isError).toBe(false);
+
+    const updated = await callTool(client, 'crontick_job_update', {
+      id: 'mcp-kind-change-engine-job',
+      action: { kind: 'prompt', prompt: 'hello' },
+    });
+    expect(updated.isError).toBe(false);
+    expect((updated.json as { action: unknown }).action).toMatchObject({
+      kind: 'prompt', prompt: 'hello', engine: 'copilot',
+    });
+  });
+
+  it('crontick_job_update preserves retry.backoffSec when the patch only sets max', async () => {
+    const created = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-retry-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'exec', command: 'echo' },
+      retry: { max: 1, backoffSec: 90 },
+    });
+    expect(created.isError).toBe(false);
+
+    const updated = await callTool(client, 'crontick_job_update', {
+      id: 'mcp-retry-job',
+      retry: { max: 3 },
+    });
+    expect(updated.isError).toBe(false);
+    expect((updated.json as { retry: unknown }).retry).toEqual({ max: 3, backoffSec: 90 });
+  });
+
+  it('crontick_job_update applies an explicit backoffSec over the preserved retry fields', async () => {
+    const updated = await callTool(client, 'crontick_job_update', {
+      id: 'mcp-retry-job',
+      retry: { max: 3, backoffSec: 15 },
+    });
+    expect(updated.isError).toBe(false);
+    expect((updated.json as { retry: unknown }).retry).toEqual({ max: 3, backoffSec: 15 });
+  });
+
   it('crontick_job_create accepts prompt actions', async () => {
     const { json, isError } = await callTool(client, 'crontick_job_create', {
       id: 'mcp-prompt-job',

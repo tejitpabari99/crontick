@@ -10,7 +10,7 @@
  */
 
 export { VERSION } from './version.js';
-export { CrontickError } from './errors.js';
+export { CrontickError, ORPHAN_RUN_ERROR_CODE, ORPHAN_RUN_ERROR_MESSAGE } from './errors.js';
 export { CrontickClient, createClient } from './client.js';
 export type {
   CrontickClientOptions,
@@ -53,8 +53,8 @@ export {
   validateConfigFile,
   writeConfigFile,
 } from './config.js';
-export { ConfigSchema, EngineConfigSchema } from './schemas/config.js';
-export type { CrontickConfig, EngineConfig } from './schemas/config.js';
+export { ConfigSchema, EngineConfigSchema, RetentionConfigSchema } from './schemas/config.js';
+export type { CrontickConfig, EngineConfig, RetentionConfig } from './schemas/config.js';
 export {
   JobSchema,
   PromptActionSchema,

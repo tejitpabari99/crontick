@@ -219,9 +219,17 @@ describe('Integration: daemon lifecycle', () => {
     // documented "editing job JSON files externally" workflow. Read the
     // current file and mutate only schedule.runAt to avoid an accidental
     // schema mismatch causing loadJobsFromDisk() to silently skip it.
+    //
+    // The margin below must survive the writeFileSync + HTTP round trip to
+    // /api/daemon/reload + reload()'s own work (loadConfig, unscheduleAll,
+    // loadJobsFromDisk, re-scheduling) that all happen AFTER nearRunAt is
+    // computed but BEFORE the one-shot timer is actually armed. A too-tight
+    // margin (previously 1200ms) can elapse before scheduleOneShot() runs on
+    // a loaded CI runner, which silently no-ops on a non-positive delay and
+    // fails the test spuriously rather than exercising reload at all.
     const jobFile = join(dir, 'jobs', `${jobId}.json`);
     const onDisk = JSON.parse(readFileSync(jobFile, 'utf-8')) as { schedule: { runAt: string } };
-    const nearRunAt = new Date(Date.now() + 1200).toISOString();
+    const nearRunAt = new Date(Date.now() + 5000).toISOString();
     onDisk.schedule.runAt = nearRunAt;
     writeFileSync(jobFile, JSON.stringify(onDisk, null, 2), 'utf-8');
 
@@ -233,7 +241,7 @@ describe('Integration: daemon lifecycle', () => {
     // picked up the on-disk edit and rescheduled with the near runAt — the
     // original 1-hour-out job would never fire inside this poll window.
     const terminal = new Set(['success', 'failed', 'canceled', 'timeout']);
-    const deadline = Date.now() + 5000;
+    const deadline = Date.now() + 10_000;
     let runs: Array<{ status: string }> = [];
     for (;;) {
       const { data } = await apiCall(port, 'GET', `/api/runs?jobId=${jobId}`);
@@ -247,7 +255,129 @@ describe('Integration: daemon lifecycle', () => {
     // The edited runAt was also loaded into the SQLite-backed job cache.
     const jobAfter = await apiCall(port, 'GET', `/api/jobs/${jobId}`);
     expect((jobAfter.data as { schedule: { runAt: string } }).schedule.runAt).toBe(nearRunAt);
-  }, 15_000);
+  }, 25_000);
+
+  // ── T-RELOAD-FAILURE ─────────────────────────────────────────────────────
+
+  it('a reload that fails to load config leaves the existing schedule intact — no jobs are dropped', async () => {
+    const dir = makeTmpDir('crontick-reload-fail-');
+    liveDirs.add(dir);
+    const { proc, port } = await spawnDaemon(dir);
+    liveProcs.add(proc);
+
+    // A fast-firing interval job so we can prove it keeps running after a
+    // reload attempt fails, without waiting on cron-minute granularity.
+    const jobId = 'reload-fail-target';
+    const created = await apiCall(port, 'POST', '/api/jobs', {
+      id: jobId,
+      schedule: { kind: 'interval', everySec: 1 },
+      action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'] },
+    });
+    expect(created.status).toBe(201);
+
+    // Confirm the job is actually live before touching config.
+    const deadlineBefore = Date.now() + 8000;
+    let runsBefore: Array<{ status: string }> = [];
+    for (;;) {
+      const { data } = await apiCall(port, 'GET', `/api/runs?jobId=${jobId}`);
+      runsBefore = data as Array<{ status: string }>;
+      if (runsBefore.some((r) => r.status === 'success')) break;
+      if (Date.now() >= deadlineBefore) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    expect(runsBefore.some((r) => r.status === 'success')).toBe(true);
+    const countBefore = runsBefore.length;
+
+    // Corrupt config.json with an out-of-bounds retention.maxRunsPerJob
+    // (RetentionConfigSchema requires 1-100000) so the next reload's
+    // loadConfig() throws a CrontickError.
+    writeFileSync(
+      join(dir, 'config.json'),
+      JSON.stringify({ retention: { maxRunsPerJob: 0 } }),
+      'utf-8',
+    );
+
+    const reload = await apiCall(port, 'POST', '/api/daemon/reload');
+    expect(reload.status).toBe(400);
+    expect((reload.data as { error: { code: string } }).error.code).toBe('CONFIG_VALIDATION_ERROR');
+
+    // Crux assertion: the job scheduled before the failed reload must still
+    // be firing. If reload() unscheduled everything before validating config
+    // (the pre-fix ordering), the scheduler would be left empty and this job
+    // would never produce another run.
+    const deadlineAfter = Date.now() + 8000;
+    let runsAfter: Array<{ status: string }> = runsBefore;
+    for (;;) {
+      const { data } = await apiCall(port, 'GET', `/api/runs?jobId=${jobId}`);
+      runsAfter = data as Array<{ status: string }>;
+      if (runsAfter.length > countBefore) break;
+      if (Date.now() >= deadlineAfter) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    expect(runsAfter.length).toBeGreaterThan(countBefore);
+
+    // The daemon process itself is still healthy, not just this one job.
+    const health = await apiCall(port, 'GET', '/health');
+    expect(health.status).toBe(200);
+    expect((health.data as { ok: boolean }).ok).toBe(true);
+  }, 25_000);
+
+  // ── T-RETENTION-RELOAD ───────────────────────────────────────────────────
+  // specs/006-state-and-persistence.md R-006-23: a running daemon MUST apply
+  // an updated retention cap without a restart.
+
+  it('reload applies a newly-lowered retention.maxRunsPerJob without a daemon restart', async () => {
+    const dir = makeTmpDir('crontick-retention-reload-');
+    liveDirs.add(dir);
+    const { proc, port } = await spawnDaemon(dir);
+    liveProcs.add(proc);
+
+    const jobId = 'retention-reload-target';
+    const created = await apiCall(port, 'POST', '/api/jobs', {
+      id: jobId,
+      schedule: { kind: 'interval', everySec: 1 },
+      action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'] },
+    });
+    expect(created.status).toBe(201);
+
+    // Let more runs accumulate than the cap we're about to apply — the
+    // default built-in cap is 100, so 5 successful runs comfortably fit
+    // under it and would never be evicted without the config change below.
+    const NEW_CAP = 2;
+    const deadlineAccrue = Date.now() + 10_000;
+    let runs: Array<{ status: string }> = [];
+    for (;;) {
+      const { data } = await apiCall(port, 'GET', `/api/runs?jobId=${jobId}`);
+      runs = data as Array<{ status: string }>;
+      if (runs.filter((r) => r.status === 'success').length >= NEW_CAP + 3) break;
+      if (Date.now() >= deadlineAccrue) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    expect(runs.filter((r) => r.status === 'success').length).toBeGreaterThanOrEqual(NEW_CAP + 3);
+
+    writeFileSync(
+      join(dir, 'config.json'),
+      JSON.stringify({ retention: { maxRunsPerJob: NEW_CAP } }),
+      'utf-8',
+    );
+    const reload = await apiCall(port, 'POST', '/api/daemon/reload');
+    expect(reload.status).toBe(200);
+    expect((reload.data as { ok: boolean }).ok).toBe(true);
+
+    // The next insertRun (from the still-ticking interval) applies the new,
+    // lower cap — no restart involved. Poll until the row count settles at
+    // (not below) NEW_CAP.
+    const deadlineEvict = Date.now() + 10_000;
+    let afterCounts: Array<{ status: string }> = [];
+    for (;;) {
+      const { data } = await apiCall(port, 'GET', `/api/runs?jobId=${jobId}`);
+      afterCounts = data as Array<{ status: string }>;
+      if (afterCounts.length <= NEW_CAP) break;
+      if (Date.now() >= deadlineEvict) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    expect(afterCounts.length).toBe(NEW_CAP);
+  }, 30_000);
 
   // ── T-FRESH-INSTALL ───────────────────────────────────────────────────────
 

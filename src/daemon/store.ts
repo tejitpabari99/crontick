@@ -88,7 +88,11 @@ const MIGRATIONS: Array<{ name: string; sql: string }> = [
 
 // ── Store ─────────────────────────────────────────────────────────────────────
 
-export const DEFAULT_RUN_RETENTION_CAP = 100;
+// Not exported: this is an internal fallback for the constructor default
+// parameter below only. BUILT_IN_CONFIG.retention.maxRunsPerJob (src/config.ts)
+// is the actual default consumers see; keeping this un-exported avoids a
+// second, easily-drifting public source of the same "100" default.
+const DEFAULT_RUN_RETENTION_CAP = 100;
 
 export class Store {
   private db!: DatabaseSync;
@@ -279,7 +283,16 @@ export class Store {
       )
       .run(id, jobId, now, 'queued');
     this.logger.debug('Inserted run', { runId: id, jobId, startedAt: now });
-    this.pruneRunsForJob(jobId);
+    // Retention is best-effort maintenance, not part of the run-recording
+    // contract: a prune failure (disk full, corrupted rows, etc.) must never
+    // stop a run from being recorded/executed. Log loudly and degrade to
+    // "run recorded, prune deferred" — the next insertRun (or the startup
+    // backfill) gets another chance to catch up.
+    try {
+      this.pruneRunsForJob(jobId);
+    } catch (err) {
+      this.logger.error('Run retention prune failed; run was still recorded', { jobId, error: String(err) });
+    }
     return { id, jobId, startedAt: now, status: 'queued' };
   }
 
@@ -387,6 +400,20 @@ export class Store {
   // ── Run retention ─────────────────────────────────────────────────────────────
 
   /**
+   * node:sqlite rejects a single statement bound with more than 32766
+   * parameters (SQLITE_LIMIT_VARIABLE_NUMBER). A naive "DELETE ... WHERE id IN
+   * (?,?,...)" with one placeholder per evicted row hits that ceiling on any
+   * job whose backlog grew past ~32766 terminal runs before the retention cap
+   * was introduced (or after the cap was raised then lowered again) — exactly
+   * the databases the startup backfill exists to fix, so the daemon would
+   * never start again. 500 ids per batch keeps each DELETE far under the
+   * limit while also bounding how long any single transaction holds the
+   * table, which matters when the startup backfill has to walk tens of
+   * thousands of rows across many jobs.
+   */
+  private static readonly EVICTION_BATCH_SIZE = 500;
+
+  /**
    * Evict the oldest terminal (non-running/non-queued) runs for a job so that at
    * most `cap` rows remain for it, deleting matching run_logs first (run_logs
    * has no FK/cascade — see docs/internals/storage.md) so a crash between the
@@ -394,35 +421,58 @@ export class Store {
    * row with no parent run. In-flight runs are excluded from the candidate set
    * so an active run is never evicted no matter how old it is; this can let a
    * job's total row count temporarily exceed `cap` by the number of active runs.
+   *
+   * Eviction happens in bounded batches (see EVICTION_BATCH_SIZE) rather than
+   * one unbounded statement: each batch is its own transaction, so a crash or
+   * thrown error mid-run can only roll back the batch in progress — every
+   * previously committed batch stays evicted, and no batch's run_logs delete
+   * can ever be separated from its runs delete. The loop recomputes the
+   * remaining-to-evict count from the DB every iteration (rather than just
+   * looping until a fixed pre-computed total), so it converges to `cap` and
+   * always terminates: it stops the instant a SELECT returns zero candidates,
+   * or as soon as a batch comes back smaller than EVICTION_BATCH_SIZE (proof
+   * the remainder has reached zero without needing one more round trip).
    */
   private pruneRunsForJob(jobId: string, cap: number = this.runRetentionCap): number {
-    const candidates = this.db
-      .prepare(
-        `SELECT id FROM runs
-         WHERE job_id = ?
-           AND status NOT IN ('running', 'queued')
-         ORDER BY started_at ASC, rowid ASC
-         LIMIT MAX(0, (SELECT COUNT(*) FROM runs WHERE job_id = ?) - ?)`,
-      )
-      .all(jobId, jobId, cap) as Array<{ id: string }>;
+    const selectBatch = this.db.prepare(
+      `SELECT id FROM runs
+       WHERE job_id = ?
+         AND status NOT IN ('running', 'queued')
+       ORDER BY started_at ASC, rowid ASC
+       LIMIT MIN(?, MAX(0, (SELECT COUNT(*) FROM runs WHERE job_id = ?) - ?))`,
+    );
 
-    if (candidates.length === 0) return 0;
+    let totalEvicted = 0;
+    for (;;) {
+      const candidates = selectBatch.all(
+        jobId,
+        Store.EVICTION_BATCH_SIZE,
+        jobId,
+        cap,
+      ) as Array<{ id: string }>;
+      if (candidates.length === 0) break;
 
-    const ids = candidates.map((r) => r.id);
-    const placeholders = ids.map(() => '?').join(',');
+      const ids = candidates.map((r) => r.id);
+      const placeholders = ids.map(() => '?').join(',');
 
-    this.db.exec('BEGIN;');
-    try {
-      this.db.prepare(`DELETE FROM run_logs WHERE run_id IN (${placeholders})`).run(...ids);
-      this.db.prepare(`DELETE FROM runs WHERE id IN (${placeholders})`).run(...ids);
-      this.db.exec('COMMIT;');
-    } catch (err) {
-      this.db.exec('ROLLBACK;');
-      throw err;
+      this.db.exec('BEGIN;');
+      try {
+        this.db.prepare(`DELETE FROM run_logs WHERE run_id IN (${placeholders})`).run(...ids);
+        this.db.prepare(`DELETE FROM runs WHERE id IN (${placeholders})`).run(...ids);
+        this.db.exec('COMMIT;');
+      } catch (err) {
+        this.db.exec('ROLLBACK;');
+        throw err;
+      }
+
+      totalEvicted += ids.length;
+      if (ids.length < Store.EVICTION_BATCH_SIZE) break; // fewer than a full batch ⇒ nothing left to evict
     }
 
-    this.logger.debug('Evicted runs exceeding retention cap', { jobId, evicted: ids.length, cap });
-    return ids.length;
+    if (totalEvicted > 0) {
+      this.logger.debug('Evicted runs exceeding retention cap', { jobId, evicted: totalEvicted, cap });
+    }
+    return totalEvicted;
   }
 
   /**
@@ -437,7 +487,14 @@ export class Store {
       .all() as Array<{ job_id: string }>;
     let total = 0;
     for (const { job_id } of jobIds) {
-      total += this.pruneRunsForJob(job_id, cap);
+      // Best-effort per job: retention is maintenance, not correctness — one
+      // job's prune failure must not abort the backfill for every other job,
+      // and must never be allowed to stop the daemon from starting.
+      try {
+        total += this.pruneRunsForJob(job_id, cap);
+      } catch (err) {
+        this.logger.error('Run retention backfill failed for job; continuing with other jobs', { jobId: job_id, error: String(err) });
+      }
     }
     if (total > 0) {
       this.logger.debug('Pruned run history across all jobs on startup', { jobsScanned: jobIds.length, evicted: total, cap });

@@ -64,8 +64,71 @@ function rmWithRetry(path, attempts = 5) {
 }
 
 function cleanup() {
+  killDaemonProcess(daemonHomeDir);
   rmWithRetry(scratchDir);
   if (tarballPath && existsSync(tarballPath)) rmWithRetry(tarballPath);
+}
+
+/** Set once we spawn crontick-daemon, so cleanup() (called from both the
+ *  success path and every fail() path) can always find and kill it. */
+let daemonHomeDir;
+
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Terminate the *real* crontick-daemon process for a given CRONTICK_HOME,
+ * not just whatever child this script directly spawned.
+ *
+ * On Node < 24, dist/daemon/index.js re-execs itself with
+ * --experimental-sqlite as a GRANDCHILD (see src/daemon/index.ts) — the
+ * process this script spawns is just a shim that forwards the grandchild's
+ * exit code. Killing only the direct child (what runWithTimeout's timeout
+ * handler does) leaves that grandchild running and bound to its port
+ * indefinitely. The real daemon PID is authoritative in CRONTICK_HOME's
+ * daemon.pid file (written by the process that actually calls
+ * writeFileSync(pidFilePath(), ...) — the grandchild on Node < 24, or the
+ * direct child itself on Node >= 24, where no re-exec happens), so read it
+ * from there and kill that PID directly. Synchronous and best-effort: this
+ * runs inside cleanup(), which fail() calls right before process.exit(),
+ * so it must not leave anything to a dangling microtask/callback.
+ */
+function killDaemonProcess(homeDir) {
+  if (!homeDir) return;
+  const pidFile = join(homeDir, 'daemon.pid');
+  if (!existsSync(pidFile)) return;
+
+  let pid;
+  try {
+    pid = parseInt(readFileSync(pidFile, 'utf-8').trim(), 10);
+  } catch {
+    return;
+  }
+  if (!Number.isInteger(pid) || pid <= 0 || !isPidAlive(pid)) return;
+
+  log(`Stopping crontick-daemon process (pid ${pid}) read from ${pidFile}...`);
+  try {
+    process.kill(pid, isWindows ? undefined : 'SIGTERM');
+  } catch {
+    return; // exited between the isPidAlive() check and here
+  }
+
+  const gracefulDeadline = Date.now() + 3000;
+  while (isPidAlive(pid) && Date.now() < gracefulDeadline) sleepSync(200);
+
+  if (isPidAlive(pid)) {
+    try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+    const killDeadline = Date.now() + 2000;
+    while (isPidAlive(pid) && Date.now() < killDeadline) sleepSync(200);
+  }
+
+  log(isPidAlive(pid) ? `WARNING: pid ${pid} still alive after SIGKILL` : `Confirmed pid ${pid} is no longer running`);
 }
 
 /**
@@ -189,7 +252,8 @@ async function main() {
 
   log('Running crontick-daemon (isolated CRONTICK_HOME, timeout+kill)...');
   const daemonBin = resolveInstalledBin('crontick-daemon');
-  const daemonEnv = { ...process.env, CRONTICK_HOME: join(scratchHome, 'daemon') };
+  daemonHomeDir = join(scratchHome, 'daemon');
+  const daemonEnv = { ...process.env, CRONTICK_HOME: daemonHomeDir };
   const daemonResult = await runWithTimeout(process.execPath, [daemonBin], { cwd: scratchDir, env: daemonEnv }, 8000);
   if (!daemonResult.survived) {
     fail(`crontick-daemon exited early (code=${daemonResult.code})\n${daemonResult.stdout}${daemonResult.stderr}`);
@@ -197,7 +261,14 @@ async function main() {
   if (!daemonResult.stderr.includes('Daemon ready') && !daemonResult.stderr.includes('API listening')) {
     fail(`crontick-daemon did not report readiness within timeout\n${daemonResult.stdout}${daemonResult.stderr}`);
   }
-  log('crontick-daemon started and reported readiness (stopped after timeout)');
+  log('crontick-daemon started and reported readiness (stopping it now, including any re-exec grandchild)...');
+  // runWithTimeout above only killed the direct child (the --experimental-sqlite
+  // re-exec shim on Node < 24 — see killDaemonProcess() for why that's not the
+  // real daemon). Stop the real daemon process now rather than waiting for the
+  // end-of-script cleanup(), so a failure in the crontick-mcp step below can't
+  // skip past a still-listening daemon port for the rest of this run.
+  killDaemonProcess(daemonHomeDir);
+  log('crontick-daemon stopped cleanly');
 
   log('Running crontick-mcp (timeout+kill)...');
   const mcpBin = resolveInstalledBin('crontick-mcp');

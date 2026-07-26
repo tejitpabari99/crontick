@@ -124,7 +124,15 @@ if (needsSqliteShim) {
     // upgrade that lowered it). reconcileOrphanRuns() runs first so any stale
     // running/queued rows it just canceled are immediately eligible eviction
     // candidates, rather than requiring a second restart to truncate them.
-    const pruned = store.pruneAllJobsRunHistory();
+    // Best-effort: a backfill failure (disk full, corrupted rows, etc.) must
+    // be logged loudly but must never prevent the daemon from starting and
+    // serving already-scheduled jobs.
+    let pruned = 0;
+    try {
+      pruned = store.pruneAllJobsRunHistory();
+    } catch (err) {
+      logger.error('Run retention backfill failed on startup; continuing without it', { error: String(err) });
+    }
     if (pruned > 0) {
       logger.info(`Pruned ${pruned} run(s) exceeding the retention cap of ${retentionCap} during startup`);
     }
@@ -142,23 +150,39 @@ if (needsSqliteShim) {
     // Wire scheduler ticks to the runner. Re-read the job from store to pick up
     // any updates applied since it was initially scheduled.
     scheduler.on('tick', ({ jobId, plannedAt }) => {
-      const job = store.getJob(jobId);
-      if (!job || !job.enabled) return;
-      const run = store.insertRun(jobId, plannedAt.getTime());
-      runner.run(job, run.id, store).catch((err: unknown) => {
-        logger.error('Runner error', { jobId, error: String(err) });
-      });
+      try {
+        const job = store.getJob(jobId);
+        if (!job || !job.enabled) return;
+        const run = store.insertRun(jobId, plannedAt.getTime());
+        runner.run(job, run.id, store).catch((err: unknown) => {
+          logger.error('Runner error', { jobId, error: String(err) });
+        });
+      } catch (err) {
+        // A synchronous throw out of an EventEmitter listener is not caught by
+        // runner.run()'s own .catch() — it propagates straight to the global
+        // uncaughtException handler and kills the daemon, taking down every
+        // other scheduled job with it, not just this one. Catching here keeps
+        // one job's failure (e.g. a store error) from ending the process.
+        logger.error('Failed to record/dispatch scheduled run', { jobId, error: String(err) });
+      }
     });
 
     async function reload(): Promise<void> {
       logger.info('Reloading jobs from disk');
+      // Read+validate everything that can throw (config) BEFORE mutating the
+      // live schedule. loadConfig() throws a CrontickError on a malformed or
+      // out-of-bounds config.json (e.g. retention.maxRunsPerJob out of range).
+      // If unscheduleAll() ran first, that throw would leave the daemon with
+      // an empty scheduler until the next successful reload or a restart —
+      // every job silently stops firing. Computing reloadedCap first means a
+      // failed reload leaves the previous schedule fully intact.
+      const reloadedCap = loadConfig().retention.maxRunsPerJob;
       scheduler.unscheduleAll();
       store.loadJobsFromDisk();
       // Re-read config here too so a changed retention.maxRunsPerJob takes
       // effect on `crontick daemon reload` without requiring a full daemon
       // restart (only the cap is config-driven at reload time; other config,
       // e.g. engines, is already re-read per prompt-action run).
-      const reloadedCap = loadConfig().retention.maxRunsPerJob;
       store.setRunRetentionCap(reloadedCap);
       const reloaded = store.listJobs();
       for (const job of reloaded) {

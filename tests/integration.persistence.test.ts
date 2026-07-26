@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
 import { Store } from '../src/daemon/store.js';
 import { ORPHAN_RUN_ERROR_CODE, ORPHAN_RUN_ERROR_MESSAGE } from '../src/errors.js';
 
@@ -164,6 +165,45 @@ describe('Integration: persistence and orphan run reconciler', () => {
       smallCapStore.pruneAllJobsRunHistory();
       expect(smallCapStore.getRun(queuedRun.id)?.status).toBe('queued');
       smallCapStore.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // A backfill failure (disk full, corrupted rows, etc.) is best-effort
+  // maintenance and must be logged, not thrown — the real daemon startup
+  // path (src/daemon/index.ts main()) wraps pruneAllJobsRunHistory() in a
+  // try/catch specifically so this can never block the daemon from starting
+  // and serving already-scheduled jobs.
+  it('a failing backfill does not throw — it is swallowed so startup can continue', () => {
+    const dir = makeTmpDir();
+    const dbPath = join(dir, 'runs.db');
+    const jobsPath = join(dir, 'jobs');
+    try {
+      const unboundedStore = new Store(dbPath, jobsPath, undefined, 1_000_000);
+      unboundedStore.open();
+      for (let i = 0; i < 10; i++) {
+        const run = unboundedStore.insertRun('job-backfill-fail', i);
+        unboundedStore.updateRun(run.id, { status: 'success' });
+      }
+      unboundedStore.close();
+
+      // Corrupt the schema so the backfill's eviction throws on the missing
+      // run_logs table for every job it encounters.
+      const raw = new DatabaseSync(dbPath);
+      raw.exec('DROP TABLE run_logs;');
+      raw.close();
+
+      const smallCapStore = new Store(dbPath, jobsPath, undefined, 4);
+      smallCapStore.open();
+      try {
+        expect(() => smallCapStore.pruneAllJobsRunHistory()).not.toThrow();
+        // The prune failed internally, so nothing was evicted — the backfill
+        // degrades to a no-op rather than silently reporting success.
+        expect(smallCapStore.listRuns({ jobId: 'job-backfill-fail' })).toHaveLength(10);
+      } finally {
+        smallCapStore.close();
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

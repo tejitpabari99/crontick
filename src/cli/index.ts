@@ -165,10 +165,17 @@ function commonJobOptions(command: Command): Command {
     .option('--session-id <id>', 'Reuse this prompt engine session every run')
     .option('--reuse-session', 'Capture the first successful run session id and reuse it')
     .option('--file <path>', 'Load job JSON from a file')
-    .option('--shell <shell>', 'Shell: auto|bash|pwsh|cmd', 'auto')
+    // No hardcoded default here (unlike most flags): a Commander default would
+    // be indistinguishable from the user explicitly typing the same value,
+    // which on `update` previously caused an omitted flag to silently reset
+    // a customized shell/overlap policy back to the default. Leaving it
+    // undefined when omitted lets job-input.ts tell "not specified" apart
+    // from "explicitly set to the default value" on both `new` and `update`.
+    // `new` still defaults to auto/skip explicitly in job-input.ts.
+    .option('--shell <shell>', 'Shell: auto|bash|pwsh|cmd (default on create: auto; omit on update to leave unchanged)')
     .option('--env-file <path>', 'Load extra environment variables from a .env file')
     .option('--timeout <sec>', 'Timeout in seconds', parseInteger)
-    .option('--overlap <policy>', 'Overlap policy: skip|queue|cancel-previous', 'skip')
+    .option('--overlap <policy>', 'Overlap policy: skip|queue|cancel-previous (default on create: skip; omit on update to leave unchanged)')
     .option('--retry <max>', 'Retry count', parseInteger)
     .option('--desc <description>', 'Job description');
 }

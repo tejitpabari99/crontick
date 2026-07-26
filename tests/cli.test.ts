@@ -434,6 +434,200 @@ describe('CLI e2e with daemon', () => {
     expect(data.retry.max).toBe(2);
   });
 
+  it('crontick update --overlap skip explicitly sets skip (not silently ignored)', () => {
+    const created = cli([
+      '--json', 'new', 'overlap-cases-job', '--cron', '0 9 * * *',
+      '--exec', 'echo hi', '--overlap', 'queue',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+    expect(JSON.parse(created.stdout).overlap).toBe('queue');
+
+    const updated = cli(['--json', 'update', 'overlap-cases-job', '--overlap', 'skip'], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    expect(JSON.parse(updated.stdout).overlap).toBe('skip');
+  });
+
+  it('crontick update --overlap cancel-previous sets that value', () => {
+    const updated = cli(['--json', 'update', 'overlap-cases-job', '--overlap', 'cancel-previous'], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    expect(JSON.parse(updated.stdout).overlap).toBe('cancel-previous');
+  });
+
+  it('crontick update omitting --overlap leaves the existing value alone', () => {
+    const updated = cli(['--json', 'update', 'overlap-cases-job', '--desc', 'no overlap flag'], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    const data = JSON.parse(updated.stdout);
+    expect(data.overlap).toBe('cancel-previous');
+    expect(data.description).toBe('no overlap flag');
+  });
+
+  it('crontick update preserves shell/envFile/timeoutSec when only --script is repeated', () => {
+    // Node's own `--env-file` startup flag is scanned globally in argv, even
+    // when it's meant for our CLI's --env-file option — point at a real file
+    // so Node doesn't error out before our script even runs.
+    const envFilePath = join(dir, 'shell-preserve.env');
+    writeFileSync(envFilePath, 'FOO=bar\n', 'utf-8');
+    const created = cli([
+      '--json', 'new', 'shell-preserve-job', '--cron', '0 9 * * *',
+      '--script', 'echo hi', '--shell', 'cmd', '--env-file', envFilePath, '--timeout', '30',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+    expect(JSON.parse(created.stdout).action).toMatchObject({ shell: 'cmd', envFile: envFilePath, timeoutSec: 30 });
+
+    const updated = cli(['--json', 'update', 'shell-preserve-job', '--script', 'echo bye'], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    const data = JSON.parse(updated.stdout);
+    expect(data.action).toMatchObject({
+      kind: 'script', script: 'echo bye', shell: 'cmd', envFile: envFilePath, timeoutSec: 30,
+    });
+  });
+
+  it('crontick update --shell explicitly changes the shell', () => {
+    const updated = cli(['--json', 'update', 'shell-preserve-job', '--script', 'echo again', '--shell', 'pwsh'], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    expect(JSON.parse(updated.stdout).action).toMatchObject({ shell: 'pwsh' });
+  });
+
+  it('crontick update switching action kind fully replaces the action (no stale fields)', () => {
+    const updated = cli(['--json', 'update', 'shell-preserve-job', '--exec', 'echo done'], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    const data = JSON.parse(updated.stdout);
+    expect(data.action).toMatchObject({ kind: 'exec', command: 'echo', args: ['done'] });
+    expect(data.action).not.toHaveProperty('shell');
+    expect(data.action).not.toHaveProperty('script');
+  });
+
+  // ── args/reuseSession/retry/engine parity with MCP (see tests/mcp.test.ts) ────
+  // The CLI's own flag builder always supplies args/reuseSession/retry
+  // explicitly (there's no flag-only way to "touch one action field but leave
+  // args alone" for exec/prompt), so these use --file JSON patches — which go
+  // through the exact same JobPatchInputSchema.safeParse + normalizeJobPatch
+  // core as an MCP call — to prove CLI and MCP resolve identically.
+
+  it('crontick update --file preserves exec args when the patch only changes envFile', () => {
+    const created = cli([
+      '--json', 'new', 'file-exec-args-job', '--cron', '0 9 * * *',
+      '--exec', 'echo a b',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+    expect(JSON.parse(created.stdout).action).toMatchObject({ kind: 'exec', command: 'echo', args: ['a', 'b'] });
+
+    const patchFile = join(dir, 'file-exec-args-patch.json');
+    writeFileSync(patchFile, JSON.stringify({ action: { kind: 'exec', command: 'echo', envFile: '.env.new' } }), 'utf-8');
+    const updated = cli(['--json', 'update', 'file-exec-args-job', '--file', patchFile], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    expect(JSON.parse(updated.stdout).action).toMatchObject({
+      kind: 'exec', command: 'echo', args: ['a', 'b'], envFile: '.env.new',
+    });
+  });
+
+  it('crontick update --file applies explicit exec args when provided', () => {
+    const patchFile = join(dir, 'file-exec-args-explicit-patch.json');
+    writeFileSync(patchFile, JSON.stringify({ action: { kind: 'exec', command: 'echo', args: ['c'] } }), 'utf-8');
+    const updated = cli(['--json', 'update', 'file-exec-args-job', '--file', patchFile], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    expect(JSON.parse(updated.stdout).action).toMatchObject({ kind: 'exec', args: ['c'] });
+  });
+
+  it('crontick update --file preserves prompt args and reuseSession when the patch only changes prompt text', () => {
+    const created = cli([
+      '--json', 'new', 'file-prompt-args-job', '--cron', '0 9 * * *',
+      '--prompt', 'old', '--reuse-session', '--', '--flag',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+    expect(JSON.parse(created.stdout).action).toMatchObject({
+      kind: 'prompt', prompt: 'old', args: ['--flag'], reuseSession: true,
+    });
+
+    const patchFile = join(dir, 'file-prompt-args-patch.json');
+    writeFileSync(patchFile, JSON.stringify({ action: { kind: 'prompt', prompt: 'new' } }), 'utf-8');
+    const updated = cli(['--json', 'update', 'file-prompt-args-job', '--file', patchFile], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    expect(JSON.parse(updated.stdout).action).toMatchObject({
+      kind: 'prompt', prompt: 'new', args: ['--flag'], reuseSession: true,
+    });
+  });
+
+  it('crontick update --file applies explicit prompt args/reuseSession when provided', () => {
+    const patchFile = join(dir, 'file-prompt-args-explicit-patch.json');
+    writeFileSync(patchFile, JSON.stringify({ action: { kind: 'prompt', prompt: 'old', args: [], reuseSession: false } }), 'utf-8');
+    const updated = cli(['--json', 'update', 'file-prompt-args-job', '--file', patchFile], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    expect(JSON.parse(updated.stdout).action).toMatchObject({ args: [], reuseSession: false });
+  });
+
+  it('crontick update --reuse-session omitted on update leaves an existing reuseSession alone', () => {
+    // Unlike args, --reuse-session has no Commander default and is a real CLI
+    // flag path (booleanOption(opts.reuseSession) is undefined when omitted),
+    // so this exercises the flag path directly rather than needing --file.
+    const created = cli([
+      '--json', 'new', 'reuse-session-flag-job', '--cron', '0 9 * * *',
+      '--prompt', 'old', '--reuse-session',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+    expect(JSON.parse(created.stdout).action).toMatchObject({ reuseSession: true });
+
+    const updated = cli(['--json', 'update', 'reuse-session-flag-job', '--prompt', 'new'], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    expect(JSON.parse(updated.stdout).action).toMatchObject({ kind: 'prompt', prompt: 'new', reuseSession: true });
+  });
+
+  it('crontick update --file preserves a custom engine on a same-kind prompt update that omits engine', () => {
+    const created = cli([
+      '--json', 'new', 'file-prompt-engine-job', '--cron', '0 9 * * *',
+      '--prompt', 'old', '--engine', 'agency',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+    expect(JSON.parse(created.stdout).action).toMatchObject({ engine: 'agency' });
+
+    const patchFile = join(dir, 'file-prompt-engine-patch.json');
+    writeFileSync(patchFile, JSON.stringify({ action: { kind: 'prompt', prompt: 'new' } }), 'utf-8');
+    const updated = cli(['--json', 'update', 'file-prompt-engine-job', '--file', patchFile], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    expect(JSON.parse(updated.stdout).action).toMatchObject({ kind: 'prompt', engine: 'agency' });
+  });
+
+  it('crontick update --file fills the configured default engine for a new prompt action introduced via a kind change', () => {
+    const created = cli([
+      '--json', 'new', 'file-kind-change-engine-job', '--cron', '0 9 * * *', '--exec', 'echo',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+
+    const patchFile = join(dir, 'file-kind-change-engine-patch.json');
+    writeFileSync(patchFile, JSON.stringify({ action: { kind: 'prompt', prompt: 'hello' } }), 'utf-8');
+    const updated = cli(['--json', 'update', 'file-kind-change-engine-job', '--file', patchFile], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    expect(JSON.parse(updated.stdout).action).toMatchObject({ kind: 'prompt', prompt: 'hello', engine: 'copilot' });
+  });
+
+  it('crontick update --file preserves retry.backoffSec when the patch only sets max', () => {
+    const created = cli([
+      '--json', 'new', 'file-retry-job', '--cron', '0 9 * * *', '--exec', 'echo',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+    // --retry only ever sets max (backoffSec fixed at 30 by the CLI flag
+    // builder), so seed a custom backoffSec via --file to set up this case.
+    const seedFile = join(dir, 'file-retry-seed-patch.json');
+    writeFileSync(seedFile, JSON.stringify({ retry: { max: 1, backoffSec: 90 } }), 'utf-8');
+    const seeded = cli(['--json', 'update', 'file-retry-job', '--file', seedFile], env());
+    expect(seeded.status, seeded.stderr).toBe(0);
+    expect(JSON.parse(seeded.stdout).retry).toEqual({ max: 1, backoffSec: 90 });
+
+    const patchFile = join(dir, 'file-retry-patch.json');
+    writeFileSync(patchFile, JSON.stringify({ retry: { max: 3 } }), 'utf-8');
+    const updated = cli(['--json', 'update', 'file-retry-job', '--file', patchFile], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    expect(JSON.parse(updated.stdout).retry).toEqual({ max: 3, backoffSec: 90 });
+  });
+
+  it('crontick update --file applies an explicit backoffSec over the preserved retry fields', () => {
+    const patchFile = join(dir, 'file-retry-explicit-patch.json');
+    writeFileSync(patchFile, JSON.stringify({ retry: { max: 3, backoffSec: 15 } }), 'utf-8');
+    const updated = cli(['--json', 'update', 'file-retry-job', '--file', patchFile], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    expect(JSON.parse(updated.stdout).retry).toEqual({ max: 3, backoffSec: 15 });
+  });
+
   it('crontick disable disables the job', () => {
     const r = cli(['--json', 'disable', 'e2e-job'], env());
     expect(r.status).toBe(0);
