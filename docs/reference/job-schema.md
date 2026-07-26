@@ -112,6 +112,21 @@ The **input schema** (`JobCreateInputSchema`) differs from the stored `JobSchema
 
 ---
 
+## Update vs Create Semantics
+
+The "Default" column above only applies **when creating a job** (`crontick new`, `crontick_job_create`, or `client.createJob`). On a partial update (`crontick update`, `crontick_job_update`, or `client.updateJob`), fields the caller does not mention are **preserved from the existing job**, not reset to the table's default. This applies identically across the CLI, MCP, and library surfaces, since all three funnel through the same `normalizeJobPatch()` logic.
+
+Concretely:
+
+- `overlap`; `action.shell` (script), `action.envFile`, `action.timeoutSec` (all action kinds); `action.args` (exec/prompt); `action.reuseSession` (prompt); `retry.backoffSec` — all keep their previous value unless the patch explicitly sets them.
+- `action.engine` (prompt) is treated the same way for a same-kind update: the config `defaultEngine` fill-in only happens when creating a job or when a patch changes a non-prompt action into a `prompt` action for the first time. A patch that leaves an existing prompt action's `kind` unchanged never overwrites a configured `engine`, even if the patch omits it.
+- **Changing `action.kind`** (e.g. `script` -> `exec`) is not a field-by-field merge: the new action wholly replaces the old one, and only the fields provided in the patch (plus the normal create-time defaults for the new kind) apply. There is no cross-kind field preservation — e.g. updating a `script` job to `exec` does not carry over `shell`.
+- `retry.max` and the rest of `retry` follow the same partial-merge rule as `overlap`.
+
+See [jobs.md](../concepts/jobs.md) for the conceptual explanation and [cli.md](cli.md) for the corresponding `--shell`/`--overlap` default-column caveat.
+
+---
+
 ## JSON Examples
 
 ### Script job with cron schedule

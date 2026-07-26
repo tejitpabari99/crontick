@@ -49,18 +49,26 @@ tests/
   mcp.test.ts              Integration: MCP server via SDK client
   client.test.ts           CrontickClient against fake/real daemons
   surface-drift.test.ts    Parity: all surfaces expose every capability
-  store.test.ts            Unit: SQLite store CRUD, migrations
+  store.test.ts            Unit: SQLite store CRUD, migrations, run retention
   scheduler.test.ts        Unit: cron/interval/one-shot scheduling
   runner.test.ts           Unit: process spawning, overlap, timeout
-  config.test.ts           Unit: config load/write/engines
-  integration.*.test.ts    Integration scenarios (persistence, retry, overlap, timeout)
+  config.test.ts           Unit: config load/write/engines, retention bounds
+  integration.*.test.ts    Integration scenarios (persistence, retry, overlap, timeout,
+                           one-shot end-to-end, live-daemon auto-fire, daemon shutdown/
+                           reload/fresh-install, prompt end-to-end)
   fuzz.*.test.ts           Property-based fuzz (fast-check) for API, MCP, env-file, paths
   property.*.test.ts       Property-based: cron preview, scheduler invariants, schema
   security.test.ts         API auth/binding/traversal hardening
   perf.test.ts             Advisory perf baselines (not gated)
   smoke.test.ts            Package export sanity
+  autostart-removal.test.ts  Guard: removed autostart-registration strings do not reappear
+                              in shipped product files (src/plugin/scripts/README/package.json)
   ...
 ```
+
+As of this writing the suite has 381 tests across 41 files (`npx vitest run`); treat this as a
+point-in-time count, not a value to keep manually in sync -- run the command above for the
+current number.
 
 Naming convention: `<module-or-layer>.<optional-qualifier>.test.ts`. Place new tests in `tests/` at the root level. Name regression tests after the bug: `tests/<area>.<ticket-or-slug>.test.ts`.
 
@@ -192,22 +200,35 @@ Workflow file: `.github/workflows/ci.yml`
 | `ubuntu-latest` | 22 | same |
 | `ubuntu-latest` | 24 | same |
 
-A second job `verify-package` (ubuntu-latest, Node 22) runs after the matrix: `npm pack --dry-run` + `scripts/verify-tarball.mjs`.
+A second job `verify-package` (ubuntu-latest, Node 22) runs after the matrix, in this order:
+`npm run build` -> `npm run typecheck:examples:dist` (type-checks `examples/` against the
+*built* `dist/index.d.ts`, not source — see [build-and-package.md](internals/build-and-package.md))
+-> `npm pack --dry-run` + `scripts/verify-tarball.mjs` (tarball contents) ->
+`npm run verify-package-install` (packs a real tarball, installs it into a scratch directory,
+imports it and checks every required public export, then runs `crontick --version` and starts
+`crontick-daemon`/`crontick-mcp` under a timeout to confirm each bin actually launches).
 
 Additional workflows:
 
-- `.github/workflows/release.yml` -- changesets publish on main push (after build + test + tarball verify).
+- `.github/workflows/release.yml` -- changesets publish on main push (after build, typecheck examples against dist, test, tarball verify, and `verify-package-install`).
 - `.github/workflows/audit.yml` -- weekly `npm audit --production` + signature check.
 
 ## Manual pre-release verification
 
 ### Fresh install
 
+The tarball install-and-launch smoke test below is now also automated in CI via the
+`verify-package` job's `npm run verify-package-install` step (real tarball, real install, real
+launch of all three bins). The manual pass remains useful as a final human sanity check before
+publishing.
+
 - [ ] `npm run build` succeeds without warnings
 - [ ] `npm pack` produces a tarball
 - [ ] In a new empty directory, `npm install <path-to-tarball>` succeeds
 - [ ] `npx crontick --version` prints the expected version
-- [ ] `npx crontick-mcp` starts without crash (Ctrl+C to exit)
+- [ ] `npx crontick-mcp` starts without crash (Ctrl+C to exit) -- note `crontick-mcp` (and
+      `crontick-daemon`) do not parse `--help` or any other argv flag; "starts and stays up" is
+      the only observable success signal, not help text
 
 ### Job kinds
 
@@ -263,13 +284,15 @@ Additional workflows:
 1. Create a changeset: `npx changeset` (follow prompts for semver bump and summary).
 2. Run validation:
    ```powershell
-   npm run typecheck
-   npm run lint
-   npm run build
-   npm test
+   npm run validate
    ```
+   (`validate` chains lint, typecheck, source and dist example type-checking, the full test
+   suite, and a build; `verify-package-install` is CI-only and not part of `validate` -- see
+   step 4.)
 3. Review tarball contents: `npm pack --dry-run` (expect `dist/`, `plugin/`, `src/skill/SKILL.md`, `README.md`, `LICENSE`).
-4. Smoke-test the tarball:
+4. The tarball install-and-launch smoke test (installing the packed tarball and exercising
+   `crontick --version`, `crontick-daemon`, and `crontick-mcp`) now runs automatically in the
+   `verify-package` CI job (`npm run verify-package-install`); optionally repeat it locally:
    ```powershell
    npm pack
    mkdir scratch && cd scratch

@@ -223,6 +223,26 @@ class CrontickError extends Error {
 
 ---
 
+## Stored Run Error Values (not `CrontickError` codes)
+
+The values above are all thrown `CrontickError` instances (`code` + `message` + optional
+`details`). Separately, the SQLite `runs.error` column stores plain failure strings for a run —
+these are written directly by the runner/store, never thrown, and are not `CrontickError`
+instances. Several use a `CODE: message` convention that looks similar to the codes above but is
+an unrelated, run-scoped vocabulary; do not conflate the two.
+
+| Stored `runs.error` prefix | Set by | Meaning |
+|-----------------------------|--------|---------|
+| `DAEMON_RESTART: ...` | `Store.reconcileOrphanRuns()` | A run left `running`/`queued` when the daemon last stopped was canceled on the next startup. Exported as `ORPHAN_RUN_ERROR_CODE` (`'DAEMON_RESTART'`) and `ORPHAN_RUN_ERROR_MESSAGE` from `src/errors.ts` and the package root — see [library-api.md](./library-api.md). |
+| `RUNNER_CALLBACK_FAILED: ...` | `src/daemon/runner.ts` | A user-supplied run callback threw. |
+| `SESSION_ID_NOT_FOUND: ...` | `src/daemon/runner.ts` | `reuseSession` capture found no session id in prompt engine output. |
+| `SESSION_PERSIST_FAILED: ...` | `src/daemon/runner.ts` | Persisting a captured session id back to the job file failed. |
+
+See [error-model.md](../concepts/error-model.md#stored-runserror-values-are-not-crontickerror-codes)
+and [storage internals](../internals/storage.md#orphan-reconciliation).
+
+---
+
 ## Surface Presentation
 
 ### CLI

@@ -57,3 +57,5 @@ NNNN-kebab-case-title.md
 | 0009 | Use changesets for versioning and releases | Accepted | 2026-07-18 |
 | 0010 | Use tsup as the build tool | Accepted | 2026-07-18 |
 | 0011 | Use vitest as the test runner with surface-drift as architectural test | Accepted | 2026-07-18 |
+| 0012 | Cap run history per job with count-based, best-effort, batched eviction | Accepted | 2026-07-26 |
+| 0013 | Narrow the autostart-removal guard test to shipped product surfaces only | Accepted | 2026-07-26 |

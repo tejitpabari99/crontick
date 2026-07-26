@@ -52,12 +52,18 @@ crontick new <id> [engineArgs...]
 | `--session-id <id>` | string | — | Reuse this prompt engine session every run |
 | `--reuse-session` | boolean | `false` | Capture first successful run session id and reuse it |
 | `--file <path>` | string | — | Load job JSON from a file |
-| `--shell <shell>` | string | `auto` | Shell: `auto`\|`bash`\|`pwsh`\|`cmd` |
+| `--shell <shell>` | string | `auto` (create only) | Shell: `auto`\|`bash`\|`pwsh`\|`cmd`\* |
 | `--env-file <path>` | string | — | Load extra environment variables from a `.env` file |
 | `--timeout <sec>` | integer | — | Timeout in seconds |
-| `--overlap <policy>` | string | `skip` | Overlap policy: `skip`\|`queue`\|`cancel-previous` |
+| `--overlap <policy>` | string | `skip` (create only) | Overlap policy: `skip`\|`queue`\|`cancel-previous`\* |
 | `--retry <max>` | integer | `0` | Retry count |
 | `--desc <description>` | string | — | Job description |
+
+\* `--shell` and `--overlap` only receive their default (`auto` / `skip`) when creating a job
+(`crontick new`). On `crontick update`, omitting either flag leaves the job's existing value
+unchanged — there is no update-time default, so a partial update never silently resets these
+fields. See [job-schema.md](job-schema.md#update-vs-create-semantics) and
+[jobs.md](../concepts/jobs.md).
 
 Exactly one schedule source (`--cron`, `--every`, `--at`) and one action source (`--script`, `--exec`, `--prompt`, `--prompt-file`) are required unless `--file` is used.
 

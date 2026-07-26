@@ -23,12 +23,14 @@ Read the relevant docs before modifying the corresponding area:
 
 ```sh
 npm ci                       # Install dependencies (clean)
-npm run validate             # Full check: lint + typecheck + typecheck:examples + test + build
+npm run validate             # Full check: lint + typecheck + typecheck:examples + test + build + typecheck:examples:dist
 npm run lint                 # ESLint
 npm run typecheck            # TypeScript type-check (src)
-npm run typecheck:examples   # TypeScript type-check (examples)
+npm run typecheck:examples   # TypeScript type-check (examples, against source types)
+npm run typecheck:examples:dist  # TypeScript type-check (examples, against built dist/index.d.ts -- requires `npm run build` first, or run `npm run validate` which builds for you)
 npm test                     # Vitest run (requires prior build for integration tests)
 npm run build                # tsup build + sqlite fix
+npm run verify-package-install  # CI-only, not part of validate: packs+installs a real tarball, exercises every public export and all three bins
 ```
 
 ## Source organization
@@ -89,8 +91,8 @@ When public behavior changes:
 2. Run `npm pack --dry-run` and confirm only intended files are included per the `files` allowlist in `package.json`: `dist`, `plugin/**`, `src/skill/SKILL.md`, `README.md`, `LICENSE`.
 3. Run `npm pack` to produce the tarball.
 4. Install the tarball in a scratch directory (`npm install ./crontick-*.tgz`).
-5. Exercise every documented public import (`import { createClient } from 'crontick'`) and each bin (`crontick --help`, `crontick-daemon --help`, `crontick-mcp --help`).
-6. The `verify-package` CI job automates steps 2-5; confirm it passes before release.
+5. Exercise every documented public import (`import { createClient } from 'crontick'`) and each bin. `crontick --help` works (Commander-parsed); `crontick-daemon` and `crontick-mcp` do **not** parse `--help` or any other argv flag at all -- they always start as long-running servers, so the only exercisable check for those two bins is that the process launches and stays up (confirmed by `scripts/verify-package-install.mjs`, which starts each under a timeout and then stops it).
+6. `npm run verify-package-install` (CI-only, not part of `npm run validate`) automates steps 2-5 end-to-end with a real packed tarball; confirm the `verify-package` CI job passes before release.
 
 ## Definition of done
 

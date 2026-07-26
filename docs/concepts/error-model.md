@@ -83,6 +83,27 @@ The client's `ensureDaemon` logic already handles the retryable daemon errors in
 | `logs/daemon-YYYY-MM-DD.log` | Daemon-level errors (startup, scheduler, unhandled) |
 | `logs/daemon.ensure.log` | Demand-start failure output |
 
+### Stored `runs.error` values are not `CrontickError` codes
+
+The `runs.error` column stores free-text failure descriptions, not thrown
+`CrontickError` instances — nothing constructs a `CrontickError` for a failed
+run; the runner writes a string directly into SQLite. Several of those
+strings follow a `CODE: message` convention that looks like an error code but
+is a distinct, smaller vocabulary scoped to run outcomes:
+
+| Stored value prefix | Meaning |
+|----------------------|---------|
+| `DAEMON_RESTART: ...` | `Store.reconcileOrphanRuns()` canceled a run that was `running`/`queued` when the daemon last stopped, exported as `ORPHAN_RUN_ERROR_CODE`/`ORPHAN_RUN_ERROR_MESSAGE` from `src/errors.ts` (and the package root) |
+| `RUNNER_CALLBACK_FAILED: ...` | A user-supplied run callback threw |
+| `SESSION_ID_NOT_FOUND: ...` | `reuseSession` capture could not find a session id in prompt engine output |
+| `SESSION_PERSIST_FAILED: ...` | Persisting a captured session id back to the job file failed |
+
+These prefixes are conventions for readability, not a closed enum validated
+anywhere, and they are unrelated to the `CrontickError` `code` table above —
+do not confuse a `runs.error` value like `DAEMON_RESTART: ...` with a thrown
+error code. See [storage internals](../internals/storage.md#orphan-reconciliation)
+and [errors reference](../reference/errors.md).
+
 ## Actionable error messages
 
 Every `CrontickError` in the daemon startup path includes a `details.action` string suggesting the next command to run. For example:

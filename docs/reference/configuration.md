@@ -31,6 +31,9 @@ The data directory is resolved by (in order):
       "args": ["<arg>", ...],
       "env": { "<KEY>": "<VALUE>", ... }
     }
+  },
+  "retention": {
+    "maxRunsPerJob": 100
   }
 }
 ```
@@ -39,6 +42,23 @@ The data directory is resolved by (in order):
 |-------|------|----------|---------|-------------|
 | `defaultEngine` | `string` | no | `"copilot"` | Must match a key in `engines`; regex `^[A-Za-z0-9_.-]+$` |
 | `engines` | `Record<string, EngineConfig>` | no | `{ copilot: { command: "copilot", args: [], env: {} } }` | At least one engine must be defined |
+| `retention` | `RetentionConfig` | no | `{ maxRunsPerJob: 100 }` | See below |
+
+### RetentionConfig
+
+| Field | Type | Required | Default | Constraints |
+|-------|------|----------|---------|-------------|
+| `maxRunsPerJob` | `integer` | no | `100` | `min(1)`, `max(100_000)` |
+
+Each job retains at most `maxRunsPerJob` runs; the oldest terminal runs (not `running`/`queued`)
+are evicted first, along with their logs, whenever a new run is inserted, and again in a
+one-time startup backfill for databases that predate this setting. Eviction is best-effort: a
+failure is logged but never fails a run insert or blocks daemon startup. Changing
+`retention.maxRunsPerJob` and running `crontick daemon reload` applies the new cap immediately,
+without a daemon restart. `RetentionConfigSchema` is `.strict()` — no extra fields allowed. See
+[state-and-storage.md](../concepts/state-and-storage.md#run-history-retention) for the
+user-facing model and its limitations, and [storage internals](../internals/storage.md) for the
+eviction algorithm.
 
 ### EngineConfig
 
@@ -57,6 +77,9 @@ Schema is `.strict()` — no extra fields allowed.
   "defaultEngine": "copilot",
   "engines": {
     "copilot": { "command": "copilot", "args": [], "env": {} }
+  },
+  "retention": {
+    "maxRunsPerJob": 100
   }
 }
 ```
@@ -186,7 +209,7 @@ CREATE TABLE migrations (
 );
 ```
 
-Indexes: `idx_runs_job_id`, `idx_runs_started_at`, `idx_run_logs_run_id`.
+Indexes: `idx_runs_job_id_started_at`, `idx_runs_started_at`, `idx_run_logs_run_id`.
 
 ---
 

@@ -178,4 +178,25 @@ The `--env-file` path does not exist or cannot be read. Verify the path is corre
 file is readable. Relative paths resolve against the job's `cwd` (or the daemon's working
 directory if no `cwd` is set).
 
+### My old runs disappeared
+
+Each job keeps at most `retention.maxRunsPerJob` runs (default `100`); older runs (and their
+logs) are pruned automatically and permanently — there is no export, dry-run, warning, or undo
+before eviction. This is a per-job **count** cap only: a job that fires every minute keeps far
+less calendar history than a job that fires monthly under the same cap. If you need to keep more
+history, raise `retention.maxRunsPerJob` in `config.json` and run `crontick daemon reload`
+(existing runs beyond the old cap that were already pruned cannot be recovered). See
+[state-and-storage.md](concepts/state-and-storage.md#run-history-retention) and
+[configuration.md](reference/configuration.md).
+
+### `crontick daemon stop` doesn't clean up on Windows
+
+On Windows, sending a stop signal to the daemon process terminates it immediately without
+running its graceful-shutdown handler (Node.js signal handlers are not invoked for
+externally-delivered `SIGINT`/`SIGTERM` on Windows, only for a genuine Ctrl+C in the same
+console). PID/port files may be left behind, and any in-flight run's own graceful cleanup is
+skipped. This is expected: the next daemon start tolerates and overwrites stale PID/port files.
+The only cross-platform guarantee after `crontick daemon stop` is that the process is no longer
+alive. See [daemon-lifecycle.md](concepts/daemon-lifecycle.md#shutdown).
+
 For all error codes see [docs/reference/errors.md](reference/errors.md).

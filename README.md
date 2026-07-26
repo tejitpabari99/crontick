@@ -136,8 +136,10 @@ The library entry point (`import ... from 'crontick'`) exports:
 |--------|---------|
 | `createClient` / `CrontickClient` | Programmatic access to all 36 capabilities |
 | `CrontickError` | Typed error with `code`, `message`, `details` |
+| `ORPHAN_RUN_ERROR_CODE` / `ORPHAN_RUN_ERROR_MESSAGE` | Stored `runs.error` value/prefix for a run canceled by a daemon restart (not a thrown `CrontickError` code) |
 | `SURFACE_CAPABILITIES` | Registry of all capability names, client methods, CLI commands, and MCP tool names |
 | `JobSchema`, `ScheduleSchema`, `PromptActionSchema` | Zod schemas for validation |
+| `RetentionConfigSchema` / `RetentionConfig` | Run retention config schema/type (`maxRunsPerJob`) |
 | `jobJsonSchema` / `jobJsonSchemaText` | JSON Schema representation of a job |
 | Config utilities | `loadConfig`, `initConfig`, `getConfigValue`, `setConfigValue`, etc. |
 | Logger utilities | `createLogger`, `nullLogger`, `redactText` |
@@ -164,6 +166,12 @@ State and configuration live in a platform-specific data directory:
 Override with `CRONTICK_HOME`.
 
 Key environment variables: `CRONTICK_HOME`, `CRONTICK_DAEMON_URL`, `CRONTICK_VERBOSE`.
+
+Each job retains at most `retention.maxRunsPerJob` runs (default `100`, range `1..100000`);
+older terminal runs and their logs are pruned automatically, and a changed cap takes effect on
+`crontick daemon reload` without a restart. This is a per-job count cap only -- see
+[docs/concepts/state-and-storage.md](docs/concepts/state-and-storage.md#run-history-retention)
+for the exact behavior and its limitations.
 
 See [docs/reference/configuration.md](docs/reference/configuration.md) for the full config
 file schema, all environment variables, and precedence rules.

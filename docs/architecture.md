@@ -32,15 +32,15 @@ Key public symbols:
 | Category | Symbols |
 |----------|---------|
 | Client | `CrontickClient`, `createClient`, `CrontickClientOptions` |
-| Error | `CrontickError` |
+| Error | `CrontickError`, `ORPHAN_RUN_ERROR_CODE`, `ORPHAN_RUN_ERROR_MESSAGE` |
 | Job input | `buildJobFromCreateOptions`, `buildJobPatchFromUpdateOptions`, `applyConfigDefaults`, `normalizeJobInput`, `normalizeJobPatch` |
-| Schemas | `JobSchema`, `ScheduleSchema`, `PromptActionSchema`, `PromptEngineSchema`, `ConfigSchema`, `EngineConfigSchema` |
+| Schemas | `JobSchema`, `ScheduleSchema`, `PromptActionSchema`, `PromptEngineSchema`, `ConfigSchema`, `EngineConfigSchema`, `RetentionConfigSchema` |
 | Config | `BUILT_IN_CONFIG`, `addEngine`, `removeEngine`, `updateEngine`, `listEngines`, `loadConfig`, `initConfig`, `configFilePath`, `getConfigValue`, `setConfigValue`, `removeConfigValue`, `readConfigFile`, `writeConfigFile`, `validateConfigFile`, `buildPromptRunCommand` |
 | Schema gen | `jobJsonSchema`, `jobJsonSchemaText` |
 | Logger | `createLogger`, `nullLogger`, `isVerboseEnv`, `redactText`, `redactValue`, `sanitizeLogEvent` |
 | Surface | `SURFACE_CAPABILITIES` |
 | Version | `VERSION` |
-| Types | `Job`, `JobInput`, `Schedule`, `Action`, `PromptAction`, `PromptEngine`, `CrontickConfig`, `EngineConfig`, `LogEvent`, `Logger`, `LogLevel`, `LogSink`, `SurfaceCapability`, `DashboardData`, `DashboardStatus`, etc. |
+| Types | `Job`, `JobInput`, `Schedule`, `Action`, `PromptAction`, `PromptEngine`, `CrontickConfig`, `EngineConfig`, `RetentionConfig`, `LogEvent`, `Logger`, `LogLevel`, `LogSink`, `SurfaceCapability`, `DashboardData`, `DashboardStatus`, etc. |
 
 The three binaries (`crontick`, `crontick-daemon`, `crontick-mcp`) are CLI entry points, not importable APIs. Internal modules (everything under `src/daemon/`, `src/cli/`, `src/mcp/`, `src/schemas/`, and non-exported source files like `src/paths.ts`, `src/prompt-runtime.ts`) are implementation details and may change without notice. The `SURFACE_CAPABILITIES` export enumerates all 37 public operations; it is itself public so consumers can introspect available functionality.
 
@@ -84,7 +84,7 @@ The three binaries (`crontick`, `crontick-daemon`, `crontick-mcp`) are CLI entry
 `src/daemon/store.ts`. Dual persistence layer:
 
 - **Job definitions**: individual JSON files under `<dataDir>/jobs/<id>.json` (source of truth) plus a JSON Schema sidecar (`<id>.schema.json`). On daemon startup, `loadJobsFromDisk()` reads all JSON files and populates the in-memory + SQLite cache.
-- **Runs and logs**: SQLite database (`<dataDir>/runs.db`) in WAL journal mode. Tables: `jobs` (cache mirror with `id`, `json`, `updated_at`), `runs` (with `id`, `job_id`, `started_at`, `ended_at`, `status`, `exit_code`, `error`, `duration_ms`), `run_logs` (with `run_id`, `stream`, `ts`, `chunk` as BLOB), `migrations`. Indexes: `idx_runs_job_id`, `idx_runs_started_at`, `idx_run_logs_run_id`.
+- **Runs and logs**: SQLite database (`<dataDir>/runs.db`) in WAL journal mode. Tables: `jobs` (cache mirror with `id`, `json`, `updated_at`), `runs` (with `id`, `job_id`, `started_at`, `ended_at`, `status`, `exit_code`, `error`, `duration_ms`), `run_logs` (with `run_id`, `stream`, `ts`, `chunk` as BLOB), `migrations`. Indexes: `idx_runs_job_id_started_at`, `idx_runs_started_at`, `idx_run_logs_run_id`. Each job's terminal runs (and their `run_logs`) are pruned to `retention.maxRunsPerJob` on every insert and via a startup backfill -- see [internals/storage.md](internals/storage.md).
 
 The Store class uses `node:sqlite` `DatabaseSync` for synchronous operations within the single-threaded daemon. It owns migrations (applied sequentially on open), CRUD for jobs/runs/logs, and orphan reconciliation on restart. Run statuses: `queued`, `running`, `success`, `failed`, `canceled`, `timeout`.
 
@@ -103,11 +103,18 @@ The Store class uses `node:sqlite` `DatabaseSync` for synchronous operations wit
 | GET/POST | `/api/runs[/:id][/cancel]` | Run queries + cancel |
 | GET | `/api/runs/:id/logs` | Run log retrieval |
 | GET | `/api/stats[/jobs/:id]` | Aggregate statistics |
-| POST | `/api/daemon/reload\|stop\|restart` | Daemon lifecycle |
+| GET | `/api/daemon/status` | Daemon PID, version, uptime, job count |
+| POST | `/api/daemon/reload` | Reload jobs from disk (see [internals/daemon.md](internals/daemon.md#reload)) |
 | POST | `/api/export`, `/api/import` | Bulk job export/import |
 | GET/POST/DELETE | `/api/dashboard[/data\|status]` | Dashboard management |
-| GET | `/api/doctor` | Health checks |
-| GET/PUT/DELETE | `/api/config[/engines[/:name]]` | Config management |
+
+`crontick daemon stop` and `crontick daemon restart` are **not** HTTP routes: they are
+client-side operations (`src/daemon/lifecycle.ts`) that read the PID file and send a process
+signal, then poll for the process to exit (see [internals/daemon.md](internals/daemon.md#lifecycle-helpers-srcdaemonlifecyclets)
+and [concepts/daemon-lifecycle.md](concepts/daemon-lifecycle.md)). `GET /api/doctor` and
+`/api/config*` are also not implemented as HTTP routes -- `crontick doctor` and
+`crontick config *` run their checks/reads directly against the filesystem and (for daemon
+reachability) the routes above, not via a dedicated config or doctor HTTP endpoint.
 
 All routes enforce loopback-only access. Request/response bodies are JSON.
 
@@ -195,7 +202,8 @@ These are architectural rules enforced by code, tests, or review policy. Violati
 | Loopback-only binding | `createApiServer` in `src/daemon/api.ts` checks `req.socket.remoteAddress` against `Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])`; non-loopback requests receive HTTP 403 with code `FORBIDDEN`; `tests/security.test.ts` verifies this |
 | Single daemon instance per data directory | PID file (`daemon.pid`) written on startup; liveness probe via `process.kill(pid, 0)`; exclusive startup lock via `openSync('wx')` on `daemon.ensure.lock` with polling + timeout |
 | Single writer to SQLite | Only the daemon process opens `runs.db` with `DatabaseSync`; all client surfaces access run/log data exclusively through daemon HTTP endpoints |
-| Orphan run reconciliation on restart | `Store.reconcileOrphanRuns()` called at daemon startup; transitions all `running`/`queued` runs to `canceled` with `error = 'daemon-restart'` so no run appears permanently stuck |
+| Orphan run reconciliation on restart | `Store.reconcileOrphanRuns()` called at daemon startup; transitions all `running`/`queued` runs to `canceled` with `error` set to the stored value `ORPHAN_RUN_ERROR_MESSAGE` (`'DAEMON_RESTART: ...'`, not a thrown `CrontickError`) so no run appears permanently stuck |
+| Per-job run retention cap | `Store.insertRun()` prunes each job's terminal runs down to `retention.maxRunsPerJob` (default 100) on every insert, in transactional batches of 500; a startup backfill (`pruneAllJobsRunHistory()`) catches pre-existing overflow; both are best-effort and never fail a run or block startup -- see [internals/storage.md](internals/storage.md) |
 | Core stays transport-agnostic | No `console.*`, `process.exit`, Commander types, or `@modelcontextprotocol/sdk` types in `src/client.ts`, `src/daemon/`, or shared modules (errors.ts, schemas/, logger.ts, paths.ts, etc.) |
 | Job JSON files are source of truth | On daemon startup, `Store.loadJobsFromDisk()` reads all `<dataDir>/jobs/*.json` files; the SQLite `jobs` table is a cache mirror, not authoritative |
 | Run status lifecycle | A run progresses: `queued` -> `running` -> terminal (`success` | `failed` | `canceled` | `timeout`). Once terminal, status is never mutated again |
@@ -303,6 +311,7 @@ Rules for adding dependencies:
 - **Per-job overlap policy**: concurrency is bounded per-job (not globally) via the `overlap` field. `skip` drops concurrent ticks, `queue` serializes them, `cancel-previous` aborts the active run. There is no global concurrency limit.
 - **Daemon demand-start latency**: first operation after daemon death incurs startup cost: process spawn + health probe polling at `POLL_MS=100` intervals, bounded by `DEFAULT_STARTUP_TIMEOUT_MS=10000`. Subsequent operations reuse the running daemon via cached base URL.
 - **No daemon heartbeat**: the daemon does not self-terminate on idle. It remains running until explicitly stopped, the process is killed, or the system shuts down.
+- **Retention eviction batching**: run pruning deletes in transactions of 500 ids at a time (not one unbounded statement), bounded by `node:sqlite`'s ~32766 bound-parameter limit and to cap how long any single transaction holds the `runs`/`run_logs` tables -- see [internals/storage.md](internals/storage.md).
 
 ## Compatibility requirements
 
@@ -317,7 +326,7 @@ Rules for adding dependencies:
 | CJS support | None | Single ESM output; `main` and `module` both point to `./dist/index.js`; no dual-publish |
 | SQLite availability | Node.js built-in `node:sqlite` | Stable in Node 24; experimental in 22-23 (daemon auto-applies `--experimental-sqlite` flag) |
 | Build tool | tsup v8 | Bundles four entry points (index, cli, daemon, mcp); all outputs get `#!/usr/bin/env node` banner |
-| Package manager | npm | No lockfile for other managers; `prepublishOnly` runs build + test |
+| Package manager | npm | No lockfile for other managers; `prepublishOnly` runs `npm run validate` (lint, typecheck, source and dist example type-checking, full test suite, build) |
 
 ## Security considerations
 

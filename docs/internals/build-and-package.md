@@ -145,7 +145,10 @@ npx changeset
 
 npm script: `"release": "changeset publish"`.
 
-Prepublish gate: `"prepublishOnly": "npm run build && npm test"`.
+Prepublish gate: `"prepublishOnly": "npm run validate"` (lint, typecheck, source
+and dist example type-checking, full test suite, and a full build — see the
+`validate` script in `package.json`; `verify-package-install` is not part of
+`validate` and only runs in CI, see Packaging Pitfalls #6 below).
 
 ---
 
@@ -163,11 +166,31 @@ Prepublish gate: `"prepublishOnly": "npm run build && npm test"`.
 5. **Tarball verification**: `scripts/verify-tarball.mjs` checks the output of
    `npm pack --dry-run` against expectations. Run in CI to catch accidental
    inclusion of dev files.
-6. **Example type-checking against source**: `examples/tsconfig.json` maps the
-   `crontick` import specifier to `../src/index.ts`, so `npm run typecheck:examples`
-   validates examples against the source type surface rather than the published
-   declaration output (`dist/index.d.ts`). If the declaration rollup ever diverges
-   from source, an example could type-check locally while being broken for real
-   consumers. This risk is mitigated by the `verify-package` CI job (which installs
-   the packed tarball and imports it) and the manual pre-release checklist in
-   `docs/testing.md` that covers importing from the tarball.
+6. **Example type-checking against source vs. against published types**:
+   `examples/tsconfig.json` maps the `crontick` import specifier to
+   `../src/index.ts`, so `npm run typecheck:examples` (part of `validate`)
+   validates examples against the *source* type surface rather than the
+   published declaration output (`dist/index.d.ts`). If the declaration
+   rollup ever diverged from source, an example could type-check locally
+   while being broken for real consumers. This gap is closed by two
+   additional, separate checks rather than by the `verify-package` CI job
+   alone:
+   - **`npm run typecheck:examples:dist`** (also part of `validate`, and run
+     again standalone in the `verify-package` CI job after a fresh build):
+     `scripts/check-dist-built.mjs` first asserts `dist/index.d.ts` exists
+     (giving an actionable "run `npm run build` first" error instead of a
+     confusing TypeScript "project root is ambiguous" failure), then
+     `tsc --project examples/tsconfig.dist.json` type-checks every example
+     against the *built* declaration file via a separate tsconfig that remaps
+     the `crontick` specifier to `../dist/index.d.ts`.
+   - **`npm run verify-package-install`** (`scripts/verify-package-install.mjs`,
+     CI-only, not part of `validate`): packs a real tarball with `npm pack`
+     (not `--dry-run`), installs it into a scratch directory, imports the
+     installed package and checks for the presence of every required public
+     export, runs `crontick --version` and asserts a clean exit, and starts
+     `crontick-daemon` and `crontick-mcp` each under a timeout to confirm the
+     bin actually launches (see [cli.md](../reference/cli.md) — neither of
+     those two bins parses `--help`/argv at all, so "launches and stays up
+     until killed" is the only exercisable success signal for them).
+   Both checks now also run in the `verify-package` CI job (`.github/workflows/ci.yml`),
+   alongside the pre-existing `scripts/verify-tarball.mjs` tarball-contents check.

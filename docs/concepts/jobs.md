@@ -43,7 +43,15 @@ Overlap values: `skip` (discard the new run), `queue` (wait for the active run t
 ## Lifecycle: create, update, remove
 
 1. **Create** - the client validates the input against `JobSchema` (Zod), POSTs to the daemon, which persists both a JSON file and a SQLite row, then registers the schedule.
-2. **Update** - a PATCH-style merge is applied to the existing job. The daemon re-persists and re-schedules.
+2. **Update** - a PATCH-style merge is applied to the existing job: fields the caller does not
+   mention keep their previous value rather than resetting to a create-time default (e.g.
+   `overlap`, `shell`, `envFile`, `timeoutSec`, `args`, `reuseSession`, and `retry.backoffSec`
+   are all preserved unless explicitly provided). Changing `action.kind` (e.g. `script` ->
+   `exec`) is the one exception: it replaces the action wholly rather than merging field by
+   field, since the old kind's fields (e.g. `shell`) have no meaning for the new kind. This
+   behavior is identical on the CLI, MCP, and library surfaces. See
+   [job-schema.md](../reference/job-schema.md#update-vs-create-semantics) for the exact field
+   list. The daemon re-persists and re-schedules after applying the merge.
 3. **Delete** - removes the JSON file, SQLite row, schema sidecar, and unschedules.
 
 ## What is persisted vs derived

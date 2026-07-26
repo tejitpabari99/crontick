@@ -48,7 +48,7 @@ The `runs.db` file is opened with `PRAGMA journal_mode=WAL` and `PRAGMA foreign_
 
 Run statuses: `queued`, `running`, `success`, `failed`, `canceled`, `timeout`.
 
-Key indexes: `idx_runs_job_id`, `idx_runs_started_at`, `idx_run_logs_run_id`.
+Key indexes: `idx_runs_job_id_started_at`, `idx_runs_started_at`, `idx_run_logs_run_id`.
 
 ## Single-writer assumption
 
@@ -62,7 +62,31 @@ Only the daemon process writes to `runs.db` and the `jobs/` directory at runtime
 
 ## Run history retention
 
-There is currently no automatic purging of old runs or logs. The `runs` and `run_logs` tables grow indefinitely. Use `runs.db` size or row count as an indicator of when manual cleanup is needed.
+Each job retains at most `retention.maxRunsPerJob` runs (default `100`,
+configurable `1..100000` — see [configuration reference](../reference/configuration.md)).
+When a job's terminal run count (runs not currently `running` or `queued`)
+exceeds the cap, the oldest terminal runs are deleted, along with their
+`run_logs`. Active runs are never evicted. Pruning runs on every new run and
+again in a one-time startup backfill for older databases, and is best-effort:
+a pruning failure is logged but never fails a run or blocks daemon startup.
+Lowering or raising `retention.maxRunsPerJob` takes effect on `crontick daemon
+reload`, without a restart. See [storage internals](../internals/storage.md)
+for the eviction algorithm.
+
+**Known limitations** (by design, not oversights):
+
+- The cap is a per-job **count** only — there is no age-based or byte-based
+  limit. A job that fires every minute keeps roughly 100 minutes of history;
+  a job that fires monthly keeps years of history under the same cap.
+- Nothing bounds the size of a single run's captured stdout/stderr. One
+  run with very large output can still produce a large `run_logs` row,
+  regardless of how many runs are retained.
+- Eviction is a hard delete. There is no export, warning, dry-run, or undo
+  for removed run history — if you need to keep old runs, raise the cap or
+  archive `runs.db` before pruning would remove them.
+
+See [ADR 0012](../decisions/0012-run-history-retention.md) for why the cap is
+count-based rather than age- or size-based, and why eviction is best-effort.
 
 ## Inspecting state
 

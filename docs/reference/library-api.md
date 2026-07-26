@@ -400,6 +400,14 @@ See [job-schema.md](job-schema.md).
 
 See [configuration.md](configuration.md).
 
+### RetentionConfig
+
+```ts
+type RetentionConfig = z.infer<typeof RetentionConfigSchema>; // { maxRunsPerJob: number }
+```
+
+See [configuration.md](configuration.md#retentionconfig).
+
 ### JobCreateInput, JobPatchInput, ActionInput, PromptActionInput
 
 See [job-schema.md](job-schema.md).
@@ -536,7 +544,7 @@ const BUILT_IN_CONFIG: CrontickConfig;
 ```
 
 ```json
-{ "defaultEngine": "copilot", "engines": { "copilot": { "command": "copilot", "args": [], "env": {} } } }
+{ "defaultEngine": "copilot", "engines": { "copilot": { "command": "copilot", "args": [], "env": {} } }, "retention": { "maxRunsPerJob": 100 } }
 ```
 
 ### SURFACE_CAPABILITIES
@@ -546,6 +554,25 @@ const SURFACE_CAPABILITIES: readonly SurfaceCapability[];
 ```
 
 37-element array mapping every capability to its client method, CLI command path, and MCP tool name.
+
+### ORPHAN_RUN_ERROR_CODE
+
+```ts
+const ORPHAN_RUN_ERROR_CODE: string; // 'DAEMON_RESTART'
+```
+
+The stable code prefix stored in `runs.error` when `Store.reconcileOrphanRuns()` cancels a run
+left `running`/`queued` by a daemon restart. Not a thrown `CrontickError` code — see
+[errors.md](errors.md#stored-run-error-values-not-crontickerror-codes).
+
+### ORPHAN_RUN_ERROR_MESSAGE
+
+```ts
+const ORPHAN_RUN_ERROR_MESSAGE: string;
+// 'DAEMON_RESTART: run was canceled because the daemon restarted while it was queued or running'
+```
+
+The full stored `runs.error` value written by `reconcileOrphanRuns()`.
 
 ---
 
@@ -559,3 +586,4 @@ const SURFACE_CAPABILITIES: readonly SurfaceCapability[];
 | `PromptEngineSchema` | `z.ZodString` | Engine name regex |
 | `ConfigSchema` | `z.ZodObject` | Config file schema |
 | `EngineConfigSchema` | `z.ZodObject` | Single engine config |
+| `RetentionConfigSchema` | `z.ZodObject` | `{ maxRunsPerJob: number }`, `.strict()`, `min(1)`/`max(100_000)`/`default(100)` |

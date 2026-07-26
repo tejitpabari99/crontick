@@ -17,16 +17,23 @@ client when needed.
 3. **Single-instance guard**: read `daemon.pid`; if PID is alive, exit 1.
    Otherwise remove stale PID file.
 4. Write own PID to `daemon.pid`.
-5. Open `Store` (SQLite WAL). Call `reconcileOrphanRuns()` to cancel any runs
-   left in `queued`/`running` state from a prior crash.
-6. `loadJobsFromDisk()` -- reads `<dataDir>/jobs/*.json`, validates with
+5. Read `retention.maxRunsPerJob` from config and open `Store` (SQLite WAL)
+   with that cap. Call `reconcileOrphanRuns()` to cancel any runs left in
+   `queued`/`running` state from a prior crash.
+6. Run the retention startup backfill, `pruneAllJobsRunHistory()`, so
+   databases that grew past the cap under an earlier version (or after the
+   cap was lowered) are truncated. Runs *after* orphan reconciliation so
+   runs just canceled by step 5 are immediately eviction-eligible. Wrapped
+   in try/catch: a failure is logged but never blocks startup — see
+   [storage.md](./storage.md) for the retention algorithm.
+7. `loadJobsFromDisk()` -- reads `<dataDir>/jobs/*.json`, validates with
    `JobSchema`, upserts into SQLite.
-7. Create `Scheduler` and `Runner`. Schedule all enabled jobs.
-8. Wire `scheduler.on('tick', ...)` to insert a run and fire `runner.run()`.
-9. Create HTTP server via `createApiServer(ctx)`, listen on `127.0.0.1:0`
-   (OS-assigned port).
-10. Write port to `daemon.port`.
-11. Register `SIGINT`/`SIGTERM` handlers for graceful shutdown.
+8. Create `Scheduler` and `Runner`. Schedule all enabled jobs.
+9. Wire `scheduler.on('tick', ...)` to insert a run and fire `runner.run()`.
+10. Create HTTP server via `createApiServer(ctx)`, listen on `127.0.0.1:0`
+    (OS-assigned port).
+11. Write port to `daemon.port`.
+12. Register `SIGINT`/`SIGTERM` handlers for graceful shutdown.
 
 ---
 
@@ -91,9 +98,24 @@ Existing logs are sent immediately; new logs are polled every 200 ms
 ## Reload
 
 `POST /api/daemon/reload` calls the `reload()` closure defined in
-`src/daemon/index.ts`: unschedules all jobs, re-reads jobs from disk via
-`store.loadJobsFromDisk()`, then re-schedules enabled jobs. This enables
-editing job JSON files externally and applying changes without a full restart.
+`src/daemon/index.ts`. As of the retention fix, config is read and validated
+**before** any mutation of the live schedule: `loadConfig()` (which throws a
+`CrontickError` on a malformed or out-of-bounds config, e.g.
+`retention.maxRunsPerJob` outside `1..100000`) runs first, so a reload that
+fails on bad config leaves the previous schedule fully intact rather than
+leaving the daemon with zero scheduled jobs until the next successful reload
+or a restart. The sequence is:
+
+1. `loadConfig()` — read the reloaded `retention.maxRunsPerJob`. Any throw
+   here aborts the reload with the schedule untouched.
+2. `scheduler.unscheduleAll()`.
+3. `store.loadJobsFromDisk()` — re-read `<dataDir>/jobs/*.json`.
+4. `store.setRunRetentionCap(reloadedCap)` — apply a changed retention cap
+   immediately, without a daemon restart (see [storage.md](./storage.md)).
+5. Re-schedule every enabled job from the freshly loaded set.
+
+This enables editing job JSON files (and `retention.maxRunsPerJob`)
+externally and applying changes without a full restart.
 
 ---
 
@@ -104,6 +126,18 @@ editing job JSON files externally and applying changes without a full restart.
   and `daemon.port`, exit 0.
 - `uncaughtException` (non-EPIPE): log fatal error, cleanup files, exit 1.
 - `stderr` EPIPE errors are swallowed (detached daemon with closed parent).
+
+**This graceful sequence only runs when the signal is genuinely delivered to
+the process by the OS** (spec: `specs/004-daemon.md` R-004-10). On POSIX,
+`process.kill(pid, 'SIGINT'|'SIGTERM')` delivers a real signal and the handler
+above runs. On Windows, `process.kill(pid, 'SIGINT'|'SIGTERM')` from another
+process unconditionally terminates the target process without invoking any
+registered handler; the handler only has a chance to run for a genuine Ctrl+C
+console event, which does not apply to `crontick daemon stop`. On Windows,
+`crontick daemon stop`/`stopDaemon()` therefore cannot rely on PID/port file
+cleanup or graceful in-flight run persistence — the only cross-platform
+guarantee is "process no longer alive," and the next daemon start tolerates
+and overwrites stale PID/port files.
 
 ---
 

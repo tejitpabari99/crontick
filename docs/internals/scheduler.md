@@ -45,9 +45,19 @@ Uses `croner` v9 `new Cron(pattern, options, callback)`:
    - `startAt` in the future: delay = `startAt - now`.
    - `startAt` in the past: align to next interval boundary:
      `intervalMs - ((now - startMs) % intervalMs)`.
-2. First fire via `safeSetTimeout(delay)`, then switch to `setInterval(intervalMs)`.
-3. Re-registers the entry map after the initial timeout fires (replaces the
-   timeout entry with the interval entry).
+2. First fire via `safeSetTimeout(delay)`; on that first fire it switches to
+   `setInterval(intervalMs)` for every subsequent tick.
+3. **Stable disposer.** The `{ stop }` object stored in `entries` for this job
+   never changes across the timeout→interval transition. Internally, a single
+   `currentTimer` variable (reassigned from the timeout's clearer to the
+   interval's clearer at the moment of the first fire) and a `disposed` flag
+   are captured by one closure that is set into `entries` once, up front. This
+   replaced an earlier version that re-registered a *new* `entries` object at
+   the timeout→interval transition. The `disposed` flag exists specifically to
+   fix a race: if `unschedule(job.id)` is called synchronously from inside the
+   job's own first-tick listener (i.e., before `setInterval` has been armed),
+   the pending `setInterval(...)` call is skipped instead of re-arming a timer
+   for an already-unscheduled job.
 
 ### One-shot (`schedule.kind === 'one-shot'`)
 
