@@ -62,11 +62,17 @@ every platform:
    server, unschedule all jobs, wait 100 ms for in-flight requests to drain, close the SQLite
    database, remove `daemon.pid`/`daemon.port`, and exit 0.
 4. `stopDaemon()` then polls for the PID to die (default timeout 5 s) and returns
-   `{ mode: 'graceful' }`.
-5. **Only if the HTTP route is unreachable** (an older pre-1.0 daemon binary, a stale/corrupt
-   port file, connection refused) does `stopDaemon()` fall back to `process.kill(pid, 'SIGTERM')`
-   and report `{ mode: 'hard-kill' }`. This fallback exists for a broken or foreign daemon, not as
-   the normal path.
+   `{ mode: 'graceful' }`, including any `activeRuns: [{ id, jobId }]` still in progress (parsed
+   from the stop response body) so nothing is abandoned silently.
+5. **If the graceful route accepts the request but the process does not actually exit within the
+   poll timeout** (stalled/wedged shutdown), `stopDaemon()` escalates: it sends `SIGTERM`, and if
+   that still does not stop it, `SIGKILL`, reporting `{ mode: 'hard-kill' }` either way rather than
+   returning `stopped: false` with no recovery.
+6. **Only if the HTTP route is unreachable in the first place** (an older pre-1.0 daemon binary, a
+   stale/corrupt port file, connection refused) does `stopDaemon()` skip straight to
+   `process.kill(pid, 'SIGTERM')`, escalating to `SIGKILL` under the same stall condition, and
+   report `{ mode: 'hard-kill' }`. This path exists for a broken or foreign daemon, not as the
+   normal case.
 
 The daemon also still registers `SIGINT`/`SIGTERM` handlers that run the identical shutdown
 function, so a genuine POSIX signal (e.g. an operator's own `kill`) triggers the same graceful
@@ -78,9 +84,12 @@ on Windows, macOS, and Linux. See
 [internals/daemon.md](../internals/daemon.md#signal-handling-and-shutdown) and
 [ADR 0014](../decisions/0014-http-graceful-shutdown-over-signals.md).
 
-In-flight child processes are deliberately left running across shutdown -- see
-[the next section](#what-happens-while-the-daemon-is-down) for why, and how they are reconciled
-on the next start.
+In-flight child processes are deliberately left running across shutdown (with the one Windows
+PowerShell exception noted below) -- see [the next section](#what-happens-while-the-daemon-is-down)
+for why, and how they are reconciled on the next start. `POST /api/daemon/stop`'s response
+includes any runs still `running` at the moment of shutdown (`activeRuns: [{ id, jobId }]`), and
+`crontick daemon stop` folds that into its message, so a stop never silently leaves work running
+without saying so.
 
 ## What happens while the daemon is down
 
@@ -112,12 +121,17 @@ on the next start.
   `skip`/`cancel-previous` overlap policy keeps holding for it; if liveness cannot be determined
   at all (e.g. the platform tool to read process start time is unavailable), the run is also
   adopted -- inconclusive evidence favors not double-running a job over a false cancellation.
-- **Child processes survive daemon shutdown identically on every platform**, so there is always
-  something for the next start's `reconcileOrphanRuns()` pass to find and reconcile. Every spawned
-  child is `detached: true` with `windowsHide: true`: on POSIX the child is reparented to init;
-  on Windows it runs in its own process group, decoupled from the daemon's job object, so it is
-  no longer killed when the daemon exits, crashes, or restarts. See
-  [ADR 0016](../decisions/0016-detached-children-cross-platform.md).
+- **Child processes survive daemon shutdown on every platform, with one narrow exception.** Every
+  spawned child is `detached: true` with `windowsHide: true`: on POSIX the child is reparented to
+  init; on Windows it runs in its own process group, decoupled from the daemon's job object, so
+  it is no longer killed when the daemon exits, crashes, or restarts. The one exception is a
+  `script` job whose resolved shell is PowerShell (`pwsh`/`powershell.exe`, including the
+  `shell: "auto"` default) on Windows: that child is spawned attached instead, trading survival
+  for output capture, because Windows's detached/no-console process creation leaves PowerShell
+  unable to write output at all. It still survives an abrupt daemon crash (Windows does not
+  cascade-kill on its own), but not the daemon being stopped via Ctrl+C through a shared console.
+  See [ADR 0016](../decisions/0016-detached-children-cross-platform.md) and
+  [ADR 0020](../decisions/0020-no-detach-powershell-script-jobs-windows.md).
 - **Jobs are safe.** Job definitions live in JSON files on disk; they are not lost when the daemon stops.
 
 ## Why not a system service

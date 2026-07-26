@@ -34,7 +34,8 @@ The data directory is resolved by (in order):
   },
   "retention": {
     "maxRunsPerJob": 100,
-    "maxOutputBytesPerRun": 2000000
+    "maxOutputBytesPerRun": 2000000,
+    "maxLogFiles": 30
   }
 }
 ```
@@ -43,7 +44,7 @@ The data directory is resolved by (in order):
 |-------|------|----------|---------|-------------|
 | `defaultEngine` | `string` | no | `"copilot"` | Must match a key in `engines`; regex `^[A-Za-z0-9_.-]+$` |
 | `engines` | `Record<string, EngineConfig>` | no | `{ copilot: { command: "copilot", args: [], env: {} } }` | At least one engine must be defined |
-| `retention` | `RetentionConfig` | no | `{ maxRunsPerJob: 100, maxOutputBytesPerRun: 2000000 }` | See below |
+| `retention` | `RetentionConfig` | no | `{ maxRunsPerJob: 100, maxOutputBytesPerRun: 2000000, maxLogFiles: 30 }` | See below |
 
 ### RetentionConfig
 
@@ -51,6 +52,7 @@ The data directory is resolved by (in order):
 |-------|------|----------|---------|-------------|
 | `maxRunsPerJob` | `integer` | no | `100` | `min(1)`, `max(100_000)` |
 | `maxOutputBytesPerRun` | `integer` | no | `2_000_000` | `min(1024)`, `max(1_000_000_000)` |
+| `maxLogFiles` | `integer` | no | `30` | `min(1)`, `max(3650)` |
 
 Each job retains at most `maxRunsPerJob` runs; the oldest terminal runs (not `running`/`queued`)
 are evicted first, along with their logs, whenever a new run is inserted, and again in a startup
@@ -60,8 +62,14 @@ never fails a run insert or blocks daemon startup. Changing `retention.maxRunsPe
 `crontick daemon reload` applies the new cap immediately, without a daemon restart.
 
 `maxOutputBytesPerRun` bounds a single run's captured stdout/stderr; once hit, further output is
-dropped, a truncation marker is appended, and the run's `outputTruncated` field is set. This cap
-is also re-read on `crontick daemon reload`.
+dropped at a UTF-8 character boundary (a multi-byte character is never split), a truncation
+marker is appended, and the run's `outputTruncated` field is set. This cap is also re-read on
+`crontick daemon reload`.
+
+`maxLogFiles` bounds how many daily `daemon-YYYY-MM-DD.log` files are kept under the daemon's log
+directory; the oldest files beyond the cap are deleted, keeping the newest. Applied at daemon
+startup and again on `crontick daemon reload` (a lowered value takes effect immediately, without
+a restart). Pruning is best-effort: a failure is logged but never blocks startup or reload.
 
 `RetentionConfigSchema` is `.strict()` — no extra fields allowed. See
 [state-and-storage.md](../concepts/state-and-storage.md#run-history-retention) for the
@@ -87,7 +95,8 @@ Schema is `.strict()` — no extra fields allowed.
   },
   "retention": {
     "maxRunsPerJob": 100,
-    "maxOutputBytesPerRun": 2000000
+    "maxOutputBytesPerRun": 2000000,
+    "maxLogFiles": 30
   }
 }
 ```

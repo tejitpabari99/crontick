@@ -102,11 +102,11 @@ are only cleared if they still point to the completing run (prevents races when
 ### Exec actions (`action.kind === 'exec'`)
 
 Direct, verbatim: `cmd = action.command`, `args = action.args ?? []`. No shell, no quoting, no
-whitespace splitting — `action.args` is the array the CLI's `--` separator (or the library API's
-`args` field) already produced, so an argument containing a space or a shell metacharacter is
-passed through to the child exactly as given. See
-[concepts/execution.md](../concepts/execution.md#exec-jobs) and
-[cli.md](../reference/cli.md#new) for the user-facing `--exec ... -- <args>` syntax.
+whitespace splitting — `action.args` is the array the CLI's repeatable `--arg <value>` flag (or,
+as a convenience, the `--` separator; or the library API's `args` field) already produced, so an
+argument containing a space or a shell metacharacter is passed through to the child exactly as
+given. See [concepts/execution.md](../concepts/execution.md#exec-jobs) and
+[cli.md](../reference/cli.md#new) for the user-facing `--arg`/`--` syntax.
 
 ### Prompt actions (`action.kind === 'prompt'`)
 
@@ -130,10 +130,12 @@ Priority (highest wins):
 3. `promptEnv` (from engine config `engine.env`)
 4. `process.env` (inherited)
 
-`spawn` options: `{ cwd: action.cwd ?? process.cwd(), shell: false, signal, detached: true,
-windowsHide: true }`. `detached` and `windowsHide` are always set, on every platform — see
-[Detached Child Processes](#detached-child-processes) below. `child.pid` is written to the run's
-`pid` column via `store.updateRun()` as soon as the process spawns, before any output arrives.
+`spawn` options: `{ cwd: action.cwd ?? process.cwd(), shell: false, signal, detached:
+!isWindowsPowerShellHost, windowsHide: true }`. `detached` is always set except for the one
+`pwsh`/`powershell.exe`-on-Windows exception — see
+[Detached Child Processes](#detached-child-processes) below. `windowsHide` is always set,
+regardless. `child.pid` is written to the run's `pid` column via `store.updateRun()` as soon as
+the process spawns, before any output arrives.
 
 ---
 
@@ -148,9 +150,13 @@ Exported from `src/daemon/runner.ts`. Parses `.env`-style files:
 
 ## Timeout Enforcement
 
-`spawnOpts.timeout = action.timeoutSec * 1000` is passed to Node.js `spawn`.
-Node emits an `'error'` event with `code === 'ETIMEDOUT'` which the runner maps
-to `status: 'timeout'`.
+`action.timeoutSec` is enforced by the runner itself, not by Node's `spawn(..., { timeout })`
+option (which cannot be distinguished from a plain SIGTERM cancellation once it fires). A
+`setTimeout(action.timeoutSec * 1000)` runs alongside the spawn; if it fires before the child has
+already exited, the runner sets an internal `timedOut` flag and sends `SIGTERM` to the child
+directly. The `close` handler checks `timedOut` before the generic signal check and records
+`status: 'timeout'` with `error: 'run exceeded timeoutSec (${action.timeoutSec}s)'`, instead of
+the generic `canceled` that a plain signal produces.
 
 ---
 
@@ -176,7 +182,10 @@ Each run tracks a running byte total across both `stdout` and `stderr`. Once tha
 exceed `retention.maxOutputBytesPerRun` (default `2_000_000`, range `1024..1_000_000_000` — see
 [configuration.md](../reference/configuration.md#retentionconfig)):
 
-1. The chunk is truncated to whatever headroom remains and persisted.
+1. The chunk is truncated to whatever headroom remains, then trimmed back further if needed so
+   the truncation point falls on a valid UTF-8 character boundary
+   (`truncateToUtf8Boundary()` — scans back up to 4 bytes, the longest possible UTF-8 sequence, to
+   avoid ever persisting a split multi-byte character right before the marker), and persisted.
 2. A single truncation marker line is appended to the captured output (once — not repeated on
    every subsequent chunk).
 3. The run's `output_truncated` column is set to `1`, surfaced to callers as `outputTruncated:
@@ -217,19 +226,33 @@ When `reuseSession && !sessionId` and the run succeeds:
 ## Detached Child Processes
 
 Every spawn — script, exec, and prompt actions alike — passes `detached: true, windowsHide: true`
-to Node's `spawn()`, identically on every platform. This means the child is started in its own
-process group (POSIX) or its own process (Windows), decoupled from the daemon's process tree,
-and `windowsHide` suppresses the console window Windows would otherwise flash for a detached
-process.
+to Node's `spawn()`, with one narrow exception: `isPowerShellHostCommand(cmd)` returns true when
+the resolved command's basename (case-insensitive, `.exe` suffix optional) is `pwsh` or
+`powershell`; when that is true **and** `platform() === 'win32'`, `detached` is set to `false`
+instead. This covers `script` jobs whose resolved shell is PowerShell, including the
+`shell: "auto"` default on Windows.
 
-The reason is restart safety: previously, spawn options differed by platform, which meant a
-daemon restart could kill in-flight job processes as a side effect on one platform while leaving
-them running-but-orphaned on the other. Detaching consistently means a daemon restart never
-kills a running job's process as a side effect, on any platform — the process either keeps
-running (and is picked up by [orphan reconciliation](./storage.md#orphan-reconciliation) and
-`adoptRun()` above) or has already exited on its own. See
-[ADR 0016](../decisions/0016-detached-children-cross-platform.md) for the full rationale and
-tradeoffs.
+The reason for the exception: Node's `detached: true` maps to Win32's `DETACHED_PROCESS` creation
+flag, which gives the child no console at all. PowerShell's own host requires an attached console
+to initialize, and without one it never reaches the point of writing to its (otherwise valid)
+stdout/stderr handles — verified empirically with both pipe- and file-redirected stdio, both come
+back completely empty. `cmd.exe` and `node.exe` are unaffected by the same `detached: true` spawn.
+A diagnostic log line (`'detached disabled for pwsh/powershell.exe on Windows (output-capture
+trade-off, see runner.ts)'`) is appended to the run's own output whenever the exception applies.
+
+For every other command/platform combination, detaching means the child is started in its own
+process group (POSIX) or its own process (Windows), decoupled from the daemon's process tree, and
+`windowsHide` suppresses the console window Windows would otherwise flash for a detached process.
+
+The reason for detaching at all is restart safety: previously, spawn options differed by
+platform, which meant a daemon restart could kill in-flight job processes as a side effect on one
+platform while leaving them running-but-orphaned on the other. Detaching consistently means a
+daemon restart never kills a running job's process as a side effect (except, deliberately, for
+the PowerShell case above) — the process either keeps running (and is picked up by
+[orphan reconciliation](./storage.md#orphan-reconciliation) and `adoptRun()` above) or has already
+exited on its own. See [ADR 0016](../decisions/0016-detached-children-cross-platform.md) for the
+original rationale and [ADR 0020](../decisions/0020-no-detach-powershell-script-jobs-windows.md)
+for the PowerShell exception and its trade-off.
 
 ---
 
@@ -241,14 +264,31 @@ adoption poll above:
 
 - `isProcessAlive(pid)`: sends signal `0` to the pid; `EPERM` (permission denied, but the pid
   exists) still counts as alive.
-- `getProcessStartTime(pid)`: reads the process's actual start time — `Get-Process` via
-  PowerShell on Windows, `ps -o lstart=` on POSIX. Returns `undefined` if the platform call
-  fails or the pid does not resolve to a process.
-- `PID_START_TOLERANCE_MS` (2000ms): the recorded `runs.started_at` for an adopted run is
-  compared to the live process's actual start time within this tolerance. A live pid whose
-  start time differs by more than the tolerance is a **different process that reused the pid**
-  after the original one exited — the check treats this as dead (`false`), not alive, defending
-  reconciliation against pid-reuse false positives.
+- `getProcessStartTime(pid)`: reads a single process's actual start time (fallback path) —
+  `Get-Process` via PowerShell on Windows, `ps -o lstart=` on POSIX. Returns `undefined` if the
+  platform call fails or the pid does not resolve to a process.
+- **Bulk listing, not one spawn per pid.** `createProcessLivenessCheck()` does one bulk OS query
+  total per check instance (lazy, cached on first `isRunAlive` call), not one `spawnSync` per pid:
+  `bulkWindowsStartTimes()` runs a single `Get-Process | ForEach-Object {...}` PowerShell
+  invocation, and `bulkPosixStartTimes()` runs a single `ps -eo pid,lstart`. A pid missing from
+  the bulk result (e.g. it was created after the snapshot) falls back to the single-pid
+  `getProcessStartTime()`. This is what keeps startup reconciliation fast when many runs need to
+  be checked at once — previously one `spawnSync` per pid made Windows startup with many
+  in-flight runs noticeably slow.
+- `withinStartTolerance(a, b)` / `PID_START_TOLERANCE_MS` (2000ms): the recorded
+  `runs.started_at` for an adopted run is compared to the live process's actual start time within
+  this tolerance, **symmetrically** (`Math.abs(a - b) <= tolerance`) — a live pid whose start time
+  differs from the recorded `startedAt` by more than the tolerance, in either direction, is
+  treated as a **different process that reused the pid** after the original one exited, not the
+  original run's process, defending reconciliation against pid-reuse false positives. (An
+  earlier, one-sided version of this check only rejected a start time *before* the tolerance
+  window, which could never actually catch a reused pid, since a reused pid's process necessarily
+  starts *after* the original one exited.)
+- `isSameRunProcess(pid, startedAt)` combines `isProcessAlive` and `withinStartTolerance` into one
+  answer (`true`/`false`/`undefined` for inconclusive). `Runner.adoptRun()`'s poll calls this on
+  **every tick**, not just once at initial reconciliation, so an adopted run whose pid gets reused
+  by an unrelated process while the poll is still running is caught and treated as exited, rather
+  than the poll trusting `isProcessAlive(pid)` alone indefinitely.
 - Any failure inside the check (unexpected platform error, parse failure) is caught and
   surfaced as `undefined` — inconclusive, never thrown — so a liveness check can never itself
   crash the daemon's startup sequence.

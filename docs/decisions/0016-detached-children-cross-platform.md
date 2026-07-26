@@ -1,7 +1,13 @@
 # 0016: Spawn every job process detached, identically on every platform
 
-- Status: Accepted
+- Status: Superseded by ADR-0020
 - Date: 2026-07-26
+
+> Superseded by [ADR 0020](0020-no-detach-powershell-script-jobs-windows.md), which
+> carves out a narrow exception for `pwsh`/`powershell.exe` script jobs on Windows.
+> The "unconditional and identical across POSIX and Windows" claim below no longer
+> holds for that one command/platform combination; everything else this ADR
+> describes is unchanged.
 
 ## Context
 

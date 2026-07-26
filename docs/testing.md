@@ -123,7 +123,7 @@ Expected: `health` shows `{ status: 'ok', ... }`, job appears in list, then disa
 crontick daemon start
 
 # Create an exec job on a 5-second interval
-crontick new my-test --every 5 --exec echo -- "hello"
+crontick new my-test --every 5 --exec echo --arg "hello"
 
 # Verify it appears
 crontick list
@@ -233,15 +233,15 @@ publishing.
 ### Job kinds
 
 - [ ] Create a `script` job: `crontick new s1 --every 10 --script "echo script-ok"`
-- [ ] Create an `exec` job: `crontick new e1 --every 10 --exec echo -- "exec-ok"`
+- [ ] Create an `exec` job: `crontick new e1 --every 10 --exec echo --arg "exec-ok"`
 - [ ] Create a `prompt` job: `crontick new p1 --every 60 --prompt "say hello"` (requires a configured engine)
 - [ ] Each fires at least once and `crontick runs list` shows `success`
 
 ### Schedule kinds
 
-- [ ] `cron`: `crontick new c1 --cron "* * * * *" --exec echo -- "tick"`
+- [ ] `cron`: `crontick new c1 --cron "* * * * *" --exec echo --arg "tick"`
 - [ ] `interval`: verified above
-- [ ] `one-shot`: `crontick new o1 --at "<30-seconds-from-now-ISO>" --exec echo -- "once"` fires exactly once
+- [ ] `one-shot`: `crontick new o1 --at "<30-seconds-from-now-ISO>" --exec echo --arg "once"` fires exactly once
 
 ### Daemon lifecycle
 

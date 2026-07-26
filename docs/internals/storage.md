@@ -134,7 +134,7 @@ class Store {
   getRun(id: string): Run | undefined;
   listRuns(opts?: ListRunsOptions): Run[]; // opts.status filters to a single RunStatus
   recordMissedRun(jobId: string, firedAt: number): Run; // inserts a terminal 'missed' run, no process spawned
-  importRuns(runs: Run[]): { imported: number; skipped: number }; // bulk archival restore; INSERT OR IGNORE; skips rows for jobs that no longer exist
+  importRuns(runs: unknown[]): { imported: number; skipped: Array<{ id: string; error: string }> }; // validates each row (zod), skips invalid/foreign-job rows individually; bulk archival restore; INSERT OR IGNORE
 
   // Log CRUD
   appendLog(runId, stream, chunk: Buffer): void;
@@ -222,6 +222,32 @@ Missed fires are **reported, never replayed**: the daemon never executes a job t
 time it was not running. See [ADR 0015](../decisions/0015-report-missed-fires-not-replay.md) for
 the reasoning, and [concepts/daemon-lifecycle.md](../concepts/daemon-lifecycle.md) for the
 user-facing framing.
+
+---
+
+## Run Import
+
+`importRuns(runs: unknown[])` (`src/daemon/store.ts`) bulk-restores previously-exported run rows
+(from `crontick export --include-runs`) as archival data only — no execution, no scheduler
+interaction. Every row is validated against `RunImportSchema` (zod) before it is ever bound to a
+statement, mirroring the same validate-then-collect pattern `POST /api/import`'s jobs loop already
+used: a malformed row (bad `status` enum value, missing `startedAt`, wrong types, ...) is skipped
+individually with a reason (`skipped: [{ id, error }]`) rather than throwing and aborting the
+whole batch. A row whose `jobId` does not exist in this store is likewise skipped individually,
+not treated as fatal. Each valid row's `INSERT OR IGNORE` is also wrapped in its own try/catch, so
+an unexpected DB-level failure on one row cannot take down the rows around it — there is no
+surrounding transaction, so every row that does succeed is durably committed independently of any
+row that doesn't (atomic-per-row, not all-or-nothing). The insert itself is idempotent on `id`: a
+row already present (e.g. re-importing the same backup) is left untouched and not counted as
+imported.
+
+After the loop, `pruneRunsForJob()` runs once for every job that received at least one imported
+row (best-effort, logged on failure, never fails the import result) — this is the same retention
+enforcement [Run Retention](#run-retention) below describes, applied so a large restore cannot
+leave a job permanently above its cap until its next real run.
+
+`POST /api/import` (`src/daemon/api.ts`) passes the request body's `runs` array straight through
+as `unknown[]`; `Store.importRuns()` is what performs all validation now, not the API handler.
 
 ---
 

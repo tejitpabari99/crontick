@@ -136,7 +136,9 @@ Permanently delete a job and all its run history.
 | `id` | `string` | yes | — | Job ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ ok: true }`
+**Result:** `{ ok: true, canceledRun: boolean }` — `canceledRun` is `true` when the job had an
+in-flight run that was canceled as part of the delete (see
+[jobs.md](../concepts/jobs.md#lifecycle-create-update-remove)).
 
 ---
 
@@ -273,7 +275,9 @@ Get aggregate summary of all jobs.
 |-----------|------|----------|---------|-------------|
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ totalJobs, enabledJobs, totalRuns, succeeded, failed, avgDurationMs }`
+**Result:** `{ totalJobs, enabledJobs, totalRuns, succeeded, failed, avgDurationMs }` --
+`avgDurationMs` excludes `missed`/`queued`/`running`/`canceled` runs, averaging only runs that
+actually finished executing (see [library-api.md](./library-api.md#statssummary)).
 
 ---
 
@@ -310,7 +314,12 @@ Stop the local crontick daemon.
 |-----------|------|----------|---------|-------------|
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ message: string }`
+**Result:** `DaemonStopResult` — `{ ok: true, running, pid?, stopped, message, mode, activeRuns? }`.
+`mode` is `'already-stopped' | 'graceful' | 'hard-kill'` (escalated to `SIGTERM` then `SIGKILL`
+when the graceful HTTP stop stalls or is unreachable); `activeRuns` (`{ id, jobId }[]`) lists any
+runs still in progress that the stop did not cancel. See
+[library-api.md](./library-api.md#daemonstopresult) and
+[internals/daemon.md](../internals/daemon.md#shutdown).
 
 ---
 
@@ -348,7 +357,10 @@ Restart the crontick daemon (stop + start).
 |-----------|------|----------|---------|-------------|
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ port, ... }`
+**Result:** `DaemonRestartResult` — `{ ok: true, baseUrl, port?, pid?, started, stopped, previousPid?
+}`. Does not report `mode`/`activeRuns` (that is `DaemonStopResult`-only, returned by
+`crontick_daemon_stop`); a restart's stop phase runs the same escalation internally but only
+surfaces whether the daemon was `stopped` and its `previousPid`.
 
 ---
 

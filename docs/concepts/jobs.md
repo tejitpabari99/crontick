@@ -52,7 +52,12 @@ Overlap values: `skip` (discard the new run), `queue` (wait for the active run t
    behavior is identical on the CLI, MCP, and library surfaces. See
    [job-schema.md](../reference/job-schema.md#update-vs-create-semantics) for the exact field
    list. The daemon re-persists and re-schedules after applying the merge.
-3. **Delete** - removes the JSON file, SQLite row, schema sidecar, and unschedules.
+3. **Delete** - removes the JSON file, SQLite row, schema sidecar, and unschedules. It also
+   cancels the job's in-flight run, if any (`Runner.cancelJob()`), so deleting a job never
+   leaves an orphaned process running against a definition that no longer exists; the response
+   reports whether a run was actually canceled (`canceledRun: boolean`). See
+   [reference/mcp-tools.md](../reference/mcp-tools.md#jobs) and
+   [reference/cli.md](../reference/cli.md#crontick-delete).
 
 ## What is persisted vs derived
 

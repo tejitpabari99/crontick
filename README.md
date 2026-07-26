@@ -55,14 +55,16 @@ npm install crontick
 
 ```sh
 npm install -g crontick
-crontick new hello --cron "*/5 * * * *" --exec node -- -e "console.log('hello')"
+crontick new hello --cron "*/5 * * * *" --exec node --arg -e --arg "console.log('hello')"
 crontick list
 crontick daemon status
 ```
 
-> On Windows PowerShell, a bare `crontick` resolves to the npm-generated `.ps1` shim, which drops
-> a literal `--` before the script sees it -- use `crontick.cmd` explicitly for commands like the
-> one above (details under [One-shot reminder](#one-shot-reminder)).
+> `--arg <value>` (repeatable) is the primary, always-correct way to pass arguments to `--exec`/
+> `--prompt` -- it works identically on every shell and every Windows shim (`crontick.cmd`,
+> `crontick.ps1`, `npx crontick`) and round-trips spaces, quotes, and leading dashes verbatim. See
+> [CLI reference](docs/reference/cli.md#windows-shells---arg-vs---) for the full behavior matrix,
+> including why the `--` convenience form is unreliable on `crontick.ps1`.
 
 ### Library (ESM)
 
@@ -94,24 +96,25 @@ crontick new backup --cron "0 2 * * *" --script "pg_dump mydb > /backups/db.sql"
 ### One-shot reminder
 
 ```sh
-crontick new deploy-reminder --at "2026-08-01T09:00:00" --exec notify-send -- "Deploy v2 today"
+crontick new deploy-reminder --at "2026-08-01T09:00:00" --exec notify-send --arg "Deploy v2 today"
 ```
 
-`--exec <command>` takes the command verbatim (no whitespace splitting); everything after `--`
-becomes its argument list, so `"Deploy v2 today"` reaches `notify-send` as one argument, spaces
-included. Need shell features (pipes, redirects, globbing) instead? Use `--script`, which runs
-through a shell.
+`--exec <command>` takes the command verbatim (no whitespace splitting); repeatable `--arg
+<value>` builds its argument list one value at a time, so `"Deploy v2 today"` reaches
+`notify-send` as one argument, spaces included -- and this round-trips correctly on every shell
+and every Windows shim (`crontick.cmd`, `crontick.ps1`, `npx crontick`). Need shell features
+(pipes, redirects, globbing) instead? Use `--script`, which runs through a shell.
 
-> **Windows PowerShell note:** a bare `crontick` resolves to the npm-generated `crontick.ps1`
-> shim, and PowerShell's own parameter binding drops a literal `--` token before the script ever
-> sees it (true for any `.ps1` script, not specific to crontick). If a `--exec`/`--` command
-> silently loses its trailing args under PowerShell, invoke `crontick.cmd` explicitly (or run
-> from `cmd.exe`) -- both forward `--` untouched.
+> As a convenience, args may instead follow a literal `--` (`--exec notify-send -- "Deploy v2
+> today"`), but this is not reliable on every shim: PowerShell's own parameter binding drops a
+> literal `--` token before `crontick.ps1` ever sees it (true for any `.ps1` script, not specific
+> to crontick), so a `--exec`/`--` command silently loses its trailing args there. `--arg` has no
+> such gap -- see [CLI reference](docs/reference/cli.md#windows-shells---arg-vs---) for the full matrix.
 
 ### Execute a binary directly
 
 ```sh
-crontick new healthcheck --every 30 --exec curl -- -sf http://localhost:3000/health
+crontick new healthcheck --every 30 --exec curl --arg -sf --arg http://localhost:3000/health
 ```
 
 ### AI prompt job
@@ -154,7 +157,7 @@ The library entry point (`import ... from 'crontick'`) exports:
 | `ORPHAN_RUN_ERROR_CODE` / `ORPHAN_RUN_ERROR_MESSAGE` | Stored `runs.error` value/prefix for a run canceled by a daemon restart (not a thrown `CrontickError` code) |
 | `SURFACE_CAPABILITIES` | Registry of all capability names, client methods, CLI commands, and MCP tool names |
 | `JobSchema`, `ScheduleSchema`, `PromptActionSchema` | Zod schemas for validation |
-| `RetentionConfigSchema` / `RetentionConfig` | Run retention config schema/type (`maxRunsPerJob`, `maxOutputBytesPerRun`) |
+| `RetentionConfigSchema` / `RetentionConfig` | Run retention config schema/type (`maxRunsPerJob`, `maxOutputBytesPerRun`, `maxLogFiles`) |
 | `jobJsonSchema` / `jobJsonSchemaText` | JSON Schema representation of a job |
 | Config utilities | `loadConfig`, `initConfig`, `getConfigValue`, `setConfigValue`, etc. |
 | Logger utilities | `createLogger`, `nullLogger`, `redactText` |
@@ -186,9 +189,11 @@ Each job retains at most `retention.maxRunsPerJob` runs (default `100`, range `1
 older terminal runs and their logs are pruned automatically, and a changed cap takes effect on
 `crontick daemon reload` without a restart. `retention.maxOutputBytesPerRun` (default `2_000_000`,
 range `1024..1_000_000_000`) caps captured stdout/stderr per run -- once hit, output is truncated
-and the run's `outputTruncated` field is set. Back up run history before it's pruned with
-`crontick export --include-runs` (see [docs/reference/cli.md](docs/reference/cli.md)). These are
-per-job/per-run caps only -- see
+at a UTF-8 character boundary and the run's `outputTruncated` field is set.
+`retention.maxLogFiles` (default `30`, range `1..3650`) similarly bounds how many daily daemon
+log files are kept. Back up run history before it's pruned with `crontick export --include-runs`
+(see [docs/reference/cli.md](docs/reference/cli.md)). These are per-job/per-run/log-file caps
+only -- see
 [docs/concepts/state-and-storage.md](docs/concepts/state-and-storage.md#run-history-retention)
 for the exact behavior and its design boundaries.
 

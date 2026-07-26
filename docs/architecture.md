@@ -68,7 +68,7 @@ The three binaries (`crontick`, `crontick-daemon`, `crontick-mcp`) are CLI entry
 
 - Single-instance guard (PID file + `process.kill(pid, 0)` probe).
 - SQLite shim: re-execs with `--experimental-sqlite` on Node < 24 if the flag is absent.
-- On startup: opens Store (schema created fresh, no migrations), reconciles orphaned runs by checking real process liveness (adopting live/inconclusive runs, canceling dead ones), reports any fires missed while the daemon was down as `missed` runs, loads jobs from disk, schedules enabled jobs.
+- On startup: opens Store (schema created fresh, no migrations), prunes daemon log files beyond `retention.maxLogFiles`, reconciles orphaned runs by checking real process liveness (adopting live/inconclusive runs, canceling dead ones), reports any fires missed while the daemon was down as `missed` runs, loads jobs from disk, schedules enabled jobs.
 - `POST /api/daemon/stop` is the primary graceful shutdown path, running in-process identically on every platform; `SIGINT`/`SIGTERM` remain wired to the same shutdown routine as a POSIX-only fallback (unschedule all, close DB, remove PID/port files) -- see [internals/daemon.md](internals/daemon.md#shutdown).
 
 ### Scheduler
@@ -77,7 +77,24 @@ The three binaries (`crontick`, `crontick-daemon`, `crontick-mcp`) are CLI entry
 
 ### Runner
 
-`src/daemon/runner.ts`. Executes job actions as child processes via `spawn`, always with `detached: true, windowsHide: true` so a daemon restart never kills in-flight work on any platform. Enforces overlap policy (`skip`, `queue`, `cancel-previous`) using per-job `AbortController` and queue maps; `adoptRun()` re-attaches this tracking to a run whose process survived a daemon restart, so the overlap policy holds across restarts too. Implements retry with configurable backoff. Captures stdout/stderr through `safeRedact()` before persisting to Store, bounded by `retention.maxOutputBytesPerRun` (capture stops and `outputTruncated` is set once hit; the child process itself is never affected). Handles `script` (temp file + shell), `exec` (direct, verbatim command and args), and `prompt` (engine-resolved command with optional session reuse) action kinds. Enforces per-job `timeoutSec` via the spawn `timeout` option (in ms). Persists the child's `pid` to the run row immediately on spawn.
+`src/daemon/runner.ts`. Executes job actions as child processes via `spawn`, with `windowsHide:
+true` always and `detached: true` on every combination except one: a `script` job whose resolved
+shell is `pwsh`/`powershell.exe` on Windows is spawned attached, because a detached PowerShell
+host there gets no console and writes nothing to its (even redirected) stdio -- see
+[ADR 0020](decisions/0020-no-detach-powershell-script-jobs-windows.md). That one case does not
+survive daemon death; every other job survives it. Enforces overlap policy (`skip`, `queue`,
+`cancel-previous`) using per-job `AbortController` and queue maps; `adoptRun()` re-attaches this
+tracking to a run whose process survived a daemon restart, so the overlap policy holds across
+restarts too. Implements retry with configurable backoff. Captures stdout/stderr through
+`safeRedact()` before persisting to Store, bounded by `retention.maxOutputBytesPerRun` (capture
+stops and `outputTruncated` is set once hit, trimmed to a UTF-8 character boundary so truncation
+never splits a multi-byte character; the child process itself is never affected). Handles
+`script` (temp file + shell), `exec` (direct, verbatim command and args), and `prompt`
+(engine-resolved command with optional session reuse) action kinds. Enforces per-job
+`timeoutSec` with its own timer that sends `SIGTERM` and records `status: 'timeout'` (not
+`canceled`) -- Node's spawn-level `timeout` option is not used. Persists the child's `pid` to the
+run row immediately on spawn. `cancelJob(jobId)` (used when a job is deleted) cancels that job's
+in-flight run, if any.
 
 ### Store
 
@@ -105,16 +122,17 @@ The Store class uses `node:sqlite` `DatabaseSync` for synchronous operations wit
 | GET | `/api/stats[/jobs/:id]` | Aggregate statistics |
 | GET | `/api/daemon/status` | Daemon PID, version, uptime, job count, missed-fire summary |
 | POST | `/api/daemon/reload` | Reload jobs from disk (see [internals/daemon.md](internals/daemon.md#reload)) |
-| POST | `/api/daemon/stop` | Graceful in-process shutdown (see [internals/daemon.md](internals/daemon.md#shutdown)) |
+| POST | `/api/daemon/stop` | Graceful in-process shutdown; response includes any `activeRuns` still in progress (see [internals/daemon.md](internals/daemon.md#shutdown)) |
 | GET | `/api/export` | Export jobs, optionally with run history (`?includeRuns=1`) |
 | POST | `/api/import` | Import jobs, optionally with a `runs` array to restore |
 | GET/POST/DELETE | `/api/dashboard[/data\|status]` | Dashboard management |
 
 `crontick daemon stop` and `crontick daemon restart` prefer the `POST /api/daemon/stop` route
 above (`src/daemon/lifecycle.ts`'s `stopDaemon()`): it works in-process and identically on every
-platform, unlike an OS signal. They fall back to a `SIGTERM` (POSIX only) plus PID polling only
-when the HTTP route is unreachable (older daemon build, stale/missing port file, connection
-refused) -- see [internals/daemon.md](internals/daemon.md#shutdown)
+platform, unlike an OS signal. If that route stalls (accepted but the process never exits) or is
+unreachable at all (older daemon build, stale/missing port file, connection refused), `stopDaemon`
+escalates to `SIGTERM` then `SIGKILL` and reports `mode: 'hard-kill'` -- see
+[internals/daemon.md](internals/daemon.md#shutdown)
 and [concepts/daemon-lifecycle.md](concepts/daemon-lifecycle.md). `GET /api/doctor` and
 `/api/config*` are also not implemented as HTTP routes -- `crontick doctor` and
 `crontick config *` run their checks/reads directly against the filesystem and (for daemon

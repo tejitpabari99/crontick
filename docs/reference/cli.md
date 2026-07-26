@@ -34,7 +34,7 @@ crontick new <id> [engineArgs...]
 | Name | Required | Description |
 |------|----------|-------------|
 | `id` | yes | Job ID (kebab-case: `^[a-z0-9]+(?:-[a-z0-9]+)*$`) |
-| `engineArgs` | no | Extra args passed to the prompt engine (after `--`) |
+| `engineArgs` | no | Convenience form of the command/prompt's arguments (after `--`); mutually exclusive with `--arg` |
 
 **Options:**
 
@@ -45,7 +45,8 @@ crontick new <id> [engineArgs...]
 | `--at <iso>` | string | — | One-shot run-at ISO-8601 time |
 | `--tz <tz>` | string | — | Timezone for cron schedule |
 | `--script <body>` | string | — | Inline script body |
-| `--exec <cmd>` | string | — | Command to exec, taken verbatim (use `--` for its arguments) |
+| `--exec <cmd>` | string | — | Command to exec, taken verbatim. Pass its arguments with repeatable `--arg <value>` (primary, always correct) or, as a convenience, everything after a literal `--` |
+| `--arg <value>` | string (repeatable) | `[]` | Argument to pass to `--exec` or `--prompt`; repeatable. The documented way to pass arguments — round-trips spaces, embedded quotes, and leading dashes on every shell and every Windows shim. Cannot be combined with `--`/`engineArgs` in the same command |
 | `--prompt <text>` | string | — | Prompt text for a prompt action |
 | `--prompt-file <path>` | string | — | UTF-8 `.txt` file to read into the prompt |
 | `--engine <engine>` | string | config `defaultEngine` | Configured prompt engine name |
@@ -66,35 +67,56 @@ fields. See [job-schema.md](job-schema.md#update-vs-create-semantics) and
 [jobs.md](../concepts/jobs.md).
 
 `--exec` takes `<cmd>` verbatim: it is never split on whitespace, so a command string containing
-a space (e.g. a path) is passed through unchanged as one argv element. Arguments for the command
-go after a literal `--` (Commander's standard separator) and are collected as `[engineArgs...]`
-without any whitespace splitting, so an individual argument containing a space works correctly:
+a space (e.g. a path) is passed through unchanged as one argv element. Pass its arguments with
+repeatable `--arg <value>`, once per argument:
+
+```bash
+crontick new notify --every 30 --exec notify-send --arg "Deploy finished" --arg "with warnings"
+```
+
+`--arg` is the documented, always-correct way to pass arguments — it round-trips spaces, embedded
+double quotes, leading dashes, and values that are spelled like crontick's own flags (`-v`,
+`--json`, ...) identically across `crontick.ps1`, `crontick.cmd`, and `npx crontick`. See
+[ADR 0019](../decisions/0019-arg-flag-primary-for-exec-and-prompt-args.md) for why.
+
+As a convenience, everything after a literal `--` (Commander's standard separator) is also
+collected as `[engineArgs...]` and used as the argument list, with no whitespace splitting:
 
 ```bash
 crontick new notify --every 30 --exec notify-send -- "Deploy finished" "with warnings"
 ```
 
+`--arg` and `--`/`engineArgs` are mutually exclusive in the same command; combining both fails
+with `Cannot combine --arg with -- positional arguments in the same command...`. A crontick flag
+placed after `--` (e.g. `-- --json`) is rejected with an explicit error rather than silently
+stored as a literal job argument — pass it via `--arg` instead if you meant it literally.
+
 Need shell features instead (pipes, redirects, globbing)? Use `--script`, which runs through a
 shell. Need to set `action.args` directly without going through argv parsing at all? Use `--file`
 with an explicit `action.args` array. See [job-schema.md](job-schema.md#kind-exec) for the `exec`
-action's JSON shape, and [ADR 0018](../decisions/0018-exec-dash-dash-args.md) for why `--` was
-chosen over whitespace splitting.
+action's JSON shape.
 
-#### Windows shells and `--`
+#### Windows shells: `--arg` vs `--`
 
-Two npm/Windows shell behaviors -- not crontick defects -- affect `--`-based commands:
+`--arg` works correctly on every real entry point. `--` is a convenience that is not reliable
+through npm's Windows shims. Verified behavior:
 
-- **PowerShell drops a literal `--` before any `.ps1` script sees it.** A bare `crontick` on
-  Windows resolves to the npm-generated `crontick.ps1` shim; PowerShell's own parameter binding
-  strips a literal `--` token before the shim's argv ever includes it (true of any `.ps1` script,
-  not specific to crontick). A `--exec ... -- ...` command silently loses its trailing arguments
-  when invoked this way.
-- **The `.cmd` shim mangles embedded double quotes.** Arguments containing `"` passed through the
-  npm-generated `crontick.cmd` shim can be corrupted by `cmd.exe`'s quoting rules before they
-  reach Node.
+| Form | `crontick.ps1` | `crontick.cmd` | `npx crontick` |
+|---|---|---|---|
+| `--arg <value>`, incl. spaces / leading dash / flag-like value | works | works | works |
+| `--arg <value>` with embedded double quotes | works | fails — `cmd.exe` strips embedded quotes | works |
+| `--` passthrough | fails — the PowerShell shim drops the literal `--` | works (no embedded quotes) | works |
+| crontick flag placed after `--` | rejected | rejected | rejected |
 
-**Guidance:** for `--`-based commands on Windows, invoke `crontick.cmd` explicitly (e.g. `crontick.cmd new ... --exec notify-send -- "Deploy finished"`), which forwards `--` untouched; avoid
-embedding literal double quotes in an argument passed through the `.cmd` shim.
+Neither shim behavior is a crontick defect: a bare `crontick` on Windows resolves to the
+npm-generated `crontick.ps1` shim, and PowerShell's own parameter binding strips a literal `--`
+token before the shim's argv ever includes it (true of any `.ps1` script); the npm-generated
+`crontick.cmd` shim is subject to `cmd.exe`'s own quoting rules, which mangle embedded double
+quotes before Node ever sees them.
+
+**Guidance:** prefer `--arg` on Windows. If you need embedded double quotes and are using the
+`.cmd` shim, switch to PowerShell (`crontick.ps1`/bare `crontick` in a PowerShell prompt) or
+`npx crontick` instead — both forward `--arg` correctly, including embedded quotes.
 
 Exactly one schedule source (`--cron`, `--every`, `--at`) and one action source (`--script`, `--exec`, `--prompt`, `--prompt-file`) are required unless `--file` is used.
 
@@ -176,6 +198,10 @@ Delete a job.
 ```bash
 crontick delete <id>
 ```
+
+Cancels the job's in-flight run, if any, before removing the job — a deleted job never leaves an
+orphaned process running against a definition that no longer exists. See
+[jobs.md](../concepts/jobs.md#lifecycle-create-update-remove).
 
 ---
 
@@ -486,10 +512,14 @@ crontick daemon stop
 ```
 
 Sends `POST /api/daemon/stop` to shut the daemon down in-process (works identically on every
-platform) and reports `mode: "graceful"` on success. Falls back to a POSIX-only
-`process.kill(pid, 'SIGTERM')` and reports `mode: "hard-kill"` only if the HTTP route is
-unreachable (an older daemon binary or a stale port file) -- not the normal path. Reports
-`mode: "already-stopped"` if no daemon was running. See
+platform) and reports `mode: "graceful"` on success. If the HTTP route is unreachable (an older
+daemon binary or a stale port file), falls back to `process.kill(pid, 'SIGTERM')`; if the process
+does not exit within the poll timeout after either path (graceful-accepted-but-stalled, or plain
+SIGTERM), it escalates to `SIGKILL` and reports `mode: "hard-kill"` — not the normal path, but the
+daemon is never left running indefinitely by a stalled stop. Reports `mode: "already-stopped"` if
+no daemon was running. The response also reports any `activeRuns` (`{ id, jobId }`) still in
+progress when the daemon stopped, since their processes keep running detached (see
+[jobs.md](../concepts/jobs.md#lifecycle-create-update-remove)) and are not abandoned silently. See
 [daemon-lifecycle.md](../concepts/daemon-lifecycle.md#shutdown).
 
 ---

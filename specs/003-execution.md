@@ -36,15 +36,15 @@ preserving observability through captured logs and structured run records.
 - **R-003-4**: `overlap=cancel-previous`: If a run for the same job is active, the runner MUST abort it (via `AbortController`) before starting the new run.
 - **R-003-5**: `overlap=queue`: Runs MUST be serialized in FIFO order per job; the queue drains sequentially.
 - **R-003-6**: For `script` actions, the runner MUST write the script to a temp file, resolve the shell (`auto` -> pwsh on Windows, bash elsewhere), and spawn the shell with the temp file as argument.
-- **R-003-7**: For `exec` actions, the runner MUST spawn `command` with `args` directly and verbatim (shell=false): no shell interpretation, no whitespace splitting, no re-quoting. `args` is the array already produced by the CLI's `--` separator (or the library API's `args` field), so an argument containing a space or shell metacharacter MUST pass through to the child exactly as given.
+- **R-003-7**: For `exec` actions, the runner MUST spawn `command` with `args` directly and verbatim (shell=false): no shell interpretation, no whitespace splitting, no re-quoting. `args` is the array produced by the CLI's repeatable `--arg <value>` flag (the primary, shim-independent mechanism) or its `--` convenience form (or the library API's `args` field), so an argument containing a space or shell metacharacter MUST pass through to the child exactly as given.
 - **R-003-8**: For `prompt` actions, the runner MUST resolve the engine command via `buildPromptRunCommand()` and spawn it with shell=false.
 - **R-003-9**: All spawned processes MUST inherit `process.env` merged with `action.env` (action.env wins). If `envFile` is specified, its variables are merged below `action.env` but above `process.env`.
 - **R-003-10**: `action.cwd` MUST be used as the working directory; if omitted, `process.cwd()` MUST be used.
-- **R-003-11**: If `action.timeoutSec` is set, the spawn MUST use `timeout = timeoutSec * 1000`.
+- **R-003-11**: If `action.timeoutSec` is set, the runner MUST start its own timer for `timeoutSec * 1000` ms (not the spawn-level `timeout` option, which cannot be distinguished from a user cancellation -- see R-003-15) and, on expiry, send `SIGTERM` to the child itself.
 - **R-003-12**: stdout and stderr MUST be captured, redacted via `safeRedact()`, and stored via `Store.appendLog()`.
 - **R-003-13**: On exit code 0, run status MUST be `success`. On non-zero exit, status MUST be `failed`.
-- **R-003-14**: On `SIGTERM`/`SIGKILL` signal, run status MUST be `canceled`.
-- **R-003-15**: On `ETIMEDOUT` error, run status MUST be `timeout`.
+- **R-003-14**: On `SIGTERM`/`SIGKILL` signal that was NOT sent by the runner's own timeout timer (R-003-11) -- i.e. a user cancellation or overlap-policy abort -- run status MUST be `canceled`.
+- **R-003-15**: On expiry of the runner's own timeout timer (R-003-11), run status MUST be `timeout`, distinct from `canceled`, with an error message naming `timeoutSec`.
 - **R-003-16**: On `ABORT_ERR` or signal aborted, run status MUST be `canceled`.
 - **R-003-17**: On `ENOENT` for a prompt engine binary, the error message MUST name the engine and suggest corrective action.
 - **R-003-18**: Retry MUST re-attempt up to `retry.max` times; on each retry, the runner MUST wait `retry.backoffSec` seconds. Retry MUST NOT occur on `canceled` or `timeout` status.
@@ -52,9 +52,9 @@ preserving observability through captured logs and structured run records.
 - **R-003-20**: `safeRedact` MUST only redact text-like chunks; binary data (containing NUL bytes or failing UTF-8 round-trip) MUST be stored as-is.
 - **R-003-21**: For `script` actions, the temp file MUST be deleted after the process exits (best-effort).
 - **R-003-22**: `cancelRun(runId)` MUST abort the active run by its run ID and return true; if no such active run exists, it MUST return false.
-- **R-003-25**: Every spawn (script, exec, and prompt actions alike) MUST pass `detached: true, windowsHide: true` to the child process, identically on every platform, so that a daemon restart or graceful stop never kills in-flight work as a side effect on any platform.
+- **R-003-25**: Every spawn (script, exec, and prompt actions alike) MUST pass `windowsHide: true` and `detached: true` to the child process, with exactly one exception: a `script` action on Windows whose resolved shell is `pwsh`/`powershell.exe` MUST be spawned with `detached: false`, because a detached PowerShell host on Windows receives no console and writes nothing to its (even redirected) stdio. A daemon restart or graceful stop MUST NOT kill in-flight work as a side effect for any other combination of platform/action/shell; the pwsh-on-Windows exception trades that survival guarantee for non-empty output capture (see `../docs/decisions/0020-no-detach-powershell-script-jobs-windows.md`).
 - **R-003-26**: The child process's `pid` MUST be persisted to the run record (`Store.updateRun()`) as soon as the process spawns, before any output arrives; `missed` runs (spec 004 R-004-28) never spawn a process and so never get a `pid`.
-- **R-003-27**: Captured stdout/stderr for a single run MUST be capped at `retention.maxOutputBytesPerRun` (default 2,000,000; configurable range 1024..1,000,000,000). Once the cap is reached, the runner MUST append a single truncation marker, set the run's `outputTruncated` field, and drop all further output for that run without persisting it. Hitting the cap MUST NOT kill, signal, or otherwise affect the child process itself; only capture stops.
+- **R-003-27**: Captured stdout/stderr for a single run MUST be capped at `retention.maxOutputBytesPerRun` (default 2,000,000; configurable range 1024..1,000,000,000). Once the cap is reached, the runner MUST trim the trailing bytes to a UTF-8 character boundary (never splitting a multi-byte character), append a single truncation marker, set the run's `outputTruncated` field, and drop all further output for that run without persisting it. Hitting the cap MUST NOT kill, signal, or otherwise affect the child process itself; only capture stops.
 - **R-003-28**: `Runner.adoptRun(jobId, runId, pid, store)` MUST re-attach a run that survived a daemon restart (per spec 004 R-004-8) into this daemon's overlap tracking (`activeRunIds`), so that `overlap: 'skip'` and `overlap: 'cancel-previous'` hold for a subsequent tick of the same job exactly as they would for a run spawned by this daemon process. Since no `ChildProcess` handle exists for an adopted run, the runner MUST poll process liveness periodically instead of listening for a native `'exit'` event, and MUST finalize the run once the poll observes the process has exited.
 
 ### Non-functional requirements
@@ -98,7 +98,7 @@ preserving observability through captured logs and structured run records.
 - [x] overlap=skip cancels new run when active (test file: `tests/integration.overlap.test.ts`)
 - [x] overlap=queue serializes runs FIFO (test file: `tests/integration.overlap.test.ts`)
 - [x] overlap=cancel-previous aborts active run (test file: `tests/integration.overlap.test.ts`)
-- [x] Timeout fires and produces status=timeout (test file: `tests/integration.timeout.test.ts`)
+- [x] Timeout fires and produces status=timeout, distinct from a user/overlap cancellation (test file: `tests/integration.timeout.test.ts`; exact-status assertion in `tests/runner.test.ts`, "exec: timeout cancels long-running job")
 - [x] Retry re-attempts on failure with backoff (test file: `tests/integration.retry.test.ts`)
 - [x] Retry stops on cancel/timeout (test file: `tests/integration.retry.test.ts`)
 - [x] Script action resolves shell correctly (test file: `tests/runner.test.ts`)
@@ -107,11 +107,12 @@ preserving observability through captured logs and structured run records.
 - [x] safeRedact skips binary data (test file: `tests/redact.test.ts`)
 - [x] cancelRun aborts active run (test file: `tests/runner.test.ts`)
 - [x] ENOENT for prompt engine produces actionable error (test file: `tests/runner.test.ts`)
-- [x] Spawn sets `detached: true` and `windowsHide: true` for every action kind (test file: `tests/runner.test.ts`, "spawn: sets detached:true and windowsHide:true...")
+- [x] Spawn sets `detached: true` and `windowsHide: true` for every action kind except a Windows pwsh/powershell.exe script job, which is spawned attached so it can produce output (test file: `tests/runner.test.ts`, "script: shell=\"auto\" (the default job kind) captures non-empty output on every platform (BLOCKER 1 regression)")
 - [x] Child `pid` is persisted on the run row as soon as the process spawns (test file: `tests/runner.test.ts`, "spawn: persists the child pid on the run row...")
-- [x] Output byte cap truncates capture, sets `outputTruncated`, and never affects the child process (test file: `tests/runner.test.ts`, output byte cap describe block)
+- [x] Output byte cap truncates capture at a UTF-8 character boundary, sets `outputTruncated`, and never affects the child process (test file: `tests/runner.test.ts`, "truncateToUtf8Boundary: ..." and "captureChunk: truncation at the byte cap does not split a multi-byte character (MINOR 7 regression)")
 - [x] `adoptRun` re-attaches overlap tracking for `skip` and `cancel-previous` across a restart (test file: `tests/runner.test.ts`, `adoptRun` describe block)
-- [x] `--exec` takes its command and args verbatim, with no whitespace splitting (test file: `tests/job-input.test.ts`, "buildJobFromCreateOptions -- --exec verbatim + rawArgs"; `tests/cli.test.ts`, "new --help describes --exec's real verbatim-command + -- args behavior")
+- [x] Repeatable `--arg <value>` round-trips spaces, embedded quotes, and a leading dash, and is mutually exclusive with `--` (test file: `tests/cli.test.ts`, "crontick new --arg round-trips a value with spaces, embedded double quotes, and a leading dash"; "crontick new rejects combining --arg with -- positional args (ambiguous args source)")
+- [x] `--exec` takes its command and args verbatim, with no whitespace splitting (test file: `tests/job-input.test.ts`, "buildJobFromCreateOptions -- --exec verbatim + rawArgs"; `tests/cli.test.ts`, "new --help describes --exec's real verbatim-command + --arg/-- args behavior")
 
 ## Out of scope
 
@@ -132,5 +133,7 @@ None.
 - [007-prompt-jobs.md](007-prompt-jobs.md)
 - `../docs/reference/`
 - `../docs/concepts/`
-- `../docs/decisions/0016-detached-children-cross-platform.md`
-- `../docs/decisions/0018-exec-dash-dash-args.md`
+- `../docs/decisions/0016-detached-children-cross-platform.md` (superseded by 0020)
+- `../docs/decisions/0018-exec-dash-dash-args.md` (superseded by 0019)
+- `../docs/decisions/0019-arg-flag-primary-for-exec-and-prompt-args.md`
+- `../docs/decisions/0020-no-detach-powershell-script-jobs-windows.md`

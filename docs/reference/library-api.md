@@ -40,7 +40,7 @@ class CrontickClient {
 | `listJobs` | `(): Promise<Job[]>` | Array of `Job` | `CrontickError` |
 | `getJob` | `(id: string): Promise<Job>` | `Job` | `CrontickError` (`NOT_FOUND`) |
 | `updateJob` | `(id: string, patch: JobPatchInput, options?: NormalizeJobInputOptions): Promise<Job>` | Updated `Job` | `CrontickError` |
-| `deleteJob` | `(id: string): Promise<{ ok: true }>` | `{ ok: true }` | `CrontickError` (`NOT_FOUND`) |
+| `deleteJob` | `(id: string): Promise<{ ok: true; canceledRun: boolean }>` | `{ ok: true, canceledRun }` — `canceledRun` is `true` when the job had an in-flight run that was canceled as part of the delete | `CrontickError` (`NOT_FOUND`) |
 | `enableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
 | `disableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
 | `runNow` | `(id: string): Promise<{ runId: string }>` | `{ runId }` | `CrontickError` |
@@ -55,8 +55,8 @@ class CrontickClient {
 | `statsSummary` | `(): Promise<StatsSummary>` | `StatsSummary` | `CrontickError` |
 | `statsJob` | `(id: string): Promise<JobStats>` | `JobStats` | `CrontickError` |
 | `daemonStart` | `(options?: { foreground?: boolean }): Promise<DaemonStartResult>` | Start result | `CrontickError` |
-| `daemonStop` | `(): Promise<DaemonStopResult>` | Stop result | `CrontickError` |
-| `daemonRestart` | `(): Promise<DaemonRestartResult>` | Restart result | `CrontickError` |
+| `daemonStop` | `(): Promise<DaemonStopResult>` | Stop result — see [DaemonStopResult](#daemonstopresult) | `CrontickError` |
+| `daemonRestart` | `(): Promise<DaemonRestartResult>` | `{ ok: true, baseUrl, port?, pid?, started, stopped, previousPid? }` — the stop phase escalates internally the same way as `daemonStop`, but only `stopped`/`previousPid` are surfaced (no `mode`/`activeRuns`) | `CrontickError` |
 | `daemonReload` | `(): Promise<{ ok: true }>` | `{ ok: true }` | `CrontickError` |
 | `daemonStatus` | `(): Promise<unknown>` | Status object | `CrontickError` |
 | `doctor` | `(options?: DoctorOptions): Promise<DoctorResult>` | `DoctorResult` | `CrontickError` |
@@ -162,6 +162,12 @@ interface StatsSummary {
 }
 ```
 
+`avgDurationMs` averages `durationMs` over runs that actually finished executing --
+`success`/`failed`/`timeout` -- and excludes `missed`, `queued`, `running`, and `canceled` runs,
+since those either never ran to completion or never ran at all. `null` when there are no
+qualifying runs. Same computation backs [`DashboardStats`](#dashboardstats) (`GET
+/api/stats/summary` and the dashboard both call `buildDashboardStats()`).
+
 ### JobStats
 
 ```ts
@@ -194,6 +200,7 @@ interface JobCreateCliOptions {
   id: string;
   engineArgs?: string[];
   rawArgs?: string[];
+  args?: string[];
   file?: string;
   cron?: string;
   every?: number;
@@ -221,6 +228,44 @@ interface JobCreateCliOptions {
 ```ts
 type JobPatchCliOptions = Omit<JobCreateCliOptions, 'id'>;
 ```
+
+### DaemonStopResult
+
+```ts
+interface DaemonStopResult {
+  ok: true;
+  running: boolean;
+  pid?: number;
+  stopped: boolean;
+  message: string;
+  mode: 'already-stopped' | 'graceful' | 'hard-kill';
+  activeRuns?: Array<{ id: string; jobId: string }>;
+}
+```
+
+Returned by `daemonStop` (`CrontickClient`) and by `crontick daemon stop`. `mode` reports how the daemon was actually stopped: `'graceful'` if the
+`POST /api/daemon/stop` route accepted the request and the process exited before the poll
+timeout; `'hard-kill'` if that stalled or the route was unreachable and `stopDaemon()` had to
+escalate to `SIGTERM` then `SIGKILL`; `'already-stopped'` if no daemon was running. `activeRuns`
+lists any runs still `status: 'running'` at the moment the stop was accepted — they are not
+canceled by a stop, since [detached children survive daemon shutdown by design](../concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down)
+(with one Windows exception, see [ADR 0020](../decisions/0020-no-detach-powershell-script-jobs-windows.md)).
+See [cli.md](./cli.md#daemon-stop) and [internals/daemon.md](../internals/daemon.md#shutdown).
+
+### DaemonRestartResult
+
+```ts
+interface DaemonRestartResult extends DaemonInfo { // { baseUrl, port?, pid?, started }
+  ok: true;
+  stopped: boolean;
+  previousPid?: number;
+}
+```
+
+Returned by `daemonRestart`/`crontick daemon restart`. The stop phase (`stopDaemon()`) runs the
+same graceful-then-escalate sequence as [`DaemonStopResult`](#daemonstopresult), but only
+`stopped` (whether the previous daemon actually exited) and `previousPid` are surfaced here —
+`mode` and `activeRuns` are not part of this result.
 
 ### DashboardOptions
 
@@ -272,6 +317,9 @@ interface DashboardStats {
   avgDurationMs: number | null;
 }
 ```
+
+Same shape and computation as [`StatsSummary`](#statssummary) -- see there for how
+`avgDurationMs` is averaged.
 
 ### DashboardJob
 
@@ -403,7 +451,7 @@ See [configuration.md](configuration.md).
 ### RetentionConfig
 
 ```ts
-type RetentionConfig = z.infer<typeof RetentionConfigSchema>; // { maxRunsPerJob: number }
+type RetentionConfig = z.infer<typeof RetentionConfigSchema>; // { maxRunsPerJob: number; maxOutputBytesPerRun: number; maxLogFiles: number }
 ```
 
 See [configuration.md](configuration.md#retentionconfig).
@@ -544,7 +592,7 @@ const BUILT_IN_CONFIG: CrontickConfig;
 ```
 
 ```json
-{ "defaultEngine": "copilot", "engines": { "copilot": { "command": "copilot", "args": [], "env": {} } }, "retention": { "maxRunsPerJob": 100 } }
+{ "defaultEngine": "copilot", "engines": { "copilot": { "command": "copilot", "args": [], "env": {} } }, "retention": { "maxRunsPerJob": 100, "maxOutputBytesPerRun": 2000000, "maxLogFiles": 30 } }
 ```
 
 ### SURFACE_CAPABILITIES
@@ -589,4 +637,4 @@ The full stored `runs.error` value written by `reconcileOrphanRuns()`.
 | `PromptEngineSchema` | `z.ZodString` | Engine name regex |
 | `ConfigSchema` | `z.ZodObject` | Config file schema |
 | `EngineConfigSchema` | `z.ZodObject` | Single engine config |
-| `RetentionConfigSchema` | `z.ZodObject` | `{ maxRunsPerJob: number }`, `.strict()`, `min(1)`/`max(100_000)`/`default(100)` |
+| `RetentionConfigSchema` | `z.ZodObject` | `{ maxRunsPerJob: number; maxOutputBytesPerRun: number; maxLogFiles: number }`, `.strict()`, defaults `100`/`2_000_000`/`30` |

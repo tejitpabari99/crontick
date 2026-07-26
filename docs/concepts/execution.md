@@ -36,20 +36,37 @@ All action kinds spawn a child process with `shell: false` using Node.js `child_
   env: { ...process.env, ...promptEnv, ...envFileVars, ...action.env },
   signal: abortController.signal,
   shell: false,
-  timeout: action.timeoutSec ? action.timeoutSec * 1000 : undefined,
-  detached: true,
+  detached: !isWindowsPowerShellHost,
   windowsHide: true,
 }
 ```
 
-`detached: true` is set for every action kind on every platform, so a child's survival across a
-daemon restart or crash is uniform: on POSIX the child reparents to init as before; on Windows it
-runs in its own process group instead of the daemon's job object, so it is no longer killed when
-the daemon exits. `windowsHide` suppresses the console window that `detached` would otherwise
-pop on Windows. The child's `pid` is persisted onto its run row (`Store.updateRun(runId, { pid })`)
-as soon as it is known, and `child.unref()` is called so a detached child never keeps the daemon's
-event loop alive. See [daemon-lifecycle.md](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down)
-for how a surviving child is reconciled on the next daemon start.
+Timeouts are no longer implemented via the spawn options — see [Timeouts](#timeouts) below.
+
+`detached` is `true` for every action kind on every platform, with one narrow exception:
+`isWindowsPowerShellHost` is true when the platform is Windows and the resolved command is
+`pwsh`/`powershell(.exe)` (case-insensitive), which is the case for `script` jobs whose shell
+resolves to PowerShell (including the `shell: "auto"` default). For that one command/platform
+combination, `detached` is `false` instead, because Windows's `DETACHED_PROCESS` creation flag
+gives the child no console, and PowerShell's host requires an attached console to ever write to
+its own (otherwise valid) stdout/stderr — without this exception, a PowerShell script job's
+output is unconditionally empty on Windows. See
+[ADR 0020](../decisions/0020-no-detach-powershell-script-jobs-windows.md) for the full
+rationale and trade-off, and [internals/executors.md](../internals/executors.md#detached-child-processes)
+for the exact detection.
+
+For every other case, `detached: true` means a child's survival across a daemon restart or crash
+is uniform: on POSIX the child reparents to init as before; on Windows it runs in its own process
+group instead of the daemon's job object, so it is no longer killed when the daemon exits.
+`windowsHide` suppresses the console window that `detached` would otherwise pop on Windows (this
+still applies even when `detached` is disabled for the PowerShell exception). The child's `pid`
+is persisted onto its run row (`Store.updateRun(runId, { pid })`) as soon as it is known, and
+`child.unref()` is called so a detached child never keeps the daemon's event loop alive. See
+[daemon-lifecycle.md](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down)
+for how a surviving child is reconciled on the next daemon start, and note that the PowerShell
+exception above means such a job's child does **not** survive the daemon being killed via Ctrl+C
+through a shared console (an abrupt crash/kill still leaves it running, since Windows does not
+cascade-kill on its own).
 
 ### Script jobs
 
@@ -68,11 +85,12 @@ The temp file is deleted after the process exits (or on error).
 The `command` is spawned directly with `args`. No shell interpretation occurs. `command` is used
 verbatim -- it is never split on whitespace -- so a command string containing spaces (e.g. a path)
 is passed through unchanged as a single argv element. `args` come from whatever a surface passes
-through (for the CLI, everything after a literal `--`), so an individual argument containing
-spaces is preserved intact rather than being re-split. See
-[cli.md](../reference/cli.md#crontick-new) for the CLI's `--`-based syntax and its two
-Windows shell-shim caveats, and [ADR 0018](../decisions/0018-exec-dash-dash-args.md) for why `--`
-was chosen over whitespace splitting.
+through -- for the CLI, from repeatable `--arg <value>` (primary) or, as a convenience, everything
+after a literal `--` -- so an individual argument containing spaces is preserved intact rather
+than being re-split. See [cli.md](../reference/cli.md#crontick-new) for the CLI's `--arg`/`--`
+syntax and the Windows shim behavior matrix, and
+[ADR 0019](../decisions/0019-arg-flag-primary-for-exec-and-prompt-args.md) for why `--arg` is
+primary.
 
 ### Prompt jobs
 
@@ -99,16 +117,21 @@ Both streams are captured chunk-by-chunk. Each chunk passes through `safeRedact(
 
 Captured output per run is bounded by `retention.maxOutputBytesPerRun` (default 2,000,000 bytes,
 configurable `1024..1_000_000_000` -- see [configuration reference](../reference/configuration.md)).
-Once a run's captured output reaches the cap, crontick appends a truncation marker line to
-`run_logs` and stops persisting any further chunks; the run's `outputTruncated` field is set to
-`true`. This only stops output *capture* -- the job's own child process is never killed,
+Once a run's captured output reaches the cap, crontick trims the last chunk back to a valid UTF-8
+character boundary (never splitting a multi-byte character) before appending a truncation marker
+line to `run_logs`, then stops persisting any further chunks; the run's `outputTruncated` field is
+set to `true`. This only stops output *capture* -- the job's own child process is never killed,
 throttled, or otherwise affected by hitting the cap; it keeps running to completion. See
 [internals/executors.md](../internals/executors.md#output-capture-cap) for the exact enforcement
 point.
 
 ## Timeouts
 
-When `action.timeoutSec` is set, it is passed as `timeout` (in ms) to the spawn options. Node.js sends SIGTERM to the child on timeout. The Runner interprets the `ETIMEDOUT` error code as status `timeout`.
+When `action.timeoutSec` is set, the Runner starts its own timer alongside the spawn (this is not
+implemented via Node's `spawn(..., { timeout })` option, which cannot be distinguished from a
+plain cancellation once it fires). If the child has not exited when the timer elapses, the Runner
+sends `SIGTERM` to it directly and records the run's status as `timeout` (with an error message
+naming the configured `timeoutSec`), rather than `canceled`.
 
 ## Exit-status interpretation
 
@@ -116,9 +139,9 @@ When `action.timeoutSec` is set, it is passed as `timeout` (in ms) to the spawn 
 |-----------|------------|
 | Exit code 0 | `success` |
 | Exit code non-zero | `failed` (with `exitCode` recorded) |
-| Signal SIGTERM/SIGKILL | `canceled` |
+| Runner-initiated timeout (`action.timeoutSec` elapsed) | `timeout` |
+| Signal SIGTERM/SIGKILL (user/overlap cancellation, not a timeout) | `canceled` |
 | Abort signal (overlap or manual cancel) | `canceled` |
-| ETIMEDOUT | `timeout` |
 | ENOENT (prompt engine not found) | `failed` with descriptive error |
 | No exit code (null) | `failed` |
 

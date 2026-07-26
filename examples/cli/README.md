@@ -8,11 +8,16 @@ The binary name is **`crontick`** (see `package.json#bin`).
 
 Examples use POSIX single-quote (`'...'`) by default. On **Windows CMD**, replace single quotes with double quotes. On **PowerShell**, single quotes work but JSON values may need escaping with backticks or double quotes around the outer string.
 
-**PowerShell `--` caveat:** a bare `crontick` resolves to the npm-generated `crontick.ps1` shim.
-PowerShell's own parameter binding drops a literal `--` token before the script ever receives it
-(true of any `.ps1` script, not specific to crontick) -- so the `--exec ... -- ...` example below
-loses its trailing args if invoked as plain `crontick`. Use `crontick.cmd` explicitly (or run from
-`cmd.exe`), which forwards `--` untouched.
+**Argument passing:** repeatable `--arg <value>` is the primary, always-correct way to pass
+arguments to `--exec`/`--prompt` -- it works identically on every shell and every Windows shim
+(`crontick.cmd`, `crontick.ps1`, `npx crontick`), and round-trips spaces, embedded quotes, and
+leading dashes verbatim. A convenience `--exec ... -- ...` form also exists but is not reliable
+on every shim: a bare `crontick` resolves to the npm-generated `crontick.ps1` shim on Windows,
+and PowerShell's own parameter binding drops a literal `--` token before the script ever receives
+it (true of any `.ps1` script, not specific to crontick), so a `--exec ... -- ...` command loses
+its trailing args if invoked as plain `crontick`. Use `--arg` to avoid the gap entirely, or
+`crontick.cmd`/`npx crontick` explicitly if you do use `--`. See
+[CLI reference](../../docs/reference/cli.md#windows-shells---arg-vs---) for the full behavior matrix.
 
 ---
 
@@ -37,7 +42,7 @@ Expected: job with `schedule.kind: "cron"`, `schedule.tz: "America/New_York"`.
 ### Exec job (no shell)
 
 ```sh
-crontick new node-hello --every 30 --exec node -- -e "console.log('hi')"
+crontick new node-hello --every 30 --exec node --arg -e --arg "console.log('hi')"
 ```
 
 Expected: job with `action.kind: "exec"`, `action.command: "node"`.

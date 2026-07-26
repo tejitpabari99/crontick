@@ -1,7 +1,13 @@
 # 0018: `--exec` takes command and args verbatim, separated by `--`
 
-- Status: Accepted
+- Status: Superseded by ADR-0019
 - Date: 2026-07-26
+
+> Superseded by [ADR 0019](0019-arg-flag-primary-for-exec-and-prompt-args.md), which
+> makes the repeatable `--arg <value>` flag the primary, documented mechanism for
+> exec/prompt arguments. `--` (described below) still works and is unchanged as a
+> convenience, but is no longer "the" mechanism this ADR's title describes -- it is
+> one of two, and not the one recommended by default.
 
 ## Context
 
