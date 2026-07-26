@@ -16,7 +16,7 @@ crontick is:
 
 crontick is NOT:
 
-- A supervised always-on service. It does not install an OS service, launchd agent, systemd unit, or Windows Service. If the daemon dies, schedules pause until the next client interaction or explicit `daemon start`. (Historical: an autostart feature using `registry-js` was removed in the current development branch.)
+- A supervised always-on service. It does not install an OS service, launchd agent, systemd unit, or Windows Service. If the daemon dies, schedules pause until the next client interaction or explicit `daemon start`.
 - A distributed or multi-node scheduler. There is no clustering, leader election, or shared state.
 - A job queue with external brokers (Redis, RabbitMQ, etc.).
 - A container orchestrator or process supervisor.
@@ -77,7 +77,7 @@ The three binaries (`crontick`, `crontick-daemon`, `crontick-mcp`) are CLI entry
 
 ### Runner
 
-`src/daemon/runner.ts`. Executes job actions as child processes via `spawn`. Enforces overlap policy (`skip`, `queue`, `cancel-previous`) using per-job `AbortController` and queue maps. Implements retry with configurable backoff. Captures stdout/stderr through `safeRedact()` before persisting to Store. Handles `script` (temp file + shell), `exec` (direct command), and `prompt` (engine-resolved command with optional session reuse) action kinds. Enforces per-job `timeoutSec` via `AbortSignal.timeout`.
+`src/daemon/runner.ts`. Executes job actions as child processes via `spawn`. Enforces overlap policy (`skip`, `queue`, `cancel-previous`) using per-job `AbortController` and queue maps. Implements retry with configurable backoff. Captures stdout/stderr through `safeRedact()` before persisting to Store. Handles `script` (temp file + shell), `exec` (direct command), and `prompt` (engine-resolved command with optional session reuse) action kinds. Enforces per-job `timeoutSec` via the spawn `timeout` option (in ms).
 
 ### Store
 
@@ -290,7 +290,7 @@ SQLite is provided by the Node.js built-in `node:sqlite` module (stable in Node 
 
 Rules for adding dependencies:
 - Prefer `node:*` built-in modules over third-party packages.
-- No native/compiled dependencies (the previous `registry-js` dependency was explicitly removed).
+- No native/compiled dependencies.
 - New runtime dependencies require explicit justification and review.
 - Dev dependencies (`vitest`, `tsup`, `eslint`, `prettier`, `fast-check`, `typescript`, `@changesets/cli`) are build/test-time only and do not ship.
 

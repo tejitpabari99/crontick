@@ -217,8 +217,10 @@ There are currently no pending breaking changes.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide (DCO, code style, PR
-process). For coding agents, see `AGENTS.md` (once available). For testing instructions,
+process). For coding agents, see [AGENTS.md](AGENTS.md). For testing instructions,
 see [docs/testing.md](docs/testing.md).
+
+Report bugs at <https://github.com/tejitpabari99/crontick/issues>.
 
 Validate a change:
 

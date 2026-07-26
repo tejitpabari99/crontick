@@ -71,7 +71,7 @@ Shutdown is triggered by `SIGINT` or `SIGTERM`. The daemon:
 - No elevated privileges required to install, update, or uninstall.
 - Works identically on Windows, macOS, and Linux without platform-specific plumbing.
 - Developer machines often sleep; a demand-start model avoids waking the daemon on resume only to find all targets are stale.
-- Autostart registration (formerly via `registry-js`) has been removed in favor of pure demand-start.
+- Startup registration has been removed in favor of pure demand-start (see ADR 0009).
 
 ## Further reading
 

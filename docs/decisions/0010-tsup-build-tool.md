@@ -1,4 +1,4 @@
-# 0012: Use tsup as the build tool
+# 0010: Use tsup as the build tool
 
 - Status: Accepted
 - Date: 2026-07-18

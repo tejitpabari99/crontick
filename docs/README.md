@@ -56,7 +56,7 @@ observable behavior without updating relevant docs is incomplete.
 | [jobs.md](concepts/jobs.md) | What a job is: identity, lifecycle, enabled/disabled semantics |
 | [scheduling.md](concepts/scheduling.md) | Cron, interval, and one-shot schedule behavior |
 | [execution.md](concepts/execution.md) | How actions run: shell rules, timeouts, cancellation |
-| [daemon-lifecycle.md](concepts/daemon-lifecycle.md) | Demand-start, idle shutdown, supervision (none) |
+| [daemon-lifecycle.md](concepts/daemon-lifecycle.md) | Demand-start, shutdown, no supervision |
 | [state-and-storage.md](concepts/state-and-storage.md) | Where state lives, SQLite WAL, JSON files |
 | [surface-parity.md](concepts/surface-parity.md) | The 36-capability contract across CLI/MCP/library |
 | [error-model.md](concepts/error-model.md) | Error codes, structured errors, surface presentation |
@@ -93,19 +93,8 @@ observable behavior without updating relevant docs is incomplete.
 |------|-------------|
 | [README.md](decisions/README.md) | ADR index and process |
 | [0000-template.md](decisions/0000-template.md) | Template for new ADRs |
-| [0001-single-core-thin-shim-architecture.md](decisions/0001-single-core-thin-shim-architecture.md) | One core client, three thin shims |
-| [0002-esm-only-distribution.md](decisions/0002-esm-only-distribution.md) | ESM-only, no CJS dual-publish |
-| [0003-demand-started-daemon.md](decisions/0003-demand-started-daemon.md) | Daemon starts on first use, not installed as a service |
-| [0004-loopback-http-ipc.md](decisions/0004-loopback-http-ipc.md) | HTTP on 127.0.0.1 for IPC |
-| [0005-sqlite-wal-plus-json-state.md](decisions/0005-sqlite-wal-plus-json-state.md) | SQLite WAL for runs, JSON for job definitions |
-| [0006-croner-cron-engine.md](decisions/0006-croner-cron-engine.md) | Croner as the cron expression engine |
-| [0007-zod-schema-validation.md](decisions/0007-zod-schema-validation.md) | Zod for all input validation |
-| [0008-registry-js-autostart.md](decisions/0008-registry-js-autostart.md) | Windows Registry autostart (superseded) |
-| [0009-remove-autostart-demand-start-only.md](decisions/0009-remove-autostart-demand-start-only.md) | Remove autostart, demand-start only |
-| [0010-prompt-jobs-pluggable-engines.md](decisions/0010-prompt-jobs-pluggable-engines.md) | Prompt job kind with pluggable engines |
-| [0011-changesets-versioning.md](decisions/0011-changesets-versioning.md) | Changesets for versioning |
-| [0012-tsup-build-tool.md](decisions/0012-tsup-build-tool.md) | tsup as the build tool |
-| [0013-vitest-and-surface-drift-test.md](decisions/0013-vitest-and-surface-drift-test.md) | Vitest and surface-drift testing |
+
+See [decisions/README.md](decisions/README.md) for the full list of architecture decision records (ADRs 0001-0013).
 
 ### specs/
 

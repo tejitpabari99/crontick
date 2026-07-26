@@ -57,7 +57,7 @@ class CrontickError extends Error {
 
 | | |
 |---|---|
-| **When** | Another process holds `daemon.ensure.lock` longer than `lockTimeoutMs` (default 15000) |
+| **When** | Another process holds `daemon.ensure.lock` and the overall startup timeout (`startupTimeoutMs`, default 10000) expires before the lock is acquired |
 | **Message shape** | Lock file path and timeout |
 | **Details** | — |
 
@@ -196,6 +196,22 @@ class CrontickError extends Error {
 | **When** | API request blocked by security policy (non-loopback access) |
 | **Message shape** | — |
 | **Details** | — |
+
+### DASHBOARD_ASSET_NOT_FOUND
+
+| | |
+|---|---|
+| **When** | Dashboard static assets directory does not exist (not built) |
+| **Message shape** | `Dashboard assets were not found at <dir>. Run: npm run build` |
+| **Details** | `{ dashboardDir, action }` |
+
+### BAD_DASHBOARD_ASSET
+
+| | |
+|---|---|
+| **When** | Dashboard asset request path is outside the dashboard directory or is not a file |
+| **Message shape** | `Dashboard asset path is outside the dashboard directory...` |
+| **Details** | `{ requestedPath, action }` |
 
 ### INTERNAL_ERROR
 

@@ -78,6 +78,8 @@ class CrontickClient {
 | `drainNotices` | `(): string[]` | Accumulated notices | — |
 | `isVerbose` | `(): boolean` | Verbose flag | — |
 
+**Library-only methods (not in `SURFACE_CAPABILITIES`, no CLI/MCP equivalent):** `ensure`, `health`, `createJobFromCliOptions`, `jobJsonSchema`, `getConfig`, `drainNotices`, `isVerbose`. These are intentionally excluded from the parity contract because they serve internal wiring, direct-use library scenarios, or launch infrastructure rather than proxying a daemon operation.
+
 ---
 
 ### CrontickError
@@ -543,7 +545,7 @@ const BUILT_IN_CONFIG: CrontickConfig;
 const SURFACE_CAPABILITIES: readonly SurfaceCapability[];
 ```
 
-36-element array mapping every capability to its client method, CLI command path, and MCP tool name.
+37-element array mapping every capability to its client method, CLI command path, and MCP tool name.
 
 ---
 

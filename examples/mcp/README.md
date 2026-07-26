@@ -44,7 +44,7 @@ If crontick is installed locally (not globally), use the full path:
 
 ---
 
-## Available tools (36)
+## Available tools (37)
 
 All tools accept an optional `verbose: boolean` parameter for diagnostics.
 

@@ -1,4 +1,4 @@
-# 0011: Use changesets for versioning and releases
+# 0009: Use changesets for versioning and releases
 
 - Status: Accepted
 - Date: 2026-07-18

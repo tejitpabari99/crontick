@@ -1,4 +1,4 @@
-# 0010: Introduce prompt jobs with pluggable prompt engines
+# 0008: Introduce prompt jobs with pluggable prompt engines
 
 - Status: Accepted
 - Date: 2026-07-25

@@ -53,9 +53,7 @@ NNNN-kebab-case-title.md
 | 0005 | SQLite WAL plus JSON files for state persistence | Accepted | 2026-07-18 |
 | 0006 | Use croner as the cron expression engine | Accepted | 2026-07-18 |
 | 0007 | Use zod for schema validation at every surface boundary | Accepted | 2026-07-18 |
-| 0008 | Adopt Windows Registry autostart via registry-js | Superseded by ADR-0009 | 2026-07-18 |
-| 0009 | Remove autostart registration -- demand-start only | Accepted | 2026-07-25 |
-| 0010 | Introduce prompt jobs with pluggable prompt engines | Accepted | 2026-07-25 |
-| 0011 | Use changesets for versioning and releases | Accepted | 2026-07-18 |
-| 0012 | Use tsup as the build tool | Accepted | 2026-07-18 |
-| 0013 | Use vitest as the test runner with surface-drift as architectural test | Accepted | 2026-07-18 |
+| 0008 | Introduce prompt jobs with pluggable prompt engines | Accepted | 2026-07-25 |
+| 0009 | Use changesets for versioning and releases | Accepted | 2026-07-18 |
+| 0010 | Use tsup as the build tool | Accepted | 2026-07-18 |
+| 0011 | Use vitest as the test runner with surface-drift as architectural test | Accepted | 2026-07-18 |

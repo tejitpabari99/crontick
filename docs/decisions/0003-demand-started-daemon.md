@@ -35,9 +35,11 @@ code paths, elevated install, harder to iterate during development, poor fit for
 dependency, complicates `npm install -g`, and still does not survive logout without an
 OS service underneath.
 
-**Watchdog/keepalive with OS autostart at login.** Previously implemented via Windows
-Registry Run key and launchd agent (see ADR-0008 for removal rationale). Removed because
-it was unreliable and surprising to users.
+**Watchdog/keepalive with OS-level startup registration.** Previously implemented via
+platform-specific login-item mechanisms (Windows Run key, launchd agent). Removed
+because it required native compiled dependencies that broke installs in constrained
+environments, added platform-specific code paths with limited test coverage, and
+surprised users with an unexpected background process at login.
 
 **No daemon -- in-process scheduling.** Each CLI invocation would calculate the next
 tick, sleep, and fire. Not viable for cron-style "fire while I'm away" semantics

@@ -163,3 +163,11 @@ Prepublish gate: `"prepublishOnly": "npm run build && npm test"`.
 5. **Tarball verification**: `scripts/verify-tarball.mjs` checks the output of
    `npm pack --dry-run` against expectations. Run in CI to catch accidental
    inclusion of dev files.
+6. **Example type-checking against source**: `examples/tsconfig.json` maps the
+   `crontick` import specifier to `../src/index.ts`, so `npm run typecheck:examples`
+   validates examples against the source type surface rather than the published
+   declaration output (`dist/index.d.ts`). If the declaration rollup ever diverges
+   from source, an example could type-check locally while being broken for real
+   consumers. This risk is mitigated by the `verify-package` CI job (which installs
+   the packed tarball and imports it) and the manual pre-release checklist in
+   `docs/testing.md` that covers importing from the tarball.

@@ -1,4 +1,4 @@
-# 0013: Use vitest as the test runner with surface-drift as an architectural test
+# 0011: Use vitest as the test runner with surface-drift as an architectural test
 
 - Status: Accepted
 - Date: 2026-07-18

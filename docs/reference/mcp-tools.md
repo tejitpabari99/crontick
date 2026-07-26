@@ -243,7 +243,7 @@ Validate a schedule definition.
 | `schedule` | `Schedule` | yes | — | Schedule object |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ ok: true, description: string }` on success; error on failure.
+**Result:** `{ ok: true }` on success; `{ ok: false, error: string }` on failure.
 
 ---
 

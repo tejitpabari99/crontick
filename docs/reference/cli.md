@@ -526,7 +526,7 @@ crontick dashboard stop
 
 ### crontick mcp
 
-Start the crontick MCP server on stdio.
+Start the crontick MCP server on stdio. This command launches the MCP server process rather than proxying a daemon operation, so it is not listed in `SURFACE_CAPABILITIES`.
 
 ```bash
 crontick mcp
