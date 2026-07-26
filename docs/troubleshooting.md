@@ -137,6 +137,45 @@ For MCP workflows, load the run via `crontick_run_get` and `crontick_run_logs_ta
 Validate and preview it first:
 
 ```sh
-curl -X POST http://127.0.0.1:<port>/api/schedules/validate -H "content-type: application/json" -d '{"kind":"cron","cron":"0 9 * * *"}'
-curl -X POST http://127.0.0.1:<port>/api/schedules/preview -H "content-type: application/json" -d '{"schedule":{"kind":"cron","cron":"0 9 * * *"},"n":5}'
+crontick schedule validate '{"kind":"cron","cron":"0 9 * * *"}'
+crontick schedule preview '{"kind":"cron","cron":"0 9 * * *"}' --limit 5
 ```
+
+### VALIDATION_ERROR on job create/update
+
+Means the job definition fails Zod schema validation. Check that:
+
+- `id` is kebab-case (`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+- `schedule` has a valid `kind` (`cron`, `interval`, or `one-shot`)
+- `action` has exactly one of `script`, `exec`, or `prompt`
+- Prompt actions have `prompt` text (not empty) or use `--prompt-file`
+
+Run with `--verbose` to see the full Zod error details.
+
+### CONFIG_READ_ERROR or CONFIG_VALIDATION_ERROR
+
+The `config.json` file is malformed or has invalid fields:
+
+```sh
+crontick config validate
+```
+
+If the file is corrupt, delete it and reinitialize:
+
+```sh
+crontick config init --force
+```
+
+### DAEMON_START_LOCK_TIMEOUT
+
+Another process is holding the startup lock. This typically means a parallel demand-start is
+already in progress. Wait a few seconds and retry. If it persists, remove the stale lock file
+from the data directory (`daemon.ensure.lock`) and retry.
+
+### ENV_FILE_ERROR
+
+The `--env-file` path does not exist or cannot be read. Verify the path is correct and the
+file is readable. Relative paths resolve against the job's `cwd` (or the daemon's working
+directory if no `cwd` is set).
+
+For all error codes see [docs/reference/errors.md](reference/errors.md).

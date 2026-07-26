@@ -558,3 +558,24 @@ Validate the current crontick config file.
 | ID | URI | MIME Type | Description |
 |----|-----|-----------|-------------|
 | `crontick-schema-job` | `crontick://schemas/job` | `application/json` | JSON Schema for a crontick job definition |
+
+---
+
+## CLI Flags for MCP Launch
+
+| Flag | Effect |
+|------|--------|
+| `--no-start-daemon` | Set `startDaemon=false` so tools do not demand-start the daemon |
+| `--daemon-url <url>` | Override the daemon base URL |
+| `--verbose` / `-v` | Pass verbose diagnostics through to clients/daemon |
+
+---
+
+## Validation Model
+
+Tool schemas are derived from the shared core/client Zod schemas. The MCP server validates tool input, then calls `CrontickClient`; normalization, prompt runtime checks, daemon lifecycle, doctor checks, and JSON schema generation all live in shared core modules. The MCP server owns only:
+
+- Tool registration schemas (derived from shared Zod schemas)
+- The `crontick://schemas/job` resource (serves `client.jobJsonSchema()`)
+- `redactForLlm()` redaction before returning errors
+- JSON-RPC formatting

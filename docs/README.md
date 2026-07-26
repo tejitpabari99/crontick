@@ -47,14 +47,6 @@ observable behavior without updating relevant docs is incomplete.
 |------|-------------|
 | [architecture.md](architecture.md) | System architecture: daemon, client, shims, state, IPC |
 | [testing.md](testing.md) | Test layers, running tests, pre-release checklist |
-| [getting-started.md](getting-started.md) | Prerequisites, installation, first job |
-| [contributing.md](contributing.md) | DCO, code style, PR process |
-| [security.md](security.md) | Trust boundary, API posture, process execution, log redaction |
-| [configuration.md](configuration.md) | Config file reference (legacy location; see also reference/) |
-| [cli.md](cli.md) | CLI usage guide (legacy location; see also reference/) |
-| [mcp.md](mcp.md) | MCP server usage |
-| [actions.md](actions.md) | Action kinds (script, exec, prompt) |
-| [schedules.md](schedules.md) | Schedule kinds and syntax |
 | [troubleshooting.md](troubleshooting.md) | Common issues and diagnostics |
 
 ### docs/concepts/
@@ -114,20 +106,6 @@ observable behavior without updating relevant docs is incomplete.
 | [0011-changesets-versioning.md](decisions/0011-changesets-versioning.md) | Changesets for versioning |
 | [0012-tsup-build-tool.md](decisions/0012-tsup-build-tool.md) | tsup as the build tool |
 | [0013-vitest-and-surface-drift-test.md](decisions/0013-vitest-and-surface-drift-test.md) | Vitest and surface-drift testing |
-
-### docs/architecture/
-
-| File | Description |
-|------|-------------|
-| [api-vs-cli-analysis.md](architecture/api-vs-cli-analysis.md) | Analysis of API vs CLI surface alignment |
-| [fluff-audit.md](architecture/fluff-audit.md) | Documentation quality audit |
-| [review-final.md](architecture/review-final.md) | Final architecture review notes |
-
-### docs/roadmap/
-
-| File | Description |
-|------|-------------|
-| [next-steps.md](roadmap/next-steps.md) | Planned future work |
 
 ### specs/
 

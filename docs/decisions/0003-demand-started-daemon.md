@@ -62,8 +62,8 @@ because the user's terminal session would need to stay open.
 
 **Impossible:**
 
-- Firing jobs while the daemon is stopped and no client triggers it (by design -- we
-  document this trade-off in getting-started.md).
+- Firing jobs while the daemon is stopped and no client triggers it (by design -- see
+  `docs/concepts/daemon-lifecycle.md`).
 
 ## Revisit when
 

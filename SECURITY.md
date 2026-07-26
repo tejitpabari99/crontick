@@ -37,3 +37,14 @@ unprivileged remote code to interact with the daemon, that is in scope.
 Vulnerabilities in third-party dependencies should be reported upstream unless
 crontick's usage of the dependency creates an exploitable path that does not
 exist in isolation.
+
+## Operational Guidance
+
+- Keep jobs self-contained.
+- Prefer `exec` actions when shell features are not needed (`shell=false`).
+- Use `envFile` or `env` for secrets; never hardcode them into scripts committed to source control.
+- Do not expose the daemon port through SSH forwarding, reverse proxies, or firewall rules.
+- Prompt text and raw engine arguments are stored in job JSON and may be visible to local process inspection while a run is active. Do not put secrets in prompts or args.
+
+For the full security model (trust boundary, loopback enforcement, redaction), see
+[docs/architecture.md](docs/architecture.md#security-considerations).

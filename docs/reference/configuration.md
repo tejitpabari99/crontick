@@ -63,6 +63,28 @@ Schema is `.strict()` — no extra fields allowed.
 
 If `config.json` does not exist, crontick uses this built-in config. The file config is deep-merged over the built-in defaults.
 
+### Multi-Engine Example
+
+```json
+{
+  "defaultEngine": "copilot",
+  "engines": {
+    "copilot": {
+      "command": "copilot",
+      "args": ["-p"],
+      "env": {}
+    },
+    "agency": {
+      "command": "agency",
+      "args": ["cp", "--logs-dir=Q:\\Repos\\crontick\\.crontick\\agency-logs"],
+      "env": {}
+    }
+  }
+}
+```
+
+Custom engines (like `agency` above) are just configurable entries; only the `command` must be on PATH.
+
 ### Config Key Path
 
 Key paths for `config get/set/unset` are dot-separated: `defaultEngine`, `engines.copilot.command`, etc. Keys must match `^[A-Za-z0-9_.-]+$`.

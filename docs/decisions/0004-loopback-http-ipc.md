@@ -62,7 +62,7 @@ every client process. Incompatible with the single-daemon-many-clients model.
 **Impossible:**
 
 - Remote access to the daemon without a proxy or tunnel (intentional -- see
-  `docs/security.md`).
+  `SECURITY.md` and `docs/architecture.md` Security considerations section).
 
 ## Revisit when
 

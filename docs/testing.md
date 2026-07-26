@@ -256,7 +256,7 @@ Additional workflows:
 ### Docs / examples
 
 - [ ] README quick-start commands still work
-- [ ] `docs/cli.md` matches `crontick --help` output
+- [ ] `docs/reference/cli.md` matches `crontick --help` output
 
 ## Release checklist
 

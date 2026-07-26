@@ -216,7 +216,7 @@ There are currently no pending breaking changes.
 
 ## Contributing
 
-See [docs/contributing.md](docs/contributing.md) for the full guide (DCO, code style, PR
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide (DCO, code style, PR
 process). For coding agents, see `AGENTS.md` (once available). For testing instructions,
 see [docs/testing.md](docs/testing.md).
 
@@ -243,7 +243,7 @@ storage or return.
 To report a vulnerability, open a private security advisory at
 <https://github.com/tejitpabari99/crontick/security/advisories/new>.
 
-See [docs/security.md](docs/security.md) for the full security model.
+See [SECURITY.md](SECURITY.md) for the full security model.
 
 ---
 
