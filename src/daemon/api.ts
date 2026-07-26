@@ -4,6 +4,7 @@ import http from 'node:http';
 import { createReadStream } from 'node:fs';
 import { URL } from 'node:url';
 import type { Store } from './store.js';
+import type { RunStatus } from './store.js';
 import type { Scheduler } from './scheduler.js';
 import type { Runner } from './runner.js';
 import { JobSchema } from '../schemas/job.js';
@@ -35,6 +36,15 @@ export interface ApiContext {
   port: number;
   reload: () => Promise<void>;
   logger?: Logger;
+  /** L1: graceful in-process shutdown, wired by index.ts after the HTTP server exists. */
+  shutdown?: (signal: string) => Promise<void>;
+  /** L2: summary of fires missed while the daemon was down, computed once at startup. */
+  missedFireSummary?: {
+    jobsWithMissedFires: number;
+    missedRunsRecorded: number;
+    jobsCapped: number;
+    capPerJob: number;
+  };
 }
 
 // ── Server factory ────────────────────────────────────────────────────────────
@@ -92,6 +102,9 @@ async function handleRequest(
       ctx.store.upsertJob(job);
       const stored = ctx.store.getJob(job.id) ?? job;
       ctx.scheduler.schedule(stored);
+      // L2: seed the missed-fire watermark so a restart computes forward from
+      // "job just created/updated", not from some earlier (or absent) state.
+      ctx.store.recordTick(stored.id);
       return sendJson(res, 201, stored);
     }
 
@@ -119,6 +132,10 @@ async function handleRequest(
         ctx.store.upsertJob(job);
         const stored = ctx.store.getJob(id) ?? job;
         ctx.scheduler.schedule(stored);
+        // L2: same watermark seed as job creation — an update can re-enable a
+        // job or change its schedule, both of which should compute missed
+        // fires forward from now, not from a stale pre-update state.
+        ctx.store.recordTick(stored.id);
         return sendJson(res, 200, stored);
       }
 
@@ -135,6 +152,8 @@ async function handleRequest(
         const updated = { ...job, enabled: true };
         ctx.store.upsertJob(updated);
         ctx.scheduler.schedule(updated);
+        // L2: re-enabling starts a fresh watermark, same reasoning as create/update.
+        ctx.store.recordTick(id);
         return sendJson(res, 200, updated);
       }
 
@@ -166,7 +185,8 @@ async function handleRequest(
       const since = url.searchParams.has('since')
         ? parseInt(url.searchParams.get('since')!, 10)
         : undefined;
-      return sendJson(res, 200, ctx.store.listRuns({ jobId, limit, since }));
+      const status = (url.searchParams.get('status') ?? undefined) as RunStatus | undefined;
+      return sendJson(res, 200, ctx.store.listRuns({ jobId, limit, since, status }));
     }
 
     // /api/runs/:id/*
@@ -262,12 +282,37 @@ async function handleRequest(
         version: VERSION,
         uptimeSec: Math.floor((Date.now() - ctx.startedAt.getTime()) / 1000),
         jobs: ctx.store.listJobs().length,
+        // L2: report-only missed-fire summary computed once at startup.
+        missedFires: ctx.missedFireSummary ?? {
+          jobsWithMissedFires: 0,
+          missedRunsRecorded: 0,
+          jobsCapped: 0,
+          capPerJob: 0,
+        },
       });
     }
 
     if (method === 'POST' && path === '/api/daemon/reload') {
       await ctx.reload();
       return sendJson(res, 200, { ok: true });
+    }
+
+    // L1: graceful in-process stop. Respond first (200, before the socket is
+    // torn down), then trigger the real shutdown once the response has been
+    // flushed — see the `res.on('finish', ...)` below. Client-side callers
+    // should treat "request succeeded" as "shutdown has started", not
+    // "daemon has exited"; use the PID/port files disappearing (or a
+    // connection-refused health probe) to confirm the process is gone.
+    if (method === 'POST' && path === '/api/daemon/stop') {
+      if (!ctx.shutdown) {
+        return sendError(res, 501, 'NOT_IMPLEMENTED', 'Graceful shutdown is not wired for this context');
+      }
+      const doShutdown = ctx.shutdown;
+      sendJson(res, 200, { ok: true, stopping: true, pid: process.pid });
+      res.on('finish', () => {
+        void doShutdown('HTTP /api/daemon/stop');
+      });
+      return;
     }
 
     // ── Export / Import ───────────────────────────────────────────────────────
@@ -365,7 +410,7 @@ function streamLogs(
       if (log.ts > lastTs) lastTs = log.ts;
     }
 
-    const terminal = new Set(['success', 'failed', 'canceled', 'timeout']);
+    const terminal = new Set(['success', 'failed', 'canceled', 'timeout', 'missed']);
     if (!run || terminal.has(run.status)) {
       sseEvent(res, { done: true, status: run?.status });
       clearInterval(poll);

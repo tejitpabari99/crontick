@@ -188,6 +188,54 @@ describe('Store', () => {
     expect(retrieved?.durationMs).toBe(123);
   });
 
+  it('insertRun starts with pid unset and outputTruncated false', () => {
+    const run = store.insertRun('test-job');
+    expect(run.pid).toBeUndefined();
+    expect(run.outputTruncated).toBe(false);
+  });
+
+  it('updateRun records the spawned child pid once known', () => {
+    const run = store.insertRun('pid-job');
+    store.updateRun(run.id, { status: 'running', pid: 4242 });
+    expect(store.getRun(run.id)?.pid).toBe(4242);
+  });
+
+  it('updateRun sets outputTruncated when a run hits the output byte cap', () => {
+    const run = store.insertRun('trunc-job');
+    expect(store.getRun(run.id)?.outputTruncated).toBe(false);
+    store.updateRun(run.id, { outputTruncated: true });
+    expect(store.getRun(run.id)?.outputTruncated).toBe(true);
+  });
+
+  it('recordMissedRun inserts a terminal missed run with no pid', () => {
+    const run = store.recordMissedRun('missed-job', 5000);
+    expect(run.status).toBe('missed');
+    expect(run.startedAt).toBe(5000);
+    expect(run.endedAt).toBe(5000);
+    expect(run.pid).toBeUndefined();
+    const retrieved = store.getRun(run.id);
+    expect(retrieved?.status).toBe('missed');
+    expect(retrieved?.error).toContain('MISSED');
+  });
+
+  it('recordMissedRun accepts a custom note overriding the default error text', () => {
+    const run = store.recordMissedRun('missed-job-2', 6000, 'MISSED: 500+ fires missed (capped)');
+    expect(store.getRun(run.id)?.error).toBe('MISSED: 500+ fires missed (capped)');
+  });
+
+  it('recordMissedRun rows are subject to the same retention cap as any other terminal run', () => {
+    const smallCapStore = new Store(join(dir, 'runs.db'), join(dir, 'jobs'), undefined, 2);
+    smallCapStore.open();
+    try {
+      smallCapStore.recordMissedRun('missed-cap-job', 1);
+      smallCapStore.recordMissedRun('missed-cap-job', 2);
+      smallCapStore.recordMissedRun('missed-cap-job', 3);
+      expect(smallCapStore.listRuns({ jobId: 'missed-cap-job' })).toHaveLength(2);
+    } finally {
+      smallCapStore.close();
+    }
+  });
+
   it('listRuns filters by jobId', () => {
     store.insertRun('job-a');
     store.insertRun('job-a');
@@ -208,6 +256,96 @@ describe('Store', () => {
     await new Promise((r) => setTimeout(r, 5));
     store.insertRun('job-s');
     expect(store.listRuns({ jobId: 'job-s', since })).toHaveLength(1);
+  });
+
+  it('listRuns filters by status, surfacing missed runs distinctly from success/failed', () => {
+    const success = store.insertRun('job-status');
+    store.updateRun(success.id, { status: 'success' });
+    const failed = store.insertRun('job-status');
+    store.updateRun(failed.id, { status: 'failed' });
+    const missed = store.recordMissedRun('job-status', Date.now());
+
+    expect(store.listRuns({ jobId: 'job-status', status: 'missed' }).map((r) => r.id)).toEqual([missed.id]);
+    expect(store.listRuns({ jobId: 'job-status', status: 'success' }).map((r) => r.id)).toEqual([success.id]);
+    expect(store.listRuns({ jobId: 'job-status' })).toHaveLength(3);
+  });
+
+  // ── Schedule state (missed-fire watermark) ──────────────────────────────────
+
+  it('getScheduleState returns undefined for a job never observed live', () => {
+    expect(store.getScheduleState('never-ticked')).toBeUndefined();
+  });
+
+  it('recordTick seeds and advances a job\'s last_tick_at watermark', () => {
+    store.recordTick('tick-job', 1000);
+    expect(store.getScheduleState('tick-job')?.lastTickAt).toBe(1000);
+    store.recordTick('tick-job', 2000);
+    expect(store.getScheduleState('tick-job')?.lastTickAt).toBe(2000);
+  });
+
+  it('recordTick defaults to now when no timestamp is passed', () => {
+    const before = Date.now();
+    store.recordTick('tick-job-default');
+    const state = store.getScheduleState('tick-job-default');
+    expect(state?.lastTickAt).toBeGreaterThanOrEqual(before);
+  });
+
+  // ── Orphan reconciliation (pid-based liveness) ──────────────────────────────
+
+  it('reconcileOrphanRuns cancels a running run when no liveness checker is provided', () => {
+    const run = store.insertRun('orphan-no-check');
+    store.updateRun(run.id, { status: 'running', pid: 99999 });
+    const result = store.reconcileOrphanRuns();
+    expect(result.canceled).toBe(1);
+    expect(result.adopted).toEqual([]);
+    expect(store.getRun(run.id)?.status).toBe('canceled');
+  });
+
+  it('reconcileOrphanRuns adopts a running run whose checker confirms it is still alive', () => {
+    const run = store.insertRun('orphan-alive');
+    store.updateRun(run.id, { status: 'running', pid: 12345 });
+    const result = store.reconcileOrphanRuns({ isRunAlive: () => true });
+    expect(result.canceled).toBe(0);
+    expect(result.adopted).toEqual([{ runId: run.id, jobId: 'orphan-alive', pid: 12345 }]);
+    expect(store.getRun(run.id)?.status).toBe('running'); // untouched, not re-canceled
+  });
+
+  it('reconcileOrphanRuns cancels a running run whose checker reports it is dead or pid-reused', () => {
+    const run = store.insertRun('orphan-dead');
+    store.updateRun(run.id, { status: 'running', pid: 12345 });
+    const result = store.reconcileOrphanRuns({ isRunAlive: () => false });
+    expect(result.canceled).toBe(1);
+    expect(result.adopted).toEqual([]);
+    expect(store.getRun(run.id)?.status).toBe('canceled');
+  });
+
+  it('reconcileOrphanRuns adopts (favors not double-running) when the checker is inconclusive', () => {
+    const run = store.insertRun('orphan-inconclusive');
+    store.updateRun(run.id, { status: 'running', pid: 12345 });
+    const result = store.reconcileOrphanRuns({ isRunAlive: () => undefined });
+    expect(result.adopted).toHaveLength(1);
+    expect(store.getRun(run.id)?.status).toBe('running');
+  });
+
+  it('reconcileOrphanRuns passes the run\'s recorded startedAt to the checker (pid-reuse guard input)', () => {
+    const run = store.insertRun('orphan-startedat', 8080);
+    store.updateRun(run.id, { status: 'running', pid: 555 });
+    const seen: Array<[number, number]> = [];
+    store.reconcileOrphanRuns({
+      isRunAlive: (pid, startedAt) => {
+        seen.push([pid, startedAt]);
+        return true;
+      },
+    });
+    expect(seen).toEqual([[555, 8080]]);
+  });
+
+  it('reconcileOrphanRuns always cancels queued runs regardless of any checker (no process was ever spawned)', () => {
+    const run = store.insertRun('orphan-queued'); // stays queued, no pid
+    const result = store.reconcileOrphanRuns({ isRunAlive: () => true });
+    expect(result.canceled).toBe(1);
+    expect(result.adopted).toEqual([]);
+    expect(store.getRun(run.id)?.status).toBe('canceled');
   });
 
   // ── Logs ────────────────────────────────────────────────────────────────────
@@ -235,9 +373,9 @@ describe('Store', () => {
     expect(tailed[0].chunk.toString('utf-8')).toBe('after\n');
   });
 
-  // ── Migrations idempotency ──────────────────────────────────────────────────
+  // ── Idempotent schema creation ──────────────────────────────────────────────
 
-  it('open() is idempotent — re-open applies no extra migrations', () => {
+  it('open() is idempotent — re-open does not error or duplicate schema objects', () => {
     store.close();
     store.open();
     expect(store.listJobs()).toHaveLength(0);
@@ -439,7 +577,7 @@ describe('Store', () => {
   // well past that threshold, not a scaled-down proxy for it.
   it('evicts a backlog of far more than 32766 rows for a single job without hitting the SQLite bound-parameter limit', () => {
     const dbPath = join(dir, 'runs.db');
-    // Close the fixture Store first so schema migrations are already applied
+    // Close the fixture Store first so the schema has already been created,
     // but there is only one writer while we bulk-load raw rows below.
     store.close();
 

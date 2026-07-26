@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { CrontickError } from '../errors.js';
 import { pidFilePath, portFilePath } from '../paths.js';
-import { ensureDaemon, type DaemonInfo, type EnsureDaemonOptions } from './ensure.js';
+import { ensureDaemon, resolveDaemonBaseUrl, type DaemonInfo, type EnsureDaemonOptions } from './ensure.js';
 import { nullLogger, type Logger } from '../logger.js';
 
 export interface DaemonLifecycleOptions extends EnsureDaemonOptions {
@@ -22,6 +22,8 @@ export interface DaemonStopResult {
   pid?: number;
   stopped: boolean;
   message: string;
+  /** L1: how the daemon was asked to stop (or that it was already stopped). */
+  mode: 'already-stopped' | 'graceful' | 'hard-kill';
 }
 
 export interface DaemonRestartResult extends DaemonInfo {
@@ -55,18 +57,46 @@ export async function startDaemon(options: DaemonLifecycleOptions = {}): Promise
   return { ok: true, ...info };
 }
 
-/** Send SIGTERM to the running daemon and poll for exit (up to timeoutMs, default 5 s). */
+/** How long to wait for the initial HTTP response from POST /api/daemon/stop before falling back to SIGTERM. */
+const HTTP_STOP_TIMEOUT_MS = 2_000;
+
+/**
+ * Stop the running daemon (L1). Prefers a graceful, in-process HTTP shutdown
+ * (POST /api/daemon/stop — see api.ts) over signals: signals are the only
+ * option on POSIX but are unreliable to depend on for cleanup ordering, and
+ * Windows has no SIGTERM equivalent at all (Node maps it to an abrupt
+ * TerminateProcess-style kill there), so the daemon's own graceful shutdown
+ * path is the one mechanism that works identically on every platform. Falls
+ * back to a SIGTERM/hard-kill if the HTTP route can't be reached (older
+ * daemon build, port file stale/missing, connection refused) so `crontick
+ * daemon stop` still works against a wedged or already-broken daemon.
+ */
 export async function stopDaemon(options: { env?: NodeJS.ProcessEnv; timeoutMs?: number; logger?: Logger } = {}): Promise<DaemonStopResult> {
   const logger = (options.logger ?? nullLogger).child('stop');
   const env = { ...process.env, ...(options.env ?? {}) };
   const pid = readLiveDaemonPid(env);
   if (pid === undefined) {
     logger.debug('Daemon stop skipped; no live pid', { pidFile: pidFilePath(env) });
-    return { ok: true, running: false, stopped: false, message: 'Daemon is not running' };
+    return { ok: true, running: false, stopped: false, message: 'Daemon is not running', mode: 'already-stopped' };
   }
 
+  const timeoutMs = options.timeoutMs ?? 5_000;
+  const graceful = await tryGracefulHttpStop(env, logger);
+  if (graceful) {
+    const stopped = await waitForStopped(pid, env, timeoutMs);
+    logger.debug('Graceful daemon stop completed', { pid, stopped });
+    return {
+      ok: true,
+      running: !stopped,
+      pid,
+      stopped,
+      mode: 'graceful',
+      message: stopped ? `Stopped daemon (pid ${pid}) via graceful HTTP shutdown` : `Requested graceful shutdown of daemon (pid ${pid})`,
+    };
+  }
+
+  logger.debug('Graceful HTTP stop unavailable; falling back to SIGTERM', { pid });
   try {
-    logger.debug('Sending SIGTERM to daemon', { pid });
     process.kill(pid, 'SIGTERM');
   } catch (err) {
     throw new CrontickError(
@@ -76,15 +106,31 @@ export async function stopDaemon(options: { env?: NodeJS.ProcessEnv; timeoutMs?:
     );
   }
 
-  const stopped = await waitForStopped(pid, env, options.timeoutMs ?? 5_000);
+  const stopped = await waitForStopped(pid, env, timeoutMs);
   logger.debug('Daemon stop completed', { pid, stopped });
   return {
     ok: true,
     running: !stopped,
     pid,
     stopped,
+    mode: 'hard-kill',
     message: stopped ? `Stopped daemon (pid ${pid})` : `Sent SIGTERM to daemon (pid ${pid})`,
   };
+}
+
+/** POST /api/daemon/stop and return true only once the daemon has accepted (200) the request. */
+async function tryGracefulHttpStop(env: NodeJS.ProcessEnv, logger: Logger): Promise<boolean> {
+  try {
+    const baseUrl = await resolveDaemonBaseUrl({ env, logger });
+    const res = await fetch(`${baseUrl}/api/daemon/stop`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(HTTP_STOP_TIMEOUT_MS),
+    });
+    return res.ok;
+  } catch (err) {
+    logger.debug('Graceful HTTP stop request failed', { error: err instanceof Error ? err.message : String(err) });
+    return false;
+  }
 }
 
 export async function restartDaemon(options: EnsureDaemonOptions = {}): Promise<DaemonRestartResult> {

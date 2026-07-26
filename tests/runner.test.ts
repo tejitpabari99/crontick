@@ -5,7 +5,9 @@ import { platform, tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
-import { Runner } from '../src/daemon/runner.js';
+import { spawn as nodeSpawn } from 'node:child_process';
+import { Runner, DEFAULT_MAX_OUTPUT_BYTES_PER_RUN, truncationMarker, ADOPTED_RUN_EXITED_MESSAGE } from '../src/daemon/runner.js';
+import { isProcessAlive } from '../src/process-liveness.js';
 import { Store } from '../src/daemon/store.js';
 import type { Job } from '../src/schemas/job.js';
 import { JobSchema } from '../src/schemas/job.js';
@@ -632,5 +634,144 @@ describe('Runner', () => {
 
     expect(store.getRun(run.id)).toMatchObject({ status: 'failed', exitCode: 7 });
     expect(store.getJob(job.id)?.action).toMatchObject({ kind: 'prompt', reuseSession: true });
+  });
+
+  // ── L8: detached + windowsHide spawn options ─────────────────────────────────
+
+  it('spawn: sets detached:true and windowsHide:true so children survive daemon exit uniformly on both platforms', async () => {
+    const fake = fakeSpawn([{ code: 0 }]);
+    runner = new Runner(fake.spawnFn as never);
+    const job = execJob('detached-check', node, ['-e', 'process.exit(0)']);
+    const run = store.insertRun(job.id);
+    await runner.run(job, run.id, store);
+    expect(fake.calls[0].opts?.detached).toBe(true);
+    expect(fake.calls[0].opts?.windowsHide).toBe(true);
+  });
+
+  // ── L4: pid capture ───────────────────────────────────────────────────────────
+
+  it('spawn: persists the child pid on the run row as soon as it is known', async () => {
+    const job = execJob('pid-capture', node, ['-e', 'process.exit(0)']);
+    const run = store.insertRun(job.id);
+    await runner.run(job, run.id, store);
+    const updated = store.getRun(run.id)!;
+    expect(updated.pid).toBeGreaterThan(0);
+  });
+
+  // ── L5: output byte cap ───────────────────────────────────────────────────────
+
+  describe('output byte cap (L5)', () => {
+    it('stops storing further output once the cap is hit, marks outputTruncated, and appends an obvious marker', async () => {
+      const cap = 32;
+      runner = new Runner(undefined, undefined, cap);
+      // Write far more than `cap` bytes of stdout in one go.
+      const job = execJob('output-cap', node, ['-e', 'process.stdout.write("x".repeat(500))']);
+      const run = store.insertRun(job.id);
+      await runner.run(job, run.id, store);
+
+      const updated = store.getRun(run.id)!;
+      expect(updated.outputTruncated).toBe(true);
+
+      const logs = store.getLogs(run.id);
+      const text = logs.map((l) => l.chunk.toString('utf-8')).join('');
+      expect(text).toContain(truncationMarker(cap).trim());
+      // Captured payload before the marker must not exceed the cap.
+      const beforeMarker = text.split(truncationMarker(cap))[0];
+      expect(Buffer.byteLength(beforeMarker, 'utf-8')).toBeLessThanOrEqual(cap);
+    });
+
+    it('does not truncate output at or under the cap', async () => {
+      const cap = 1024;
+      runner = new Runner(undefined, undefined, cap);
+      const job = execJob('output-no-cap', node, ['-e', 'process.stdout.write("short output\\n")']);
+      const run = store.insertRun(job.id);
+      await runner.run(job, run.id, store);
+      const updated = store.getRun(run.id)!;
+      expect(updated.outputTruncated).toBe(false);
+    });
+
+    it('defaults to DEFAULT_MAX_OUTPUT_BYTES_PER_RUN (2,000,000 bytes) when no override or config value is set', async () => {
+      runner = new Runner(); // no override
+      const job = execJob('output-default-cap', node, ['-e', 'process.stdout.write("small\\n")']);
+      const run = store.insertRun(job.id);
+      await runner.run(job, run.id, store);
+      expect(store.getRun(run.id)!.outputTruncated).toBe(false);
+      expect(DEFAULT_MAX_OUTPUT_BYTES_PER_RUN).toBe(2_000_000);
+    });
+  });
+
+  // ── L3/L4: adoptRun restores overlap invariants across a restart ─────────────
+
+  describe('adoptRun', () => {
+    it('overlap=skip: a job with an adopted, still-alive run skips new ticks until the adopted process exits', async () => {
+      const jobId = 'adopt-skip';
+      const child = nodeSpawn(node, ['-e', 'setTimeout(() => process.exit(0), 10000)']);
+      const adoptedRun = store.insertRun(jobId);
+      store.updateRun(adoptedRun.id, { status: 'running', pid: child.pid! });
+
+      runner = new Runner(undefined, undefined, undefined, 50); // fast adopted-poll for the test
+      runner.adoptRun(jobId, adoptedRun.id, child.pid!, store);
+
+      const job = execJob(jobId, node, ['-e', 'process.exit(0)'], { overlap: 'skip' });
+      const skippedRun = store.insertRun(jobId);
+      await runner.run(job, skippedRun.id, store);
+      expect(store.getRun(skippedRun.id)).toMatchObject({
+        status: 'canceled',
+        error: expect.stringContaining('overlap=skip'),
+      });
+
+      // Let the adopted process die (simulating it exiting on its own) and
+      // poll for adoptRun's own liveness poll to notice and clear the slot.
+      child.kill();
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && store.getRun(adoptedRun.id)!.status === 'running') {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(store.getRun(adoptedRun.id)).toMatchObject({
+        status: 'canceled',
+        error: ADOPTED_RUN_EXITED_MESSAGE,
+      });
+      expect(isProcessAlive(child.pid!)).toBe(false);
+
+      // The job slot is now free — a subsequent overlap=skip run must proceed normally.
+      const nextRun = store.insertRun(jobId);
+      await runner.run(job, nextRun.id, store);
+      expect(store.getRun(nextRun.id)?.status).toBe('success');
+    }, 15_000);
+
+    it('overlap=cancel-previous: canceling a new tick against an adopted run sends SIGTERM to the real pid', async () => {
+      const jobId = 'adopt-cancel-previous';
+      const child = nodeSpawn(node, ['-e', 'setTimeout(() => process.exit(0), 10000)']);
+      const adoptedRun = store.insertRun(jobId);
+      store.updateRun(adoptedRun.id, { status: 'running', pid: child.pid! });
+
+      runner = new Runner(undefined, undefined, undefined, 50);
+      runner.adoptRun(jobId, adoptedRun.id, child.pid!, store);
+      expect(isProcessAlive(child.pid!)).toBe(true);
+
+      const job = execJob(jobId, node, ['-e', 'process.exit(0)'], { overlap: 'cancel-previous' });
+      const newRun = store.insertRun(jobId);
+      await runner.run(job, newRun.id, store);
+
+      // The abort listener registered by adoptRun() SIGTERMs the real pid —
+      // poll for it to actually die rather than asserting on a fixed sleep.
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && isProcessAlive(child.pid!)) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(isProcessAlive(child.pid!)).toBe(false);
+      expect(store.getRun(newRun.id)?.status).toBe('success');
+
+      // Give adoptRun's own poll a chance to observe the death and finalize
+      // the adopted run row as "terminated" (canceledByAbort branch).
+      const finalizeDeadline = Date.now() + 5000;
+      while (Date.now() < finalizeDeadline && store.getRun(adoptedRun.id)!.status === 'running') {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(store.getRun(adoptedRun.id)).toMatchObject({
+        status: 'canceled',
+        error: expect.stringContaining('terminated'),
+      });
+    }, 15_000);
   });
 });

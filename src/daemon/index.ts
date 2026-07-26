@@ -16,8 +16,13 @@ import { Store } from './store.js';
 import { Scheduler } from './scheduler.js';
 import { Runner } from './runner.js';
 import { createApiServer } from './api.js';
+import type { ApiContext } from './api.js';
 import { createLogger, isVerboseEnv, type LogEvent } from '../logger.js';
 import { loadConfig } from '../config.js';
+import { createProcessLivenessCheck } from '../process-liveness.js';
+
+/** Cap on missed fires recorded per job at startup (see enumerateFiresBetween()). */
+const MISSED_FIRE_CAP_PER_JOB = 500;
 
 // ── SQLite shim ───────────────────────────────────────────────────────────────
 // node:sqlite is experimental on Node <24; re-exec with the flag so the child
@@ -112,21 +117,14 @@ if (needsSqliteShim) {
     checkSingleInstance();
     writeFileSync(pidFilePath(), String(process.pid), 'utf-8');
 
+    const startedAt = new Date();
     const retentionCap = loadConfig().retention.maxRunsPerJob;
     const store = new Store(runsDbPath(), jobsDir(), logger, retentionCap);
     store.open();
-    // Cancel runs left as running/queued from a prior crash (orphan reconciliation).
-    const reconciled = store.reconcileOrphanRuns();
-    if (reconciled > 0) {
-      logger.warn(`Reconciled ${reconciled} orphaned run(s) from previous daemon session`);
-    }
     // Backfill pass for databases that predate the retention cap (or predate an
-    // upgrade that lowered it). reconcileOrphanRuns() runs first so any stale
-    // running/queued rows it just canceled are immediately eligible eviction
-    // candidates, rather than requiring a second restart to truncate them.
-    // Best-effort: a backfill failure (disk full, corrupted rows, etc.) must
-    // be logged loudly but must never prevent the daemon from starting and
-    // serving already-scheduled jobs.
+    // upgrade that lowered it). Best-effort: a backfill failure (disk full,
+    // corrupted rows, etc.) must be logged loudly but must never prevent the
+    // daemon from starting and serving already-scheduled jobs.
     let pruned = 0;
     try {
       pruned = store.pruneAllJobsRunHistory();
@@ -141,7 +139,83 @@ if (needsSqliteShim) {
     logger.info(`Loaded ${jobs.length} job(s) from disk`);
 
     const scheduler = new Scheduler(logger);
+
+    // ── L2: missed-fire report on startup ─────────────────────────────────────
+    // Report-only: never catch up or re-run a backlog (a 30s health check down
+    // for a month would otherwise replay ~86,400 times). For each enabled job
+    // with a prior watermark, enumerate fires missed between the watermark and
+    // "now" (bounded by MISSED_FIRE_CAP_PER_JOB) and record them as terminal
+    // 'missed' runs; jobs with no watermark yet (never observed live) are
+    // skipped. The watermark is always advanced to "now" afterward so the next
+    // restart computes forward from here, not from a stale point in the past.
+    let jobsWithMissedFires = 0;
+    let missedRunsRecorded = 0;
+    let jobsCapped = 0;
+    const nowMs = startedAt.getTime();
+    for (const job of jobs) {
+      if (!job.enabled) continue;
+      const state = store.getScheduleState(job.id);
+      if (!state) {
+        store.recordTick(job.id, nowMs);
+        continue;
+      }
+      try {
+        const result = scheduler.enumerateFiresBetween(job.schedule, state.lastTickAt, nowMs, {
+          cap: MISSED_FIRE_CAP_PER_JOB,
+        });
+        if (result.capped) {
+          jobsCapped++;
+          jobsWithMissedFires++;
+          missedRunsRecorded++;
+          const earliest = new Date(result.fires[0]).toISOString();
+          const latest = new Date(result.fires[result.fires.length - 1]).toISOString();
+          store.recordMissedRun(
+            job.id,
+            result.fires[result.fires.length - 1],
+            `MISSED: ${result.fires.length}+ fires missed between ${earliest} and ${latest} (capped at ${MISSED_FIRE_CAP_PER_JOB}, only a summary recorded)`,
+          );
+        } else if (result.fires.length > 0) {
+          jobsWithMissedFires++;
+          for (const plannedAt of result.fires) {
+            store.recordMissedRun(job.id, plannedAt);
+          }
+          missedRunsRecorded += result.fires.length;
+        }
+      } catch (err) {
+        logger.error('Missed-fire computation failed for job; skipping', { jobId: job.id, error: String(err) });
+      }
+      store.recordTick(job.id, nowMs);
+    }
+    const missedFireSummary = {
+      jobsWithMissedFires,
+      missedRunsRecorded,
+      jobsCapped,
+      capPerJob: MISSED_FIRE_CAP_PER_JOB,
+    };
+    if (missedRunsRecorded > 0) {
+      logger.warn('Recorded missed fires from downtime; these are report-only and were not re-run', missedFireSummary);
+    }
+
     const runner = new Runner(undefined, logger);
+
+    // Reconcile runs left as running/queued from a prior crash (L3/L4): check
+    // real pid liveness (+ recorded startedAt, to reject a reused pid) instead
+    // of unconditionally canceling everything, so a genuinely-still-alive
+    // child (L8: children now survive the daemon's death on both platforms)
+    // is adopted rather than treated as a second concurrent execution.
+    const livenessCheck = createProcessLivenessCheck();
+    const reconciliation = store.reconcileOrphanRuns(livenessCheck);
+    if (reconciliation.canceled > 0) {
+      logger.warn(`Reconciled ${reconciliation.canceled} orphaned run(s) from previous daemon session`);
+    }
+    for (const { jobId, runId, pid } of reconciliation.adopted) {
+      runner.adoptRun(jobId, runId, pid, store);
+    }
+    if (reconciliation.adopted.length > 0) {
+      logger.info(`Adopted ${reconciliation.adopted.length} run(s) still alive from a previous daemon session`, {
+        adopted: reconciliation.adopted.map((a) => ({ jobId: a.jobId, runId: a.runId, pid: a.pid })),
+      });
+    }
 
     for (const job of jobs) {
       if (job.enabled) scheduler.schedule(job);
@@ -154,6 +228,7 @@ if (needsSqliteShim) {
         const job = store.getJob(jobId);
         if (!job || !job.enabled) return;
         const run = store.insertRun(jobId, plannedAt.getTime());
+        store.recordTick(jobId, plannedAt.getTime());
         runner.run(job, run.id, store).catch((err: unknown) => {
           logger.error('Runner error', { jobId, error: String(err) });
         });
@@ -191,8 +266,7 @@ if (needsSqliteShim) {
       logger.info(`Reloaded ${reloaded.length} job(s)`);
     }
 
-    const startedAt = new Date();
-    const ctx = { store, scheduler, runner, startedAt, port: 0, reload, logger };
+    const ctx: ApiContext = { store, scheduler, runner, startedAt, port: 0, reload, logger, missedFireSummary, shutdown: () => Promise.resolve() };
     const server = createApiServer(ctx);
 
     // Bind to 127.0.0.1:0 — OS assigns an ephemeral port written to daemon.port
@@ -209,8 +283,17 @@ if (needsSqliteShim) {
       server.on('error', reject);
     });
 
-    // Graceful shutdown: stop accepting connections, unschedule all timers,
-    // drain briefly, then close SQLite and remove discovery files.
+    // Graceful shutdown (L1): stop accepting new connections, unschedule all
+    // timers, drain briefly, then close SQLite and remove discovery files.
+    // L8: in-flight runs are deliberately left alone here, not killed — they
+    // were spawned with detached:true/unref() so they keep running
+    // independently of this process on both Windows and POSIX (see spawn() in
+    // runner.ts). Their `runs` rows stay 'running'; the next daemon start's
+    // reconcileOrphanRuns() pass (L3/L4) will adopt them if still alive or
+    // cancel them if not. This makes a graceful stop behave identically to an
+    // abrupt daemon death (crash/kill -9) from the child's point of view —
+    // one liveness-checked reconciliation path handles both, on both
+    // platforms, instead of two different behaviors to reason about.
     let shuttingDown = false;
     async function shutdown(signal: string): Promise<void> {
       if (shuttingDown) return;
@@ -224,6 +307,10 @@ if (needsSqliteShim) {
       logger.info('Daemon stopped');
       process.exit(0);
     }
+    // ctx.shutdown starts as a stub (createApiServer(ctx) above needs ctx to
+    // exist before `shutdown` — which closes over `server` — can be defined);
+    // wire the real implementation now, same pattern as ctx.port = port above.
+    ctx.shutdown = shutdown;
 
     process.on('SIGINT', () => void shutdown('SIGINT'));
     process.on('SIGTERM', () => void shutdown('SIGTERM'));

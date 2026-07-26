@@ -13,7 +13,11 @@ import { nullLogger, type Logger } from '../logger.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type RunStatus = 'queued' | 'running' | 'success' | 'failed' | 'canceled' | 'timeout';
+// 'missed' is a terminal status recorded by recordMissedRun() for a scheduled
+// fire the daemon was down for. It is never a success or a failure — it is
+// its own outcome — but it IS terminal for retention purposes (see
+// pruneRunsForJob(), which excludes only 'running'/'queued').
+export type RunStatus = 'queued' | 'running' | 'success' | 'failed' | 'canceled' | 'timeout' | 'missed';
 
 export interface Run {
   id: string;
@@ -24,6 +28,8 @@ export interface Run {
   exitCode?: number;
   error?: string;
   durationMs?: number;
+  pid?: number; // OS pid of the spawned child, set once known (see updateRun); absent for 'queued'/'missed' runs.
+  outputTruncated: boolean; // true once a run's captured output hit the byte cap (NOT NULL DEFAULT 0 column, always present).
 }
 
 export interface RunLog {
@@ -37,56 +43,42 @@ export interface ListRunsOptions {
   jobId?: string;
   limit?: number;
   since?: number; // epoch ms
+  status?: RunStatus;
 }
 
-// ── Migrations ────────────────────────────────────────────────────────────────
+/** Per-job watermark: the last time this job's schedule was known to be observed by a running daemon. */
+export interface ScheduleState {
+  jobId: string;
+  lastTickAt: number; // epoch ms
+  updatedAt: number; // epoch ms
+}
 
-const MIGRATIONS: Array<{ name: string; sql: string }> = [
-  {
-    name: '001_initial',
-    sql: `
-      CREATE TABLE IF NOT EXISTS jobs (
-        id TEXT PRIMARY KEY,
-        json TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS runs (
-        id TEXT PRIMARY KEY,
-        job_id TEXT NOT NULL,
-        started_at INTEGER NOT NULL,
-        ended_at INTEGER,
-        status TEXT NOT NULL,
-        exit_code INTEGER,
-        error TEXT,
-        duration_ms INTEGER
-      );
-      CREATE TABLE IF NOT EXISTS run_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        run_id TEXT NOT NULL,
-        stream TEXT NOT NULL,
-        ts INTEGER NOT NULL,
-        chunk BLOB NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_runs_job_id ON runs(job_id);
-      CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs(started_at);
-      CREATE INDEX IF NOT EXISTS idx_run_logs_run_id ON run_logs(run_id);
-    `,
-  },
-  {
-    // idx_runs_job_id is a strict left-prefix subset of this composite index
-    // (every query it served is served at least as well by this one), so it
-    // is dropped rather than kept redundant on every runs INSERT/UPDATE/DELETE.
-    // Retention eviction needs an index-ordered (job_id, started_at) walk to
-    // avoid a scan-then-sort per pruneRunsForJob() call.
-    name: '002_run_retention_index',
-    sql: `
-      DROP INDEX IF EXISTS idx_runs_job_id;
-      CREATE INDEX IF NOT EXISTS idx_runs_job_id_started_at ON runs(job_id, started_at);
-    `,
-  },
-];
+/**
+ * Injected by the daemon so reconcileOrphanRuns() can tell a still-alive
+ * process apart from a dead one whose pid has since been reused by an
+ * unrelated process. Implementations live outside store.ts (a process-liveness
+ * helper) — see reconcileOrphanRuns()'s doc comment for exactly what this
+ * needs to provide.
+ */
+export interface OrphanLivenessCheck {
+  isRunAlive(pid: number, startedAt: number): boolean | undefined;
+}
+
+export interface OrphanReconciliationResult {
+  /** Number of runs canceled (dead, reused-pid, or no checker available to tell). */
+  canceled: number;
+  /** Runs left as 'running' because they were confirmed (or inconclusively assumed) still alive. */
+  adopted: Array<{ runId: string; jobId: string; pid: number }>;
+}
 
 // ── Store ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Sentinel value written to a recordMissedRun() row's `error` column,
+ * following the `CODE: message` convention already used for
+ * ORPHAN_RUN_ERROR_MESSAGE (src/errors.ts) and other runs.error values.
+ */
+export const MISSED_RUN_ERROR_MESSAGE = 'MISSED: daemon was not running at the scheduled fire time';
 
 // Not exported: this is an internal fallback for the constructor default
 // parameter below only. BUILT_IN_CONFIG.retention.maxRunsPerJob (src/config.ts)
@@ -123,14 +115,14 @@ export class Store {
     this.runRetentionCap = cap;
   }
 
-  /** Open the SQLite database, enable WAL + foreign keys, and apply pending migrations. */
+  /** Open the SQLite database, enable WAL + foreign keys, and create the schema. */
   open(): void {
     this.logger.debug('Opening store', { dbPath: this.dbPath, jobsPath: this.jobsPath });
     this.db = new DatabaseSync(this.dbPath);
     // WAL enables concurrent reads from HTTP handlers without blocking writes.
     this.db.exec('PRAGMA journal_mode=WAL;');
     this.db.exec('PRAGMA foreign_keys=ON;');
-    this.runMigrations();
+    this.createSchema();
   }
 
   close(): void {
@@ -141,28 +133,57 @@ export class Store {
     }
   }
 
-  private runMigrations(): void {
+  /**
+   * Creates every table/index a fresh database needs, in one idempotent pass.
+   * `CREATE TABLE/INDEX IF NOT EXISTS` throughout, so calling this again on an
+   * already-initialized database (e.g. a second open()) is a no-op — there is
+   * no migration ledger and no prior on-disk shape to reconcile: databases
+   * created by crontick versions before 1.0.0 are not a supported input.
+   */
+  private createSchema(): void {
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS migrations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        applied_at INTEGER NOT NULL
+      CREATE TABLE IF NOT EXISTS jobs (
+        id TEXT PRIMARY KEY,
+        json TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS runs (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER,
+        status TEXT NOT NULL,
+        exit_code INTEGER,
+        error TEXT,
+        duration_ms INTEGER,
+        pid INTEGER,
+        output_truncated INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS run_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL,
+        stream TEXT NOT NULL,
+        ts INTEGER NOT NULL,
+        chunk BLOB NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS job_schedule_state (
+        job_id TEXT PRIMARY KEY,
+        last_tick_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      -- idx_runs_job_id (a single-column index) is deliberately never created:
+      -- idx_runs_job_id_started_at is a strict left-prefix superset of it, so
+      -- every query it would have served is served at least as well by this
+      -- one. Retention eviction needs an index-ordered (job_id, started_at)
+      -- walk to avoid a scan-then-sort per pruneRunsForJob() call.
+      CREATE INDEX IF NOT EXISTS idx_runs_job_id_started_at ON runs(job_id, started_at);
+      CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs(started_at);
+      CREATE INDEX IF NOT EXISTS idx_run_logs_run_id ON run_logs(run_id);
     `);
-
-    const applied = this.db
-      .prepare('SELECT name FROM migrations')
-      .all() as Array<{ name: string }>;
-    const appliedSet = new Set(applied.map((r) => r.name));
-
-    for (const migration of MIGRATIONS) {
-      if (!appliedSet.has(migration.name)) {
-        this.db.exec(migration.sql);
-        this.db
-          .prepare('INSERT INTO migrations (name, applied_at) VALUES (?, ?)')
-          .run(migration.name, Date.now());
-      }
-    }
   }
 
   // ── Job CRUD ────────────────────────────────────────────────────────────────
@@ -301,12 +322,36 @@ export class Store {
     } catch (err) {
       this.logger.error('Run retention prune failed; run was still recorded', { jobId, error: String(err) });
     }
-    return { id, jobId, startedAt: now, status: 'queued' };
+    return { id, jobId, startedAt: now, status: 'queued', outputTruncated: false };
+  }
+
+  /**
+   * Records a scheduled fire the daemon was not running to execute (see
+   * job_schedule_state / recordTick()). Inserted directly as a terminal
+   * 'missed' run — startedAt and endedAt both equal plannedAt, since nothing
+   * ever actually ran — so it needs no separate updateRun() call to reach a
+   * terminal state, and is an ordinary retention-eviction candidate like any
+   * other terminal run.
+   */
+  recordMissedRun(jobId: string, plannedAt: number, note?: string): Run {
+    const id = randomUUID();
+    this.db
+      .prepare(
+        'INSERT INTO runs (id, job_id, started_at, ended_at, status, error) VALUES (?, ?, ?, ?, ?, ?)',
+      )
+      .run(id, jobId, plannedAt, plannedAt, 'missed', note ?? MISSED_RUN_ERROR_MESSAGE);
+    this.logger.debug('Recorded missed run', { runId: id, jobId, plannedAt });
+    try {
+      this.pruneRunsForJob(jobId);
+    } catch (err) {
+      this.logger.error('Run retention prune failed; missed run was still recorded', { jobId, error: String(err) });
+    }
+    return { id, jobId, startedAt: plannedAt, endedAt: plannedAt, status: 'missed', error: note ?? MISSED_RUN_ERROR_MESSAGE, outputTruncated: false };
   }
 
   updateRun(
     id: string,
-    update: Partial<Pick<Run, 'status' | 'exitCode' | 'error' | 'endedAt' | 'durationMs'>>,
+    update: Partial<Pick<Run, 'status' | 'exitCode' | 'error' | 'endedAt' | 'durationMs' | 'pid' | 'outputTruncated'>>,
   ): void {
     const run = this.getRun(id);
     if (!run) throw new CrontickError('NOT_FOUND', `Run ${id} not found`);
@@ -334,6 +379,14 @@ export class Store {
       fields.push('duration_ms = ?');
       values.push(update.durationMs ?? null);
     }
+    if (update.pid !== undefined) {
+      fields.push('pid = ?');
+      values.push(update.pid ?? null);
+    }
+    if (update.outputTruncated !== undefined) {
+      fields.push('output_truncated = ?');
+      values.push(update.outputTruncated ? 1 : 0);
+    }
 
     if (fields.length === 0) return;
     values.push(id);
@@ -360,12 +413,16 @@ export class Store {
       conditions.push('started_at >= ?');
       params.push(opts.since);
     }
+    if (opts.status !== undefined) {
+      conditions.push('status = ?');
+      params.push(opts.status);
+    }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const limit = opts.limit !== undefined ? `LIMIT ${opts.limit}` : '';
     const rows = this.db.prepare(`SELECT * FROM runs ${where} ORDER BY started_at DESC ${limit}`)
       .all(...params) as unknown as DbRunRow[];
-    this.logger.debug('Listed runs', { count: rows.length, jobId: opts.jobId, limit: opts.limit, since: opts.since });
+    this.logger.debug('Listed runs', { count: rows.length, jobId: opts.jobId, limit: opts.limit, since: opts.since, status: opts.status });
     return rows.map(rowToRun);
   }
 
@@ -391,18 +448,84 @@ export class Store {
     return rows.map(rowToLog);
   }
 
+  // ── Schedule state (missed-fire watermark) ───────────────────────────────────
+
   /**
-   * On daemon startup, cancel runs stuck in non-terminal state from a prior crash.
-   * Invariant: no run appears permanently stuck after a daemon restart.
+   * Advance job_schedule_state.last_tick_at — called every time the daemon
+   * actually processes a tick for this job, and seeded at job creation/enable
+   * time. This is the watermark a startup missed-fire pass reads back via
+   * getScheduleState() to enumerate fires that happened while nothing was
+   * listening; it is intentionally decoupled from any particular tick source.
    */
-  reconcileOrphanRuns(): number {
-    const result = this.db
+  recordTick(jobId: string, at: number = Date.now()): void {
+    this.db
       .prepare(
-        "UPDATE runs SET status = 'canceled', error = ?, ended_at = ? WHERE status IN ('running', 'queued')",
+        'INSERT INTO job_schedule_state (job_id, last_tick_at, updated_at) VALUES (?, ?, ?) ON CONFLICT(job_id) DO UPDATE SET last_tick_at=excluded.last_tick_at, updated_at=excluded.updated_at',
       )
-      .run(ORPHAN_RUN_ERROR_MESSAGE, Date.now()) as { changes: number };
-    this.logger.debug('Reconciled orphan runs', { changes: result.changes });
-    return result.changes;
+      .run(jobId, at, Date.now());
+  }
+
+  /** Returns undefined for a job never observed live (no missed-fire computation is possible without a watermark). */
+  getScheduleState(jobId: string): ScheduleState | undefined {
+    const row = this.db
+      .prepare('SELECT * FROM job_schedule_state WHERE job_id = ?')
+      .get(jobId) as DbScheduleStateRow | undefined;
+    return row ? { jobId: row.job_id, lastTickAt: row.last_tick_at, updatedAt: row.updated_at } : undefined;
+  }
+
+  /**
+   * On daemon startup, decide the fate of every run left 'running'/'queued' by
+   * an unclean shutdown, instead of unconditionally canceling all of them.
+   *
+   * 'queued' runs (overlap: queue, never actually spawned) are always
+   * canceled — there is no process to check liveness of.
+   *
+   * 'running' runs are canceled too unless `check` is supplied AND it reports
+   * the recorded pid is still (plausibly) the same live process: `check` is
+   * expected to come from a process-liveness helper providing at least
+   * pid-liveness (e.g. `process.kill(pid, 0)`) and, ideally, enough identity
+   * signal (this store passes the run's own `started_at` alongside the pid)
+   * to reject a pid that has since been reused by an unrelated process — for
+   * example by comparing the OS-reported start time of that pid against the
+   * run's `started_at`. `isRunAlive` returning `undefined` (inconclusive,
+   * e.g. the OS tool it needs is unavailable) is treated the same as `true`:
+   * favor adopting over risking a false cancellation that would let a second,
+   * overlapping execution of the same job start on the very next tick.
+   */
+  reconcileOrphanRuns(check?: OrphanLivenessCheck): OrphanReconciliationResult {
+    const stuck = this.db
+      .prepare("SELECT * FROM runs WHERE status IN ('running', 'queued')")
+      .all() as unknown as DbRunRow[];
+
+    const adopted: OrphanReconciliationResult['adopted'] = [];
+    const toCancel: string[] = [];
+
+    for (const row of stuck) {
+      if (row.status === 'running' && check && row.pid != null) {
+        const alive = check.isRunAlive(row.pid, row.started_at);
+        if (alive !== false) {
+          adopted.push({ runId: row.id, jobId: row.job_id, pid: row.pid });
+          continue;
+        }
+      }
+      toCancel.push(row.id);
+    }
+
+    // Batched for the same reason pruneRunsForJob() batches its deletes: an
+    // unbounded "WHERE id IN (?,?,...)" can exceed node:sqlite's bound
+    // parameter limit on a daemon that crashed with a very large backlog.
+    let canceled = 0;
+    for (let i = 0; i < toCancel.length; i += Store.EVICTION_BATCH_SIZE) {
+      const batch = toCancel.slice(i, i + Store.EVICTION_BATCH_SIZE);
+      const placeholders = batch.map(() => '?').join(',');
+      const result = this.db
+        .prepare(`UPDATE runs SET status = 'canceled', error = ?, ended_at = ? WHERE id IN (${placeholders})`)
+        .run(ORPHAN_RUN_ERROR_MESSAGE, Date.now(), ...batch) as { changes: number };
+      canceled += result.changes;
+    }
+
+    this.logger.debug('Reconciled orphan runs', { canceled, adopted: adopted.length });
+    return { canceled, adopted };
   }
 
   // ── Run retention ─────────────────────────────────────────────────────────────
@@ -411,13 +534,13 @@ export class Store {
    * node:sqlite rejects a single statement bound with more than 32766
    * parameters (SQLITE_LIMIT_VARIABLE_NUMBER). A naive "DELETE ... WHERE id IN
    * (?,?,...)" with one placeholder per evicted row hits that ceiling on any
-   * job whose backlog grew past ~32766 terminal runs before the retention cap
-   * was introduced (or after the cap was raised then lowered again) — exactly
-   * the databases the startup backfill exists to fix, so the daemon would
-   * never start again. 500 ids per batch keeps each DELETE far under the
-   * limit while also bounding how long any single transaction holds the
-   * table, which matters when the startup backfill has to walk tens of
-   * thousands of rows across many jobs.
+   * job whose backlog grew past ~32766 terminal runs since its cap was last
+   * lowered (e.g. via `crontick daemon reload`) — exactly the databases the
+   * startup backfill exists to fix, so the daemon would never start again.
+   * 500 ids per batch keeps each DELETE far under the limit while also
+   * bounding how long any single transaction holds the table, which matters
+   * when the startup backfill has to walk tens of thousands of rows across
+   * many jobs.
    */
   private static readonly EVICTION_BATCH_SIZE = 500;
 
@@ -484,10 +607,12 @@ export class Store {
   }
 
   /**
-   * Backfill pass for databases that predate the retention cap (or whose cap was
-   * lowered): applies pruneRunsForJob() to every job_id present in `runs`. Safe
-   * and cheap to call on every daemon startup — a no-op when every job is already
-   * within the cap.
+   * Cap-reconciliation pass, not an upgrade/backfill step: applies
+   * pruneRunsForJob() to every job_id present in `runs` so a job whose
+   * backlog already exceeds a cap lowered via `crontick daemon reload` (and
+   * hasn't ticked since, so its own pruneRunsForJob() call on next insert
+   * hasn't fired yet) still gets truncated. Safe and cheap to call on every
+   * daemon startup — a no-op when every job is already within the cap.
    */
   pruneAllJobsRunHistory(cap: number = this.runRetentionCap): number {
     const jobIds = this.db
@@ -525,6 +650,8 @@ interface DbRunRow {
   exit_code: number | null;
   error: string | null;
   duration_ms: number | null;
+  pid: number | null;
+  output_truncated: number;
 }
 
 interface DbLogRow {
@@ -535,17 +662,25 @@ interface DbLogRow {
   chunk: Buffer;
 }
 
+interface DbScheduleStateRow {
+  job_id: string;
+  last_tick_at: number;
+  updated_at: number;
+}
+
 function rowToRun(row: DbRunRow): Run {
   const r: Run = {
     id: row.id,
     jobId: row.job_id,
     startedAt: row.started_at,
     status: row.status,
+    outputTruncated: row.output_truncated === 1,
   };
   if (row.ended_at !== null) r.endedAt = row.ended_at;
   if (row.exit_code !== null) r.exitCode = row.exit_code;
   if (row.error !== null) r.error = row.error;
   if (row.duration_ms !== null) r.durationMs = row.duration_ms;
+  if (row.pid !== null) r.pid = row.pid;
   return r;
 }
 
@@ -589,9 +724,10 @@ function normalizeJobForPersistence(job: Job): Job {
 // config.json: job files can contain inline scripts and prompt text, so they
 // should not be world-readable under a typical umask. writeFileSync's mode
 // option only takes effect when the file is newly created, so an explicit
-// chmodSync also re-hardens a file that already existed (e.g. from a version
-// predating this fix). chmodSync is a best-effort no-op on Windows (POSIX
-// modes aren't enforced there) and never throws for that reason.
+// chmodSync also re-hardens a file that already existed on disk (created by
+// a prior process, a hand-edit, or a permissive umask). chmodSync is a
+// best-effort no-op on Windows (POSIX modes aren't enforced there) and never
+// throws for that reason.
 const PRIVATE_FILE_MODE = 0o600;
 
 function writeJobFileHardened(filePath: string, contents: string): void {

@@ -32,7 +32,8 @@ describe('Integration: persistence and orphan run reconciler', () => {
       const store2 = new Store(dbPath, jobsPath);
       store2.open();
       const reconciled = store2.reconcileOrphanRuns();
-      expect(reconciled).toBe(2);
+      expect(reconciled.canceled).toBe(2);
+      expect(reconciled.adopted).toEqual([]);
       expect(store2.getRun(r1.id)?.status).toBe('canceled');
       expect(store2.getRun(r1.id)?.error).toBe(ORPHAN_RUN_ERROR_MESSAGE);
       expect(store2.getRun(r1.id)?.error?.startsWith(ORPHAN_RUN_ERROR_CODE)).toBe(true);
@@ -54,7 +55,8 @@ describe('Integration: persistence and orphan run reconciler', () => {
       const run = store.insertRun('job-x');
       store.updateRun(run.id, { status: 'success' });
       const count = store.reconcileOrphanRuns();
-      expect(count).toBe(0);
+      expect(count.canceled).toBe(0);
+      expect(count.adopted).toEqual([]);
       store.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -71,9 +73,9 @@ describe('Integration: persistence and orphan run reconciler', () => {
       const run = store.insertRun('job-y');
       store.updateRun(run.id, { status: 'running' });
       const first = store.reconcileOrphanRuns();
-      expect(first).toBe(1);
+      expect(first.canceled).toBe(1);
       const second = store.reconcileOrphanRuns();
-      expect(second).toBe(0);
+      expect(second.canceled).toBe(0);
       store.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -98,7 +100,7 @@ describe('Integration: persistence and orphan run reconciler', () => {
       const store2 = new Store(dbPath, jobsPath);
       store2.open();
       const reconciled = store2.reconcileOrphanRuns();
-      expect(reconciled).toBe(3); // q1 + q2 + r1
+      expect(reconciled.canceled).toBe(3); // q1 + q2 + r1
       expect(store2.getRun(q1.id)?.status).toBe('canceled');
       expect(store2.getRun(q1.id)?.error).toBe(ORPHAN_RUN_ERROR_MESSAGE);
       expect(store2.getRun(q2.id)?.status).toBe('canceled');
@@ -110,21 +112,52 @@ describe('Integration: persistence and orphan run reconciler', () => {
     }
   });
 
-  // ── Run retention: startup backfill ──────────────────────────────────────────
-
-  it('pruneAllJobsRunHistory truncates a pre-existing oversized database on startup', () => {
+  it('reconcileOrphanRuns adopts a running run across a restart when the injected checker confirms it is alive, using the persisted pid', () => {
     const dir = makeTmpDir();
     const dbPath = join(dir, 'runs.db');
     const jobsPath = join(dir, 'jobs');
     try {
-      // Simulate "a database that predates this feature": populate it via a
-      // Store with a very large cap so insertRun's own pruning is a no-op,
-      // leaving all 10 terminal runs in place.
+      const store1 = new Store(dbPath, jobsPath);
+      store1.open();
+      const alive = store1.insertRun('job-alive');
+      store1.updateRun(alive.id, { status: 'running', pid: 7777 });
+      const dead = store1.insertRun('job-dead');
+      store1.updateRun(dead.id, { status: 'running', pid: 8888 });
+      const queued = store1.insertRun('job-queued-across-restart'); // never spawned, no pid
+      store1.close();
+
+      const store2 = new Store(dbPath, jobsPath);
+      store2.open();
+      const result = store2.reconcileOrphanRuns({
+        isRunAlive: (pid) => pid === 7777, // only the "alive" run's persisted pid checks out
+      });
+      expect(result.canceled).toBe(2); // dead + queued
+      expect(result.adopted).toEqual([{ runId: alive.id, jobId: 'job-alive', pid: 7777 }]);
+      expect(store2.getRun(alive.id)?.status).toBe('running');
+      expect(store2.getRun(dead.id)?.status).toBe('canceled');
+      expect(store2.getRun(queued.id)?.status).toBe('canceled');
+      store2.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // ── Run retention: startup backfill ──────────────────────────────────────────
+
+  it('pruneAllJobsRunHistory truncates an existing oversized database on startup', () => {
+    const dir = makeTmpDir();
+    const dbPath = join(dir, 'runs.db');
+    const jobsPath = join(dir, 'jobs');
+    try {
+      // Simulate a job whose backlog grew large before its cap was
+      // subsequently lowered: populate it via a Store with a very large cap
+      // so insertRun's own pruning is a no-op, leaving all 10 terminal runs
+      // in place.
       const unboundedStore = new Store(dbPath, jobsPath, undefined, 1_000_000);
       unboundedStore.open();
       const runIds: string[] = [];
       for (let i = 0; i < 10; i++) {
-        const run = unboundedStore.insertRun('job-legacy', i);
+        const run = unboundedStore.insertRun('job-lowered-cap', i);
         unboundedStore.updateRun(run.id, { status: 'success' });
         runIds.push(run.id);
       }
@@ -135,7 +168,7 @@ describe('Integration: persistence and orphan run reconciler', () => {
       smallCapStore.open();
       const pruned = smallCapStore.pruneAllJobsRunHistory();
       expect(pruned).toBe(6);
-      expect(smallCapStore.listRuns({ jobId: 'job-legacy' })).toHaveLength(4);
+      expect(smallCapStore.listRuns({ jobId: 'job-lowered-cap' })).toHaveLength(4);
 
       // Idempotent: a second pass finds nothing left to prune.
       expect(smallCapStore.pruneAllJobsRunHistory()).toBe(0);
@@ -153,11 +186,11 @@ describe('Integration: persistence and orphan run reconciler', () => {
       const unboundedStore = new Store(dbPath, jobsPath, undefined, 1_000_000);
       unboundedStore.open();
       for (let i = 0; i < 10; i++) {
-        const run = unboundedStore.insertRun('job-legacy2', i);
+        const run = unboundedStore.insertRun('job-lowered-cap-2', i);
         unboundedStore.updateRun(run.id, { status: 'success' });
       }
       // Oldest run for the job, left queued — must survive the backfill regardless of age.
-      const queuedRun = unboundedStore.insertRun('job-legacy2', -1);
+      const queuedRun = unboundedStore.insertRun('job-lowered-cap-2', -1);
       unboundedStore.close();
 
       const smallCapStore = new Store(dbPath, jobsPath, undefined, 4);
@@ -188,15 +221,17 @@ describe('Integration: persistence and orphan run reconciler', () => {
       }
       unboundedStore.close();
 
-      // Corrupt the schema so the backfill's eviction throws on the missing
-      // run_logs table for every job it encounters.
-      const raw = new DatabaseSync(dbPath);
-      raw.exec('DROP TABLE run_logs;');
-      raw.close();
-
       const smallCapStore = new Store(dbPath, jobsPath, undefined, 4);
       smallCapStore.open();
       try {
+        // Corrupt the schema via a second connection *after* open() so
+        // createSchema()'s idempotent CREATE TABLE IF NOT EXISTS (which runs
+        // once, during open()) doesn't just heal the drop before the prune
+        // gets a chance to run.
+        const raw = new DatabaseSync(dbPath);
+        raw.exec('DROP TABLE run_logs;');
+        raw.close();
+
         expect(() => smallCapStore.pruneAllJobsRunHistory()).not.toThrow();
         // The prune failed internally, so nothing was evicted — the backfill
         // degrades to a no-op rather than silently reporting success.

@@ -10,8 +10,56 @@ import type { Job, PromptAction } from '../schemas/job.js';
 import type { Store, RunStatus } from './store.js';
 import { CrontickError } from '../errors.js';
 import { extractSessionId } from './prompt-session.js';
-import { buildPromptRunCommand } from '../config.js';
+import { buildPromptRunCommand, loadConfig } from '../config.js';
 import { nullLogger, redactText, type Logger } from '../logger.js';
+import { isProcessAlive } from '../process-liveness.js';
+
+// ── Output cap (L5) ───────────────────────────────────────────────────────────
+
+/**
+ * Default bytes captured per run before further stdout/stderr is dropped
+ * (mirrors the design's `retention.maxOutputBytesPerRun`). This is the
+ * daemon-side default until that config key lands; see resolveMaxOutputBytesPerRun().
+ *
+ * Expected config shape once added by the surface agent (src/schemas/config.ts):
+ *   retention.maxOutputBytesPerRun: number (int, min 1024, max 1_000_000_000, default 2_000_000)
+ * Read defensively below since the key doesn't exist on RetentionConfig yet.
+ */
+export const DEFAULT_MAX_OUTPUT_BYTES_PER_RUN = 2_000_000;
+
+/** Marker line appended exactly once when a run's captured output hits the cap. */
+export function truncationMarker(maxBytes: number): string {
+  return `\n[crontick] output truncated: exceeded ${maxBytes} bytes (retention.maxOutputBytesPerRun); further output from this run is not stored\n`;
+}
+
+/** Reads retention.maxOutputBytesPerRun defensively — the key may not exist on the schema yet. */
+function resolveMaxOutputBytesPerRun(): number {
+  try {
+    const retention = loadConfig().retention as unknown as Record<string, unknown>;
+    const raw = retention['maxOutputBytesPerRun'];
+    return typeof raw === 'number' && Number.isFinite(raw) && raw > 0
+      ? raw
+      : DEFAULT_MAX_OUTPUT_BYTES_PER_RUN;
+  } catch {
+    return DEFAULT_MAX_OUTPUT_BYTES_PER_RUN;
+  }
+}
+
+// ── Adopted-run polling (L3/L4) ────────────────────────────────────────────────
+
+/** How often an adopted run's pid is polled for liveness (see Runner.adoptRun()). */
+const ADOPTED_RUN_POLL_MS = 3_000;
+
+/**
+ * Sentinel error recorded on an adopted run once its process is observed to
+ * have exited on its own (not via our SIGTERM) while the daemon was down or
+ * busy starting up. Distinct from ORPHAN_RUN_ERROR_MESSAGE (src/errors.ts),
+ * which means "this run was still alive/unknown and we canceled it" — this
+ * one means "it already finished, but without a daemon around to capture the
+ * exit code."
+ */
+export const ADOPTED_RUN_EXITED_MESSAGE =
+  'DAEMON_RESTART: process exited while the daemon was not running or between adoption and this check; exit code unknown';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -74,11 +122,71 @@ export class Runner {
   private activeRunIds: Map<string, string> = new Map();
   /** Tracks which job queues are currently being drained */
   private draining: Set<string> = new Set();
+  /** Poll timers for adopted runs (see adoptRun()), keyed by runId so they can be cleared. */
+  private adoptedPolls: Map<string, ReturnType<typeof setInterval>> = new Map();
 
   private readonly logger: Logger;
 
-  constructor(private readonly spawnFn: typeof spawn = spawn, logger: Logger = nullLogger) {
+  constructor(
+    private readonly spawnFn: typeof spawn = spawn,
+    logger: Logger = nullLogger,
+    private readonly maxOutputBytesPerRunOverride?: number,
+    /** Test-only seam: overrides ADOPTED_RUN_POLL_MS so adoptRun() tests don't wait 3s per poll tick. */
+    private readonly adoptedPollMsOverride?: number,
+  ) {
     this.logger = logger.child('runner');
+  }
+
+  /**
+   * Re-attach in-memory overlap tracking (L3) to a run the store's
+   * reconcileOrphanRuns() confirmed (or couldn't rule out) is still alive
+   * from a previous daemon session (L4). This restores `overlap: skip` (the
+   * job is seen as active) and `overlap: cancel-previous` (abort() best-
+   * effort SIGTERMs the real pid, since there is no in-process ChildProcess
+   * handle for it) across a restart.
+   *
+   * A lightweight poll detects the adopted process exiting on its own so the
+   * job doesn't stay "active" forever in this daemon's memory — without it,
+   * overlap=skip would permanently skip every future tick for this job until
+   * the next full daemon restart, which would be a worse regression than the
+   * orphan-cancel behavior this replaces.
+   */
+  adoptRun(jobId: string, runId: string, pid: number, store: Store): void {
+    this.activeRunIds.set(jobId, runId);
+
+    const ctrl = new AbortController();
+    let canceledByAbort = false;
+    ctrl.signal.addEventListener('abort', () => {
+      canceledByAbort = true;
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        // already gone
+      }
+    });
+    this.activeAborts.set(jobId, ctrl);
+
+    const poll = setInterval(() => {
+      if (isProcessAlive(pid)) return;
+      clearInterval(poll);
+      this.adoptedPolls.delete(runId);
+      if (this.activeAborts.get(jobId) === ctrl) this.activeAborts.delete(jobId);
+      if (this.activeRunIds.get(jobId) === runId) this.activeRunIds.delete(jobId);
+      try {
+        const run = store.getRun(runId);
+        if (run && run.status === 'running') {
+          store.updateRun(runId, {
+            status: 'canceled',
+            error: canceledByAbort ? 'DAEMON_RESTART: adopted run was terminated' : ADOPTED_RUN_EXITED_MESSAGE,
+            endedAt: Date.now(),
+          });
+        }
+      } catch (err) {
+        this.logger.error('Failed to finalize adopted run after exit', { jobId, runId, error: String(err) });
+      }
+    }, this.adoptedPollMsOverride ?? ADOPTED_RUN_POLL_MS);
+    poll.unref?.();
+    this.adoptedPolls.set(runId, poll);
   }
 
   /**
@@ -251,11 +359,21 @@ export class Runner {
       }
 
       // All action kinds use shell:false — no shell interpretation, preventing injection.
+      // detached + windowsHide (L8): children survive the daemon's death uniformly on
+      // both platforms — POSIX reparents to init (unchanged from before), and on
+      // Windows CREATE_NEW_PROCESS_GROUP decouples the child from the daemon's Job
+      // Object so it isn't torn down when the daemon exits/crashes/restarts.
+      // windowsHide prevents a visible console window from appearing for every job
+      // on Windows now that detached is always set (Node opens one by default
+      // otherwise). Combined with L3/L4's pid-based adoption, a child that's still
+      // alive when the daemon comes back up is re-attached instead of double-run.
       const spawnOpts: Parameters<typeof spawn>[2] = {
         cwd: action.cwd ?? process.cwd(),
         env: { ...process.env, ...promptEnv, ...(action.env ?? {}) } as NodeJS.ProcessEnv,
         signal,
         shell: false,
+        detached: true,
+        windowsHide: true,
       };
 
       // Merge envFile variables (lower priority than action.env, higher than process.env).
@@ -294,10 +412,47 @@ export class Runner {
         }
       };
 
+      // Byte cap on captured output (L5): re-read per run (not cached at Runner
+      // construction) so a config change via `crontick daemon reload` takes
+      // effect for new runs without a full restart, mirroring the
+      // maxRunsPerJob reload pattern. The child process itself is never
+      // killed or throttled here — only persistence of further chunks stops.
+      const maxOutputBytes = this.maxOutputBytesPerRunOverride ?? resolveMaxOutputBytesPerRun();
+      let capturedBytes = 0;
+      let outputTruncated = false;
+      const captureChunk = (stream: 'stdout' | 'stderr', chunk: Buffer): void => {
+        if (outputTruncated) return; // marker already emitted; drop silently, child keeps running
+        if (capturedBytes + chunk.length > maxOutputBytes) {
+          const room = Math.max(0, maxOutputBytes - capturedBytes);
+          if (room > 0) store.appendLog(runId, stream, safeRedact(chunk.subarray(0, room)));
+          store.appendLog(runId, stream, Buffer.from(truncationMarker(maxOutputBytes), 'utf-8'));
+          try {
+            store.updateRun(runId, { outputTruncated: true });
+          } catch (err) {
+            this.logger.error('Failed to persist outputTruncated flag', { jobId: job.id, runId, error: String(err) });
+          }
+          outputTruncated = true;
+          return;
+        }
+        capturedBytes += chunk.length;
+        store.appendLog(runId, stream, safeRedact(chunk));
+      };
+
       const result = await new Promise<RunResult>((resolve) => {
         this.logger.debug('Spawning child process', { jobId: job.id, runId, command: cmd, args, cwd: spawnOpts.cwd, timeoutMs: spawnOpts.timeout });
         this.appendDiagnosticLog(store, runId, 'spawn', { command: cmd, args, cwd: spawnOpts.cwd, timeoutMs: spawnOpts.timeout });
         const child = this.spawnFn(cmd, args, spawnOpts);
+        // Persist the OS pid the instant it's known (L4) — nothing before this
+        // point could reconcile against it. unref() so a detached child never
+        // keeps the daemon's event loop alive on its own.
+        if (child.pid !== undefined) {
+          try {
+            store.updateRun(runId, { pid: child.pid });
+          } catch (err) {
+            this.logger.error('Failed to persist run pid', { jobId: job.id, runId, error: String(err) });
+          }
+        }
+        child.unref?.();
         const startedAt = Date.now();
         const captureAction = promptCaptureAction;
         let settled = false;
@@ -318,7 +473,7 @@ export class Runner {
         child.stdout?.on('data', (chunk: Buffer) => {
           try {
             appendTranscript(chunk);
-            store.appendLog(runId, 'stdout', safeRedact(chunk));
+            captureChunk('stdout', chunk);
           } catch (err) {
             failFromCallback(err);
           }
@@ -327,7 +482,7 @@ export class Runner {
         child.stderr?.on('data', (chunk: Buffer) => {
           try {
             appendTranscript(chunk);
-            store.appendLog(runId, 'stderr', safeRedact(chunk));
+            captureChunk('stderr', chunk);
           } catch (err) {
             failFromCallback(err);
           }

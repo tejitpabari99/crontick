@@ -295,4 +295,56 @@ describe('Scheduler', () => {
       expect(after).toBe(before); // same object identity — fails under the old replace-the-object design
     });
   });
+
+  // ── L2: enumerateFiresBetween (missed-fire enumeration) ─────────────────────
+
+  describe('enumerateFiresBetween', () => {
+    it('cron: enumerates every minute-aligned fire strictly between from and to', () => {
+      scheduler = new Scheduler();
+      const from = Math.floor(Date.now() / 60_000) * 60_000; // exact minute boundary
+      const to = from + 5 * 60_000;
+      const result = scheduler.enumerateFiresBetween({ kind: 'cron', cron: '* * * * *' }, from, to);
+      expect(result.capped).toBe(false);
+      expect(result.fires).toEqual([from + 60_000, from + 120_000, from + 180_000, from + 240_000]);
+    });
+
+    it('interval: enumerates equally-spaced fires strictly between from and to', () => {
+      scheduler = new Scheduler();
+      const from = 1_000_000;
+      const to = from + 35_000;
+      const result = scheduler.enumerateFiresBetween({ kind: 'interval', everySec: 10 }, from, to);
+      expect(result.capped).toBe(false);
+      expect(result.fires).toEqual([from + 10_000, from + 20_000, from + 30_000]);
+    });
+
+    it('one-shot: includes runAt only when it falls strictly inside the window', () => {
+      scheduler = new Scheduler();
+      const from = 1_000_000;
+      const to = 2_000_000;
+
+      const inside = scheduler.enumerateFiresBetween({ kind: 'one-shot', runAt: new Date(1_500_000).toISOString() }, from, to);
+      expect(inside).toEqual({ fires: [1_500_000], capped: false });
+
+      const before = scheduler.enumerateFiresBetween({ kind: 'one-shot', runAt: new Date(500_000).toISOString() }, from, to);
+      expect(before).toEqual({ fires: [], capped: false });
+
+      const atOrAfterTo = scheduler.enumerateFiresBetween({ kind: 'one-shot', runAt: new Date(2_000_000).toISOString() }, from, to);
+      expect(atOrAfterTo).toEqual({ fires: [], capped: false });
+    });
+
+    it('caps the number of enumerated fires and reports capped: true, never exceeding the cap', () => {
+      scheduler = new Scheduler();
+      const from = 0;
+      const to = 100_000; // 100 possible 1s fires
+      const result = scheduler.enumerateFiresBetween({ kind: 'interval', everySec: 1 }, from, to, { cap: 3 });
+      expect(result.capped).toBe(true);
+      expect(result.fires).toEqual([1000, 2000, 3000]);
+    });
+
+    it('returns no fires (without throwing) when fromExclusiveMs >= toExclusiveMs', () => {
+      scheduler = new Scheduler();
+      expect(scheduler.enumerateFiresBetween({ kind: 'interval', everySec: 1 }, 5000, 5000)).toEqual({ fires: [], capped: false });
+      expect(scheduler.enumerateFiresBetween({ kind: 'interval', everySec: 1 }, 6000, 5000)).toEqual({ fires: [], capped: false });
+    });
+  });
 });

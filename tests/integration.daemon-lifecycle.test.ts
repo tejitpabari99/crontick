@@ -381,6 +381,136 @@ describe('Integration: daemon lifecycle', () => {
 
   // ── T-FRESH-INSTALL ───────────────────────────────────────────────────────
 
+  // ── T-GRACEFUL-STOP (L1 + L8) ────────────────────────────────────────────
+  // specs/004 previously documented POST /api/daemon/stop without it
+  // existing; this proves the route now performs an in-process graceful
+  // shutdown (works identically on Windows and POSIX, unlike signal-based
+  // stopDaemon()) and that an in-flight child survives the daemon's own
+  // exit (the deliberate L8 choice — see shutdown()'s doc comment in
+  // src/daemon/index.ts).
+
+  it('POST /api/daemon/stop responds before exit, cleans up discovery files, and leaves an in-flight child running (L1 + L8)', async () => {
+    const dir = makeTmpDir('crontick-stop-');
+    liveDirs.add(dir);
+    const { proc, port } = await spawnDaemon(dir);
+    liveProcs.add(proc);
+
+    const pid = readPidFile(dir);
+    expect(pid).toBeDefined();
+
+    // A child that proves (a) it started, and (b) it is still alive well
+    // after the daemon process has exited, without any fixed sleep in the
+    // assertion path itself (both files are polled for).
+    const startedFile = join(dir, 'child-started.txt');
+    const doneFile = join(dir, 'child-done.txt');
+    const script =
+      `const fs = require('fs');` +
+      `fs.writeFileSync(${JSON.stringify(startedFile)}, 'started');` +
+      `setTimeout(() => fs.writeFileSync(${JSON.stringify(doneFile)}, 'done'), 3000);`;
+
+    const jobId = 'stop-survivor';
+    const created = await apiCall(port, 'POST', '/api/jobs', {
+      id: jobId,
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: { kind: 'exec', command: node, args: ['-e', script] },
+    });
+    expect(created.status).toBe(201);
+
+    const runRes = await apiCall(port, 'POST', `/api/jobs/${jobId}/run`);
+    expect(runRes.status).toBe(202);
+
+    // Wait for the child to actually be spawned (not just queued) before
+    // stopping the daemon, so the stop genuinely races a live child.
+    const startDeadline = Date.now() + 10_000;
+    while (Date.now() < startDeadline && !existsSync(startedFile)) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(existsSync(startedFile)).toBe(true);
+    expect(existsSync(doneFile)).toBe(false); // still mid-flight
+
+    const before = Date.now();
+    const stopRes = await apiCall(port, 'POST', '/api/daemon/stop');
+    const elapsedMs = Date.now() - before;
+    expect(stopRes.status).toBe(200);
+    expect(stopRes.data).toMatchObject({ ok: true, stopping: true, pid });
+    // The response must arrive promptly — well before the child's own
+    // 3000ms completion delay — proving it isn't waiting on the child.
+    expect(elapsedMs).toBeLessThan(2000);
+
+    await waitForPidExit(pid!, 10_000);
+    liveProcs.delete(proc); // already dead; nothing left to force-kill
+
+    // Discovery files are cleaned up identically on both platforms because
+    // this is an in-process shutdown, not a signal handler race.
+    expect(existsSync(join(dir, 'daemon.pid'))).toBe(false);
+    expect(existsSync(join(dir, 'daemon.port'))).toBe(false);
+
+    // The child was spawned detached/unref'd (L8) and must keep running to
+    // completion strictly after the daemon that spawned it has exited.
+    const doneDeadline = Date.now() + 10_000;
+    while (Date.now() < doneDeadline && !existsSync(doneFile)) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(existsSync(doneFile)).toBe(true);
+  }, 30_000);
+
+  // ── T-MISSED-FIRES (L2) ───────────────────────────────────────────────────
+  // Report-only: missed fires while the daemon was down are recorded as
+  // 'missed' runs and surfaced in /api/daemon/status, but never replayed.
+
+  it('records missed fires across a crash/restart and surfaces them in status (L2)', async () => {
+    const dir = makeTmpDir('crontick-missed-');
+    liveDirs.add(dir);
+    const first = await spawnDaemon(dir);
+    liveProcs.add(first.proc);
+
+    // Sub-second interval so several fires are missed within a short,
+    // bounded downtime window rather than needing minute-granularity cron.
+    const jobId = 'missed-fire-target';
+    const created = await apiCall(first.port, 'POST', '/api/jobs', {
+      id: jobId,
+      schedule: { kind: 'interval', everySec: 0.5 },
+      action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'] },
+    });
+    expect(created.status).toBe(201);
+
+    // Let it tick at least once so job_schedule_state has a watermark to
+    // compute missed fires from on the next start.
+    const tickDeadline = Date.now() + 8000;
+    for (;;) {
+      const { data } = await apiCall(first.port, 'GET', `/api/runs?jobId=${jobId}`);
+      if ((data as unknown[]).length > 0) break;
+      if (Date.now() >= tickDeadline) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    // Simulate a crash (not a graceful stop) so no watermark bookkeeping
+    // beyond the last recorded tick happens on the way down.
+    first.proc.kill('SIGKILL');
+    await waitForPidExit(first.proc.pid!, 5000);
+    liveProcs.delete(first.proc);
+
+    // Bounded, unavoidable real downtime: missed fires only exist if time
+    // actually elapses past several 0.5s ticks while nothing is running.
+    await new Promise((r) => setTimeout(r, 2500));
+
+    const second = await spawnDaemon(dir, first.port);
+    liveProcs.add(second.proc);
+
+    const status = await apiCall(second.port, 'GET', '/api/daemon/status');
+    expect(status.status).toBe(200);
+    const missedFires = (status.data as { missedFires: Record<string, number> }).missedFires;
+    expect(missedFires.jobsWithMissedFires).toBeGreaterThanOrEqual(1);
+    expect(missedFires.missedRunsRecorded).toBeGreaterThanOrEqual(1);
+    expect(typeof missedFires.capPerJob).toBe('number');
+
+    const missedRuns = await apiCall(second.port, 'GET', `/api/runs?jobId=${jobId}&status=missed`);
+    expect(missedRuns.status).toBe(200);
+    const rows = missedRuns.data as Array<{ status: string; error?: string }>;
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    expect(rows[0].status).toBe('missed');
+  }, 30_000);
+
   it('creates the full data directory tree on a clean machine (no pre-existing directories)', async () => {
     // Unlike every other daemon-spawning test in this suite, this one does
     // NOT pre-create jobs/logs (or even the immediate parent) before spawning
