@@ -1,3 +1,11 @@
+/**
+ * Configuration management for crontick. Handles `config.json` read/write, engine
+ * CRUD, and config key-path operations. The built-in default config provides the
+ * `copilot` engine; file config is deep-merged over it.
+ *
+ * Precedence for engine resolution: file config > BUILT_IN_CONFIG.
+ * Writes use atomic rename (write-to-tmp, rename) for crash safety.
+ */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
@@ -33,6 +41,7 @@ export interface PromptRunCommand {
   engine: string;
 }
 
+/** Built-in fallback config used when no file exists; also serves as the merge base. */
 export const BUILT_IN_CONFIG: CrontickConfig = Object.freeze({
   defaultEngine: 'copilot',
   engines: {
@@ -40,10 +49,12 @@ export const BUILT_IN_CONFIG: CrontickConfig = Object.freeze({
   },
 });
 
+/** Resolves config file path: explicit `options.path` > `<dataDir>/config.json`. */
 export function configFilePath(options: ConfigOptions = {}): string {
   return options.path ? resolve(options.path) : defaultConfigPath(options.env);
 }
 
+/** Loads config: reads file and deep-merges over BUILT_IN_CONFIG. Returns built-in if no file. */
 export function loadConfig(options: ConfigOptions = {}): CrontickConfig {
   const filePath = configFilePath(options);
   const logger = (options.logger ?? nullLogger).child('config');
@@ -174,6 +185,10 @@ export function removeEngine(name: string, options: ConfigOptions = {}): Crontic
   return writeConfigFile(updated, options);
 }
 
+/**
+ * Builds the full command+args for executing a prompt action via its engine.
+ * Merges engine-level args, the prompt text, job-level args, and optional sessionId.
+ */
 export function buildPromptRunCommand(action: PromptAction, options: ConfigOptions = {}): PromptRunCommand {
   const logger = (options.logger ?? nullLogger).child('config');
   const config = loadConfig(options);
@@ -233,6 +248,7 @@ function setEngine(name: string, engine: unknown, mustExist: boolean, options: C
   return writeConfigFile(updated, options);
 }
 
+/** Deep-merges file config over BUILT_IN_CONFIG then validates via ConfigSchema. */
 function parseConfig(input: unknown, filePath: string): CrontickConfig {
   const merged = deepMerge(cloneConfig(BUILT_IN_CONFIG), input);
   const parsed = ConfigSchema.safeParse(merged);
@@ -264,6 +280,7 @@ function configValidationError(filePath: string, error: z.ZodError): CrontickErr
   );
 }
 
+/** Atomic write: tmp file with restrictive mode (0o600), then rename into place. */
 function writeJsonAtomic(filePath: string, config: CrontickConfig, env?: NodeJS.ProcessEnv): void {
   ensureDirs(env);
   mkdirSync(dirname(filePath), { recursive: true });

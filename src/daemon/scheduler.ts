@@ -1,3 +1,6 @@
+// Per-job timer management: cron (via croner), interval, and one-shot schedules.
+// Emits 'tick' events consumed by the daemon to trigger runs.
+// See docs/internals/scheduler.md
 import { EventEmitter } from 'node:events';
 import { Cron, type CronOptions } from 'croner';
 import type { Job, Schedule } from '../schemas/job.js';
@@ -31,8 +34,9 @@ export class Scheduler extends EventEmitter {
     this.logger = logger.child('scheduler');
   }
 
+  /** Register a timer for a job. Calls unschedule first (idempotent re-schedule without leaking timers). */
   schedule(job: Job): void {
-    this.unschedule(job.id); // idempotent
+    this.unschedule(job.id);
 
     if (!job.enabled) {
       this.logger.debug('Skipping disabled job', { jobId: job.id });
@@ -69,6 +73,7 @@ export class Scheduler extends EventEmitter {
 
   // ── Preview / Validate ─────────────────────────────────────────────────────
 
+  /** Compute the next N fire times without registering timers (side-effect free). */
   previewNext(schedule: Schedule, opts: PreviewOptions = {}): string[] {
     const n = opts.n ?? 5;
 
@@ -95,6 +100,7 @@ export class Scheduler extends EventEmitter {
     return [];
   }
 
+  /** Validate structural correctness of a schedule without side effects. */
   validateSchedule(schedule: Schedule): ValidateResult {
     if (schedule.kind === 'cron') {
       try {
@@ -155,7 +161,11 @@ export class Scheduler extends EventEmitter {
   ): void {
     const intervalMs = everySec * 1000;
 
-    // Calculate initial delay
+    // Calculate initial delay:
+    // - No startAt → wait one full interval.
+    // - startAt in the future → fire at startAt.
+    // - startAt in the past → align to the next interval boundary so the cadence
+    //   is preserved relative to the original start.
     let delay = intervalMs;
     if (startAt) {
       const startTime = new Date(startAt);
@@ -171,6 +181,7 @@ export class Scheduler extends EventEmitter {
       }
     }
 
+    // After the initial timeout fires, replace the entry with a regular setInterval.
     const timer = safeSetTimeout(() => {
       this.fireTick(job.id, new Date());
       const interval = setInterval(() => this.fireTick(job.id, new Date()), intervalMs);
@@ -187,6 +198,7 @@ export class Scheduler extends EventEmitter {
     if (isNaN(t.getTime())) return;
 
     const delay = t.getTime() - Date.now();
+    // One-shot whose time has already passed: silently skip (no retroactive firing).
     if (delay <= 0) {
       return;
     }
@@ -203,9 +215,9 @@ export class Scheduler extends EventEmitter {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * `setTimeout` clamps delays > 2^31-1 ms (~24.8 days) to 1 ms, causing
- * far-future timers to fire immediately.  This helper chains intermediate
- * 2 000 000 000 ms timeouts until the remaining delay is safe.
+ * setTimeout clamps delays > 2^31-1 ms (~24.8 days) to 1 ms, causing
+ * far-future timers to fire immediately. This helper chains intermediate
+ * 2,000,000,000 ms timeouts until the remaining delay is within the safe range.
  */
 const MAX_SAFE_TIMEOUT_MS = 2_000_000_000;
 
@@ -230,6 +242,7 @@ function safeSetTimeout(cb: () => void, ms: number): SafeTimer {
   };
 }
 
+/** Iterate croner's nextRun() N times from now without registering a live timer. */
 function cronNextN(pattern: string, tz: string | undefined, n: number): string[] {
   try {
     const options: CronOptions = { paused: true };

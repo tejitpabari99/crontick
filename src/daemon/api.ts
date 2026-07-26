@@ -1,3 +1,5 @@
+// Loopback-only HTTP API for the daemon. All routes enforce localhost access.
+// See docs/internals/daemon.md for the full route table.
 import http from 'node:http';
 import { createReadStream } from 'node:fs';
 import { URL } from 'node:url';
@@ -18,7 +20,9 @@ import { nullLogger, type Logger } from '../logger.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
+// Invariant: only loopback addresses may connect. Non-loopback → 403.
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+/** Poll interval for SSE log streaming. Stream closes when run reaches a terminal status. */
 const SSE_POLL_MS = 200;
 
 // ── Context shared with handlers ──────────────────────────────────────────────
@@ -35,6 +39,7 @@ export interface ApiContext {
 
 // ── Server factory ────────────────────────────────────────────────────────────
 
+/** Create the daemon HTTP server. Enforces loopback-only access on every request. */
 export function createApiServer(ctx: ApiContext): http.Server {
   const server = http.createServer((req, res) => {
     // Enforce localhost-only
@@ -146,7 +151,7 @@ async function handleRequest(
         const job = ctx.store.getJob(id);
         if (!job) return sendError(res, 404, 'NOT_FOUND', `Job ${id} not found`);
         const run = ctx.store.insertRun(id);
-        // fire async, don't await
+        // Fire-and-forget: return 202 immediately while the run executes async
         ctx.runner.run(job, run.id, ctx.store).catch(() => {});
         return sendJson(res, 202, { runId: run.id });
       }
@@ -327,6 +332,8 @@ async function handleRequest(
 }
 
 // ── SSE log streaming ─────────────────────────────────────────────────────────
+// Sends existing log entries immediately, then polls for new entries every
+// SSE_POLL_MS until the run reaches a terminal status or the client disconnects.
 
 function streamLogs(
   req: http.IncomingMessage,

@@ -1,3 +1,14 @@
+/**
+ * Public API boundary. Everything exported here is public, covered by semver,
+ * and may be imported as `import { ... } from 'crontick'`. Anything not
+ * re-exported from this file is internal and may change without notice.
+ *
+ * Some CrontickClient methods (getConfig, health, ensure, drainNotices,
+ * isVerbose, jobJsonSchema, createJobFromCliOptions) are intentionally
+ * library-only — they serve internal wiring or direct-use scenarios and are
+ * outside the surface-parity contract enforced by tests/surface-drift.test.ts.
+ */
+
 export { VERSION } from './version.js';
 export { CrontickError } from './errors.js';
 export { CrontickClient, createClient } from './client.js';

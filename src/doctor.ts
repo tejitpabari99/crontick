@@ -1,3 +1,7 @@
+/**
+ * System health checks. Verifies Node version, node:sqlite availability,
+ * data dir writability, daemon reachability, dashboard assets, and MCP binary.
+ */
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { ensureDirs, portFilePath } from './paths.js';

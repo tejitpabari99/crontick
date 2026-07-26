@@ -1,3 +1,5 @@
+// Daemon lifecycle commands: start (foreground/background), stop, restart.
+// See docs/concepts/daemon-lifecycle.md
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { CrontickError } from '../errors.js';
@@ -28,6 +30,7 @@ export interface DaemonRestartResult extends DaemonInfo {
   previousPid?: number;
 }
 
+/** Start the daemon. Foreground mode uses spawnSync (blocks); background delegates to ensureDaemon. */
 export async function startDaemon(options: DaemonLifecycleOptions = {}): Promise<DaemonStartResult> {
   const logger = (options.logger ?? nullLogger).child('start');
   if (options.foreground) {
@@ -52,6 +55,7 @@ export async function startDaemon(options: DaemonLifecycleOptions = {}): Promise
   return { ok: true, ...info };
 }
 
+/** Send SIGTERM to the running daemon and poll for exit (up to timeoutMs, default 5 s). */
 export async function stopDaemon(options: { env?: NodeJS.ProcessEnv; timeoutMs?: number; logger?: Logger } = {}): Promise<DaemonStopResult> {
   const logger = (options.logger ?? nullLogger).child('stop');
   const env = { ...process.env, ...(options.env ?? {}) };
@@ -89,6 +93,7 @@ export async function restartDaemon(options: EnsureDaemonOptions = {}): Promise<
   return { ok: true, ...info, stopped: stopped.stopped, previousPid: stopped.pid };
 }
 
+/** Read the PID file and verify the process is alive. Returns undefined if stale or absent. */
 export function readLiveDaemonPid(env: NodeJS.ProcessEnv = process.env): number | undefined {
   if (!existsSync(pidFilePath(env))) return undefined;
   const pid = Number.parseInt(readFileSync(pidFilePath(env), 'utf-8').trim(), 10);

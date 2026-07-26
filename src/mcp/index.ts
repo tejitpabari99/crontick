@@ -1,6 +1,8 @@
 /**
- * crontick MCP server — stdio transport.
- * Thin adapter over the local daemon HTTP API.
+ * MCP server shim — thin adapter over CrontickClient via stdio transport.
+ * Registers tools whose input schemas are derived from shared Zod schemas and
+ * delegates all operations to the client. Contains no business logic; the only
+ * MCP-specific behavior is error redaction (redactForLlm) and result shaping.
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -20,6 +22,7 @@ function daemonScript(): string {
   return pathResolve(__dirname, '../daemon/index.js');
 }
 
+/** CRONTICK_MCP_START_DAEMON=0 disables demand-start (for testing or explicit control). */
 function shouldStartDaemon(): boolean {
   return process.env['CRONTICK_MCP_START_DAEMON'] !== '0';
 }
@@ -33,6 +36,7 @@ type RawArgs = Record<string, unknown> & VerboseArgs;
 
 const VERBOSE_INPUT = { verbose: z.boolean().optional() };
 
+/** Appends the optional `verbose` boolean to any tool's input schema. */
 function withVerbose<T extends Record<string, unknown>>(schema: T): T & typeof VERBOSE_INPUT {
   return { ...schema, ...VERBOSE_INPUT };
 }
@@ -65,7 +69,11 @@ function okResult(data: unknown, diagnostics: LogEvent[] = [], verbose = false):
   return { content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }] };
 }
 
-/** Redact sensitive details before returning errors to the LLM. Exported for testing. */
+/**
+ * Security: strip loopback addresses and filesystem paths from error text
+ * before returning to the LLM host. Prevents leaking machine-specific details
+ * (port numbers, user home directories) into model context. Exported for testing.
+ */
 export function redactForLlm(msg: string): string {
   return msg
     // Loopback address:port
@@ -93,6 +101,7 @@ function redactedErrorMessage(err: unknown): string {
   return redactForLlm(msg);
 }
 
+/** Core handler pattern: create client, call fn, shape result or redact error. */
 async function toolWrap(args: VerboseArgs | undefined, fn: (client: CrontickClient) => Promise<unknown>, startDaemon = shouldStartDaemon()): Promise<ToolResult> {
   const diagnostics: LogEvent[] = [];
   const verbose = mcpVerbose(args);
@@ -107,6 +116,7 @@ async function toolWrap(args: VerboseArgs | undefined, fn: (client: CrontickClie
   }
 }
 
+/** Strip the shim-only `verbose` key before forwarding args to the client. */
 function withoutVerbose<T extends RawArgs>(args: T): Omit<T, 'verbose'> {
   const rest = { ...args };
   delete rest.verbose;
@@ -115,6 +125,7 @@ function withoutVerbose<T extends RawArgs>(args: T): Omit<T, 'verbose'> {
 
 // ── MCP server setup ──────────────────────────────────────────────────────────
 
+/** Build and return the McpServer with all tools registered. Separated from main() for testing. */
 export function createMcpServer(): McpServer {
   const server = new McpServer({
     name: 'crontick',
@@ -331,6 +342,8 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
         'Get the daemon process status: PID, version, uptime, job counts, run stats, Node version, and platform.',
       inputSchema: withVerbose({}),
     },
+    // daemon_status returns a soft error object instead of isError:true — the
+    // LLM should know the daemon is down without treating it as a tool failure.
     async (args) => {
       const diagnostics: LogEvent[] = [];
       const verbose = mcpVerbose(args);
@@ -550,6 +563,7 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
 
 // ── Entry point ────────────────────────────────────────────────────────────────
 
+/** Entry point: connect the MCP server to stdin/stdout JSON-RPC transport. */
 export async function main(): Promise<void> {
   const server = createMcpServer();
   const transport = new StdioServerTransport();

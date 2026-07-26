@@ -1,3 +1,8 @@
+/**
+ * Dashboard data assembly and static asset resolution. The daemon API calls
+ * `buildDashboardData` to produce a snapshot; `resolveDashboardAsset` serves
+ * the SPA assets with path-traversal protection.
+ */
 import { existsSync, statSync } from 'node:fs';
 import { extname, join as pathJoin, normalize, resolve as pathResolve, sep as pathSep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -181,6 +186,12 @@ export function dashboardUrl(baseUrl: string): string {
   return `${baseUrl.replace(/\/+$/, '')}/dashboard`;
 }
 
+/**
+ * Resolves a request path to a dashboard static file. Security guards:
+ * 1. Rejects path segments containing '..' after URL-decoding (traversal attempt).
+ * 2. After normalize+resolve, rejects any path that escapes the dashboard directory.
+ * 3. Falls back to index.html for SPA client-side routing (non-existent sub-paths).
+ */
 export function resolveDashboardAsset(reqPath: string): DashboardAsset {
   const dashDir = dashboardDir();
   const indexFile = pathJoin(dashDir, 'index.html');

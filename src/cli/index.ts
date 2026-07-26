@@ -1,3 +1,10 @@
+/**
+ * CLI shim — thin adapter over CrontickClient via Commander v12.
+ * Translates flags/positionals into client method calls, formats output to
+ * stdout (JSON or tabular), and prints errors to stderr with exit code 1.
+ * Contains no business logic; all scheduling, persistence, and validation live
+ * in the client and daemon.
+ */
 import { Command } from 'commander';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -21,6 +28,7 @@ function mcpScript(): string {
   return resolve(__dirname, '../mcp/index.js');
 }
 
+/** Factory: startDaemon=true (default) demand-starts the daemon on first use. */
 function client(startDaemon = true) {
   const verbose = useVerbose();
   return createClient({
@@ -37,6 +45,7 @@ function useJson(): boolean {
   return !!(program.opts() as { json?: boolean }).json;
 }
 
+/** Also enabled by CRONTICK_VERBOSE=1 so verbose diagnostics work in scripts. */
 function useVerbose(): boolean {
   return !!(program.opts() as { verbose?: boolean }).verbose || isVerboseEnv();
 }
@@ -54,6 +63,7 @@ function renderLogEvent(event: LogEvent): void {
   stderr(`[crontick:${event.level}] ${event.component ? `${event.component} ` : ''}${event.message}${data}`);
 }
 
+/** Render output: --json emits JSON; otherwise tabular for arrays, key:value for objects. */
 function print(data: unknown, json = useJson()): void {
   if (json) {
     stdout(JSON.stringify(data, null, 2));
@@ -129,6 +139,7 @@ function printDashboardData(data: unknown): void {
   }
 }
 
+/** Map any error to stderr + exit(1). CrontickError includes a machine-readable code. */
 function handleError(err: unknown): never {
   if (err instanceof CrontickError) {
     stderr(`Error [${err.code}]: ${err.message}`);
@@ -237,6 +248,7 @@ function parseScheduleJson(raw: string): Schedule {
   return JSON.parse(raw) as Schedule;
 }
 
+/** Attempt JSON parse; fall back to raw string for bare values like `true` or `hello`. */
 function parseJsonValue(raw: string): unknown {
   try {
     return JSON.parse(raw);
@@ -245,6 +257,7 @@ function parseJsonValue(raw: string): unknown {
   }
 }
 
+/** Commander repeatable option accumulator (e.g. --arg a --arg b → ['a','b']). */
 function collectOption(value: string, previous: string[] | undefined): string[] {
   return [...(previous ?? []), value];
 }
@@ -391,6 +404,8 @@ stats.command('job <id>').description('Show statistics for one job').action(asyn
   try { print(await client().statsJob(id)); } catch (err) { handleError(err); }
 });
 
+// Config commands pass startDaemon=false — they operate on the local config file
+// without needing the daemon running.
 const config = program.command('config').description('Inspect and edit crontick config');
 config.command('get [path]').description('Get the effective config or one config value').action((path?: string) => {
   try { print(client(false).getConfigValue(path)); } catch (err) { handleError(err); }
@@ -410,7 +425,7 @@ config.command('validate [path]').description('Validate the config file').action
   try {
     const result = client(false).validateConfig(path);
     print(result);
-    if (!result.ok) process.exit(1);
+    if (!result.ok) process.exit(1); // non-zero exit for CI/script usage
   } catch (err) { handleError(err); }
 });
 
@@ -543,6 +558,9 @@ dashboard.command('stop').description('Stop the dashboard server').action(async 
   } catch (err) { handleError(err); }
 });
 
+// The `mcp` subcommand launches the MCP server process directly via spawnSync
+// (inheriting stdio for JSON-RPC). It is NOT listed in SURFACE_CAPABILITIES
+// because it starts a server rather than proxying a daemon operation.
 program.command('mcp')
   .description('Start the crontick MCP server on stdio (for use with Claude Desktop, Copilot, Cursor, etc.)')
   .option('--no-start-daemon', 'Set startDaemon=false for MCP daemon-backed tools')

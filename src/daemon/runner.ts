@@ -1,3 +1,6 @@
+// Job execution engine: spawns child processes, enforces overlap policies,
+// retry with backoff, timeout, and stream capture with secret redaction.
+// See docs/internals/executors.md
 import { spawn } from 'node:child_process';
 import { writeFileSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir, platform } from 'node:os';
@@ -63,13 +66,13 @@ export function parseEnvFile(contents: string): Record<string, string> {
 // ── Runner ────────────────────────────────────────────────────────────────────
 
 export class Runner {
-  /** Per-job queues for overlap=queue policy */
+  /** Per-job FIFO queues for overlap='queue' policy */
   private queues: Map<string, QueueEntry[]> = new Map();
-  /** Abort controllers for currently active runs per job */
+  /** AbortControllers for the currently active run per job (overlap enforcement) */
   private activeAborts: Map<string, AbortController> = new Map();
-  /** Active run IDs per job */
+  /** Maps job ID → active run ID (used by cancelRun to locate the right controller) */
   private activeRunIds: Map<string, string> = new Map();
-  /** Whether a job's queue is currently being drained */
+  /** Tracks which job queues are currently being drained */
   private draining: Set<string> = new Set();
 
   private readonly logger: Logger;
@@ -160,6 +163,7 @@ export class Runner {
           this.appendDiagnosticLog(store, runId, 'retry backoff', { attempt, backoffSec });
           await sleep(backoffSec * 1000);
         }
+        // Check abort before each retry attempt (cancel-previous or manual cancel)
         if (ctrl.signal.aborted) {
           lastResult = { status: 'canceled', error: 'canceled before retry' };
           break;
@@ -171,8 +175,8 @@ export class Runner {
         if (lastResult.status === 'canceled' || lastResult.status === 'timeout') break;
       }
     } finally {
-      // Only delete if these maps still point to THIS run's ctrl/runId.
-      // A newer run (cancel-previous) may have already overwritten them.
+      // Only clear if these maps still point to THIS run's state. A newer run
+      // via cancel-previous may have already overwritten them.
       if (this.activeAborts.get(job.id) === ctrl) this.activeAborts.delete(job.id);
       if (this.activeRunIds.get(job.id) === runId) this.activeRunIds.delete(job.id);
     }
@@ -246,6 +250,7 @@ export class Runner {
         this.appendDiagnosticLog(store, runId, 'resolved prompt command', { engine: promptEngineBinary, command: cmd, args, envKeys: Object.keys(promptEnv) });
       }
 
+      // All action kinds use shell:false — no shell interpretation, preventing injection.
       const spawnOpts: Parameters<typeof spawn>[2] = {
         cwd: action.cwd ?? process.cwd(),
         env: { ...process.env, ...promptEnv, ...(action.env ?? {}) } as NodeJS.ProcessEnv,
@@ -253,9 +258,7 @@ export class Runner {
         shell: false,
       };
 
-      // Merge envFile variables (lower priority than action.env).
-      // We intentionally do not log environment snapshots, so secret-shaped
-      // env-file values are not emitted to logs.
+      // Merge envFile variables (lower priority than action.env, higher than process.env).
       if (action.envFile) {
         const envFilePath = isAbsolute(action.envFile)
           ? action.envFile
@@ -275,10 +278,12 @@ export class Runner {
         }
       }
 
+      // Timeout enforcement: passed as ms to spawn; Node emits ETIMEDOUT on expiry.
       if (action.timeoutSec) {
         spawnOpts.timeout = action.timeoutSec * 1000;
       }
 
+      // Ring buffer for prompt session ID extraction (max 128 KB of combined output).
       const maxTranscriptBytes = 128 * 1024;
       let transcriptTail = Buffer.alloc(0);
       const appendTranscript = (chunk: Buffer) => {
@@ -458,6 +463,7 @@ export class Runner {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/** Resolve shell per platform: 'auto' → pwsh on Windows, bash elsewhere. */
 function resolveShell(shell: string): 'bash' | 'pwsh' | 'cmd' {
   if (shell === 'auto') {
     return platform() === 'win32' ? 'pwsh' : 'bash';
@@ -467,6 +473,7 @@ function resolveShell(shell: string): 'bash' | 'pwsh' | 'cmd' {
   return 'bash';
 }
 
+/** Map shell name to temp-file extension (.ps1, .bat, .sh). */
 function resolveShellExt(shell: string): string {
   const resolved = resolveShell(shell);
   if (resolved === 'pwsh') return '.ps1';

@@ -1,3 +1,7 @@
+// Session ID extraction from prompt engine output (last 128 KB of combined stdout/stderr).
+// Used by the runner to persist a session ID for subsequent reuseSession runs.
+
+/** Extract a session ID from engine output using known patterns. */
 export function extractSessionId(text: string): string | undefined {
   const patterns = [
     /(?:session\s*id|session-id|sessionId)\s*[:=]\s*([A-Za-z0-9][A-Za-z0-9._:-]{7,})/i,

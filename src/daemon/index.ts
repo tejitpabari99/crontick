@@ -1,7 +1,6 @@
-/**
- * crontick daemon entry point.
- * T-NEW-4: Re-exec with --experimental-sqlite on Node < 24 if flag is absent.
- */
+// Daemon entry point: starts the scheduler, runner, store, and HTTP API.
+// Re-execs with --experimental-sqlite on Node < 24 when the flag is absent.
+// See docs/internals/daemon.md
 import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, unlinkSync, existsSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,6 +19,8 @@ import { createApiServer } from './api.js';
 import { createLogger, isVerboseEnv, type LogEvent } from '../logger.js';
 
 // ── SQLite shim ───────────────────────────────────────────────────────────────
+// node:sqlite is experimental on Node <24; re-exec with the flag so the child
+// process has access to DatabaseSync. This shim carries no logic of its own.
 
 const nodeMajor = parseInt(process.versions.node.split('.')[0], 10);
 const needsSqliteShim = nodeMajor < 24 && !process.execArgv.includes('--experimental-sqlite');
@@ -50,6 +51,8 @@ if (needsSqliteShim) {
     }
   }
 
+  // Swallow EPIPE on stderr — happens when the daemon is detached and the
+  // parent shell that spawned it has already closed its pipe.
   process.stderr.on('error', (err) => {
     if (!isEpipeError(err)) throw err;
   });
@@ -65,6 +68,7 @@ if (needsSqliteShim) {
   const logger = createLogger({ verbose: isVerboseEnv(), component: 'daemon', sink: writeLogEvent });
 
   // ── Single-instance guard ───────────────────────────────────────────────────
+  // Invariant: only one daemon per data directory. Enforced via PID file + kill(pid,0) liveness probe.
 
   function checkSingleInstance(): void {
     const pidPath = pidFilePath();
@@ -109,6 +113,7 @@ if (needsSqliteShim) {
 
     const store = new Store(runsDbPath(), jobsDir(), logger);
     store.open();
+    // Cancel runs left as running/queued from a prior crash (orphan reconciliation).
     const reconciled = store.reconcileOrphanRuns();
     if (reconciled > 0) {
       logger.warn(`Reconciled ${reconciled} orphaned run(s) from previous daemon session`);
@@ -124,6 +129,8 @@ if (needsSqliteShim) {
       if (job.enabled) scheduler.schedule(job);
     }
 
+    // Wire scheduler ticks to the runner. Re-read the job from store to pick up
+    // any updates applied since it was initially scheduled.
     scheduler.on('tick', ({ jobId, plannedAt }) => {
       const job = store.getJob(jobId);
       if (!job || !job.enabled) return;
@@ -148,6 +155,8 @@ if (needsSqliteShim) {
     const ctx = { store, scheduler, runner, startedAt, port: 0, reload, logger };
     const server = createApiServer(ctx);
 
+    // Bind to 127.0.0.1:0 — OS assigns an ephemeral port written to daemon.port
+    // for client discovery. Loopback-only binding is a security invariant.
     await new Promise<void>((resolve, reject) => {
       server.listen(0, '127.0.0.1', () => {
         const addr = server.address();
@@ -160,6 +169,8 @@ if (needsSqliteShim) {
       server.on('error', reject);
     });
 
+    // Graceful shutdown: stop accepting connections, unschedule all timers,
+    // drain briefly, then close SQLite and remove discovery files.
     let shuttingDown = false;
     async function shutdown(signal: string): Promise<void> {
       if (shuttingDown) return;
@@ -167,7 +178,7 @@ if (needsSqliteShim) {
       logger.info(`Received ${signal}, shutting down`);
       server.close();
       scheduler.unscheduleAll();
-      await new Promise<void>((r) => setTimeout(r, 100));
+      await new Promise<void>((r) => setTimeout(r, 100)); // brief drain window
       store.close();
       cleanup();
       logger.info('Daemon stopped');

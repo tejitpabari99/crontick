@@ -1,3 +1,6 @@
+// Dual-persistence layer: JSON files (source of truth for jobs) + SQLite WAL (runs, logs, job cache).
+// Only the daemon opens this store (single-writer invariant).
+// See docs/internals/storage.md
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { writeFileSync, readFileSync, unlinkSync, readdirSync, existsSync } from 'node:fs';
@@ -85,9 +88,11 @@ export class Store {
     this.logger = logger.child('store');
   }
 
+  /** Open the SQLite database, enable WAL + foreign keys, and apply pending migrations. */
   open(): void {
     this.logger.debug('Opening store', { dbPath: this.dbPath, jobsPath: this.jobsPath });
     this.db = new DatabaseSync(this.dbPath);
+    // WAL enables concurrent reads from HTTP handlers without blocking writes.
     this.db.exec('PRAGMA journal_mode=WAL;');
     this.db.exec('PRAGMA foreign_keys=ON;');
     this.runMigrations();
@@ -127,6 +132,7 @@ export class Store {
 
   // ── Job CRUD ────────────────────────────────────────────────────────────────
 
+  /** Write job to both SQLite cache and JSON file on disk (JSON is source of truth). */
   upsertJob(job: Job): void {
     const persisted = normalizeJobForPersistence(job);
     const json = JSON.stringify(persisted);
@@ -136,13 +142,16 @@ export class Store {
         'INSERT INTO jobs (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at',
       )
       .run(persisted.id, json, now);
-    // File-based persistence: jobs dir is source of truth
     const filePath = join(this.jobsPath, `${persisted.id}.json`);
     writeFileSync(filePath, json, 'utf-8');
     writeFileSync(join(this.jobsPath, `${persisted.id}.schema.json`), jobJsonSchemaText(), 'utf-8');
     this.logger.debug('Persisted job files', { jobId: persisted.id, filePath, schemaPath: join(this.jobsPath, `${persisted.id}.schema.json`) });
   }
 
+  /**
+   * Persist a captured session ID back into the job definition.
+   * Guards against races: only writes if the job still matches the expected action state.
+   */
   tryCapturePromptSession(jobId: string, expectedAction: PromptAction, sessionId: string): boolean {
     const current = this.getJob(jobId);
     if (!current || current.action.kind !== 'prompt') return false;
@@ -200,7 +209,7 @@ export class Store {
     return changes > 0;
   }
 
-  /** Load jobs from the jobs directory (disk is source of truth on daemon start). */
+  /** Load jobs from the jobs directory (JSON files are source of truth on daemon start). */
   loadJobsFromDisk(): void {
     if (!existsSync(this.jobsPath)) {
       this.logger.debug('Jobs directory missing during load', { jobsPath: this.jobsPath });
@@ -329,7 +338,10 @@ export class Store {
     return rows.map(rowToLog);
   }
 
-  /** On daemon startup, cancel any runs that were left in 'running' or 'queued' state (daemon crashed). */
+  /**
+   * On daemon startup, cancel runs stuck in non-terminal state from a prior crash.
+   * Invariant: no run appears permanently stuck after a daemon restart.
+   */
   reconcileOrphanRuns(): number {
     const result = this.db
       .prepare(
@@ -397,6 +409,10 @@ function isSamePromptCaptureTarget(current: PromptAction, expected: PromptAction
   );
 }
 
+/**
+ * Clears reuseSession once a sessionId has been captured, preventing the
+ * capture logic from running again on subsequent daemon starts.
+ */
 function normalizeJobForPersistence(job: Job): Job {
   if (job.action.kind !== 'prompt' || !job.action.sessionId || !job.action.reuseSession) return job;
   return {

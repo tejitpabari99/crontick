@@ -1,3 +1,12 @@
+/**
+ * Job input normalization and CLI-to-job construction. This module converts
+ * user-friendly input shapes (promptFile, CLI flags, partial patches) into the
+ * canonical persisted Job shape. Key transformations:
+ * - `promptFile` is read from disk and becomes `prompt` (never persisted as path)
+ * - Engine defaults are resolved from config when not specified
+ * - `reuseSession` is cleared when an explicit `sessionId` is already set
+ * - Prompt runtime validation (Windows cmd-line length, reserved args) is applied
+ */
 import { readFileSync, statSync } from 'node:fs';
 import { dirname, extname, isAbsolute, resolve } from 'node:path';
 import { TextDecoder } from 'node:util';
@@ -17,6 +26,10 @@ import { EngineNameSchema } from './schemas/config.js';
 import { loadConfig } from './config.js';
 import { promptRuntimeValidationMessage } from './prompt-runtime.js';
 
+/**
+ * Input schema extends prompt action to accept `promptFile` as an alternative
+ * to `prompt`. During normalization, the file is read and inlined.
+ */
 export const PromptActionInputSchema = PromptActionBaseSchema.omit({ prompt: true }).extend({
   prompt: z.string().min(1).optional(),
   promptFile: z.string().min(1).optional(),
@@ -83,6 +96,7 @@ export type JobPatchCliOptions = Omit<JobCreateCliOptions, 'id'>;
 
 const DEFAULT_MAX_PROMPT_FILE_BYTES = 1024 * 1024;
 
+/** Validates and normalizes a full job create input into the canonical persisted shape. */
 export function normalizeJobInput(
   input: JobCreateInput,
   options: NormalizeJobInputOptions = {},
@@ -99,6 +113,7 @@ export function normalizeJobInput(
   return parsed.data;
 }
 
+/** Fills in the default engine for prompt jobs that omit it (derived field, not user-supplied). */
 export function applyConfigDefaults(job: Job, options: NormalizeJobInputOptions = {}): Job {
   if (job.action.kind !== 'prompt' || job.action.engine !== undefined) return job;
   return {
@@ -110,6 +125,7 @@ export function applyConfigDefaults(job: Job, options: NormalizeJobInputOptions 
   };
 }
 
+/** Merges patch over existing job, re-validates the full result, and returns canonical shape. */
 export function normalizeJobPatch(
   id: string,
   existing: Job,
@@ -126,6 +142,7 @@ export function normalizeJobPatch(
   return parsed.data;
 }
 
+/** Constructs a full Job from CLI flags; supports --file (JSON) as an alternative to flags. */
 export function buildJobFromCreateOptions(
   input: JobCreateCliOptions,
   options: NormalizeJobInputOptions = {},
@@ -184,6 +201,10 @@ export function buildJobPatchFromUpdateOptions(
   return parsed.data;
 }
 
+/**
+ * Normalizes a prompt action input: resolves promptFile, fills engine default,
+ * clears redundant reuseSession, and runs runtime validation.
+ */
 function normalizeActionInput(action: ActionInput, options: NormalizeJobInputOptions): unknown {
   if (!isRecord(action) || action.kind !== 'prompt') return action;
 
@@ -320,6 +341,7 @@ function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[]): ActionI
   };
 }
 
+/** --file is mutually exclusive with all other schedule/action/prompt flags. */
 function assertFileModeExclusive(opts: JobPatchCliOptions, rawArgs: string[]): void {
   const conflicting = rawArgs.length > 0
     || opts.cron !== undefined

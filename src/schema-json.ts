@@ -1,3 +1,4 @@
+/** Generates a JSON Schema from Zod JobSchema for editor validation and the MCP resource. */
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { JobSchema } from './schemas/job.js';
 

@@ -1,3 +1,4 @@
+/** Structured domain error with a machine-readable code and optional details. */
 export class CrontickError extends Error {
   code: string;
   details?: unknown;
@@ -7,7 +8,7 @@ export class CrontickError extends Error {
     this.name = 'CrontickError';
     this.code = code;
     this.details = details;
-    // Maintain proper prototype chain for instanceof checks
+    // Maintain proper prototype chain so `instanceof CrontickError` works after transpilation
     Object.setPrototypeOf(this, CrontickError.prototype);
   }
 

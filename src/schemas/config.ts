@@ -1,5 +1,11 @@
+/**
+ * Zod schemas for `config.json`. The config is strict — no extra fields allowed.
+ * A refinement enforces that `defaultEngine` references a key in `engines` and
+ * that at least one engine exists.
+ */
 import { z } from 'zod';
 
+/** Shared regex for config key paths and engine names (letters, numbers, underscore, dash, dot). */
 export const ConfigKeySchema = z.string().regex(
   /^[A-Za-z0-9_.-]+$/,
   'Config key paths can contain letters, numbers, underscore, dash, and dot',
@@ -16,6 +22,11 @@ export const EngineConfigSchema = z.object({
   env: z.record(z.string(), z.string()).default({}),
 }).strict();
 
+/**
+ * Top-level config schema. File config is deep-merged over BUILT_IN_CONFIG
+ * (defined in src/config.ts), then validated here. The refinement ensures
+ * `defaultEngine` actually exists in `engines`.
+ */
 export const ConfigSchema = z.object({
   defaultEngine: EngineNameSchema.default('copilot'),
   engines: z.record(EngineNameSchema, EngineConfigSchema).default({
