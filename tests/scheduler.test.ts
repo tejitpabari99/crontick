@@ -223,4 +223,76 @@ describe('Scheduler', () => {
       vi.useRealTimers();
     }
   });
+
+  // ── Interval disposer robustness (stable closure identity) ──────────────────
+
+  describe('scheduleInterval disposer', () => {
+    afterEach(() => {
+      scheduler?.unscheduleAll();
+      vi.useRealTimers();
+    });
+
+    it('unschedule() called before the first fire prevents the interval from ever arming', () => {
+      vi.useFakeTimers();
+      scheduler = new Scheduler();
+      const ticks: string[] = [];
+      scheduler.on('tick', ({ jobId }) => ticks.push(jobId));
+
+      scheduler.schedule(makeIntervalJob('pre-fire-stop', 1));
+      scheduler.unschedule('pre-fire-stop');
+
+      // Advance well past the original delay plus several intervals.
+      vi.advanceTimersByTime(5000);
+      expect(ticks).toHaveLength(0);
+    });
+
+    it('unschedule() called after the first fire stops the now-armed interval', () => {
+      vi.useFakeTimers();
+      scheduler = new Scheduler();
+      const ticks: string[] = [];
+      scheduler.on('tick', ({ jobId }) => ticks.push(jobId));
+
+      scheduler.schedule(makeIntervalJob('post-fire-stop', 1));
+      vi.advanceTimersByTime(1000); // trigger the first fire
+      expect(ticks).toHaveLength(1);
+
+      scheduler.unschedule('post-fire-stop');
+      vi.advanceTimersByTime(5000);
+      expect(ticks).toHaveLength(1); // no further fires from the armed interval
+    });
+
+    it('synchronous unschedule() from within the job\'s own first tick listener stops it permanently (race fix)', () => {
+      vi.useFakeTimers();
+      scheduler = new Scheduler();
+      const ticks: string[] = [];
+      scheduler.on('tick', ({ jobId }) => {
+        ticks.push(jobId);
+        if (jobId === 'self-stopping') {
+          // Synchronously unschedule from inside the tick handler for the very
+          // job that just fired — this is the previously-broken race.
+          scheduler.unschedule('self-stopping');
+        }
+      });
+
+      scheduler.schedule(makeIntervalJob('self-stopping', 1));
+      vi.advanceTimersByTime(5000);
+
+      // Previously this would be >1 under the old replace-the-map-entry implementation.
+      expect(ticks.filter((id) => id === 'self-stopping')).toHaveLength(1);
+    });
+
+    it('keeps a stable entries map-entry identity across the pre/post-fire boundary', () => {
+      vi.useFakeTimers();
+      scheduler = new Scheduler();
+      scheduler.schedule(makeIntervalJob('stable-identity', 1));
+
+      const entries = (scheduler as unknown as { entries: Map<string, unknown> }).entries;
+      const before = entries.get('stable-identity');
+
+      vi.advanceTimersByTime(1000); // past the first fire
+
+      const after = entries.get('stable-identity');
+      expect(after).toBe(before); // same object identity — fails under the old replace-the-object design
+    });
+  });
 });

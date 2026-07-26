@@ -7,6 +7,6 @@ client, HTTP API, or MCP with `action.kind: "prompt"`, raw engine args, explicit
 first-run session reuse. Daemon-backed CLI/MCP/client operations now start the daemon on demand;
 prompt files are normalized to persisted prompt text before jobs are stored.
 
-BREAKING: remove install-time and login/startup autostart registration surfaces. Users should let
-daemon-backed commands start the daemon on demand or run `crontick daemon start` explicitly when
-they want manual lifecycle control.
+BREAKING: remove install-time and login/startup registration surfaces used to launch the daemon
+automatically. Users should let daemon-backed commands start the daemon on demand or run
+`crontick daemon start` explicitly when they want manual lifecycle control.

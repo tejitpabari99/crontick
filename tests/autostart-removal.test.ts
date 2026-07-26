@@ -27,11 +27,21 @@ describe('startup registration removal guards', () => {
     expect(readFileSync(join(root, 'tsup.config.ts'), 'utf-8')).not.toContain('registry' + '-js');
   });
 
-  it('public source, docs, scripts, and plugin text do not expose removed surfaces', () => {
+  it('product source, packaged bin/exports surface, scripts, and plugin text do not expose removed surfaces', () => {
+    // Scope: product code and the shipped/packaged surface only. docs/, specs/,
+    // and examples/ are prose describing the removal, not the product itself, and
+    // are intentionally NOT scanned -- scanning docs/ previously forced deletion
+    // and rewording of legitimate ADR content (see docs/decisions/0003, commit
+    // 9adbd63) and would break CI on the release PR the first time the pending
+    // changeset (.changeset/purple-crabs-prompt.md) is consumed into CHANGELOG.md,
+    // which is also excluded for the same reason. Every actual reappearance
+    // vector (startup-registration code, a CLI flag, an MCP tool, a runtime
+    // dependency) still lives in src/, plugin/, scripts/, or package.json, all of
+    // which remain fully scanned below.
     const offenders: string[] = [];
     for (const file of walk(root)) {
       const rel = relative(root, file).replace(/\\/g, '/');
-      if (!/^(src|docs|plugin|scripts|README\.md|CHANGELOG\.md|package(?:-lock)?\.json|tsup\.config\.ts)/.test(rel)) continue;
+      if (!/^(src|plugin|scripts|README\.md|package(?:-lock)?\.json|tsup\.config\.ts)/.test(rel)) continue;
       const text = readFileSync(file, 'utf-8').toLowerCase();
       for (const needle of [
         removed,
@@ -46,6 +56,20 @@ describe('startup registration removal guards', () => {
         if (text.includes(needle)) offenders.push(`${rel}: ${needle}`);
       }
     }
-    expect(offenders).toEqual([]);
+    if (offenders.length > 0) {
+      throw new Error(
+        [
+          `Found ${offenders.length} reference(s) to the removed startup-registration feature in shipped/product files:`,
+          ...offenders.map((o) => `  - ${o}`),
+          '',
+          `This guard blocks the removed "${removed}" feature (OS login-item / registry-based daemon`,
+          'launch) from reappearing in src/, plugin/, scripts/, README.md, package.json, package-lock.json,',
+          'or tsup.config.ts. If this is a genuine reintroduction, it needs explicit sign-off per',
+          '"Implementation rules" #1 in AGENTS.md before it can be added back. If this is an unrelated',
+          'false-positive substring match, narrow the needle list or add a targeted exception here --',
+          'do not delete or reword legitimate product code or documentation to dodge this test.',
+        ].join('\n'),
+      );
+    }
   });
 });

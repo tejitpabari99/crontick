@@ -12,3 +12,7 @@ npm-debug.log*
 # crontick runtime data dirs (local dev)
 .crontick/
 .dev/
+
+# scratch artifacts from scripts/verify-package-install.mjs
+.verify-package-scratch/
+*.tgz

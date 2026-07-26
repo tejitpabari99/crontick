@@ -7,7 +7,7 @@ import { writeFileSync, readFileSync, unlinkSync, readdirSync, existsSync } from
 import { join } from 'node:path';
 import { runsDbPath, jobsDir } from '../paths.js';
 import { JobSchema, type Job, type PromptAction } from '../schemas/job.js';
-import { CrontickError } from '../errors.js';
+import { CrontickError, ORPHAN_RUN_ERROR_MESSAGE } from '../errors.js';
 import { jobJsonSchemaText } from '../schema-json.js';
 import { nullLogger, type Logger } from '../logger.js';
 
@@ -72,20 +72,51 @@ const MIGRATIONS: Array<{ name: string; sql: string }> = [
       CREATE INDEX IF NOT EXISTS idx_run_logs_run_id ON run_logs(run_id);
     `,
   },
+  {
+    // idx_runs_job_id is a strict left-prefix subset of this composite index
+    // (every query it served is served at least as well by this one), so it
+    // is dropped rather than kept redundant on every runs INSERT/UPDATE/DELETE.
+    // Retention eviction needs an index-ordered (job_id, started_at) walk to
+    // avoid a scan-then-sort per pruneRunsForJob() call.
+    name: '002_run_retention_index',
+    sql: `
+      DROP INDEX IF EXISTS idx_runs_job_id;
+      CREATE INDEX IF NOT EXISTS idx_runs_job_id_started_at ON runs(job_id, started_at);
+    `,
+  },
 ];
 
 // ── Store ─────────────────────────────────────────────────────────────────────
+
+export const DEFAULT_RUN_RETENTION_CAP = 100;
 
 export class Store {
   private db!: DatabaseSync;
   private dbPath: string;
   private jobsPath: string;
   private logger: Logger;
+  private runRetentionCap: number;
 
-  constructor(dbPath?: string, jobsPath?: string, logger: Logger = nullLogger) {
+  constructor(
+    dbPath?: string,
+    jobsPath?: string,
+    logger: Logger = nullLogger,
+    runRetentionCap: number = DEFAULT_RUN_RETENTION_CAP,
+  ) {
     this.dbPath = dbPath ?? runsDbPath();
     this.jobsPath = jobsPath ?? jobsDir();
     this.logger = logger.child('store');
+    this.runRetentionCap = runRetentionCap;
+  }
+
+  /**
+   * Update the retention cap applied to future pruneRunsForJob() calls (both
+   * the per-insert path and any subsequent pruneAllJobsRunHistory() backfill).
+   * Lets `crontick daemon reload` pick up a changed `retention.maxRunsPerJob`
+   * config value without requiring a full daemon restart.
+   */
+  setRunRetentionCap(cap: number): void {
+    this.runRetentionCap = cap;
   }
 
   /** Open the SQLite database, enable WAL + foreign keys, and apply pending migrations. */
@@ -248,6 +279,7 @@ export class Store {
       )
       .run(id, jobId, now, 'queued');
     this.logger.debug('Inserted run', { runId: id, jobId, startedAt: now });
+    this.pruneRunsForJob(jobId);
     return { id, jobId, startedAt: now, status: 'queued' };
   }
 
@@ -345,11 +377,72 @@ export class Store {
   reconcileOrphanRuns(): number {
     const result = this.db
       .prepare(
-        "UPDATE runs SET status = 'canceled', error = 'daemon-restart', ended_at = ? WHERE status IN ('running', 'queued')",
+        "UPDATE runs SET status = 'canceled', error = ?, ended_at = ? WHERE status IN ('running', 'queued')",
       )
-      .run(Date.now()) as { changes: number };
+      .run(ORPHAN_RUN_ERROR_MESSAGE, Date.now()) as { changes: number };
     this.logger.debug('Reconciled orphan runs', { changes: result.changes });
     return result.changes;
+  }
+
+  // ── Run retention ─────────────────────────────────────────────────────────────
+
+  /**
+   * Evict the oldest terminal (non-running/non-queued) runs for a job so that at
+   * most `cap` rows remain for it, deleting matching run_logs first (run_logs
+   * has no FK/cascade — see docs/internals/storage.md) so a crash between the
+   * two deletes can only ever leave a run with no logs, never an orphaned log
+   * row with no parent run. In-flight runs are excluded from the candidate set
+   * so an active run is never evicted no matter how old it is; this can let a
+   * job's total row count temporarily exceed `cap` by the number of active runs.
+   */
+  private pruneRunsForJob(jobId: string, cap: number = this.runRetentionCap): number {
+    const candidates = this.db
+      .prepare(
+        `SELECT id FROM runs
+         WHERE job_id = ?
+           AND status NOT IN ('running', 'queued')
+         ORDER BY started_at ASC, rowid ASC
+         LIMIT MAX(0, (SELECT COUNT(*) FROM runs WHERE job_id = ?) - ?)`,
+      )
+      .all(jobId, jobId, cap) as Array<{ id: string }>;
+
+    if (candidates.length === 0) return 0;
+
+    const ids = candidates.map((r) => r.id);
+    const placeholders = ids.map(() => '?').join(',');
+
+    this.db.exec('BEGIN;');
+    try {
+      this.db.prepare(`DELETE FROM run_logs WHERE run_id IN (${placeholders})`).run(...ids);
+      this.db.prepare(`DELETE FROM runs WHERE id IN (${placeholders})`).run(...ids);
+      this.db.exec('COMMIT;');
+    } catch (err) {
+      this.db.exec('ROLLBACK;');
+      throw err;
+    }
+
+    this.logger.debug('Evicted runs exceeding retention cap', { jobId, evicted: ids.length, cap });
+    return ids.length;
+  }
+
+  /**
+   * Backfill pass for databases that predate the retention cap (or whose cap was
+   * lowered): applies pruneRunsForJob() to every job_id present in `runs`. Safe
+   * and cheap to call on every daemon startup — a no-op when every job is already
+   * within the cap.
+   */
+  pruneAllJobsRunHistory(cap: number = this.runRetentionCap): number {
+    const jobIds = this.db
+      .prepare('SELECT DISTINCT job_id FROM runs')
+      .all() as Array<{ job_id: string }>;
+    let total = 0;
+    for (const { job_id } of jobIds) {
+      total += this.pruneRunsForJob(job_id, cap);
+    }
+    if (total > 0) {
+      this.logger.debug('Pruned run history across all jobs on startup', { jobsScanned: jobIds.length, evicted: total, cap });
+    }
+    return total;
   }
 }
 

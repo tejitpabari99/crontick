@@ -44,13 +44,15 @@
     "build": "tsup && node scripts/fix-node-sqlite.mjs",
     "typecheck": "tsc --noEmit",
     "typecheck:examples": "tsc --project examples/tsconfig.json",
+    "typecheck:examples:dist": "node scripts/check-dist-built.mjs && tsc --project examples/tsconfig.dist.json",
+    "verify-package-install": "node scripts/verify-package-install.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "validate": "npm run lint && npm run typecheck && npm run typecheck:examples && npm test && npm run build",
+    "validate": "npm run lint && npm run typecheck && npm run typecheck:examples && npm test && npm run build && npm run typecheck:examples:dist",
     "release": "changeset publish",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run validate"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.0",

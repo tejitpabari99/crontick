@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Store } from '../src/daemon/store.js';
+import { ORPHAN_RUN_ERROR_CODE, ORPHAN_RUN_ERROR_MESSAGE } from '../src/errors.js';
 
 function makeTmpDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'crontick-persist-'));
@@ -32,7 +33,8 @@ describe('Integration: persistence and orphan run reconciler', () => {
       const reconciled = store2.reconcileOrphanRuns();
       expect(reconciled).toBe(2);
       expect(store2.getRun(r1.id)?.status).toBe('canceled');
-      expect(store2.getRun(r1.id)?.error).toBe('daemon-restart');
+      expect(store2.getRun(r1.id)?.error).toBe(ORPHAN_RUN_ERROR_MESSAGE);
+      expect(store2.getRun(r1.id)?.error?.startsWith(ORPHAN_RUN_ERROR_CODE)).toBe(true);
       expect(store2.getRun(r2.id)?.status).toBe('canceled');
       expect(store2.getRun(r3.id)?.status).toBe('success');
       store2.close();
@@ -97,11 +99,71 @@ describe('Integration: persistence and orphan run reconciler', () => {
       const reconciled = store2.reconcileOrphanRuns();
       expect(reconciled).toBe(3); // q1 + q2 + r1
       expect(store2.getRun(q1.id)?.status).toBe('canceled');
-      expect(store2.getRun(q1.id)?.error).toBe('daemon-restart');
+      expect(store2.getRun(q1.id)?.error).toBe(ORPHAN_RUN_ERROR_MESSAGE);
       expect(store2.getRun(q2.id)?.status).toBe('canceled');
       expect(store2.getRun(r1.id)?.status).toBe('canceled');
       expect(store2.getRun(s1.id)?.status).toBe('success');
       store2.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // ── Run retention: startup backfill ──────────────────────────────────────────
+
+  it('pruneAllJobsRunHistory truncates a pre-existing oversized database on startup', () => {
+    const dir = makeTmpDir();
+    const dbPath = join(dir, 'runs.db');
+    const jobsPath = join(dir, 'jobs');
+    try {
+      // Simulate "a database that predates this feature": populate it via a
+      // Store with a very large cap so insertRun's own pruning is a no-op,
+      // leaving all 10 terminal runs in place.
+      const unboundedStore = new Store(dbPath, jobsPath, undefined, 1_000_000);
+      unboundedStore.open();
+      const runIds: string[] = [];
+      for (let i = 0; i < 10; i++) {
+        const run = unboundedStore.insertRun('job-legacy', i);
+        unboundedStore.updateRun(run.id, { status: 'success' });
+        runIds.push(run.id);
+      }
+      unboundedStore.close();
+
+      // Reopen with a small cap and run the startup backfill pass directly.
+      const smallCapStore = new Store(dbPath, jobsPath, undefined, 4);
+      smallCapStore.open();
+      const pruned = smallCapStore.pruneAllJobsRunHistory();
+      expect(pruned).toBe(6);
+      expect(smallCapStore.listRuns({ jobId: 'job-legacy' })).toHaveLength(4);
+
+      // Idempotent: a second pass finds nothing left to prune.
+      expect(smallCapStore.pruneAllJobsRunHistory()).toBe(0);
+      smallCapStore.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('pruneAllJobsRunHistory never evicts an in-flight run from the oversized-database backfill', () => {
+    const dir = makeTmpDir();
+    const dbPath = join(dir, 'runs.db');
+    const jobsPath = join(dir, 'jobs');
+    try {
+      const unboundedStore = new Store(dbPath, jobsPath, undefined, 1_000_000);
+      unboundedStore.open();
+      for (let i = 0; i < 10; i++) {
+        const run = unboundedStore.insertRun('job-legacy2', i);
+        unboundedStore.updateRun(run.id, { status: 'success' });
+      }
+      // Oldest run for the job, left queued — must survive the backfill regardless of age.
+      const queuedRun = unboundedStore.insertRun('job-legacy2', -1);
+      unboundedStore.close();
+
+      const smallCapStore = new Store(dbPath, jobsPath, undefined, 4);
+      smallCapStore.open();
+      smallCapStore.pruneAllJobsRunHistory();
+      expect(smallCapStore.getRun(queuedRun.id)?.status).toBe('queued');
+      smallCapStore.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -181,15 +181,28 @@ export class Scheduler extends EventEmitter {
       }
     }
 
-    // After the initial timeout fires, replace the entry with a regular setInterval.
-    const timer = safeSetTimeout(() => {
+    // Stable disposer: the SAME closure identity is stored in `entries` for the
+    // entire lifetime of this job's schedule, across both the pre-fire (timeout)
+    // and post-fire (interval) phases — unlike the old code, which replaced the
+    // map entry object when the timer transitioned. `disposed` guards against
+    // unschedule() being called synchronously from within this job's own first
+    // tick listener: without the guard, the code below would unconditionally
+    // re-arm a setInterval even though the job was just unscheduled from inside
+    // its own tick callback (see docs/internals/scheduler.md).
+    let disposed = false;
+    let currentTimer: { clear(): void } = safeSetTimeout(() => {
+      if (disposed) return;
       this.fireTick(job.id, new Date());
+      if (disposed) return;
       const interval = setInterval(() => this.fireTick(job.id, new Date()), intervalMs);
-      this.entries.set(job.id, { stop: () => clearInterval(interval) });
+      currentTimer = { clear: () => clearInterval(interval) };
     }, delay);
 
     this.entries.set(job.id, {
-      stop: () => timer.clear(),
+      stop: () => {
+        disposed = true;
+        currentTimer.clear();
+      },
     });
   }
 

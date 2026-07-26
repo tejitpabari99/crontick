@@ -5,8 +5,10 @@ import { randomUUID } from 'node:crypto';
 import { createClient } from '../src/client.js';
 import {
   buildPromptRunCommand,
+  getConfigValue,
   initConfig,
   loadConfig,
+  setConfigValue,
   validateConfigFile,
   writeConfigFile,
 } from '../src/config.js';
@@ -46,6 +48,7 @@ describe('crontick config core', () => {
     expect(loadConfig({ env })).toEqual({
       defaultEngine: 'copilot',
       engines: { copilot: { command: 'copilot', args: [], env: {} } },
+      retention: { maxRunsPerJob: 100 },
     });
     expect(validateConfigFile({ env })).toMatchObject({ ok: true, path, problems: [] });
   });
@@ -154,6 +157,23 @@ describe('crontick config core', () => {
     expect(client.removeEngine('agency')).not.toHaveProperty('engines.agency');
     expect(client.removeConfigValue('engines.copilot.args')).toMatchObject({ engines: { copilot: { args: [] } } });
     expect(client.validateConfig()).toMatchObject({ ok: true, problems: [] });
+  });
+
+  it('retention.maxRunsPerJob defaults to 100 and round-trips through get/set', () => {
+    const { env, path } = makeHome();
+
+    // No config file at all: built-in default applies.
+    expect(loadConfig({ env }).retention.maxRunsPerJob).toBe(100);
+
+    // Custom config file that omits `retention` entirely: deep-merge keeps the default.
+    writeRawConfig(path, { defaultEngine: 'copilot', engines: { copilot: { command: 'copilot' } } });
+    expect(loadConfig({ env }).retention.maxRunsPerJob).toBe(100);
+
+    setConfigValue('retention.maxRunsPerJob', 250, { env });
+    expect(getConfigValue('retention.maxRunsPerJob', { env })).toBe(250);
+
+    expect(() => setConfigValue('retention.maxRunsPerJob', 0, { env })).toThrow(/CONFIG_VALIDATION_ERROR|retention\.maxRunsPerJob/);
+    expect(() => setConfigValue('retention.maxRunsPerJob', 1.5, { env })).toThrow(/CONFIG_VALIDATION_ERROR|retention\.maxRunsPerJob/);
   });
 
   it('initializes with force when the file already exists', () => {

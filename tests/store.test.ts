@@ -241,4 +241,93 @@ describe('Store', () => {
     store.loadJobsFromDisk(); // should not throw
     expect(store.listJobs()).toHaveLength(0);
   });
+
+  // ── Run retention ─────────────────────────────────────────────────────────────
+
+  it('evicts the oldest run at exactly the 101st run for a job', () => {
+    for (let i = 0; i < 100; i++) {
+      const run = store.insertRun('job-a', 1000 + i);
+      store.updateRun(run.id, { status: 'success' });
+    }
+    expect(store.listRuns({ jobId: 'job-a' })).toHaveLength(100);
+
+    const oldest = store.listRuns({ jobId: 'job-a' }).sort((a, b) => a.startedAt - b.startedAt)[0];
+    const run101 = store.insertRun('job-a', 1000 + 100);
+    store.updateRun(run101.id, { status: 'success' });
+
+    expect(store.listRuns({ jobId: 'job-a' })).toHaveLength(100);
+    expect(store.getRun(oldest.id)).toBeUndefined();
+    expect(store.getRun(run101.id)).toBeTruthy();
+  });
+
+  it('never evicts in-flight (running/queued) runs even when they are the oldest', () => {
+    for (let i = 0; i < 100; i++) {
+      const run = store.insertRun('job-b', 2000 + i);
+      store.updateRun(run.id, { status: 'success' });
+    }
+    // Leave this one queued (do not mark terminal) — it must survive.
+    const queuedRun = store.insertRun('job-b', 1); // oldest startedAt of all, but non-terminal
+    expect(store.getRun(queuedRun.id)?.status).toBe('queued');
+    expect(store.listRuns({ jobId: 'job-b' })).toHaveLength(100); // 99 terminal survivors + queued
+
+    // Repeat with 'running' status.
+    for (let i = 0; i < 100; i++) {
+      const run = store.insertRun('job-b2', 3000 + i);
+      store.updateRun(run.id, { status: 'success' });
+    }
+    const runningRun = store.insertRun('job-b2', 2);
+    store.updateRun(runningRun.id, { status: 'running' });
+    expect(store.getRun(runningRun.id)?.status).toBe('running');
+    expect(store.listRuns({ jobId: 'job-b2' })).toHaveLength(100);
+  });
+
+  it('removes run_logs for evicted runs (no orphaned log rows)', () => {
+    const run = store.insertRun('job-c', 0);
+    store.appendLog(run.id, 'stdout', Buffer.from('hi\n'));
+    store.appendLog(run.id, 'stderr', Buffer.from('err\n'));
+    store.updateRun(run.id, { status: 'success' });
+
+    for (let i = 0; i < 100; i++) {
+      const r = store.insertRun('job-c', 100 + i);
+      store.updateRun(r.id, { status: 'success' });
+    }
+
+    expect(store.getRun(run.id)).toBeUndefined();
+    expect(store.getLogs(run.id)).toEqual([]);
+  });
+
+  it('respects a custom retention cap passed to the constructor', () => {
+    const smallCapStore = new Store(join(dir, 'runs.db'), join(dir, 'jobs'), undefined, 3);
+    smallCapStore.open();
+    try {
+      for (let i = 0; i < 5; i++) {
+        const run = smallCapStore.insertRun('job-d', i);
+        smallCapStore.updateRun(run.id, { status: 'success' });
+      }
+      expect(smallCapStore.listRuns({ jobId: 'job-d' })).toHaveLength(3);
+    } finally {
+      smallCapStore.close();
+    }
+  });
+
+  it('breaks started_at ties by insertion order (rowid), evicting the earlier-inserted run first', () => {
+    const smallCapStore = new Store(join(dir, 'runs.db'), join(dir, 'jobs'), undefined, 2);
+    smallCapStore.open();
+    try {
+      const same = 5000;
+      const first = smallCapStore.insertRun('job-e', same);
+      smallCapStore.updateRun(first.id, { status: 'success' });
+      const second = smallCapStore.insertRun('job-e', same); // identical startedAt, inserted later
+      smallCapStore.updateRun(second.id, { status: 'success' });
+      const third = smallCapStore.insertRun('job-e', same + 1);
+      smallCapStore.updateRun(third.id, { status: 'success' });
+
+      // Cap is 2: the earlier-inserted of the two same-timestamp runs is evicted first.
+      expect(smallCapStore.getRun(first.id)).toBeUndefined();
+      expect(smallCapStore.getRun(second.id)).toBeTruthy();
+      expect(smallCapStore.getRun(third.id)).toBeTruthy();
+    } finally {
+      smallCapStore.close();
+    }
+  });
 });

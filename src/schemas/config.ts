@@ -23,6 +23,16 @@ export const EngineConfigSchema = z.object({
 }).strict();
 
 /**
+ * `min(1)`: a job must retain at least its own most recent run to be useful.
+ * `max(100_000)`: a sanity ceiling rejecting fat-finger values that would make
+ * the per-insert eviction query (COUNT + ORDER BY ... LIMIT) pointlessly
+ * expensive on a table that's supposed to stay small.
+ */
+export const RetentionConfigSchema = z.object({
+  maxRunsPerJob: z.number().int().min(1).max(100_000).default(100),
+}).strict();
+
+/**
  * Top-level config schema. File config is deep-merged over BUILT_IN_CONFIG
  * (defined in src/config.ts), then validated here. The refinement ensures
  * `defaultEngine` actually exists in `engines`.
@@ -32,6 +42,7 @@ export const ConfigSchema = z.object({
   engines: z.record(EngineNameSchema, EngineConfigSchema).default({
     copilot: { command: 'copilot', args: [], env: {} },
   }),
+  retention: RetentionConfigSchema.default({ maxRunsPerJob: 100 }),
 }).strict().superRefine((config, ctx) => {
   if (Object.keys(config.engines).length === 0) {
     ctx.addIssue({
@@ -51,4 +62,5 @@ export const ConfigSchema = z.object({
 
 export type EngineConfig = z.infer<typeof EngineConfigSchema>;
 export type CrontickConfig = z.infer<typeof ConfigSchema>;
+export type RetentionConfig = z.infer<typeof RetentionConfigSchema>;
 

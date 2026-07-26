@@ -17,6 +17,7 @@ import { Scheduler } from './scheduler.js';
 import { Runner } from './runner.js';
 import { createApiServer } from './api.js';
 import { createLogger, isVerboseEnv, type LogEvent } from '../logger.js';
+import { loadConfig } from '../config.js';
 
 // ── SQLite shim ───────────────────────────────────────────────────────────────
 // node:sqlite is experimental on Node <24; re-exec with the flag so the child
@@ -111,12 +112,21 @@ if (needsSqliteShim) {
     checkSingleInstance();
     writeFileSync(pidFilePath(), String(process.pid), 'utf-8');
 
-    const store = new Store(runsDbPath(), jobsDir(), logger);
+    const retentionCap = loadConfig().retention.maxRunsPerJob;
+    const store = new Store(runsDbPath(), jobsDir(), logger, retentionCap);
     store.open();
     // Cancel runs left as running/queued from a prior crash (orphan reconciliation).
     const reconciled = store.reconcileOrphanRuns();
     if (reconciled > 0) {
       logger.warn(`Reconciled ${reconciled} orphaned run(s) from previous daemon session`);
+    }
+    // Backfill pass for databases that predate the retention cap (or predate an
+    // upgrade that lowered it). reconcileOrphanRuns() runs first so any stale
+    // running/queued rows it just canceled are immediately eligible eviction
+    // candidates, rather than requiring a second restart to truncate them.
+    const pruned = store.pruneAllJobsRunHistory();
+    if (pruned > 0) {
+      logger.info(`Pruned ${pruned} run(s) exceeding the retention cap of ${retentionCap} during startup`);
     }
     store.loadJobsFromDisk();
     const jobs = store.listJobs();
@@ -144,6 +154,12 @@ if (needsSqliteShim) {
       logger.info('Reloading jobs from disk');
       scheduler.unscheduleAll();
       store.loadJobsFromDisk();
+      // Re-read config here too so a changed retention.maxRunsPerJob takes
+      // effect on `crontick daemon reload` without requiring a full daemon
+      // restart (only the cap is config-driven at reload time; other config,
+      // e.g. engines, is already re-read per prompt-action run).
+      const reloadedCap = loadConfig().retention.maxRunsPerJob;
+      store.setRunRetentionCap(reloadedCap);
       const reloaded = store.listJobs();
       for (const job of reloaded) {
         if (job.enabled) scheduler.schedule(job);

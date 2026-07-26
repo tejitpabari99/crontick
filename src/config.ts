@@ -11,11 +11,11 @@ import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
 import { CrontickError } from './errors.js';
 import { configPath as defaultConfigPath, ensureDirs } from './paths.js';
-import { ConfigKeySchema, ConfigSchema, EngineConfigSchema, type CrontickConfig, type EngineConfig } from './schemas/config.js';
+import { ConfigKeySchema, ConfigSchema, EngineConfigSchema, RetentionConfigSchema, type CrontickConfig, type EngineConfig, type RetentionConfig } from './schemas/config.js';
 import type { PromptAction } from './schemas/job.js';
 import { nullLogger, type Logger } from './logger.js';
 
-export { ConfigSchema, EngineConfigSchema, type CrontickConfig, type EngineConfig };
+export { ConfigSchema, EngineConfigSchema, RetentionConfigSchema, type CrontickConfig, type EngineConfig, type RetentionConfig };
 
 export interface ConfigOptions {
   env?: NodeJS.ProcessEnv;
@@ -47,6 +47,7 @@ export const BUILT_IN_CONFIG: CrontickConfig = Object.freeze({
   engines: {
     copilot: Object.freeze({ command: 'copilot', args: [], env: {} }),
   },
+  retention: Object.freeze({ maxRunsPerJob: 100 }),
 });
 
 /** Resolves config file path: explicit `options.path` > `<dataDir>/config.json`. */
