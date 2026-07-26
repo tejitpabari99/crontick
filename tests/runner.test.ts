@@ -424,6 +424,30 @@ describe('Runner', () => {
     });
   });
 
+  it('prompt: real spawn ENOENT for a genuinely missing engine binary produces the same actionable error (integration-level)', async () => {
+    // No injected spawnFn here — this exercises the real child_process.spawn
+    // ENOENT path (fakeSpawnError above only simulates it), matching the
+    // convention that non-fake runner.test.ts tests already spawn real
+    // processes (e.g. "exec: success path" above).
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({
+      defaultEngine: 'nonexistent-engine-xyz',
+      engines: {
+        'nonexistent-engine-xyz': { command: 'crontick-test-nonexistent-engine-binary-xyz', args: [] },
+      },
+    }), 'utf-8');
+    runner = new Runner(); // real spawn
+    const job = promptJob('prompt-real-enoent', { engine: 'nonexistent-engine-xyz' });
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(store.getRun(run.id)).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('nonexistent-engine-xyz'),
+    });
+    expect(store.getRun(run.id)?.error).toContain('was not found on PATH');
+  });
+
   it('prompt: forwards explicit session id every run after raw args', async () => {
     const fake = fakeSpawn([{ stdout: 'ok\n' }, { stdout: 'ok\n' }]);
     runner = new Runner(fake.spawnFn as never);

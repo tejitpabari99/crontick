@@ -79,7 +79,7 @@ The drift test (`tests/surface-drift.test.ts`) performs four checks:
 - [x] CLI exposes every table capability command (test file: `tests/surface-drift.test.ts`)
 - [x] MCP exposes every table capability tool (test file: `tests/surface-drift.test.ts`)
 - [x] All MCP tools have verbose parameter (test file: `tests/surface-drift.test.ts`)
-- [ ] Documentation updated when capability count changes
+- [x] Documentation updated when capability count changes (test file: `tests/surface-drift.test.ts`)
 
 ## Out of scope
 

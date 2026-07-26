@@ -415,6 +415,25 @@ describe('CLI e2e with daemon', () => {
     expect(data.description).toBe('updated from cli');
   });
 
+  it('crontick update merges a partial patch onto the existing definition rather than replacing it', () => {
+    const created = cli([
+      '--json', 'new', 'merge-check-job', '--cron', '0 9 * * *',
+      '--exec', 'echo hi',
+      '--overlap', 'queue', '--retry', '2',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+
+    const updated = cli(['--json', 'update', 'merge-check-job', '--desc', 'merged'], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    const data = JSON.parse(updated.stdout);
+
+    expect(data.description).toBe('merged');
+    expect(data.schedule).toEqual({ kind: 'cron', cron: '0 9 * * *' });
+    expect(data.action).toMatchObject({ kind: 'exec', command: 'echo' });
+    expect(data.overlap).toBe('queue');
+    expect(data.retry.max).toBe(2);
+  });
+
   it('crontick disable disables the job', () => {
     const r = cli(['--json', 'disable', 'e2e-job'], env());
     expect(r.status).toBe(0);

@@ -94,7 +94,8 @@ removes the entry from the internal map. `unscheduleAll()` iterates all entries.
 - [x] previewNext returns correct ISO timestamps (test file: `tests/scheduler.test.ts`)
 - [x] safeSetTimeout chains for large delays (test file: `tests/property.scheduler.test.ts`)
 - [x] Property: arbitrary cron expressions produce sorted future dates (test file: `tests/property.cron.test.ts`)
-- [ ] One-shot past-time no-op verified in integration context
+- [x] One-shot past-time no-op verified in integration context (test file: `tests/integration.oneshot.test.ts`)
+- [x] A live daemon's real Scheduler auto-fires a cron/interval tick end-to-end into a run, with no manual `/run` trigger (test file: `tests/integration.autofire.test.ts`)
 
 ## Out of scope
 

@@ -220,6 +220,32 @@ describe('MCP server — full contract', () => {
     expect(readFileSync(join(dir, 'jobs', `${testJobId}.schema.json`), 'utf-8')).toBe(jobJsonSchemaText());
   });
 
+  it('crontick_job_update merges a partial patch onto the existing definition rather than replacing it', async () => {
+    const created = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-merge-job',
+      schedule: { kind: 'interval', everySec: 120 },
+      action: { kind: 'exec', command: 'echo', args: ['x'] },
+      overlap: 'cancel-previous',
+    });
+    expect(created.isError).toBe(false);
+
+    const updated = await callTool(client, 'crontick_job_update', {
+      id: 'mcp-merge-job',
+      description: 'via mcp',
+    });
+    expect(updated.isError).toBe(false);
+    const data = updated.json as {
+      description: string;
+      schedule: unknown;
+      action: unknown;
+      overlap: string;
+    };
+    expect(data.description).toBe('via mcp');
+    expect(data.schedule).toEqual({ kind: 'interval', everySec: 120 });
+    expect(data.action).toMatchObject({ kind: 'exec', command: 'echo', args: ['x'] });
+    expect(data.overlap).toBe('cancel-previous');
+  });
+
   it('crontick_job_create accepts prompt actions', async () => {
     const { json, isError } = await callTool(client, 'crontick_job_create', {
       id: 'mcp-prompt-job',

@@ -100,7 +100,7 @@ preserving observability through captured logs and structured run records.
 - [x] envFile is loaded and merged (test file: `tests/env-file.test.ts`)
 - [x] safeRedact skips binary data (test file: `tests/redact.test.ts`)
 - [x] cancelRun aborts active run (test file: `tests/runner.test.ts`)
-- [ ] ENOENT for prompt engine produces actionable error (integration-level)
+- [x] ENOENT for prompt engine produces actionable error (test file: `tests/runner.test.ts`)
 
 ## Out of scope
 

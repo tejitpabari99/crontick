@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -124,4 +124,11 @@ describe('surface capability drift', () => {
       rmSync(home, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it('documented MCP tool count in docs/testing.md stays in sync with MCP_TOOLS', () => {
+    const doc = readFileSync(resolve('docs/testing.md'), 'utf-8');
+    const match = doc.match(/all (\d+) `crontick_\*` tools/);
+    expect(match, 'could not find tool count sentence in docs/testing.md — update the regex if the doc was reworded').not.toBeNull();
+    expect(Number(match![1])).toBe(MCP_TOOLS.length);
+  });
 });

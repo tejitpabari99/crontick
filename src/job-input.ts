@@ -193,7 +193,11 @@ export function buildJobPatchFromUpdateOptions(
   if (schedule !== undefined) patch.schedule = schedule;
   const action = maybeBuildAction(input, rawArgs);
   if (action !== undefined) patch.action = normalizeActionInput(action, options) as ActionInput;
-  if (input.overlap !== undefined) patch.overlap = input.overlap as JobPatchInput['overlap'];
+  // 'skip' is indistinguishable from Commander's --overlap default (see
+  // commonJobOptions in cli/index.ts), the same ambiguity already handled for
+  // --shell/'auto' in assertFileModeExclusive below — so an unset/default
+  // 'skip' must not overwrite a job's existing overlap policy on update.
+  if (input.overlap !== undefined && input.overlap !== 'skip') patch.overlap = input.overlap as JobPatchInput['overlap'];
   if (input.retry !== undefined) patch.retry = { max: input.retry, backoffSec: 30 };
 
   const parsed = JobPatchInputSchema.safeParse(patch);

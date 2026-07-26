@@ -87,7 +87,7 @@ daemon to validate and persist jobs without surface-specific logic.
 - [x] Delete removes file and SQLite row (test file: `tests/store.test.ts`)
 - [x] Schema sidecar written on persist (test file: `tests/store.test.ts`)
 - [x] Prompt action validates reserved args (test file: `tests/job-input.test.ts`)
-- [ ] Update merge semantics tested end-to-end (CLI and MCP)
+- [x] Update merge semantics tested end-to-end (CLI and MCP) (test files: `tests/cli.test.ts`, `tests/mcp.test.ts`)
 
 ## Out of scope
 

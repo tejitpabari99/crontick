@@ -39,7 +39,7 @@ need for OS service registration while ensuring the daemon is available when nee
 - **R-004-7**: GET /health MUST return `{ ok: true, product: "crontick", pid: <number>, port: <number>, version, startedAt, uptime, jobCount }`.
 - **R-004-8**: On startup, the daemon MUST call `store.reconcileOrphanRuns()` to cancel any runs left in `running` or `queued` state (daemon crash recovery).
 - **R-004-9**: On startup, the daemon MUST call `store.loadJobsFromDisk()` to reload job definitions from the jobs directory.
-- **R-004-10**: The daemon MUST handle SIGINT and SIGTERM: close the HTTP server, unschedule all jobs, close the store, remove PID/port files, and exit cleanly.
+- **R-004-10**: The daemon MUST register `process.on('SIGINT'/'SIGTERM', ...)` handlers that close the HTTP server, unschedule all jobs, close the store, remove PID/port files, and exit cleanly. **This graceful sequence is only reachable when the signal is genuinely delivered to the process by the OS.** On POSIX, `process.kill(pid, 'SIGINT'|'SIGTERM')` delivers a real signal and the handler runs, so PID/port files are removed. On Windows, `process.kill(pid, 'SIGINT'|'SIGTERM')` from another process unconditionally terminates the target process without invoking any registered handler (verified empirically); the handler only has a chance to run for a genuine Ctrl+C console event, which does not apply to `crontick daemon stop`. Callers on Windows MUST NOT rely on PID/port file cleanup or in-flight run persistence after `crontick daemon stop`/`stopDaemon()`; they should instead treat "process no longer alive" as the sole cross-platform guarantee, and expect the next daemon start to tolerate and overwrite stale PID/port files.
 - **R-004-11**: On uncaughtException (unless EPIPE), the daemon MUST log the error, clean up PID/port files, and exit with code 1.
 - **R-004-12**: The daemon MUST run SQLite in WAL journal mode with foreign keys enabled.
 - **R-004-13**: On Node < 24, the daemon MUST re-exec itself with `--experimental-sqlite` if that flag is absent.
@@ -51,7 +51,7 @@ need for OS service registration while ensuring the daemon is available when nee
 - **R-004-19**: The health probe MUST validate that `product === "crontick"`, `pid` and `port` are positive integers, and `port` matches the expected port.
 - **R-004-20**: The daemon MUST log to `<dataDir>/logs/daemon-YYYY-MM-DD.log` (JSON lines).
 - **R-004-21**: Daemon reload (POST /api/daemon/reload) MUST unschedule all jobs, reload from disk, and reschedule enabled jobs.
-- **R-004-22**: Daemon stop (POST /api/daemon/stop) MUST initiate graceful shutdown.
+- **R-004-22**: Daemon stop is a client-side operation (`stopDaemon()` in `src/daemon/lifecycle.ts`), not an HTTP endpoint: it reads the PID file and sends `process.kill(pid, 'SIGTERM')`, then polls until the PID is no longer alive (or a timeout elapses). **There is no `POST /api/daemon/stop` route in `src/daemon/api.ts`**; a prior version of this spec incorrectly documented one. See R-004-10 for the resulting cross-platform caveat on how gracefully that SIGTERM is actually handled.
 - **R-004-23**: `startDaemon=false` (option or env `CRONTICK_MCP_START_DAEMON=0`) MUST prevent demand-start from spawning; it MUST throw `DAEMON_NOT_RUNNING` instead.
 - **R-004-24**: Stale lock files (older than `lockTimeoutMs` or held by dead process) MUST be cleaned up by waiting clients.
 
@@ -84,7 +84,7 @@ need for OS service registration while ensuring the daemon is available when nee
 5. Poll port file + health until healthy or timeout.
 6. Return `DaemonInfo { baseUrl, port, pid, started: true }`.
 
-**Shutdown sequence**:
+**Shutdown sequence** (reachable only when the handler actually runs — see R-004-10):
 1. Close HTTP server.
 2. Unschedule all jobs.
 3. Wait 100ms for in-flight I/O.
@@ -120,8 +120,8 @@ need for OS service registration while ensuring the daemon is available when nee
 - [x] Orphan runs reconciled on startup (test file: `tests/integration.persistence.test.ts`)
 - [x] Lock timeout throws DAEMON_START_LOCK_TIMEOUT (test file: `tests/daemon.ensure.test.ts`)
 - [x] NOT_BUILT thrown when daemon script missing (test file: `tests/daemon.ensure.test.ts`)
-- [ ] Graceful shutdown removes PID/port files (integration-level)
-- [ ] Reload reschedules all jobs from disk (integration-level)
+- [x] Graceful shutdown removes PID/port files on POSIX; on Windows the process still dies and a subsequent daemon start tolerates the stale files (test file: `tests/integration.daemon-lifecycle.test.ts`)
+- [x] Reload reschedules all jobs from disk (test file: `tests/integration.daemon-lifecycle.test.ts`)
 
 ## Out of scope
 

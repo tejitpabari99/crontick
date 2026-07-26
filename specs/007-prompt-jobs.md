@@ -108,8 +108,8 @@ reuse enables multi-turn conversations across runs.
 - [x] Built-in copilot engine cannot be removed (test file: `tests/config.test.ts`)
 - [x] addEngine rejects duplicate (test file: `tests/config.test.ts`)
 - [x] updateEngine rejects non-existent (test file: `tests/config.test.ts`)
-- [ ] End-to-end prompt job run with session capture (integration-level)
-- [ ] reuseSession=true with explicit sessionId logs notice (integration-level)
+- [x] End-to-end prompt job run with session capture (test file: `tests/integration.prompt-e2e.test.ts`)
+- [x] reuseSession=true with explicit sessionId logs notice (test files: `tests/mcp.test.ts`, `tests/cli.test.ts`)
 
 ## Out of scope
 
