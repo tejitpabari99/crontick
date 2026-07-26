@@ -103,6 +103,17 @@ Schema is `.strict()` — no extra fields allowed.
 
 If `config.json` does not exist, crontick uses this built-in config. The file config is deep-merged over the built-in defaults.
 
+### Set vs. Inherited Values
+
+`config get` (with or without a key path) always shows **effective** values — the file
+deep-merged over the built-in defaults above. `config unset <path>` removes the key from
+`config.json` itself; it does not write the built-in default back into the file. So after
+`config unset defaultEngine`, `config get defaultEngine` still reports `"copilot"` (the
+inherited built-in default), but the file no longer pins that value explicitly — a future
+built-in default change, or restoring `config.json` from an older version, no longer requires
+touching that key. To see exactly what's explicitly set (as opposed to inherited), read
+`config.json` directly: any key absent from the file is inherited from the built-in default.
+
 ### Multi-Engine Example
 
 ```json

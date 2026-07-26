@@ -761,6 +761,43 @@ describe('CLI e2e with daemon', () => {
     expect(JSON.parse(cancel.stdout)).toMatchObject({ ok: true });
   });
 
+  // ── Blocker 1 regression: daemon-backed errors must exit cleanly (1), never
+  // crash with a libuv assertion (`Assertion failed: !(handle->flags & ...)`,
+  // exit code -1073740791 on Windows). Covers every command explicitly called
+  // out in the blocker report: get, delete, enable, run-now, cancel-run — each
+  // against a job/run id that does not exist, so the error round-trips through
+  // the daemon HTTP client (src/client.ts's `request()`/`fetchRequest()`).
+  describe('daemon-backed errors exit cleanly (no libuv assertion crash)', () => {
+    const NONEXISTENT_ID = 'does-not-exist-regression-id';
+
+    function expectCleanErrorExit(result: ReturnType<typeof cli>): void {
+      expect(result.status, `stderr: ${result.stderr}\nstdout: ${result.stdout}`).toBe(1);
+      expect(result.stderr).not.toMatch(/Assertion failed/i);
+      expect(result.stderr).not.toMatch(/UV_HANDLE_CLOSING/i);
+      expect(result.stdout + result.stderr).toMatch(/Error \[/);
+    }
+
+    it('get: nonexistent job id exits 1 with no assertion crash', () => {
+      expectCleanErrorExit(cli(['get', NONEXISTENT_ID], env()));
+    });
+
+    it('delete: nonexistent job id exits 1 with no assertion crash', () => {
+      expectCleanErrorExit(cli(['delete', NONEXISTENT_ID], env()));
+    });
+
+    it('enable: nonexistent job id exits 1 with no assertion crash', () => {
+      expectCleanErrorExit(cli(['enable', NONEXISTENT_ID], env()));
+    });
+
+    it('run-now: nonexistent job id exits 1 with no assertion crash', () => {
+      expectCleanErrorExit(cli(['run-now', NONEXISTENT_ID], env()));
+    });
+
+    it('cancel-run: nonexistent run id exits 1 with no assertion crash', () => {
+      expectCleanErrorExit(cli(['cancel-run', NONEXISTENT_ID], env()));
+    });
+  });
+
   it('crontick runs list --status filters to the requested run status', async () => {
     const r = cli(['--json', 'run-now', 'e2e-job'], env());
     const { runId } = JSON.parse(r.stdout) as { runId: string };
@@ -805,7 +842,7 @@ describe('CLI e2e with daemon', () => {
     const r = cli(['--json', 'delete', 'e2e-job'], env());
     expect(r.status).toBe(0);
     const r2 = cli(['get', 'e2e-job'], env());
-    expect(r2.status).not.toBe(0); // should error
+    expect(r2.status).toBe(1); // clean error exit, not a libuv assertion crash
   });
 
   it('crontick export produces JSON with jobs array', () => {

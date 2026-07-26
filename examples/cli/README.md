@@ -108,7 +108,7 @@ crontick delete hello-world
 crontick run-now hello-world
 ```
 
-Expected: prints `{ "runId": "<uuid>" }`.
+Expected: prints `runId: <uuid>` (key/value text). With `--json`, prints `{ "runId": "<uuid>" }`.
 
 ### List runs
 

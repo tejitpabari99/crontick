@@ -81,3 +81,39 @@ export type EngineConfig = z.infer<typeof EngineConfigSchema>;
 export type CrontickConfig = z.infer<typeof ConfigSchema>;
 export type RetentionConfig = z.infer<typeof RetentionConfigSchema>;
 
+/**
+ * "Persisted" counterparts of the schemas above — every field is `.optional()`
+ * and none carry a `.default(...)`. These validate exactly what's written to
+ * `config.json` on disk, as opposed to `ConfigSchema` et al. which validate
+ * the *effective* config (raw file deep-merged over BUILT_IN_CONFIG).
+ *
+ * Without this split, every write path (`config set`/`config unset`/engine
+ * CRUD) round-tripped through the effective, fully-defaulted config and
+ * re-persisted it, so `.default(...)` values (defaultEngine, retention.*, the
+ * built-in copilot engine's fields) were baked back into the file on every
+ * write — making `config unset` a no-op for any key that has a built-in
+ * fallback. Write paths must build on these Persisted* schemas (see
+ * `readRawStoredConfig`/`persistRawConfig` in src/config.ts) so that removing
+ * a key actually removes it from disk; only `loadConfig`/`getConfigValue`
+ * (effective reads) should merge in defaults.
+ */
+export const PersistedEngineConfigSchema = z.object({
+  command: z.string().min(1),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+}).strict();
+
+export const PersistedRetentionConfigSchema = z.object({
+  maxRunsPerJob: z.number().int().min(1).max(100_000).optional(),
+  maxOutputBytesPerRun: z.number().int().min(1024).max(1_000_000_000).optional(),
+  maxLogFiles: z.number().int().min(1).max(3650).optional(),
+}).strict();
+
+export const PersistedConfigSchema = z.object({
+  defaultEngine: EngineNameSchema.optional(),
+  engines: z.record(EngineNameSchema, PersistedEngineConfigSchema).optional(),
+  retention: PersistedRetentionConfigSchema.optional(),
+}).strict();
+
+export type PersistedConfig = z.infer<typeof PersistedConfigSchema>;
+

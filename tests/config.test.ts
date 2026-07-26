@@ -8,6 +8,7 @@ import {
   getConfigValue,
   initConfig,
   loadConfig,
+  removeConfigValue,
   setConfigValue,
   validateConfigFile,
   writeConfigFile,
@@ -205,6 +206,81 @@ describe('crontick config core', () => {
     expect(loadConfig({ env }).engines.copilot.command).toBe('custom');
     expect(initConfig({ env, force: true })).toMatchObject({ path, created: true });
     expect(loadConfig({ env }).engines.copilot.command).toBe('copilot');
+  });
+
+  // Blocker 2 regression: `config unset` must genuinely remove the key from
+  // config.json, not just report success while ConfigSchema's `.default(...)`
+  // bakes the built-in value straight back into what gets persisted.
+  describe('config unset genuinely removes keys from the persisted file (not baked back in)', () => {
+    it('defaultEngine: unset removes the raw key even though the effective value (built-in default) is unchanged', () => {
+      const { env, path } = makeHome();
+      initConfig({ env }); // writes a full explicit file, including defaultEngine: "copilot"
+      expect(JSON.parse(readFileSync(path, 'utf-8'))).toHaveProperty('defaultEngine', 'copilot');
+
+      removeConfigValue('defaultEngine', { env });
+
+      // The raw file must no longer contain the key at all...
+      expect(JSON.parse(readFileSync(path, 'utf-8'))).not.toHaveProperty('defaultEngine');
+      // ...while the effective (merged) value still falls back to the built-in default.
+      expect(getConfigValue('defaultEngine', { env })).toBe('copilot');
+      expect(loadConfig({ env }).defaultEngine).toBe('copilot');
+    });
+
+    it('defaultEngine: unset after an explicit set truly falls back, and stays removed across repeat writes', () => {
+      const { env, path } = makeHome();
+      initConfig({ env });
+      setConfigValue('defaultEngine', 'copilot', { env }); // re-affirm explicitly (same value, still baked into raw file)
+      expect(JSON.parse(readFileSync(path, 'utf-8'))).toHaveProperty('defaultEngine', 'copilot');
+
+      removeConfigValue('defaultEngine', { env });
+      expect(JSON.parse(readFileSync(path, 'utf-8'))).not.toHaveProperty('defaultEngine');
+
+      // Writing an unrelated key afterward must not resurrect defaultEngine in the file.
+      setConfigValue('retention.maxRunsPerJob', 42, { env });
+      expect(JSON.parse(readFileSync(path, 'utf-8'))).not.toHaveProperty('defaultEngine');
+      expect(getConfigValue('defaultEngine', { env })).toBe('copilot');
+    });
+
+    it('retention.*: unset removes the raw key, falling back to the built-in default effectively', () => {
+      const { env, path } = makeHome();
+      initConfig({ env });
+      setConfigValue('retention.maxRunsPerJob', 250, { env });
+      expect((JSON.parse(readFileSync(path, 'utf-8')) as { retention: { maxRunsPerJob: number } }).retention.maxRunsPerJob).toBe(250);
+
+      removeConfigValue('retention.maxRunsPerJob', { env });
+
+      const raw = JSON.parse(readFileSync(path, 'utf-8')) as { retention?: { maxRunsPerJob?: number } };
+      expect(raw.retention?.maxRunsPerJob).toBeUndefined();
+      expect(getConfigValue('retention.maxRunsPerJob', { env })).toBe(100);
+      expect(loadConfig({ env }).retention.maxRunsPerJob).toBe(100);
+    });
+
+    it('engines map: unsetting a customized built-in copilot field removes it from the file and falls back to the built-in value', () => {
+      const { env, path } = makeHome();
+      initConfig({ env });
+      setConfigValue('engines.copilot.command', 'my-custom-copilot', { env });
+      expect((JSON.parse(readFileSync(path, 'utf-8')) as { engines: { copilot: { command: string } } }).engines.copilot.command)
+        .toBe('my-custom-copilot');
+
+      removeConfigValue('engines.copilot.command', { env });
+
+      const raw = JSON.parse(readFileSync(path, 'utf-8')) as { engines: { copilot: Record<string, unknown> } };
+      expect(raw.engines.copilot).not.toHaveProperty('command');
+      expect(getConfigValue('engines.copilot.command', { env })).toBe('copilot');
+    });
+
+    it('config get with no path still reports full effective values (including inherited defaults) after unsetting', () => {
+      const { env } = makeHome();
+      initConfig({ env });
+      removeConfigValue('defaultEngine', { env });
+      removeConfigValue('retention.maxRunsPerJob', { env });
+
+      expect(getConfigValue(undefined, { env })).toEqual({
+        defaultEngine: 'copilot',
+        engines: { copilot: { command: 'copilot', args: [], env: {} } },
+        retention: { maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 },
+      });
+    });
   });
 });
 

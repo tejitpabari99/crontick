@@ -139,8 +139,19 @@ function printDashboardData(data: unknown): void {
   }
 }
 
-/** Map any error to stderr + exit(1). CrontickError includes a machine-readable code. */
-function handleError(err: unknown): never {
+/**
+ * Map any error to stderr + a non-zero exit code. CrontickError includes a
+ * machine-readable code.
+ *
+ * Deliberately sets `process.exitCode` instead of calling `process.exit()`.
+ * Daemon-backed errors arrive after an in-flight `fetch()` (undici) request;
+ * calling `process.exit()` immediately can race the socket/handle teardown
+ * that fetch schedules for after the response body is read, which trips
+ * `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` in libuv on
+ * Windows. Setting `exitCode` and returning lets Node drain the event loop
+ * (finishing that teardown) before exiting on its own with the same code.
+ */
+function handleError(err: unknown): void {
   if (err instanceof CrontickError) {
     stderr(`Error [${err.code}]: ${err.message}`);
   } else if (err instanceof Error) {
@@ -148,7 +159,7 @@ function handleError(err: unknown): never {
   } else {
     stderr(`Error: ${String(err)}`);
   }
-  process.exit(1);
+  process.exitCode = 1;
 }
 
 function commonJobOptions(command: Command): Command {
@@ -584,7 +595,7 @@ program.command('doctor').description('Check system health').action(async () => 
         stdout(`${check.ok ? '✓' : '✗'} ${check.name}${check.note ? ` (${check.note})` : ''}`);
       }
     }
-    if (!result.ok) process.exit(1);
+    if (!result.ok) process.exitCode = 1;
   } catch (err) { handleError(err); }
 });
 

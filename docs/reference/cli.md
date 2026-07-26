@@ -357,6 +357,11 @@ Remove one config value.
 crontick config unset <path>
 ```
 
+Removes the key from `config.json` itself. If the key has a built-in default (e.g.
+`defaultEngine`, `retention.*`, or the built-in `copilot` engine's fields), `config get`
+continues to report that default afterward — but the file no longer pins the value
+explicitly. See [configuration.md](configuration.md#set-vs-inherited-values).
+
 ---
 
 ### crontick config init
