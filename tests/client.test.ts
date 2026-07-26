@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import http from 'node:http';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { createClient } from '../src/client.js';
 import { CrontickError } from '../src/errors.js';
@@ -220,6 +222,27 @@ describe('CrontickClient', () => {
     expect(existsSync(join(home, 'daemon.port'))).toBe(true);
     expect(existsSync(join(home, 'daemon.pid'))).toBe(true);
   });
+
+  it('defaults daemonScript to the real dist/daemon/index.js when the caller supplies none (bare createClient against the built dist/index.js, matching the README quick start)', async () => {
+    const home = makeHome();
+    const script = join(home, 'bare-client.mjs');
+    const distIndexUrl = pathToFileURL(resolve('dist', 'index.js')).href;
+    writeFileSync(script, `
+import { createClient } from ${JSON.stringify(distIndexUrl)};
+const client = createClient({ startupTimeoutMs: 10_000 });
+const created = await client.createJob({
+  id: 'bare-default-daemon-script-job',
+  schedule: { kind: 'cron', cron: '0 0 * * *' },
+  action: { kind: 'exec', command: 'echo', args: ['hello'] },
+});
+process.stdout.write(JSON.stringify({ id: created.id }));
+`);
+    const result = spawnSync(process.execPath, [script], { encoding: 'utf-8', env: { ...process.env } });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({ id: 'bare-default-daemon-script-job' });
+    expect(existsSync(join(home, 'daemon.port'))).toBe(true);
+  }, 15_000);
 
   it('keeps health and daemonStatus no-start by default', async () => {
     const home = makeHome();

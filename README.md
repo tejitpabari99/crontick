@@ -55,10 +55,14 @@ npm install crontick
 
 ```sh
 npm install -g crontick
-crontick new hello --cron "*/5 * * * *" --exec "echo hello"
+crontick new hello --cron "*/5 * * * *" --exec node -- -e "console.log('hello')"
 crontick list
 crontick daemon status
 ```
+
+> On Windows PowerShell, a bare `crontick` resolves to the npm-generated `.ps1` shim, which drops
+> a literal `--` before the script sees it -- use `crontick.cmd` explicitly for commands like the
+> one above (details under [One-shot reminder](#one-shot-reminder)).
 
 ### Library (ESM)
 
@@ -90,17 +94,24 @@ crontick new backup --cron "0 2 * * *" --script "pg_dump mydb > /backups/db.sql"
 ### One-shot reminder
 
 ```sh
-crontick new deploy-reminder --at "2026-08-01T09:00:00" --script "notify-send 'Deploy v2 today'"
+crontick new deploy-reminder --at "2026-08-01T09:00:00" --exec notify-send -- "Deploy v2 today"
 ```
 
-`--exec` splits its argument on whitespace (see [CLI reference](docs/reference/cli.md)), so an
-argument containing a space -- like the reminder text above -- needs `--script` (which runs
-through a shell) instead.
+`--exec <command>` takes the command verbatim (no whitespace splitting); everything after `--`
+becomes its argument list, so `"Deploy v2 today"` reaches `notify-send` as one argument, spaces
+included. Need shell features (pipes, redirects, globbing) instead? Use `--script`, which runs
+through a shell.
+
+> **Windows PowerShell note:** a bare `crontick` resolves to the npm-generated `crontick.ps1`
+> shim, and PowerShell's own parameter binding drops a literal `--` token before the script ever
+> sees it (true for any `.ps1` script, not specific to crontick). If a `--exec`/`--` command
+> silently loses its trailing args under PowerShell, invoke `crontick.cmd` explicitly (or run
+> from `cmd.exe`) -- both forward `--` untouched.
 
 ### Execute a binary directly
 
 ```sh
-crontick new healthcheck --every 30 --exec "curl -sf http://localhost:3000/health"
+crontick new healthcheck --every 30 --exec curl -- -sf http://localhost:3000/health
 ```
 
 ### AI prompt job
@@ -143,7 +154,7 @@ The library entry point (`import ... from 'crontick'`) exports:
 | `ORPHAN_RUN_ERROR_CODE` / `ORPHAN_RUN_ERROR_MESSAGE` | Stored `runs.error` value/prefix for a run canceled by a daemon restart (not a thrown `CrontickError` code) |
 | `SURFACE_CAPABILITIES` | Registry of all capability names, client methods, CLI commands, and MCP tool names |
 | `JobSchema`, `ScheduleSchema`, `PromptActionSchema` | Zod schemas for validation |
-| `RetentionConfigSchema` / `RetentionConfig` | Run retention config schema/type (`maxRunsPerJob`) |
+| `RetentionConfigSchema` / `RetentionConfig` | Run retention config schema/type (`maxRunsPerJob`, `maxOutputBytesPerRun`) |
 | `jobJsonSchema` / `jobJsonSchemaText` | JSON Schema representation of a job |
 | Config utilities | `loadConfig`, `initConfig`, `getConfigValue`, `setConfigValue`, etc. |
 | Logger utilities | `createLogger`, `nullLogger`, `redactText` |
@@ -173,7 +184,11 @@ Key environment variables: `CRONTICK_HOME`, `CRONTICK_DAEMON_URL`, `CRONTICK_VER
 
 Each job retains at most `retention.maxRunsPerJob` runs (default `100`, range `1..100000`);
 older terminal runs and their logs are pruned automatically, and a changed cap takes effect on
-`crontick daemon reload` without a restart. This is a per-job count cap only -- see
+`crontick daemon reload` without a restart. `retention.maxOutputBytesPerRun` (default `2_000_000`,
+range `1024..1_000_000_000`) caps captured stdout/stderr per run -- once hit, output is truncated
+and the run's `outputTruncated` field is set. Back up run history before it's pruned with
+`crontick export --include-runs` (see [docs/reference/cli.md](docs/reference/cli.md)). These are
+per-job/per-run caps only -- see
 [docs/concepts/state-and-storage.md](docs/concepts/state-and-storage.md#run-history-retention)
 for the exact behavior and its limitations.
 

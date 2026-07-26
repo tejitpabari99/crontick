@@ -426,6 +426,48 @@ export class Store {
     return rows.map(rowToRun);
   }
 
+  /**
+   * Bulk-restores previously-exported run history (L7's `export --include-runs`
+   * mitigation for hard-delete retention). Inserts are archival only: no
+   * execution, no scheduler interaction. Idempotent on `id` (INSERT OR IGNORE
+   * — a run already present, e.g. from re-importing the same backup, is left
+   * untouched and not counted as imported). Rows referencing a job that
+   * doesn't exist in this store are skipped individually so a partial restore
+   * still succeeds for everything else.
+   */
+  importRuns(runs: Run[]): { imported: number; skipped: Array<{ id: string; error: string }> } {
+    const skipped: Array<{ id: string; error: string }> = [];
+    let imported = 0;
+    const jobExists = this.db.prepare('SELECT 1 FROM jobs WHERE id = ?');
+    const insert = this.db.prepare(
+      `INSERT OR IGNORE INTO runs
+         (id, job_id, started_at, ended_at, status, exit_code, error, duration_ms, pid, output_truncated)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const run of runs) {
+      if (!jobExists.get(run.jobId)) {
+        skipped.push({ id: run.id, error: 'job not found' });
+        continue;
+      }
+      const result = insert.run(
+        run.id,
+        run.jobId,
+        run.startedAt,
+        run.endedAt ?? null,
+        run.status,
+        run.exitCode ?? null,
+        run.error ?? null,
+        run.durationMs ?? null,
+        run.pid ?? null,
+        run.outputTruncated ? 1 : 0,
+      ) as { changes: number };
+      if (result.changes > 0) imported += 1;
+      // else: id already present -- idempotent re-import, not an error.
+    }
+    this.logger.debug('Imported runs', { requested: runs.length, imported, skipped: skipped.length });
+    return { imported, skipped };
+  }
+
   // ── Log CRUD ────────────────────────────────────────────────────────────────
 
   appendLog(runId: string, stream: 'stdout' | 'stderr', chunk: Buffer): void {

@@ -114,11 +114,12 @@ describe('CLI binary (dist/cli/index.js)', () => {
     expect(result.stdout).not.toContain('-f,');
   });
 
-  it('new --help describes --exec\'s real whitespace-splitting behavior, not a nonexistent -- separator', () => {
+  it('new --help describes --exec\'s real verbatim-command + -- args behavior', () => {
     const result = cli(['new', '--help']);
     expect(result.status).toBe(0);
-    expect(result.stdout).not.toContain('use -- for args');
-    expect(result.stdout).toContain('split naively on whitespace');
+    expect(result.stdout).not.toContain('split naively on whitespace');
+    expect(result.stdout).toContain('taken verbatim');
+    expect(result.stdout).toContain('pass arguments after --');
   });
 
   it('daemon-backed list auto-starts the daemon when down', async () => {
@@ -175,6 +176,31 @@ describe('CLI binary (dist/cli/index.js)', () => {
       expect(existsSync(join(tmp, 'daemon.pid'))).toBe(false);
       expect(existsSync(join(tmp, 'daemon.ensure.lock'))).toBe(false);
     } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it('daemon stop reports the graceful HTTP mode and pid, in both text and --json output', async () => {
+    const tmp = makeTmpDir();
+    try {
+      const started = cli(['--json', 'list'], { CRONTICK_HOME: tmp });
+      expect(started.status, started.stderr).toBe(0);
+      const pid = readPidFile(tmp);
+      expect(pid).toBeGreaterThan(0);
+
+      const jsonStop = cli(['--json', 'daemon', 'stop'], { CRONTICK_HOME: tmp });
+      expect(jsonStop.status, jsonStop.stderr).toBe(0);
+      const data = JSON.parse(jsonStop.stdout);
+      expect(data.mode).toBe('graceful');
+      expect(data.pid).toBe(pid);
+
+      // Second stop against an already-stopped daemon still reports a mode.
+      const textStop = cli(['daemon', 'stop'], { CRONTICK_HOME: tmp });
+      expect(textStop.status, textStop.stderr).toBe(0);
+      expect(textStop.stdout).toContain('mode: already-stopped');
+    } finally {
+      stopDaemonInHome(tmp);
+      await new Promise((r) => setTimeout(r, 300));
       rmSync(tmp, { recursive: true, force: true });
     }
   }, 15_000);
@@ -242,10 +268,11 @@ describe('CLI e2e with daemon', () => {
   const env = () => ({ CRONTICK_HOME: dir });
 
   it('crontick new creates a job', () => {
-    const r = cli(['--json', 'new', 'e2e-job', '--cron', '0 0 * * *', '--exec', `${process.execPath} -e process.exit(0)`], env());
+    const r = cli(['--json', 'new', 'e2e-job', '--cron', '0 0 * * *', '--exec', process.execPath, '--', '-e', 'process.exit(0)'], env());
     expect(r.status).toBe(0);
     const data = JSON.parse(r.stdout);
     expect(data.id).toBe('e2e-job');
+    expect(data.action).toMatchObject({ kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] });
     expect(readFileSync(join(dir, 'jobs', 'e2e-job.schema.json'), 'utf-8')).toBe(jobJsonSchemaText());
   });
 
@@ -378,7 +405,7 @@ describe('CLI e2e with daemon', () => {
   it('crontick new rejects prompt-only flags outside prompt mode', () => {
     const raw = cli(['new', 'bad-raw-job', '--cron', '0 0 * * *', '--script', 'echo hi', '--', '--silent'], env());
     expect(raw.status).not.toBe(0);
-    expect(raw.stderr).toContain('Raw engine args');
+    expect(raw.stderr).toContain('Raw args after --');
 
     const session = cli(['new', 'bad-session-job', '--cron', '0 0 * * *', '--script', 'echo hi', '--session-id', 'sess-12345678'], env());
     expect(session.status).not.toBe(0);
@@ -425,8 +452,9 @@ describe('CLI e2e with daemon', () => {
   it('crontick update merges a partial patch onto the existing definition rather than replacing it', () => {
     const created = cli([
       '--json', 'new', 'merge-check-job', '--cron', '0 9 * * *',
-      '--exec', 'echo hi',
+      '--exec', 'echo',
       '--overlap', 'queue', '--retry', '2',
+      '--', 'hi',
     ], env());
     expect(created.status, created.stderr).toBe(0);
 
@@ -444,7 +472,7 @@ describe('CLI e2e with daemon', () => {
   it('crontick update --overlap skip explicitly sets skip (not silently ignored)', () => {
     const created = cli([
       '--json', 'new', 'overlap-cases-job', '--cron', '0 9 * * *',
-      '--exec', 'echo hi', '--overlap', 'queue',
+      '--exec', 'echo', '--overlap', 'queue', '--', 'hi',
     ], env());
     expect(created.status, created.stderr).toBe(0);
     expect(JSON.parse(created.stdout).overlap).toBe('queue');
@@ -496,7 +524,7 @@ describe('CLI e2e with daemon', () => {
   });
 
   it('crontick update switching action kind fully replaces the action (no stale fields)', () => {
-    const updated = cli(['--json', 'update', 'shell-preserve-job', '--exec', 'echo done'], env());
+    const updated = cli(['--json', 'update', 'shell-preserve-job', '--exec', 'echo', '--', 'done'], env());
     expect(updated.status, updated.stderr).toBe(0);
     const data = JSON.parse(updated.stdout);
     expect(data.action).toMatchObject({ kind: 'exec', command: 'echo', args: ['done'] });
@@ -514,7 +542,7 @@ describe('CLI e2e with daemon', () => {
   it('crontick update --file preserves exec args when the patch only changes envFile', () => {
     const created = cli([
       '--json', 'new', 'file-exec-args-job', '--cron', '0 9 * * *',
-      '--exec', 'echo a b',
+      '--exec', 'echo', '--', 'a', 'b',
     ], env());
     expect(created.status, created.stderr).toBe(0);
     expect(JSON.parse(created.stdout).action).toMatchObject({ kind: 'exec', command: 'echo', args: ['a', 'b'] });
@@ -657,7 +685,12 @@ describe('CLI e2e with daemon', () => {
 
     const getRun = cli(['--json', 'runs', 'get', data.runId], env());
     expect(getRun.status, getRun.stderr).toBe(0);
-    expect(JSON.parse(getRun.stdout).id).toBe(data.runId);
+    const run = JSON.parse(getRun.stdout);
+    expect(run.id).toBe(data.runId);
+    // Handoff #4: pid (the spawned child's pid, once known) and outputTruncated
+    // (whether the retention output cap kicked in) are surfaced on every run record.
+    expect(typeof run.pid === 'number' || run.pid === undefined).toBe(true);
+    expect(typeof run.outputTruncated).toBe('boolean');
 
     const listRuns = cli(['--json', 'runs', 'list', '--job', 'e2e-job', '--limit', '5'], env());
     expect(listRuns.status, listRuns.stderr).toBe(0);
@@ -667,6 +700,22 @@ describe('CLI e2e with daemon', () => {
     expect(cancel.status, cancel.stderr).toBe(0);
     expect(JSON.parse(cancel.stdout)).toMatchObject({ ok: true });
   });
+
+  it('crontick runs list --status filters to the requested run status', async () => {
+    const r = cli(['--json', 'run-now', 'e2e-job'], env());
+    const { runId } = JSON.parse(r.stdout) as { runId: string };
+    await new Promise((resolve) => setTimeout(resolve, 2000)); // let the exec job finish
+
+    const success = cli(['--json', 'runs', 'list', '--job', 'e2e-job', '--status', 'success'], env());
+    expect(success.status, success.stderr).toBe(0);
+    const successRuns = JSON.parse(success.stdout) as Array<{ id: string; status: string }>;
+    expect(successRuns.every((run) => run.status === 'success')).toBe(true);
+    expect(successRuns.some((run) => run.id === runId)).toBe(true);
+
+    const failed = cli(['--json', 'runs', 'list', '--job', 'e2e-job', '--status', 'failed'], env());
+    expect(failed.status, failed.stderr).toBe(0);
+    expect((JSON.parse(failed.stdout) as unknown[]).some((run) => (run as { id: string }).id === runId)).toBe(false);
+  }, 8000);
 
   it('crontick logs works for a completed run', async () => {
     // Get the run ID from a fresh run
@@ -704,7 +753,39 @@ describe('CLI e2e with daemon', () => {
     expect(r.status).toBe(0);
     const data = JSON.parse(r.stdout);
     expect(Array.isArray(data.jobs)).toBe(true);
+    // --include-runs is opt-in -- keeps the default export small.
+    expect(data.runs).toBeUndefined();
   });
+
+  it('L7: crontick export --include-runs and crontick import round-trip run history', async () => {
+    const create = cli(['--json', 'new', 'export-runs-job', '--cron', '0 0 * * *', '--exec', process.execPath, '--', '-e', 'process.exit(0)'], env());
+    expect(create.status, create.stderr).toBe(0);
+    const runNow = cli(['--json', 'run-now', 'export-runs-job'], env());
+    const { runId } = JSON.parse(runNow.stdout) as { runId: string };
+    await new Promise((resolve) => setTimeout(resolve, 2000)); // let the exec job finish
+
+    const exported = cli(['--json', 'export', '--include-runs'], env());
+    expect(exported.status, exported.stderr).toBe(0);
+    const data = JSON.parse(exported.stdout) as { jobs: Array<{ id: string }>; runs: Array<{ id: string; jobId: string }> };
+    expect(data.runs.some((run) => run.id === runId && run.jobId === 'export-runs-job')).toBe(true);
+
+    // Delete the job (run rows aren't cascade-deleted -- the retention gap L7
+    // mitigates), then restore job + runs from the export file.
+    const del = cli(['--json', 'delete', 'export-runs-job'], env());
+    expect(del.status, del.stderr).toBe(0);
+
+    const exportFile = join(dir, 'export-runs.json');
+    writeFileSync(exportFile, exported.stdout, 'utf-8');
+    const imported = cli(['--json', 'import', exportFile], env());
+    expect(imported.status, imported.stderr).toBe(0);
+    const importResult = JSON.parse(imported.stdout) as { runsImported: number; runsSkipped: unknown[] };
+    expect(typeof importResult.runsImported).toBe('number');
+    expect(Array.isArray(importResult.runsSkipped)).toBe(true);
+
+    const listRuns = cli(['--json', 'runs', 'list', '--job', 'export-runs-job'], env());
+    expect(listRuns.status, listRuns.stderr).toBe(0);
+    expect((JSON.parse(listRuns.stdout) as Array<{ id: string }>).some((run) => run.id === runId)).toBe(true);
+  }, 8000);
 
   it('crontick schedule and stats commands expose client capabilities', () => {
     const scheduleJson = JSON.stringify({ kind: 'cron', cron: '0 9 * * *' });
@@ -716,7 +797,7 @@ describe('CLI e2e with daemon', () => {
     expect(preview.status, preview.stderr).toBe(0);
     expect(JSON.parse(preview.stdout).next).toHaveLength(2);
 
-    const create = cli(['--json', 'new', 'stats-cli-job', '--cron', '0 1 * * *', '--exec', `${process.execPath} -e process.exit(0)`], env());
+    const create = cli(['--json', 'new', 'stats-cli-job', '--cron', '0 1 * * *', '--exec', process.execPath, '--', '-e', 'process.exit(0)'], env());
     expect(create.status, create.stderr).toBe(0);
 
     const summary = cli(['--json', 'stats', 'summary'], env());
@@ -733,6 +814,13 @@ describe('CLI e2e with daemon', () => {
     expect(r.status).toBe(0);
     const data = JSON.parse(r.stdout);
     expect(typeof data.pid).toBe('number');
+    // L2: missedFires is always present (report-only missed-fire summary), even when zero.
+    expect(data.missedFires).toMatchObject({
+      jobsWithMissedFires: expect.any(Number),
+      missedRunsRecorded: expect.any(Number),
+      jobsCapped: expect.any(Number),
+      capPerJob: expect.any(Number),
+    });
   });
 
   it('crontick doctor exits 0 when daemon is running', () => {
@@ -746,7 +834,7 @@ describe('CLI e2e with daemon', () => {
 
   it('list --json output parses as JSON array', () => {
     // Create a fresh job so the list is non-empty
-    cli(['--json', 'new', 'list-json-job', '--cron', '0 0 * * *', '--exec', `${process.execPath} -e process.exit(0)`], env());
+    cli(['--json', 'new', 'list-json-job', '--cron', '0 0 * * *', '--exec', process.execPath, '--', '-e', 'process.exit(0)'], env());
     const r = cli(['--json', 'list'], env());
     expect(r.status).toBe(0);
     const data = JSON.parse(r.stdout);

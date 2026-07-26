@@ -48,7 +48,7 @@ describe('crontick config core', () => {
     expect(loadConfig({ env })).toEqual({
       defaultEngine: 'copilot',
       engines: { copilot: { command: 'copilot', args: [], env: {} } },
-      retention: { maxRunsPerJob: 100 },
+      retention: { maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000 },
     });
     expect(validateConfigFile({ env })).toMatchObject({ ok: true, path, problems: [] });
   });
@@ -174,6 +174,27 @@ describe('crontick config core', () => {
 
     expect(() => setConfigValue('retention.maxRunsPerJob', 0, { env })).toThrow(/CONFIG_VALIDATION_ERROR|retention\.maxRunsPerJob/);
     expect(() => setConfigValue('retention.maxRunsPerJob', 1.5, { env })).toThrow(/CONFIG_VALIDATION_ERROR|retention\.maxRunsPerJob/);
+  });
+
+  it('retention.maxOutputBytesPerRun defaults to 2_000_000 and round-trips through get/set', () => {
+    const { env, path } = makeHome();
+
+    // No config file at all: built-in default applies.
+    expect(loadConfig({ env }).retention.maxOutputBytesPerRun).toBe(2_000_000);
+
+    // Custom config file that omits `retention` entirely: deep-merge keeps the default.
+    writeRawConfig(path, { defaultEngine: 'copilot', engines: { copilot: { command: 'copilot' } } });
+    expect(loadConfig({ env }).retention.maxOutputBytesPerRun).toBe(2_000_000);
+
+    setConfigValue('retention.maxOutputBytesPerRun', 5_000_000, { env });
+    expect(getConfigValue('retention.maxOutputBytesPerRun', { env })).toBe(5_000_000);
+
+    expect(() => setConfigValue('retention.maxOutputBytesPerRun', 1023, { env }))
+      .toThrow(/CONFIG_VALIDATION_ERROR|retention\.maxOutputBytesPerRun/);
+    expect(() => setConfigValue('retention.maxOutputBytesPerRun', 1_000_000_001, { env }))
+      .toThrow(/CONFIG_VALIDATION_ERROR|retention\.maxOutputBytesPerRun/);
+    expect(() => setConfigValue('retention.maxOutputBytesPerRun', 1.5, { env }))
+      .toThrow(/CONFIG_VALIDATION_ERROR|retention\.maxOutputBytesPerRun/);
   });
 
   it('initializes with force when the file already exists', () => {

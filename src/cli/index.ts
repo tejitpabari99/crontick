@@ -158,7 +158,7 @@ function commonJobOptions(command: Command): Command {
     .option('--at <iso>', 'One-shot run-at ISO-8601 time')
     .option('--tz <tz>', 'Timezone for cron schedule')
     .option('--script <body>', 'Inline script body')
-    .option('--exec <cmd>', 'Command to exec, split naively on whitespace into command + args (an argument containing a space cannot be expressed this way -- use --script, or --file with an explicit args array)')
+    .option('--exec <cmd>', 'Command to exec, taken verbatim (no whitespace splitting); pass arguments after -- (e.g. --exec node -- -e "process.stdout.write(1)")')
     .option('--prompt <text>', 'Prompt text for a prompt action')
     .option('--prompt-file <path>', 'UTF-8 .txt file to read into the prompt')
     .option('--engine <engine>', 'Configured prompt engine name (default: config defaultEngine)')
@@ -362,15 +362,23 @@ program.command('cancel-run <runId>').description('Cancel an in-progress run').a
   try { print(await client().cancelRun(runId)); } catch (err) { handleError(err); }
 });
 
+const RUN_STATUSES = ['queued', 'running', 'success', 'failed', 'canceled', 'timeout', 'missed'] as const;
+
 const runs = program.command('runs').description('Inspect run history');
 runs.command('list')
   .description('List recent runs')
   .option('--job <id>', 'Filter by job ID')
   .option('--limit <n>', 'Maximum runs to return', parseInteger)
   .option('--since <ms>', 'Only runs since epoch milliseconds', parseInteger)
+  .option('--status <status>', `Filter by run status (${RUN_STATUSES.join('|')})`)
   .action(async (opts) => {
     try {
-      print(await client().listRuns({ jobId: opts.job as string | undefined, limit: opts.limit as number | undefined, since: opts.since as number | undefined }));
+      print(await client().listRuns({
+        jobId: opts.job as string | undefined,
+        limit: opts.limit as number | undefined,
+        since: opts.since as number | undefined,
+        status: opts.status as string | undefined,
+      }));
     } catch (err) { handleError(err); }
   });
 runs.command('get <runId>').description('Get a run by ID').action(async (runId: string) => {
@@ -461,9 +469,10 @@ configEngines.command('remove <name>').description('Remove an engine').action((n
 program.command('export')
   .description('Export all jobs')
   .option('--out <file>', 'Output file (default: stdout)')
+  .option('--include-runs', 'Also include run history in the export')
   .action(async (opts) => {
     try {
-      const data = await client().exportJobs();
+      const data = await client().exportJobs({ includeRuns: opts.includeRuns as boolean | undefined });
       const json = JSON.stringify(data, null, 2);
       if (opts.out) {
         writeFileSync(resolve(process.cwd(), opts.out as string), json, 'utf-8');
@@ -474,12 +483,13 @@ program.command('export')
     } catch (err) { handleError(err); }
   });
 
-program.command('import <file>').description('Import jobs from a JSON file').action(async (file: string) => {
+program.command('import <file>').description('Import jobs (and run history, if present) from a JSON file').action(async (file: string) => {
   try {
     const filePath = resolve(process.cwd(), file);
-    const data = JSON.parse(readFileSync(filePath, 'utf-8')) as { jobs?: unknown[] } | unknown[];
+    const data = JSON.parse(readFileSync(filePath, 'utf-8')) as { jobs?: unknown[]; runs?: unknown[] } | unknown[];
     const jobs = Array.isArray(data) ? data : data.jobs;
-    print(await client().importJobs(Array.isArray(jobs) ? jobs : [], { fileBaseDir: dirname(filePath) }));
+    const runs = Array.isArray(data) ? undefined : data.runs;
+    print(await client().importJobs(Array.isArray(jobs) ? jobs : [], { fileBaseDir: dirname(filePath), runs }));
   } catch (err) { handleError(err); }
 });
 
@@ -509,7 +519,11 @@ daemon.command('start')
     } catch (err) { handleError(err); }
   });
 daemon.command('stop').description('Stop the daemon').action(async () => {
-  try { stdout((await client(false).daemonStop()).message); } catch (err) { handleError(err); }
+  try {
+    const result = await client(false).daemonStop();
+    if (useJson()) print(result);
+    else stdout(`${result.message} (mode: ${result.mode})`);
+  } catch (err) { handleError(err); }
 });
 daemon.command('status').description('Show daemon status').action(async () => {
   try { print(await client(false).daemonStatus()); } catch { stdout('Daemon is not running'); }

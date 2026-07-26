@@ -27,9 +27,16 @@ export const EngineConfigSchema = z.object({
  * `max(100_000)`: a sanity ceiling rejecting fat-finger values that would make
  * the per-insert eviction query (COUNT + ORDER BY ... LIMIT) pointlessly
  * expensive on a table that's supposed to stay small.
+ *
+ * `maxOutputBytesPerRun`: caps stdout+stderr bytes captured per run before
+ * the daemon stops persisting further output for that run (see
+ * docs/internals/executors.md and src/daemon/runner.ts's captureChunk).
+ * `min(1024)`: below this, even the truncation marker line barely fits.
+ * `max(1_000_000_000)`: a sanity ceiling, same rationale as maxRunsPerJob.
  */
 export const RetentionConfigSchema = z.object({
   maxRunsPerJob: z.number().int().min(1).max(100_000).default(100),
+  maxOutputBytesPerRun: z.number().int().min(1024).max(1_000_000_000).default(2_000_000),
 }).strict();
 
 /**
@@ -42,7 +49,7 @@ export const ConfigSchema = z.object({
   engines: z.record(EngineNameSchema, EngineConfigSchema).default({
     copilot: { command: 'copilot', args: [], env: {} },
   }),
-  retention: RetentionConfigSchema.default({ maxRunsPerJob: 100 }),
+  retention: RetentionConfigSchema.default({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000 }),
 }).strict().superRefine((config, ctx) => {
   if (Object.keys(config.engines).length === 0) {
     ctx.addIssue({

@@ -241,11 +241,12 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
   server.registerTool(
     'crontick_run_list',
     {
-      description: 'List recent runs, optionally filtered by job ID.',
+      description: 'List recent runs, optionally filtered by job ID and/or status. Status includes the terminal "missed" state for schedule fires that were recorded but never executed because the daemon was down.',
       inputSchema: withVerbose({
         jobId: z.string().optional(),
         limit: z.number().int().positive().optional(),
         since: z.number().int().optional(),
+        status: z.enum(['queued', 'running', 'success', 'failed', 'canceled', 'timeout', 'missed']).optional(),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
@@ -255,7 +256,7 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
   server.registerTool(
     'crontick_run_get',
     {
-      description: 'Get the details and current status of a specific run by run ID.',
+      description: 'Get the details and current status of a specific run by run ID, including its pid (if it was spawned) and whether its output was truncated by the retention output cap.',
       inputSchema: withVerbose({ runId: z.string() }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
@@ -346,7 +347,7 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     'crontick_daemon_stop',
     {
       description:
-        'Stop the local crontick daemon. Running jobs will be interrupted. Confirm with the user before calling.',
+        'Stop the local crontick daemon gracefully (HTTP shutdown, falling back to a hard kill only if unresponsive). In-flight runs are detached and keep running; they are adopted by the next daemon start rather than being interrupted. Confirm with the user before calling.',
       inputSchema: withVerbose({}),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
@@ -357,7 +358,7 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     'crontick_daemon_status',
     {
       description:
-        'Get the daemon process status: PID, version, uptime, job counts, run stats, Node version, and platform.',
+        'Get the daemon process status: PID, version, uptime, job counts, and a missedFires summary (jobs whose schedule missed fires while the daemon was down since the last start — report-only, never auto-executed; see crontick_run_list with status "missed").',
       inputSchema: withVerbose({}),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
@@ -404,24 +405,27 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     'crontick_export',
     {
       description:
-        'Export all job definitions as a JSON object. Use this to back up or migrate jobs.',
-      inputSchema: withVerbose({}),
+        'Export all job definitions as a JSON object. Use this to back up or migrate jobs. Set includeRuns to also include run history (the mitigation for retention\'s hard-delete of old runs).',
+      inputSchema: withVerbose({
+        includeRuns: z.boolean().optional(),
+      }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.exportJobs()),
+    async (args) => toolWrap(args, (client) => client.exportJobs({ includeRuns: args.includeRuns })),
   );
 
   server.registerTool(
     'crontick_import',
     {
       description:
-        'Import job definitions from a JSON array. Jobs are upserted (existing jobs with the same ID are updated), each import persisting recurring jobs that execute arbitrary commands, scripts, or prompts on the user\'s machine -- confirm the imported job definitions with the user before calling.',
+        'Import job definitions from a JSON array. Jobs are upserted (existing jobs with the same ID are updated), each import persisting recurring jobs that execute arbitrary commands, scripts, or prompts on the user\'s machine -- confirm the imported job definitions with the user before calling. An optional runs array (as produced by crontick_export with includeRuns) is restored archivally: no execution, no scheduler interaction.',
       inputSchema: withVerbose({
         jobs: z.array(z.unknown()),
+        runs: z.array(z.unknown()).optional(),
       }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.importJobs(args.jobs)),
+    async (args) => toolWrap(args, (client) => client.importJobs(args.jobs, { runs: args.runs })),
   );
 
   server.registerTool(

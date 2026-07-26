@@ -426,10 +426,14 @@ function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[]): ActionI
   }
 
   const promptMode = input.prompt !== undefined || input.promptFile !== undefined;
-  if (!promptMode && rawArgs.length > 0) {
+  // --exec reuses the same `--` positional-args convention prompt mode already
+  // uses: the command is taken verbatim (no whitespace splitting) and
+  // everything after `--` becomes action.args.
+  const rawArgsMode = promptMode || input.exec !== undefined;
+  if (!rawArgsMode && rawArgs.length > 0) {
     throw new CrontickError(
       'VALIDATION_ERROR',
-      'Raw engine args after -- are valid only with prompt mode. Use --prompt or --prompt-file, or remove the raw engine args.',
+      'Raw args after -- are valid only with --exec, --prompt, or --prompt-file. Remove the raw args or use one of those action sources.',
     );
   }
   if (!promptMode && (input.engine !== undefined || input.sessionId !== undefined || input.reuseSession)) {
@@ -449,11 +453,10 @@ function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[]): ActionI
     };
   }
   if (input.exec !== undefined) {
-    const parts = input.exec.split(/\s+/).filter(Boolean);
     return {
       kind: 'exec',
-      command: parts[0] ?? '',
-      args: parts.slice(1),
+      command: input.exec, // taken verbatim -- no whitespace splitting
+      args: rawArgs, // everything after `--`, same convention as prompt mode
       envFile: input.envFile,
       timeoutSec: input.timeout,
     };

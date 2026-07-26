@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import {
   normalizeJobInput,
   normalizeJobPatch,
+  buildJobFromCreateOptions,
   buildJobPatchFromUpdateOptions,
   JobPatchInputSchema,
   type ActionInput,
@@ -142,6 +143,47 @@ describe('normalizeJobInput', () => {
   });
 });
 
+// ── buildJobFromCreateOptions — --exec verbatim + rawArgs (L6) ────────────────
+// --exec takes the command verbatim (no whitespace splitting); everything
+// after `--` (rawArgs) becomes action.args, reusing prompt mode's convention.
+
+describe('buildJobFromCreateOptions — --exec verbatim + rawArgs (L6)', () => {
+  it('takes the command verbatim and args from rawArgs, with no whitespace splitting', () => {
+    const job = buildJobFromCreateOptions({
+      id: 'exec-job', cron: '0 9 * * *', exec: 'node', rawArgs: ['-e', 'process.exit(0)'],
+    });
+    expect(job.action).toMatchObject({ kind: 'exec', command: 'node', args: ['-e', 'process.exit(0)'] });
+  });
+
+  it('preserves a single argument containing spaces intact (the naive-split bug this fixes)', () => {
+    const job = buildJobFromCreateOptions({
+      id: 'exec-job', cron: '0 9 * * *', exec: 'echo', rawArgs: ['hello world'],
+    });
+    expect(job.action).toMatchObject({ kind: 'exec', command: 'echo', args: ['hello world'] });
+  });
+
+  it('keeps a command string containing spaces intact when no rawArgs are given', () => {
+    const job = buildJobFromCreateOptions({
+      id: 'exec-job', cron: '0 9 * * *', exec: 'echo hello world',
+    });
+    expect(job.action).toMatchObject({ kind: 'exec', command: 'echo hello world', args: [] });
+  });
+
+  it('produces action output identical to the library/MCP args-array form for the same intent', () => {
+    const viaExec = buildJobFromCreateOptions({
+      id: 'exec-job', cron: '0 9 * * *', exec: 'node', rawArgs: ['-e', 'a b'],
+    });
+    const viaArgsArray = normalizeJobInput(baseJob({ kind: 'exec', command: 'node', args: ['-e', 'a b'] }));
+    expect(viaExec.action).toEqual(viaArgsArray.action);
+  });
+
+  it('rejects rawArgs (--) on --script, unchanged from before L6', () => {
+    expect(() =>
+      buildJobFromCreateOptions({ id: 'exec-job', cron: '0 9 * * *', script: 'echo hi', rawArgs: ['extra'] }),
+    ).toThrow(/Raw args after --/);
+  });
+});
+
 // ── normalizeJobPatch / mergeActionPatch (Blockers 1 & 2) ──────────────────────
 
 function patchOpts(overrides: Partial<JobPatchCliOptions>): JobPatchCliOptions {
@@ -223,7 +265,7 @@ describe('normalizeJobPatch — action merge (mergeActionPatch)', () => {
       envFile: '.env.test',
       timeoutSec: 30,
     });
-    const patch = buildJobPatchFromUpdateOptions(patchOpts({ exec: 'echo done' }));
+    const patch = buildJobPatchFromUpdateOptions(patchOpts({ exec: 'echo', rawArgs: ['done'] }));
     const result = normalizeJobPatch('job-1', existing, patch);
     expect(result.action).toMatchObject({ kind: 'exec', command: 'echo', args: ['done'] });
     expect(result.action).not.toHaveProperty('shell');

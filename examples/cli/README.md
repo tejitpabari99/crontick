@@ -8,6 +8,12 @@ The binary name is **`crontick`** (see `package.json#bin`).
 
 Examples use POSIX single-quote (`'...'`) by default. On **Windows CMD**, replace single quotes with double quotes. On **PowerShell**, single quotes work but JSON values may need escaping with backticks or double quotes around the outer string.
 
+**PowerShell `--` caveat:** a bare `crontick` resolves to the npm-generated `crontick.ps1` shim.
+PowerShell's own parameter binding drops a literal `--` token before the script ever receives it
+(true of any `.ps1` script, not specific to crontick) -- so the `--exec ... -- ...` example below
+loses its trailing args if invoked as plain `crontick`. Use `crontick.cmd` explicitly (or run from
+`cmd.exe`), which forwards `--` untouched.
+
 ---
 
 ## Job creation
@@ -103,6 +109,7 @@ Expected: prints `{ "runId": "<uuid>" }`.
 
 ```sh
 crontick runs list --job hello-world --limit 5
+crontick runs list --status success --limit 5
 ```
 
 ### Get a specific run
@@ -183,7 +190,7 @@ crontick config unset defaultEngine
 
 ```sh
 crontick config engines
-crontick config engines add my-engine --command my-cli --arg '--verbose'
+crontick config engines add my-engine --command my-cli --arg=--verbose
 crontick config engines update my-engine --command my-cli-v2
 crontick config engines remove my-engine
 ```
@@ -200,8 +207,11 @@ crontick config validate
 
 ```sh
 crontick export --out jobs-backup.json
+crontick export --out jobs-and-runs-backup.json --include-runs
 crontick import jobs-backup.json
 ```
+
+`--include-runs` adds a `runs` array to the export; `import` restores it automatically when present.
 
 ---
 

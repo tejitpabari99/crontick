@@ -4,7 +4,7 @@ import http from 'node:http';
 import { createReadStream } from 'node:fs';
 import { URL } from 'node:url';
 import type { Store } from './store.js';
-import type { RunStatus } from './store.js';
+import type { Run, RunStatus } from './store.js';
 import type { Scheduler } from './scheduler.js';
 import type { Runner } from './runner.js';
 import { JobSchema } from '../schemas/job.js';
@@ -317,7 +317,12 @@ async function handleRequest(
 
     // ── Export / Import ───────────────────────────────────────────────────────
     if (method === 'GET' && path === '/api/export') {
-      return sendJson(res, 200, { jobs: ctx.store.listJobs() });
+      // L7: run history is opt-in via ?includeRuns=1 to keep the common
+      // (jobs-only) export small; bounded by whatever retention has left.
+      const includeRuns = url.searchParams.get('includeRuns') === '1';
+      const payload: { jobs: ReturnType<Store['listJobs']>; runs?: Run[] } = { jobs: ctx.store.listJobs() };
+      if (includeRuns) payload.runs = ctx.store.listRuns({});
+      return sendJson(res, 200, payload);
     }
 
     if (method === 'POST' && path === '/api/import') {
@@ -335,7 +340,15 @@ async function handleRequest(
           results.push({ id: String(raw?.id ?? '?'), ok: false, error: 'validation failed' });
         }
       }
-      return sendJson(res, 200, { imported: results.filter((r) => r.ok).length, results });
+      // L7: optional `runs` array (as produced by GET /api/export?includeRuns=1)
+      // is restored archivally -- no execution, no scheduler interaction.
+      const runs = Array.isArray(body?.runs) ? (body.runs as Run[]) : undefined;
+      const runsResult = runs ? ctx.store.importRuns(runs) : undefined;
+      return sendJson(res, 200, {
+        imported: results.filter((r) => r.ok).length,
+        results,
+        ...(runsResult ? { runsImported: runsResult.imported, runsSkipped: runsResult.skipped } : {}),
+      });
     }
 
     // ── Dashboard ─────────────────────────────────────────────────────────────

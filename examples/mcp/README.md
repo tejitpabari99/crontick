@@ -66,9 +66,12 @@ All tools accept an optional `verbose: boolean` parameter for diagnostics.
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `crontick_run_list` | `jobId?`, `limit?`, `since?` | List run records |
-| `crontick_run_get` | `runId` | Get a specific run |
+| `crontick_run_list` | `jobId?`, `limit?`, `since?`, `status?` | List run records |
+| `crontick_run_get` | `runId` | Get a specific run (includes `pid` and `outputTruncated`) |
 | `crontick_run_logs_tail` | `runId`, `lines?` (default 50) | Tail run output logs |
+
+`status` accepts one of `queued`, `running`, `success`, `failed`, `canceled`, `timeout`, `missed`
+(`missed` marks a schedule fire recorded but never executed because the daemon was down).
 
 ### Schedules
 
@@ -121,8 +124,8 @@ All tools accept an optional `verbose: boolean` parameter for diagnostics.
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `crontick_export` | - | Export all jobs |
-| `crontick_import` | `jobs[]` | Import jobs |
+| `crontick_export` | `includeRuns?` | Export all jobs (optionally with run history) |
+| `crontick_import` | `jobs[]`, `runs?` | Import jobs (optionally restoring run history from an export) |
 
 ### Doctor
 

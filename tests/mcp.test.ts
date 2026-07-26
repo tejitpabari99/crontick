@@ -566,13 +566,43 @@ describe('MCP server — full contract', () => {
 
     const { json: runJson, isError: runErr } = await callTool(client, 'crontick_run_get', { runId });
     expect(runErr).toBe(false);
-    expect((runJson as { id: string }).id).toBe(runId);
+    const run = runJson as { id: string; pid?: number; outputTruncated: boolean };
+    expect(run.id).toBe(runId);
+    // Handoff #4: pid (once known) and outputTruncated are surfaced on every run.
+    expect(run.pid === undefined || typeof run.pid === 'number').toBe(true);
+    expect(typeof run.outputTruncated).toBe('boolean');
 
     const { json: logsJson, isError: logsErr } = await callTool(client, 'crontick_run_logs_tail', { runId, lines: 10 });
     expect(logsErr).toBe(false);
     const logsData = logsJson as { runId: string; lines: unknown[] };
     expect(logsData.runId).toBe(runId);
     expect(Array.isArray(logsData.lines)).toBe(true);
+  }, 10_000);
+
+  it('crontick_run_list filters by status', async () => {
+    // A dedicated node-exec job so the run deterministically succeeds, unlike
+    // the shared echo-based testJobId (echo isn't a real executable, shell:false).
+    const jobId = 'mcp-run-status-job';
+    await callTool(client, 'crontick_job_create', {
+      id: jobId,
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
+    });
+    const { json: runNowJson } = await callTool(client, 'crontick_job_run_now', { id: jobId });
+    const { runId } = runNowJson as { runId: string };
+    await new Promise((resolve) => setTimeout(resolve, 2000)); // let the exec job finish
+
+    const { json: successJson, isError: successErr } = await callTool(client, 'crontick_run_list', { jobId, status: 'success' });
+    expect(successErr).toBe(false);
+    const successRuns = successJson as Array<{ id: string; status: string }>;
+    expect(successRuns.every((r) => r.status === 'success')).toBe(true);
+    expect(successRuns.some((r) => r.id === runId)).toBe(true);
+
+    const { json: failedJson, isError: failedErr } = await callTool(client, 'crontick_run_list', { jobId, status: 'failed' });
+    expect(failedErr).toBe(false);
+    expect((failedJson as Array<{ id: string }>).some((r) => r.id === runId)).toBe(false);
+
+    await callTool(client, 'crontick_job_delete', { id: jobId });
   }, 10_000);
 
   it('crontick_job_delete removes the job', async () => {
@@ -623,10 +653,17 @@ describe('MCP server — full contract', () => {
   it('crontick_daemon_status returns healthy', async () => {
     const { json, isError } = await callTool(client, 'crontick_daemon_status');
     expect(isError).toBe(false);
-    const data = json as { pid: number; version: string };
+    const data = json as { pid: number; version: string; missedFires: Record<string, number> };
     expect(typeof data.pid).toBe('number');
     expect(data.pid).toBeGreaterThan(0);
     expect(typeof data.version).toBe('string');
+    // L2: missedFires mirrors the CLI's daemon status output (see tests/cli.test.ts).
+    expect(data.missedFires).toMatchObject({
+      jobsWithMissedFires: expect.any(Number),
+      missedRunsRecorded: expect.any(Number),
+      jobsCapped: expect.any(Number),
+      capPerJob: expect.any(Number),
+    });
   });
 
   it('crontick_daemon_reload returns ok', async () => {
@@ -665,7 +702,45 @@ describe('MCP server — full contract', () => {
     const { json, isError } = await callTool(client, 'crontick_export');
     expect(isError).toBe(false);
     expect(Array.isArray((json as { jobs: unknown[] }).jobs)).toBe(true);
+    // includeRuns defaults to off -- keeps the common export small.
+    expect((json as { runs?: unknown }).runs).toBeUndefined();
   });
+
+  it('L7: crontick_export includeRuns and crontick_import round-trip run history', async () => {
+    const jobId = 'mcp-export-runs-job';
+    await callTool(client, 'crontick_job_create', {
+      id: jobId,
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
+    });
+    await callTool(client, 'crontick_job_run_now', { id: jobId });
+    await new Promise((resolve) => setTimeout(resolve, 2000)); // let the exec job finish
+
+    const { json: exportJson, isError: exportErr } = await callTool(client, 'crontick_export', { includeRuns: true });
+    expect(exportErr).toBe(false);
+    const exported = exportJson as { jobs: Array<{ id: string }>; runs: Array<{ id: string; jobId: string }> };
+    expect(exported.runs.some((r) => r.jobId === jobId)).toBe(true);
+
+    // Delete the job (job history rows are untouched by job delete -- that's
+    // exactly the retention gap L7 exists to mitigate), then restore both the
+    // job and its run history from the export -- proving the wire format
+    // export produces is exactly what import consumes, end to end.
+    await callTool(client, 'crontick_job_delete', { id: jobId });
+    const { json: importJson, isError: importErr } = await callTool(client, 'crontick_import', {
+      jobs: exported.jobs.filter((j) => j.id === jobId),
+      runs: exported.runs,
+    });
+    expect(importErr).toBe(false);
+    expect(importJson as { runsImported?: number; runsSkipped?: unknown[] }).toMatchObject({
+      runsImported: expect.any(Number),
+      runsSkipped: expect.any(Array),
+    });
+
+    const { json: listJson } = await callTool(client, 'crontick_run_list', { jobId });
+    expect((listJson as Array<{ id: string }>).some((r) => exported.runs.some((er) => er.id === r.id))).toBe(true);
+
+    await callTool(client, 'crontick_job_delete', { id: jobId });
+  }, 10_000);
 
   it('crontick_doctor returns check results', async () => {
     const { json, isError } = await callTool(client, 'crontick_doctor');
@@ -739,7 +814,9 @@ describe('MCP server — full contract', () => {
   it('crontick_dashboard_stop stops the daemon-backed dashboard server', async () => {
     const { json, isError } = await callTool(client, 'crontick_dashboard_stop');
     expect(isError).toBe(false);
-    expect(json).toMatchObject({ ok: true, stopped: expect.any(Boolean) });
+    // dashboardStop delegates to daemonStop(); mode surfaces the L1 HTTP-first
+    // shutdown handshake result (see src/daemon/lifecycle.ts DaemonStopResult).
+    expect(json).toMatchObject({ ok: true, stopped: expect.any(Boolean), mode: expect.stringMatching(/^(graceful|hard-kill|already-stopped)$/) });
   });
 });
 
