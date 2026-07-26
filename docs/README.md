@@ -58,7 +58,7 @@ observable behavior without updating relevant docs is incomplete.
 | [execution.md](concepts/execution.md) | How actions run: shell rules, timeouts, cancellation |
 | [daemon-lifecycle.md](concepts/daemon-lifecycle.md) | Demand-start, shutdown, no supervision |
 | [state-and-storage.md](concepts/state-and-storage.md) | Where state lives, SQLite WAL, JSON files |
-| [surface-parity.md](concepts/surface-parity.md) | The 36-capability contract across CLI/MCP/library |
+| [surface-parity.md](concepts/surface-parity.md) | The 37-capability contract across CLI/MCP/library |
 | [error-model.md](concepts/error-model.md) | Error codes, structured errors, surface presentation |
 
 ### docs/internals/

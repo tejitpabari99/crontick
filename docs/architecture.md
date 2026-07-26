@@ -42,7 +42,7 @@ Key public symbols:
 | Version | `VERSION` |
 | Types | `Job`, `JobInput`, `Schedule`, `Action`, `PromptAction`, `PromptEngine`, `CrontickConfig`, `EngineConfig`, `LogEvent`, `Logger`, `LogLevel`, `LogSink`, `SurfaceCapability`, `DashboardData`, `DashboardStatus`, etc. |
 
-The three binaries (`crontick`, `crontick-daemon`, `crontick-mcp`) are CLI entry points, not importable APIs. Internal modules (everything under `src/daemon/`, `src/cli/`, `src/mcp/`, `src/schemas/`, and non-exported source files like `src/paths.ts`, `src/prompt-runtime.ts`) are implementation details and may change without notice. The `SURFACE_CAPABILITIES` export enumerates all 36 public operations; it is itself public so consumers can introspect available functionality.
+The three binaries (`crontick`, `crontick-daemon`, `crontick-mcp`) are CLI entry points, not importable APIs. Internal modules (everything under `src/daemon/`, `src/cli/`, `src/mcp/`, `src/schemas/`, and non-exported source files like `src/paths.ts`, `src/prompt-runtime.ts`) are implementation details and may change without notice. The `SURFACE_CAPABILITIES` export enumerates all 37 public operations; it is itself public so consumers can introspect available functionality.
 
 ## Major components
 
@@ -56,7 +56,7 @@ The three binaries (`crontick`, `crontick-daemon`, `crontick-mcp`) are CLI entry
 
 ### MCP server shim
 
-`src/mcp/index.ts`. A stdio-transport MCP server (`@modelcontextprotocol/sdk`) that registers 36 tools and one resource (`crontick://schemas/job`). Each tool handler instantiates `CrontickClient`, delegates to the matching method, and returns a JSON text content block. Errors are returned with `isError: true`. The `redactForLlm()` helper strips loopback addresses and filesystem paths from error messages before returning them to the host.
+`src/mcp/index.ts`. A stdio-transport MCP server (`@modelcontextprotocol/sdk`) that registers 37 tools and one resource (`crontick://schemas/job`). Each tool handler instantiates `CrontickClient`, delegates to the matching method, and returns a JSON text content block. Errors are returned with `isError: true`. The `redactForLlm()` helper strips loopback addresses and filesystem paths from error messages before returning them to the host.
 
 ### Library API shim
 
@@ -190,7 +190,7 @@ These are architectural rules enforced by code, tests, or review policy. Violati
 
 | Invariant | Enforcement mechanism |
 |-----------|----------------------|
-| Surface parity: every capability exists identically in client, CLI, and MCP | `SURFACE_CAPABILITIES` constant in `src/surface.ts` defines a 36-row mapping of `{ capability, clientMethod, cliCommand, mcpTool }`; `tests/surface-drift.test.ts` asserts: (a) every capability maps to a real `CrontickClient.prototype` method, (b) every client method is accounted for in the table or in the explicit `NON_PARITY_CLIENT_METHODS` set, (c) every MCP tool is registered, (d) every CLI command exists |
+| Surface parity: every capability exists identically in client, CLI, and MCP | `SURFACE_CAPABILITIES` constant in `src/surface.ts` defines a 37-row mapping of `{ capability, clientMethod, cliCommand, mcpTool }`; `tests/surface-drift.test.ts` asserts: (a) every capability maps to a real `CrontickClient.prototype` method, (b) every client method is accounted for in the table or in the explicit `NON_PARITY_CLIENT_METHODS` set, (c) every MCP tool is registered, (d) every CLI command exists |
 | Shims contain no business logic | Architecture review rubric (`.github/skills/review-crontick/SKILL.md`); scheduling, validation, persistence, error construction, schema generation live exclusively in core (client + daemon modules) |
 | Loopback-only binding | `createApiServer` in `src/daemon/api.ts` checks `req.socket.remoteAddress` against `Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])`; non-loopback requests receive HTTP 403 with code `FORBIDDEN`; `tests/security.test.ts` verifies this |
 | Single daemon instance per data directory | PID file (`daemon.pid`) written on startup; liveness probe via `process.kill(pid, 0)`; exclusive startup lock via `openSync('wx')` on `daemon.ensure.lock` with polling + timeout |
