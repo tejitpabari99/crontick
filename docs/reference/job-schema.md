@@ -227,5 +227,6 @@ Runs stored in SQLite use these status values:
 | `running` | Currently executing |
 | `success` | Completed with exit code 0 |
 | `failed` | Completed with non-zero exit code or error |
-| `canceled` | Canceled by user or overlap policy `cancel-previous` |
+| `canceled` | Canceled by user, overlap policy `cancel-previous`, or a confirmed-dead orphan on daemon restart |
 | `timeout` | Killed due to `timeoutSec` |
+| `missed` | No process ever ran: recorded at daemon startup for a fire that occurred while no daemon was running. See [concepts/daemon-lifecycle.md](../concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down) |

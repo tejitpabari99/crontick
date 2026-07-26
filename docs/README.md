@@ -70,7 +70,7 @@ observable behavior without updating relevant docs is incomplete.
 | [daemon.md](internals/daemon.md) | Daemon process: HTTP server, routing, lifecycle |
 | [scheduler.md](internals/scheduler.md) | Scheduler loop: croner integration, tick behavior |
 | [executors.md](internals/executors.md) | Script, exec, and prompt executor implementations |
-| [storage.md](internals/storage.md) | SQLite schema, WAL mode, migrations |
+| [storage.md](internals/storage.md) | SQLite schema, WAL mode, retention and eviction |
 | [shims.md](internals/shims.md) | CLI and MCP shim architecture (thin adapters) |
 | [build-and-package.md](internals/build-and-package.md) | tsup config, bin entries, publish pipeline |
 
@@ -107,7 +107,7 @@ See [decisions/README.md](decisions/README.md) for the full list of architecture
 | [003-execution.md](../specs/003-execution.md) | Execution guarantees and failure modes |
 | [004-daemon.md](../specs/004-daemon.md) | Daemon process lifecycle contract |
 | [005-surface-parity.md](../specs/005-surface-parity.md) | Surface parity requirements |
-| [006-state-and-persistence.md](../specs/006-state-and-persistence.md) | State format and migration guarantees |
+| [006-state-and-persistence.md](../specs/006-state-and-persistence.md) | State format and durability guarantees |
 | [007-prompt-jobs.md](../specs/007-prompt-jobs.md) | Prompt job behavior specification |
 
 ### examples/

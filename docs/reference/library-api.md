@@ -46,10 +46,10 @@ class CrontickClient {
 | `runNow` | `(id: string): Promise<{ runId: string }>` | `{ runId }` | `CrontickError` |
 | `cancelRun` | `(runId: string): Promise<{ ok: true; canceled: boolean }>` | Cancel result | `CrontickError` |
 | `getRun` | `(runId: string): Promise<unknown>` | Run object | `CrontickError` |
-| `listRuns` | `(options?: { jobId?: string; limit?: number; since?: number }): Promise<unknown[]>` | Array of runs | `CrontickError` |
+| `listRuns` | `(options?: { jobId?: string; limit?: number; since?: number; status?: string }): Promise<unknown[]>` | Array of runs | `CrontickError` |
 | `getLogs` | `(runId: string, options?: { lines?: number }): Promise<LogsResult>` | `LogsResult` | `CrontickError` |
-| `exportJobs` | `(): Promise<{ jobs: Job[] }>` | Export payload | `CrontickError` |
-| `importJobs` | `(jobs: unknown[], options?: NormalizeJobInputOptions): Promise<unknown>` | Import result | `CrontickError` |
+| `exportJobs` | `(options?: { includeRuns?: boolean }): Promise<{ jobs: Job[]; runs?: unknown[] }>` | Export payload; `runs` present only when `includeRuns` is set | `CrontickError` |
+| `importJobs` | `(jobs: unknown[], options?: NormalizeJobInputOptions & { runs?: unknown[] }): Promise<unknown>` | Import result, including `runsImported`/`runsSkipped` when `options.runs` is passed | `CrontickError` |
 | `validateSchedule` | `(schedule: Schedule): Promise<unknown>` | Validation result | `CrontickError` |
 | `previewSchedule` | `(input: { schedule: Schedule; n?: number; tz?: string }): Promise<unknown>` | Fire times | `CrontickError` |
 | `statsSummary` | `(): Promise<StatsSummary>` | `StatsSummary` | `CrontickError` |
@@ -561,9 +561,12 @@ const SURFACE_CAPABILITIES: readonly SurfaceCapability[];
 const ORPHAN_RUN_ERROR_CODE: string; // 'DAEMON_RESTART'
 ```
 
-The stable code prefix stored in `runs.error` when `Store.reconcileOrphanRuns()` cancels a run
-left `running`/`queued` by a daemon restart. Not a thrown `CrontickError` code — see
-[errors.md](errors.md#stored-run-error-values-not-crontickerror-codes).
+The stable code prefix stored in `runs.error` when `Store.reconcileOrphanRuns()` cancels a
+`queued` run (never spawned) or a `running` run confirmed dead by a process-liveness check, left
+behind by a daemon restart. A `running` run whose process is still alive (or the liveness check
+was inconclusive) is adopted instead and does not get this error — see
+[storage internals](../internals/storage.md#orphan-reconciliation). Not a thrown `CrontickError`
+code — see [errors.md](errors.md#stored-run-error-values-not-crontickerror-codes).
 
 ### ORPHAN_RUN_ERROR_MESSAGE
 

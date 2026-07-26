@@ -106,36 +106,6 @@ Then run `crontick doctor`. If it still fails, inspect the ensure log in the cro
 `logs/daemon.ensure.log`. crontick is not a supervisor; if the daemon died while idle, scheduled jobs
 pause until you start it or run another daemon-backed command.
 
-### My schedule silently stopped running
-
-crontick has no supervisor and no alerting: if a job stops firing, nothing notifies you. This is
-expected behavior of the demand-started daemon model, not a bug -- see
-[daemon-lifecycle.md](concepts/daemon-lifecycle.md#limitations-and-known-gaps) for why. Common
-causes, in rough order of likelihood:
-
-- **Nothing has demand-started the daemon since a reboot or logout.** The daemon only starts when
-  a crontick command (CLI, MCP, or client) runs. After a reboot, if nothing has invoked crontick
-  yet, the daemon simply is not running and no job fires -- there is no missed-tick record.
-- **The daemon process died** (crash, out-of-memory kill, manual `kill -9`/Task Manager, etc.)
-  while otherwise idle between ticks.
-- **The overlap policy was violated across a restart.** If the daemon restarted while a run for a
-  `skip`/`cancel-previous` job was still active, the new process has no memory of that run, since
-  overlap tracking is in-memory only (see [execution.md](concepts/execution.md#overlap-enforcement)).
-
-Check and mitigate:
-
-```sh
-crontick daemon status
-crontick doctor
-```
-
-If the daemon is not running, start it explicitly (`crontick daemon start`) or run any other
-daemon-backed command, which demand-starts it. There is no built-in way to be notified
-automatically today; the practical mitigation is to periodically run `crontick daemon status` or
-`crontick doctor` yourself (from your own monitoring, or simply a habit), or to keep a terminal or
-script that periodically invokes crontick, since that is what keeps the demand-started daemon
-alive in the first place.
-
 ### Need more crontick diagnostics
 
 Use `crontick --verbose ...` (or `-v`) or set `CRONTICK_VERBOSE=1`. Verbose output goes to stderr,
@@ -210,7 +180,7 @@ run, scheduled or otherwise -- until the file is removed. Recovery:
    `runs.db-shm`. All three must go together -- removing only `runs.db` can leave a stale
    `-wal`/`-shm` pair that the next open tries to replay against the new, empty database file.
 4. Start the daemon again (`crontick daemon start`, or let the next daemon-backed command
-   demand-start it). A fresh `runs.db` is created and migrated automatically.
+   demand-start it). A fresh `runs.db` is created automatically.
 
 **What this loses:** run history and logs only -- every past run, its stdout/stderr, exit code,
 and timestamps. **Job definitions are not affected**: jobs are the JSON files under
@@ -237,22 +207,34 @@ directory if no `cwd` is set).
 ### My old runs disappeared
 
 Each job keeps at most `retention.maxRunsPerJob` runs (default `100`); older runs (and their
-logs) are pruned automatically and permanently — there is no export, dry-run, warning, or undo
-before eviction. This is a per-job **count** cap only: a job that fires every minute keeps far
-less calendar history than a job that fires monthly under the same cap. If you need to keep more
-history, raise `retention.maxRunsPerJob` in `config.json` and run `crontick daemon reload`
-(existing runs beyond the old cap that were already pruned cannot be recovered). See
+logs) are pruned automatically and permanently — eviction has no dry-run, warning, or undo. This
+is a per-job **count** cap only: a job that fires every minute keeps far less calendar history
+than a job that fires monthly under the same cap. If you need to keep more history, raise
+`retention.maxRunsPerJob` in `config.json` and run `crontick daemon reload` (existing runs beyond
+the old cap that were already pruned cannot be recovered after the fact). To avoid losing history
+in the first place, back it up before it is evicted: `crontick export --include-runs` captures
+every job's run history, and `crontick import` restores it — see
+[cli.md](reference/cli.md#export). See
 [state-and-storage.md](concepts/state-and-storage.md#run-history-retention) and
 [configuration.md](reference/configuration.md).
 
-### `crontick daemon stop` doesn't clean up on Windows
+### `crontick daemon stop` reports `mode: "hard-kill"` instead of `"graceful"`
 
-On Windows, sending a stop signal to the daemon process terminates it immediately without
-running its graceful-shutdown handler (Node.js signal handlers are not invoked for
-externally-delivered `SIGINT`/`SIGTERM` on Windows, only for a genuine Ctrl+C in the same
-console). PID/port files may be left behind, and any in-flight run's own graceful cleanup is
-skipped. This is expected: the next daemon start tolerates and overwrites stale PID/port files.
-The only cross-platform guarantee after `crontick daemon stop` is that the process is no longer
-alive. See [daemon-lifecycle.md](concepts/daemon-lifecycle.md#shutdown).
+`crontick daemon stop` (and `daemon restart`) prefer `POST /api/daemon/stop`, an in-process
+graceful shutdown that works identically on every platform, including Windows, where OS signals
+sent to another process do not invoke Node's signal handlers at all. A result of `mode:
+"hard-kill"` means the HTTP route could not be reached, so `stopDaemon()` fell back to a raw
+`SIGTERM`/process-kill instead — this is the only path left when the daemon is already wedged or
+unresponsive. Common causes:
+
+- **Stale or missing `daemon.port` file.** Run `crontick doctor` to check daemon reachability;
+  if the port file is stale, the next `crontick daemon start` will overwrite it.
+- **The daemon is deadlocked or otherwise not answering HTTP**, in which case the hard-kill
+  fallback is the correct, intended recovery path, not a bug.
+
+After a hard-kill (on any platform), any run whose child process is still alive is picked up by
+the next daemon start's orphan reconciliation (adopted if still alive, canceled if not) — see
+[daemon-lifecycle.md](concepts/daemon-lifecycle.md#shutdown) and
+[storage.md](internals/storage.md#orphan-reconciliation).
 
 For all error codes see [docs/reference/errors.md](reference/errors.md).

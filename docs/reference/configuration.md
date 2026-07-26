@@ -33,7 +33,8 @@ The data directory is resolved by (in order):
     }
   },
   "retention": {
-    "maxRunsPerJob": 100
+    "maxRunsPerJob": 100,
+    "maxOutputBytesPerRun": 2000000
   }
 }
 ```
@@ -42,23 +43,29 @@ The data directory is resolved by (in order):
 |-------|------|----------|---------|-------------|
 | `defaultEngine` | `string` | no | `"copilot"` | Must match a key in `engines`; regex `^[A-Za-z0-9_.-]+$` |
 | `engines` | `Record<string, EngineConfig>` | no | `{ copilot: { command: "copilot", args: [], env: {} } }` | At least one engine must be defined |
-| `retention` | `RetentionConfig` | no | `{ maxRunsPerJob: 100 }` | See below |
+| `retention` | `RetentionConfig` | no | `{ maxRunsPerJob: 100, maxOutputBytesPerRun: 2000000 }` | See below |
 
 ### RetentionConfig
 
 | Field | Type | Required | Default | Constraints |
 |-------|------|----------|---------|-------------|
 | `maxRunsPerJob` | `integer` | no | `100` | `min(1)`, `max(100_000)` |
+| `maxOutputBytesPerRun` | `integer` | no | `2_000_000` | `min(1024)`, `max(1_000_000_000)` |
 
 Each job retains at most `maxRunsPerJob` runs; the oldest terminal runs (not `running`/`queued`)
-are evicted first, along with their logs, whenever a new run is inserted, and again in a
-one-time startup backfill for databases that predate this setting. Eviction is best-effort: a
-failure is logged but never fails a run insert or blocks daemon startup. Changing
-`retention.maxRunsPerJob` and running `crontick daemon reload` applies the new cap immediately,
-without a daemon restart. `RetentionConfigSchema` is `.strict()` — no extra fields allowed. See
+are evicted first, along with their logs, whenever a new run is inserted, and again in a startup
+pass (`pruneAllJobsRunHistory()`) that catches a job whose cap was just lowered via `crontick
+daemon reload` but that hasn't ticked since. Eviction is best-effort: a failure is logged but
+never fails a run insert or blocks daemon startup. Changing `retention.maxRunsPerJob` and running
+`crontick daemon reload` applies the new cap immediately, without a daemon restart.
+
+`maxOutputBytesPerRun` bounds a single run's captured stdout/stderr; once hit, further output is
+dropped, a truncation marker is appended, and the run's `outputTruncated` field is set. This cap
+is also re-read on `crontick daemon reload`.
+
+`RetentionConfigSchema` is `.strict()` — no extra fields allowed. See
 [state-and-storage.md](../concepts/state-and-storage.md#run-history-retention) for the
-user-facing model and its limitations, and [storage internals](../internals/storage.md) for the
-eviction algorithm.
+user-facing model, and [storage internals](../internals/storage.md) for the eviction and output-cap algorithms.
 
 ### EngineConfig
 
@@ -79,7 +86,8 @@ Schema is `.strict()` — no extra fields allowed.
     "copilot": { "command": "copilot", "args": [], "env": {} }
   },
   "retention": {
-    "maxRunsPerJob": 100
+    "maxRunsPerJob": 100,
+    "maxOutputBytesPerRun": 2000000
   }
 }
 ```
@@ -174,42 +182,11 @@ Root: `CRONTICK_HOME` or platform default (see above).
 
 ## SQLite Schema (runs.db)
 
-Journal mode: WAL (Write-Ahead Logging). Single-writer (daemon process).
-
-```sql
-CREATE TABLE jobs (
-  id TEXT PRIMARY KEY,
-  json TEXT NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-
-CREATE TABLE runs (
-  id TEXT PRIMARY KEY,
-  job_id TEXT NOT NULL,
-  started_at INTEGER NOT NULL,
-  ended_at INTEGER,
-  status TEXT NOT NULL,
-  exit_code INTEGER,
-  error TEXT,
-  duration_ms INTEGER
-);
-
-CREATE TABLE run_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id TEXT NOT NULL,
-  stream TEXT NOT NULL,
-  ts INTEGER NOT NULL,
-  chunk BLOB NOT NULL
-);
-
-CREATE TABLE migrations (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL UNIQUE,
-  applied_at INTEGER NOT NULL
-);
-```
-
-Indexes: `idx_runs_job_id_started_at`, `idx_runs_started_at`, `idx_run_logs_run_id`.
+Journal mode: WAL (Write-Ahead Logging). Single-writer (daemon process). The full schema
+(`jobs`, `runs`, `run_logs`, `job_schedule_state`, and their indexes) is authoritatively
+documented once, alongside the eviction, missed-fire, and orphan-reconciliation algorithms that
+operate on it, in [internals/storage.md](../internals/storage.md#schema) -- see that page rather
+than duplicating the `CREATE TABLE` statements here.
 
 ---
 

@@ -190,7 +190,7 @@ and the run's `outputTruncated` field is set. Back up run history before it's pr
 `crontick export --include-runs` (see [docs/reference/cli.md](docs/reference/cli.md)). These are
 per-job/per-run caps only -- see
 [docs/concepts/state-and-storage.md](docs/concepts/state-and-storage.md#run-history-retention)
-for the exact behavior and its limitations.
+for the exact behavior and its design boundaries.
 
 See [docs/reference/configuration.md](docs/reference/configuration.md) for the full config
 file schema, all environment variables, and precedence rules.

@@ -17,23 +17,43 @@ client when needed.
 3. **Single-instance guard**: read `daemon.pid`; if PID is alive, exit 1.
    Otherwise remove stale PID file.
 4. Write own PID to `daemon.pid`.
-5. Read `retention.maxRunsPerJob` from config and open `Store` (SQLite WAL)
-   with that cap. Call `reconcileOrphanRuns()` to cancel any runs left in
-   `queued`/`running` state from a prior crash.
-6. Run the retention startup backfill, `pruneAllJobsRunHistory()`, so
-   databases that grew past the cap under an earlier version (or after the
-   cap was lowered) are truncated. Runs *after* orphan reconciliation so
-   runs just canceled by step 5 are immediately eviction-eligible. Wrapped
+5. Read `retention.maxRunsPerJob` from config and open `Store` (SQLite WAL,
+   schema created in one idempotent pass — no migrations, see
+   [storage.md](./storage.md#schema)) with that cap.
+6. `pruneAllJobsRunHistory()` — reconcile any job whose retention cap was
+   lowered via `crontick daemon reload` while the daemon was down. Wrapped
    in try/catch: a failure is logged but never blocks startup — see
-   [storage.md](./storage.md) for the retention algorithm.
+   [storage.md](./storage.md#run-retention) for the retention algorithm.
 7. `loadJobsFromDisk()` -- reads `<dataDir>/jobs/*.json`, validates with
    `JobSchema`, upserts into SQLite.
-8. Create `Scheduler` and `Runner`. Schedule all enabled jobs.
-9. Wire `scheduler.on('tick', ...)` to insert a run and fire `runner.run()`.
-10. Create HTTP server via `createApiServer(ctx)`, listen on `127.0.0.1:0`
+8. Create `Scheduler`.
+9. **Missed-fire reporting**: for each enabled job with a
+   `job_schedule_state` watermark, call `scheduler.enumerateFiresBetween()`
+   from that watermark to now (capped at `MISSED_FIRE_CAP_PER_JOB` = 500) and
+   record each fire as a terminal `missed` run via
+   `store.recordMissedRun()`; a job with no watermark yet has one seeded
+   instead. Aggregate into `missedFireSummary: { jobsWithMissedFires,
+   missedRunsRecorded, jobsCapped, capPerJob }`. See
+   [storage.md](./storage.md#missed-fire-reporting) and
+   [scheduler.md](./scheduler.md#enumerating-past-fires-enumeratefiresbetween).
+10. Create `Runner`.
+11. **Orphan reconciliation**: `createProcessLivenessCheck()` (see
+    [executors.md](./executors.md#process-liveness)), then
+    `store.reconcileOrphanRuns(livenessCheck)` — resolves every leftover
+    `queued`/`running` run from a prior daemon process by checking real pid
+    liveness, canceling dead/queued-never-spawned runs and adopting live or
+    inconclusive ones. Adopted runs are handed to `runner.adoptRun()` so
+    overlap tracking resumes. See
+    [storage.md](./storage.md#orphan-reconciliation).
+12. Schedule every enabled job.
+13. Wire `scheduler.on('tick', ...)` to insert a run and fire `runner.run()`.
+14. Create HTTP server via `createApiServer(ctx)`, listen on `127.0.0.1:0`
     (OS-assigned port).
-11. Write port to `daemon.port`.
-12. Register `SIGINT`/`SIGTERM` handlers for graceful shutdown.
+15. Write port to `daemon.port`.
+16. Define the graceful `shutdown(signal)` closure and wire it into
+    `ctx.shutdown` (so `POST /api/daemon/stop` can call it) and into
+    `SIGINT`/`SIGTERM` handlers (POSIX fallback path) — see
+    [Shutdown](#shutdown) below.
 
 ---
 
@@ -74,10 +94,11 @@ All routes enforce localhost-only via `LOOPBACK` set check on
 | POST | `/api/schedules/preview` | Preview next N fire times | 200 |
 | GET | `/api/stats/summary` | Aggregate stats | 200 |
 | GET | `/api/stats/jobs/:id` | Per-job stats | 200/404 |
-| GET | `/api/daemon/status` | Daemon PID, version, uptime, job count | 200 |
+| GET | `/api/daemon/status` | Daemon PID, version, uptime, job count, `missedFires` summary | 200 |
 | POST | `/api/daemon/reload` | Reload jobs from disk | 200 |
-| GET | `/api/export` | Export all jobs | 200 |
-| POST | `/api/import` | Import jobs array | 200 |
+| POST | `/api/daemon/stop` | Graceful in-process shutdown; responds before exiting | 200/501 |
+| GET | `/api/export` | Export all jobs (optionally `?includeRuns=1`) | 200 |
+| POST | `/api/import` | Import jobs array (optionally a `runs` array) | 200 |
 | GET | `/api/dashboard/status` | Dashboard connection info | 200 |
 | GET | `/api/dashboard` | Full dashboard data payload | 200 |
 | GET | `/` or `/dashboard{/*}` | Serve static dashboard HTML/CSS/JS | 200 |
@@ -119,25 +140,45 @@ externally and applying changes without a full restart.
 
 ---
 
-## Signal Handling and Shutdown
+## Shutdown
 
-- `SIGINT`, `SIGTERM`: set `shuttingDown` flag, close HTTP server, unschedule
-  all timers, wait 100 ms for in-flight work, close SQLite, delete `daemon.pid`
-  and `daemon.port`, exit 0.
-- `uncaughtException` (non-EPIPE): log fatal error, cleanup files, exit 1.
-- `stderr` EPIPE errors are swallowed (detached daemon with closed parent).
+`POST /api/daemon/stop` is the primary graceful shutdown mechanism, and works identically on
+every platform because it runs in-process rather than depending on OS signal delivery:
 
-**This graceful sequence only runs when the signal is genuinely delivered to
-the process by the OS** (spec: `specs/004-daemon.md` R-004-10). On POSIX,
-`process.kill(pid, 'SIGINT'|'SIGTERM')` delivers a real signal and the handler
-above runs. On Windows, `process.kill(pid, 'SIGINT'|'SIGTERM')` from another
-process unconditionally terminates the target process without invoking any
-registered handler; the handler only has a chance to run for a genuine Ctrl+C
-console event, which does not apply to `crontick daemon stop`. On Windows,
-`crontick daemon stop`/`stopDaemon()` therefore cannot rely on PID/port file
-cleanup or graceful in-flight run persistence — the only cross-platform
-guarantee is "process no longer alive," and the next daemon start tolerates
-and overwrites stale PID/port files.
+1. The handler responds `200 { ok: true, stopping: true, pid }` **before** tearing anything down
+   (via `res.on('finish', ...)`), so the caller gets confirmation the request was received even
+   though the process is about to exit mid-response-cycle. Callers should treat a `200` as
+   "shutdown has started," not "the daemon has exited" — poll for the PID/port files
+   disappearing, or a connection-refused health probe, to confirm the process is actually gone.
+2. `shutdown(signal)` then runs: stop accepting new connections (`server.close()`), unschedule
+   every timer (`scheduler.unscheduleAll()`), wait a brief 100ms drain window, close the SQLite
+   handle, delete `daemon.pid`/`daemon.port`, and `process.exit(0)`.
+3. **In-flight runs are deliberately left alone.** Shutdown does not kill or wait for running
+   child processes — they were spawned `detached: true` (see
+   [executors.md](./executors.md#detached-child-processes)) precisely so they keep running
+   independently of the daemon process on every platform. Their `runs` rows stay `'running'`;
+   the next daemon start's [orphan reconciliation](./storage.md#orphan-reconciliation) pass
+   adopts them if they're still alive, or cancels them if not. This makes a graceful stop behave
+   identically to an abrupt daemon death from the in-flight run's point of view — one
+   liveness-checked reconciliation path handles both, on both platforms, instead of two
+   different behaviors to reason about.
+
+`SIGINT`/`SIGTERM` handlers call the same `shutdown(signal)` closure and remain registered as a
+**POSIX fallback path** — a real signal delivered by the OS still triggers the identical
+sequence above. This matters because Windows has no true signal delivery for another process to
+send: `process.kill(pid, 'SIGTERM')` from another process unconditionally terminates the target
+without invoking any registered handler on Windows, so a caller cannot rely on the signal path
+there at all. `crontick daemon stop` (`stopDaemon()` in `src/daemon/lifecycle.ts`) therefore
+tries the HTTP route first on every platform, and only falls back to `SIGTERM` (a genuine
+"hard-kill", not graceful) if the HTTP route is unreachable (older daemon build, stale/missing
+port file, connection refused). The result's `mode` field (`'already-stopped' | 'graceful' |
+'hard-kill'`) tells the caller which path was actually used — see
+[cli.md](../reference/cli.md#daemon-stop) for the CLI-facing behavior and
+[ADR 0014](../decisions/0014-http-graceful-shutdown-over-signals.md) for the full rationale.
+
+`uncaughtException` (non-EPIPE) still logs a fatal error, cleans up files, and exits 1;
+`stderr` EPIPE errors are swallowed (detached daemon with closed parent). A daemon start
+tolerates and overwrites stale PID/port files left by a prior hard-kill.
 
 ---
 
@@ -146,6 +187,6 @@ and overwrites stale PID/port files.
 | Function | Behavior |
 |----------|----------|
 | `startDaemon(options)` | Foreground: `spawnSync` with `stdio: 'inherit'`. Background: delegates to `ensureDaemon()`. |
-| `stopDaemon(options)` | Read PID from file, send `SIGTERM`, poll for death up to 5 s. |
+| `stopDaemon(options)` | Read PID from file; try graceful `POST /api/daemon/stop` first (2s timeout), waiting up to 5s for the process to exit; fall back to `SIGTERM` only if the HTTP route is unreachable. Returns `mode: 'already-stopped' \| 'graceful' \| 'hard-kill'`. |
 | `restartDaemon(options)` | `stopDaemon` then `ensureDaemon`. |
 | `readLiveDaemonPid(env)` | Read PID file, verify alive with `process.kill(pid, 0)`. |

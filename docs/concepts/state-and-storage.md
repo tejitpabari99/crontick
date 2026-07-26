@@ -35,18 +35,24 @@ Each job is stored as a standalone JSON file in `jobs/<id>.json`. These files ar
 
 The `.schema.json` sidecar is a JSON Schema generated from the Zod `JobSchema` via `zod-to-json-schema`. It enables IDE validation and autocompletion when editing job files directly.
 
-## SQLite: runs, logs, and a job cache
+## SQLite: runs, logs, schedule state
 
-The `runs.db` file is opened with `PRAGMA journal_mode=WAL` and `PRAGMA foreign_keys=ON`. It contains:
+The `runs.db` file is opened with `PRAGMA journal_mode=WAL` and `PRAGMA foreign_keys=ON`. The
+full schema is created in one idempotent pass on open -- there is no migration ledger and no
+prior on-disk shape to reconcile; a `runs.db` created by a crontick version before 1.0.0 is not a
+supported input (see [ADR 0017](../decisions/0017-no-migrations-for-first-release.md)). It
+contains:
 
 | Table | Purpose |
 |-------|---------|
 | `jobs` | Cache of job definitions (rebuilt from disk on start) |
-| `runs` | Run execution records with status, exit code, timing |
+| `runs` | Run execution records: status, exit code, timing, spawned `pid`, output-truncation flag |
 | `run_logs` | Stdout/stderr chunks per run, ordered by insertion |
-| `migrations` | Schema migration tracking |
+| `job_schedule_state` | Per-job "last observed ticking" watermark, used to compute missed fires on restart |
 
-Run statuses: `queued`, `running`, `success`, `failed`, `canceled`, `timeout`.
+Run statuses: `queued`, `running`, `success`, `failed`, `canceled`, `timeout`, `missed` (a fire
+the schedule would have produced while the daemon was not running, recorded but never executed --
+see [daemon-lifecycle.md](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down)).
 
 Key indexes: `idx_runs_job_id_started_at`, `idx_runs_started_at`, `idx_run_logs_run_id`.
 
@@ -66,27 +72,31 @@ Each job retains at most `retention.maxRunsPerJob` runs (default `100`,
 configurable `1..100000` — see [configuration reference](../reference/configuration.md)).
 When a job's terminal run count (runs not currently `running` or `queued`)
 exceeds the cap, the oldest terminal runs are deleted, along with their
-`run_logs`. Active runs are never evicted. Pruning runs on every new run and
-again in a one-time startup backfill for older databases, and is best-effort:
-a pruning failure is logged but never fails a run or blocks daemon startup.
-Lowering or raising `retention.maxRunsPerJob` takes effect on `crontick daemon
-reload`, without a restart. See [storage internals](../internals/storage.md)
-for the eviction algorithm.
+`run_logs`. Active runs are never evicted. Pruning runs on every new run, and
+also as a startup pass (`pruneAllJobsRunHistory()`) that catches a job whose
+cap was just lowered via `crontick daemon reload` but that hasn't ticked since
+-- not an upgrade or backfill step. Pruning is best-effort: a pruning failure
+is logged but never fails a run or blocks daemon startup. Lowering or raising
+`retention.maxRunsPerJob` takes effect on `crontick daemon reload`, without a
+restart. See [storage internals](../internals/storage.md) for the eviction algorithm.
 
-**Known limitations** (by design, not oversights):
+**Design boundaries** (deliberate, not oversights):
 
-- The cap is a per-job **count** only — there is no age-based or byte-based
-  limit. A job that fires every minute keeps roughly 100 minutes of history;
-  a job that fires monthly keeps years of history under the same cap.
-- Nothing bounds the size of a single run's captured stdout/stderr. One
-  run with very large output can still produce a large `run_logs` row,
-  regardless of how many runs are retained.
-- Eviction is a hard delete. There is no export, warning, dry-run, or undo
-  for removed run history — if you need to keep old runs, raise the cap or
-  archive `runs.db` before pruning would remove them.
+- The cap is a per-job **count** only — there is no age-based limit. A job that fires every
+  minute keeps roughly 100 minutes of history; a job that fires monthly keeps years of history
+  under the same cap.
+- Eviction is a hard delete with no dry-run or confirmation prompt. If you need to keep runs
+  beyond the cap, back them up first with `crontick export --include-runs` (round-trips via
+  `crontick import`), or raise `retention.maxRunsPerJob` before the cap would evict them.
+
+A single run's own captured stdout/stderr is bounded separately by
+`retention.maxOutputBytesPerRun` (default 2,000,000 bytes, range `1024..1_000_000_000`); once a
+run hits that cap, further output is dropped and `outputTruncated` is set on the run, but its
+`run_logs` size no longer grows without bound. See
+[execution.md](./execution.md#stdoutstderr-capture) for the truncation behavior.
 
 See [ADR 0012](../decisions/0012-run-history-retention.md) for why the cap is
-count-based rather than age- or size-based, and why eviction is best-effort.
+count-based rather than age-based, and why eviction is best-effort.
 
 ## Inspecting state
 
@@ -104,7 +114,7 @@ cat <dataDir>/logs/daemon-$(date +%F).log | jq .
 ## Resetting state safely
 
 1. **Stop the daemon first**: `crontick daemon stop`
-2. **Delete runs only**: remove `runs.db` (the daemon will recreate it on next start with fresh migrations).
+2. **Delete runs only**: remove `runs.db` (the daemon recreates it with a fresh schema on next start).
 3. **Delete everything**: remove the entire data directory. Jobs, runs, logs, and config will all be lost.
 4. **Delete one job**: `crontick delete <id>` removes the JSON file, schema sidecar, and SQLite row.
 

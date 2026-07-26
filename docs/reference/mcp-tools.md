@@ -199,6 +199,7 @@ List recent runs, optionally filtered by job ID.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `jobId` | `string` | no | — | Filter by job ID |
+| `status` | `enum` | no | — | Filter by run status: `queued`, `running`, `success`, `failed`, `canceled`, `timeout`, `missed` |
 | `limit` | `integer` (positive) | no | — | Maximum runs to return |
 | `since` | `integer` | no | — | Only runs since epoch ms |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
@@ -209,14 +210,16 @@ List recent runs, optionally filtered by job ID.
 
 ### crontick_run_get
 
-Get the details and current status of a specific run.
+Get the details and current status of a specific run, including its `pid` (if it was spawned)
+and whether its captured output was truncated by the retention output cap.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `runId` | `string` | yes | — | Run ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Run object.
+**Result:** Run object, including `pid` (number, absent for `missed` runs) and `outputTruncated`
+(boolean).
 
 ---
 
@@ -313,13 +316,15 @@ Stop the local crontick daemon.
 
 ### crontick_daemon_status
 
-Get daemon process status.
+Get daemon process status: PID, version, uptime, job counts, and a `missedFires` summary.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Health object or `{ running: false, error: string }` if not running.
+**Result:** Health object (including `missedFires: { jobsWithMissedFires, missedRunsRecorded,
+jobsCapped, capPerJob }`, report-only — see `crontick_run_list` with `status: "missed"`) or
+`{ running: false, error: string }` if not running.
 
 ---
 
@@ -349,26 +354,31 @@ Restart the crontick daemon (stop + start).
 
 ### crontick_export
 
-Export all job definitions as a JSON object.
+Export all job definitions as a JSON object. Set `includeRuns` to also include run history —
+the mitigation for retention's hard-delete of old runs.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
+| `includeRuns` | `boolean` | no | `false` | Include each job's run history in the export |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ jobs: Job[] }`
+**Result:** `{ jobs: Job[], runs?: Run[] }` (`runs` present only when `includeRuns` is set).
 
 ---
 
 ### crontick_import
 
-Import job definitions from a JSON array (upsert).
+Import job definitions from a JSON array (upsert). An optional `runs` array (as produced by
+`crontick_export` with `includeRuns`) is restored archivally — no execution, no scheduler
+interaction.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `jobs` | `unknown[]` | yes | — | Array of job definitions |
+| `runs` | `unknown[]` | no | — | Array of run records to restore, from a prior `crontick_export --includeRuns` |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Import summary.
+**Result:** Import summary, including `runsImported`/`runsSkipped` when `runs` was provided.
 
 ---
 

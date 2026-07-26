@@ -59,7 +59,8 @@ deployment complexity and a network dependency.
   zips them; `import` unzips).
 - SQLite WAL provides fast appends for run logs without blocking reads.
 - No native addons to compile -- `node:sqlite` ships with Node.js.
-- Schema migrations are simple sequential SQL scripts in `src/daemon/store.ts`.
+- Schema is created in a single idempotent `CREATE TABLE/INDEX IF NOT EXISTS` pass in
+  `src/daemon/store.ts` -- no migration ledger to maintain (see ADR 0017).
 
 **Harder:**
 

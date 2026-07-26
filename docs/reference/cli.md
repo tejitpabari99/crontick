@@ -45,7 +45,7 @@ crontick new <id> [engineArgs...]
 | `--at <iso>` | string | — | One-shot run-at ISO-8601 time |
 | `--tz <tz>` | string | — | Timezone for cron schedule |
 | `--script <body>` | string | — | Inline script body |
-| `--exec <cmd>` | string | — | Command to exec, split naively on whitespace into command + args |
+| `--exec <cmd>` | string | — | Command to exec, taken verbatim (use `--` for its arguments) |
 | `--prompt <text>` | string | — | Prompt text for a prompt action |
 | `--prompt-file <path>` | string | — | UTF-8 `.txt` file to read into the prompt |
 | `--engine <engine>` | string | config `defaultEngine` | Configured prompt engine name |
@@ -65,13 +65,36 @@ unchanged — there is no update-time default, so a partial update never silentl
 fields. See [job-schema.md](job-schema.md#update-vs-create-semantics) and
 [jobs.md](../concepts/jobs.md).
 
-`--exec` does not support a `--` separator for arguments: the entire `<cmd>` string is split
-naively on whitespace into a command plus args (see `src/job-input.ts`). This means an argument
-containing a space -- e.g. a file path or message with embedded spaces -- cannot be expressed
-through `--exec`. Use `--script` (which runs through a shell and supports normal quoting), or
-`--file` with an explicit `action.args` array (each array element is passed as one argument,
-untouched by whitespace splitting) for anything that needs precise arguments. See
-[job-schema.md](job-schema.md#kind-exec) for the `exec` action's JSON shape.
+`--exec` takes `<cmd>` verbatim: it is never split on whitespace, so a command string containing
+a space (e.g. a path) is passed through unchanged as one argv element. Arguments for the command
+go after a literal `--` (Commander's standard separator) and are collected as `[engineArgs...]`
+without any whitespace splitting, so an individual argument containing a space works correctly:
+
+```bash
+crontick new notify --every 30 --exec notify-send -- "Deploy finished" "with warnings"
+```
+
+Need shell features instead (pipes, redirects, globbing)? Use `--script`, which runs through a
+shell. Need to set `action.args` directly without going through argv parsing at all? Use `--file`
+with an explicit `action.args` array. See [job-schema.md](job-schema.md#kind-exec) for the `exec`
+action's JSON shape, and [ADR 0018](../decisions/0018-exec-dash-dash-args.md) for why `--` was
+chosen over whitespace splitting.
+
+#### Windows shells and `--`
+
+Two npm/Windows shell behaviors -- not crontick defects -- affect `--`-based commands:
+
+- **PowerShell drops a literal `--` before any `.ps1` script sees it.** A bare `crontick` on
+  Windows resolves to the npm-generated `crontick.ps1` shim; PowerShell's own parameter binding
+  strips a literal `--` token before the shim's argv ever includes it (true of any `.ps1` script,
+  not specific to crontick). A `--exec ... -- ...` command silently loses its trailing arguments
+  when invoked this way.
+- **The `.cmd` shim mangles embedded double quotes.** Arguments containing `"` passed through the
+  npm-generated `crontick.cmd` shim can be corrupted by `cmd.exe`'s quoting rules before they
+  reach Node.
+
+**Guidance:** for `--`-based commands on Windows, invoke `crontick.cmd` explicitly (e.g. `crontick.cmd new ... --exec notify-send -- "Deploy finished"`), which forwards `--` untouched; avoid
+embedding literal double quotes in an argument passed through the `.cmd` shim.
 
 Exactly one schedule source (`--cron`, `--every`, `--at`) and one action source (`--script`, `--exec`, `--prompt`, `--prompt-file`) are required unless `--file` is used.
 
@@ -189,6 +212,7 @@ crontick runs list
 | `--job <id>` | string | — | Filter by job ID |
 | `--limit <n>` | integer | — | Maximum runs to return |
 | `--since <ms>` | integer | — | Only runs since epoch milliseconds |
+| `--status <status>` | string | — | Filter by run status: `queued`\|`running`\|`success`\|`failed`\|`canceled`\|`timeout`\|`missed` |
 
 ---
 
@@ -408,6 +432,7 @@ crontick export
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--out <file>` | string | stdout | Output file path |
+| `--include-runs` | boolean | `false` | Also include run history (a `runs` array) in the export |
 
 ---
 
@@ -419,7 +444,10 @@ Import jobs from a JSON file.
 crontick import <file>
 ```
 
-Jobs are upserted (existing jobs with the same ID are updated).
+Jobs are upserted (existing jobs with the same ID are updated). If the file was produced with
+`--include-runs`, its `runs` array is restored archivally into `runs.db` (`INSERT OR IGNORE`,
+keyed by run id; rows for a job that no longer exists are skipped) -- this is a plain data
+restore, not re-execution, and does not touch the scheduler.
 
 ---
 
@@ -457,6 +485,13 @@ Stop the daemon.
 crontick daemon stop
 ```
 
+Sends `POST /api/daemon/stop` to shut the daemon down in-process (works identically on every
+platform) and reports `mode: "graceful"` on success. Falls back to a POSIX-only
+`process.kill(pid, 'SIGTERM')` and reports `mode: "hard-kill"` only if the HTTP route is
+unreachable (an older daemon binary or a stale port file) -- not the normal path. Reports
+`mode: "already-stopped"` if no daemon was running. See
+[daemon-lifecycle.md](../concepts/daemon-lifecycle.md#shutdown).
+
 ---
 
 ### crontick daemon status
@@ -466,6 +501,11 @@ Show daemon status.
 ```bash
 crontick daemon status
 ```
+
+Includes a `missedFires` summary: `{ jobsWithMissedFires, missedRunsRecorded, jobsCapped,
+capPerJob }`, describing fires the schedule would have produced while the daemon was not running,
+recorded on the most recent daemon start (`capPerJob` is 500). See
+[daemon-lifecycle.md](../concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down).
 
 ---
 

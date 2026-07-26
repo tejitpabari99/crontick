@@ -42,7 +42,7 @@ number assigned in order of creation.
 | 003 | [Execution](003-execution.md) | Active | Run lifecycle, spawn, output, timeout, overlap |
 | 004 | [Daemon](004-daemon.md) | Active | Daemon lifecycle, HTTP API, recovery |
 | 005 | [Surface Parity](005-surface-parity.md) | Active | CLI/MCP/API parity enforcement |
-| 006 | [State and Persistence](006-state-and-persistence.md) | Active | Durability, layout, retention, upgrades |
+| 006 | [State and Persistence](006-state-and-persistence.md) | Active | Durability, schema, layout, retention |
 | 007 | [Prompt Jobs](007-prompt-jobs.md) | Active | Prompt engines, invocation, session capture |
 
 ## Template

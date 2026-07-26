@@ -19,12 +19,37 @@ class Runner {
 
   constructor(spawnFn?: typeof spawn, logger?: Logger);
   async run(job: Job, runId: string, store: Store): Promise<void>;
+  adoptRun(jobId: string, runId: string, pid: number, store: Store): void;
   cancelJob(jobId: string): boolean;
   cancelRun(runId: string): boolean;
 }
 ```
 
 The `spawnFn` parameter allows injection of a mock `spawn` for tests.
+
+---
+
+## Adopting Runs Across a Restart
+
+`adoptRun(jobId, runId, pid, store)` re-attaches a run that `Store.reconcileOrphanRuns()`
+determined is still alive in a previous daemon's child process (see
+[storage.md](./storage.md#orphan-reconciliation)) into this daemon's in-memory overlap tracking:
+
+- The run's `jobId`/`runId` are registered in `activeRunIds` exactly as a freshly-spawned run
+  would be, so a subsequent fire for the same job still observes `overlap: 'skip'` or
+  `overlap: 'cancel-previous'` correctly instead of treating the adopted run as untracked.
+- Since the daemon does not hold the original `ChildProcess` handle (it was created by a
+  different process), `adoptRun` polls liveness every `ADOPTED_RUN_POLL_MS` (3000ms) using the
+  same process-liveness check (see [Process Liveness](#process-liveness) below) instead of
+  listening for an `'exit'` event, and finalizes the run (`status`, `ended_at`, `duration_ms`)
+  once the poll observes the process has exited.
+- `cancelRun`/`cancelJob` on an adopted run sends `SIGTERM` directly to the recorded `pid`
+  (there is no `AbortController`-driven `spawn` to abort), since the daemon does not own the
+  child's stdio streams to signal it another way.
+
+This is what makes `overlap: 'skip'` and `overlap: 'cancel-previous'` hold across a daemon
+restart instead of only within a single daemon process's lifetime — see
+[concepts/execution.md](../concepts/execution.md#overlap-policies).
 
 ---
 
@@ -76,7 +101,12 @@ are only cleared if they still point to the completing run (prevents races when
 
 ### Exec actions (`action.kind === 'exec'`)
 
-Direct: `cmd = action.command`, `args = action.args ?? []`.
+Direct, verbatim: `cmd = action.command`, `args = action.args ?? []`. No shell, no quoting, no
+whitespace splitting — `action.args` is the array the CLI's `--` separator (or the library API's
+`args` field) already produced, so an argument containing a space or a shell metacharacter is
+passed through to the child exactly as given. See
+[concepts/execution.md](../concepts/execution.md#exec-jobs) and
+[cli.md](../reference/cli.md#new) for the user-facing `--exec ... -- <args>` syntax.
 
 ### Prompt actions (`action.kind === 'prompt'`)
 
@@ -100,7 +130,10 @@ Priority (highest wins):
 3. `promptEnv` (from engine config `engine.env`)
 4. `process.env` (inherited)
 
-`spawn` options: `{ cwd: action.cwd ?? process.cwd(), shell: false, signal }`.
+`spawn` options: `{ cwd: action.cwd ?? process.cwd(), shell: false, signal, detached: true,
+windowsHide: true }`. `detached` and `windowsHide` are always set, on every platform — see
+[Detached Child Processes](#detached-child-processes) below. `child.pid` is written to the run's
+`pid` column via `store.updateRun()` as soon as the process spawns, before any output arrives.
 
 ---
 
@@ -128,10 +161,33 @@ to `status: 'timeout'`.
 1. Call `safeRedact(chunk)`: if the chunk is valid UTF-8 (no NUL bytes, lossless
    round-trip), apply `redactText()` from `src/logger.ts` to strip secrets.
    Binary data passes through unmodified.
-2. Call `store.appendLog(runId, stream, redactedChunk)`.
+2. Enforce the per-run output cap (see [Output Capture Cap](#output-capture-cap) below) before
+   the chunk is persisted.
+3. Call `store.appendLog(runId, stream, redactedChunk)`.
 
 Prompt session capture: stdout/stderr chunks are also appended to a
 `transcriptTail` buffer (max 128 KB, ring-style) for session ID extraction.
+
+---
+
+## Output Capture Cap
+
+Each run tracks a running byte total across both `stdout` and `stderr`. Once that total would
+exceed `retention.maxOutputBytesPerRun` (default `2_000_000`, range `1024..1_000_000_000` — see
+[configuration.md](../reference/configuration.md#retentionconfig)):
+
+1. The chunk is truncated to whatever headroom remains and persisted.
+2. A single truncation marker line is appended to the captured output (once — not repeated on
+   every subsequent chunk).
+3. The run's `output_truncated` column is set to `1`, surfaced to callers as `outputTruncated:
+   true` (see [cli.md](../reference/cli.md#logs) and [mcp-tools.md](../reference/mcp-tools.md)).
+4. All further `stdout`/`stderr` data for that run is dropped without being written to
+   `run_logs` — capture stops, but the cap is re-read live on `crontick daemon reload`, so a
+   config change takes effect for runs started after the reload.
+
+Capping output only stops *capture*; the child process itself is never signaled, killed, or
+otherwise affected by hitting the cap — a job that produces gigabytes of stdout still runs to
+completion and exits normally, it just does not have all of that output recorded.
 
 ---
 
@@ -152,6 +208,50 @@ When `reuseSession && !sessionId` and the run succeeds:
 - `cancelRun(runId)`: iterates `activeRunIds` to find the job, then aborts.
 - `cancelJob(jobId)`: aborts the `AbortController` in `activeAborts`.
 - Aborted processes receive `SIGTERM`/`SIGKILL` via Node.js abort semantics.
+- Cancelling an *adopted* run (see [Adopting Runs Across a Restart](#adopting-runs-across-a-restart))
+  has no `AbortController` to abort — the runner sends `SIGTERM` directly to the recorded `pid`
+  instead.
+
+---
+
+## Detached Child Processes
+
+Every spawn — script, exec, and prompt actions alike — passes `detached: true, windowsHide: true`
+to Node's `spawn()`, identically on every platform. This means the child is started in its own
+process group (POSIX) or its own process (Windows), decoupled from the daemon's process tree,
+and `windowsHide` suppresses the console window Windows would otherwise flash for a detached
+process.
+
+The reason is restart safety: previously, spawn options differed by platform, which meant a
+daemon restart could kill in-flight job processes as a side effect on one platform while leaving
+them running-but-orphaned on the other. Detaching consistently means a daemon restart never
+kills a running job's process as a side effect, on any platform — the process either keeps
+running (and is picked up by [orphan reconciliation](./storage.md#orphan-reconciliation) and
+`adoptRun()` above) or has already exited on its own. See
+[ADR 0016](../decisions/0016-detached-children-cross-platform.md) for the full rationale and
+tradeoffs.
+
+---
+
+## Process Liveness
+
+`src/process-liveness.ts` (`createProcessLivenessCheck()`) provides the `isRunAlive(pid,
+startedAt)` check used by [orphan reconciliation](./storage.md#orphan-reconciliation) and by the
+adoption poll above:
+
+- `isProcessAlive(pid)`: sends signal `0` to the pid; `EPERM` (permission denied, but the pid
+  exists) still counts as alive.
+- `getProcessStartTime(pid)`: reads the process's actual start time — `Get-Process` via
+  PowerShell on Windows, `ps -o lstart=` on POSIX. Returns `undefined` if the platform call
+  fails or the pid does not resolve to a process.
+- `PID_START_TOLERANCE_MS` (2000ms): the recorded `runs.started_at` for an adopted run is
+  compared to the live process's actual start time within this tolerance. A live pid whose
+  start time differs by more than the tolerance is a **different process that reused the pid**
+  after the original one exited — the check treats this as dead (`false`), not alive, defending
+  reconciliation against pid-reuse false positives.
+- Any failure inside the check (unexpected platform error, parse failure) is caught and
+  surfaced as `undefined` — inconclusive, never thrown — so a liveness check can never itself
+  crash the daemon's startup sequence.
 
 ---
 

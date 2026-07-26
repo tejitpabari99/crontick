@@ -37,9 +37,9 @@ need for OS service registration while ensuring the daemon is available when nee
 - **R-004-5**: If the PID file references a dead process, the daemon MUST remove the stale PID file and continue startup.
 - **R-004-6**: The daemon MUST enforce loopback-only connections; requests from non-loopback addresses MUST receive 403 FORBIDDEN.
 - **R-004-7**: GET /health MUST return `{ ok: true, product: "crontick", pid: <number>, port: <number>, version, startedAt, uptime, jobCount }`.
-- **R-004-8**: On startup, the daemon MUST call `store.reconcileOrphanRuns()` to cancel any runs left in `running` or `queued` state (daemon crash recovery).
+- **R-004-8**: On startup, the daemon MUST call `store.reconcileOrphanRuns(check)` to resolve any runs left in `running` or `queued` state by a prior process (crash recovery): `queued` runs (never spawned) are canceled unconditionally, while `running` runs are checked against real process liveness via the recorded `pid` and adopted back into the `Runner` if the check finds the process still alive (or the check is inconclusive), or canceled if the check confirms the process is dead.
 - **R-004-9**: On startup, the daemon MUST call `store.loadJobsFromDisk()` to reload job definitions from the jobs directory.
-- **R-004-10**: The daemon MUST register `process.on('SIGINT'/'SIGTERM', ...)` handlers that close the HTTP server, unschedule all jobs, close the store, remove PID/port files, and exit cleanly. **This graceful sequence is only reachable when the signal is genuinely delivered to the process by the OS.** On POSIX, `process.kill(pid, 'SIGINT'|'SIGTERM')` delivers a real signal and the handler runs, so PID/port files are removed. On Windows, `process.kill(pid, 'SIGINT'|'SIGTERM')` from another process unconditionally terminates the target process without invoking any registered handler (verified empirically); the handler only has a chance to run for a genuine Ctrl+C console event, which does not apply to `crontick daemon stop`. Callers on Windows MUST NOT rely on PID/port file cleanup or in-flight run persistence after `crontick daemon stop`/`stopDaemon()`; they should instead treat "process no longer alive" as the sole cross-platform guarantee, and expect the next daemon start to tolerate and overwrite stale PID/port files.
+- **R-004-10**: `POST /api/daemon/stop` MUST be the primary graceful shutdown mechanism: it runs the shutdown sequence in-process (stop accepting connections, unschedule all jobs, close the store, remove PID/port files, exit 0) and works identically on every platform, since it does not depend on OS signal delivery. The daemon MUST also register `process.on('SIGINT'/'SIGTERM', ...)` handlers that invoke the same shutdown sequence, as a POSIX-only fallback path: on POSIX, `process.kill(pid, 'SIGINT'|'SIGTERM')` delivers a real signal and the handler runs; on Windows, `process.kill(pid, 'SIGINT'|'SIGTERM')` from another process unconditionally terminates the target without invoking any registered handler, so the signal path cannot be relied on there — callers on every platform MUST prefer the HTTP route (see R-004-22) and treat a `SIGTERM`/hard-kill as a fallback only.
 - **R-004-11**: On uncaughtException (unless EPIPE), the daemon MUST log the error, clean up PID/port files, and exit with code 1.
 - **R-004-12**: The daemon MUST run SQLite in WAL journal mode with foreign keys enabled.
 - **R-004-13**: On Node < 24, the daemon MUST re-exec itself with `--experimental-sqlite` if that flag is absent.
@@ -51,9 +51,12 @@ need for OS service registration while ensuring the daemon is available when nee
 - **R-004-19**: The health probe MUST validate that `product === "crontick"`, `pid` and `port` are positive integers, and `port` matches the expected port.
 - **R-004-20**: The daemon MUST log to `<dataDir>/logs/daemon-YYYY-MM-DD.log` (JSON lines).
 - **R-004-21**: Daemon reload (POST /api/daemon/reload) MUST unschedule all jobs, reload from disk, and reschedule enabled jobs.
-- **R-004-22**: Daemon stop is a client-side operation (`stopDaemon()` in `src/daemon/lifecycle.ts`), not an HTTP endpoint: it reads the PID file and sends `process.kill(pid, 'SIGTERM')`, then polls until the PID is no longer alive (or a timeout elapses). **There is no `POST /api/daemon/stop` route in `src/daemon/api.ts`**; a prior version of this spec incorrectly documented one. See R-004-10 for the resulting cross-platform caveat on how gracefully that SIGTERM is actually handled.
+- **R-004-22**: `stopDaemon()` (`src/daemon/lifecycle.ts`, used by `crontick daemon stop`/`daemon restart`) MUST prefer the graceful `POST /api/daemon/stop` route (see R-004-10), reading the PID file to confirm a daemon is even claimed to be running, then issuing the HTTP request and polling for the process to exit. It MUST fall back to `process.kill(pid, 'SIGTERM')` (hard-kill) only when the HTTP route is unreachable (connection refused, timeout, stale/missing port file). It MUST report which path was used via a `mode: 'already-stopped' | 'graceful' | 'hard-kill'` result field.
 - **R-004-23**: `startDaemon=false` (option or env `CRONTICK_MCP_START_DAEMON=0`) MUST prevent demand-start from spawning; it MUST throw `DAEMON_NOT_RUNNING` instead.
 - **R-004-24**: Stale lock files (older than `lockTimeoutMs` or held by dead process) MUST be cleaned up by waiting clients.
+- **R-004-27**: `POST /api/daemon/stop` MUST respond `200 { ok: true, stopping: true, pid }` before the shutdown sequence tears down the server, so the HTTP response is delivered to the caller; it MUST respond `501 NOT_IMPLEMENTED` if graceful shutdown is not wired for the context (e.g. a test harness without a real shutdown closure).
+- **R-004-28**: On startup, before scheduling jobs, the daemon MUST compute and record any fires each enabled job missed while no daemon process was running, using its `job_schedule_state` watermark and `Scheduler.enumerateFiresBetween()`, capped at `MISSED_FIRE_CAP_PER_JOB` (500) per job. Each missed fire MUST be recorded as a terminal `missed` run (see R-006 series) and MUST NOT be executed. The results MUST be summarized as `missedFireSummary: { jobsWithMissedFires, missedRunsRecorded, jobsCapped, capPerJob }` and returned by `GET /api/daemon/status`.
+- **R-004-29**: A job with no recorded `job_schedule_state` watermark (never observed ticking live) MUST have its watermark seeded from the current time on startup rather than have a gap computed against it, since there is no prior observation to diff against.
 
 ### Non-functional requirements
 
@@ -67,14 +70,15 @@ need for OS service registration while ensuring the daemon is available when nee
 2. Initialize logger with daily log file.
 3. Check single-instance guard (PID file).
 4. Write PID file.
-5. Open store (SQLite WAL mode, run migrations).
-6. Reconcile orphan runs.
-7. Load jobs from disk.
-8. Schedule all enabled jobs.
-9. Create HTTP API server.
-10. Bind to 127.0.0.1:0; write port file.
-11. Register signal handlers.
-12. Log "Daemon ready".
+5. Open store (SQLite WAL mode, schema created in one idempotent pass -- no migrations).
+6. Load jobs from disk.
+7. Create scheduler; compute and record missed fires per enabled job (R-004-28/R-004-29).
+8. Create runner; reconcile orphan runs via process-liveness check, adopting live/inconclusive runs and canceling dead ones (R-004-8).
+9. Schedule all enabled jobs.
+10. Create HTTP API server.
+11. Bind to 127.0.0.1:0; write port file.
+12. Wire graceful shutdown into `POST /api/daemon/stop` and register signal handlers as a POSIX fallback (R-004-10).
+13. Log "Daemon ready".
 
 **Demand-start (ensureDaemon)**:
 1. If explicit URL provided, probe health and return or throw.
@@ -84,13 +88,15 @@ need for OS service registration while ensuring the daemon is available when nee
 5. Poll port file + health until healthy or timeout.
 6. Return `DaemonInfo { baseUrl, port, pid, started: true }`.
 
-**Shutdown sequence** (reachable only when the handler actually runs — see R-004-10):
+**Shutdown sequence** (triggered by `POST /api/daemon/stop`, or by `SIGINT`/`SIGTERM` as a POSIX fallback — R-004-10):
 1. Close HTTP server.
 2. Unschedule all jobs.
 3. Wait 100ms for in-flight I/O.
 4. Close store.
 5. Remove PID and port files.
 6. Exit 0.
+
+In-flight run processes are deliberately left running (they were spawned `detached: true`); the next daemon start's orphan reconciliation (R-004-8) adopts or cancels them based on liveness.
 
 ## Inputs and outputs
 
@@ -117,10 +123,12 @@ need for OS service registration while ensuring the daemon is available when nee
 - [x] Stale PID file is cleaned up (test file: `tests/daemon.ensure.test.ts`)
 - [x] Loopback enforcement returns 403 for non-local (test file: `tests/security.test.ts`)
 - [x] Health endpoint returns correct shape (test file: `tests/health.test.ts`)
-- [x] Orphan runs reconciled on startup (test file: `tests/integration.persistence.test.ts`)
+- [x] Orphan runs reconciled on startup, liveness-checked and adopted or canceled accordingly (test file: `tests/store.test.ts` reconcileOrphanRuns liveness variants; `tests/integration.persistence.test.ts`)
 - [x] Lock timeout throws DAEMON_START_LOCK_TIMEOUT (test file: `tests/daemon.ensure.test.ts`)
 - [x] NOT_BUILT thrown when daemon script missing (test file: `tests/daemon.ensure.test.ts`)
-- [x] Graceful shutdown removes PID/port files on POSIX; on Windows the process still dies and a subsequent daemon start tolerates the stale files (test file: `tests/integration.daemon-lifecycle.test.ts`)
+- [x] `POST /api/daemon/stop` responds before the process exits, and the shutdown sequence runs identically on POSIX and Windows since it does not depend on signal delivery (test file: `tests/integration.daemon-lifecycle.test.ts`, "POST /api/daemon/stop responds before exit...")
+- [x] `crontick daemon stop` reports `mode: 'graceful'` when the HTTP route succeeds and falls back to `mode: 'hard-kill'` only when it is unreachable (test file: `tests/integration.daemon-lifecycle.test.ts`)
+- [x] Missed fires across a crash/restart are recorded as `missed` runs and surfaced in `daemon status`'s `missedFires` summary (test file: `tests/integration.daemon-lifecycle.test.ts`, "records missed fires across a crash/restart and surfaces them in status"; `tests/api.test.ts`, "GET /api/daemon/status includes missedFires summary")
 - [x] Reload reschedules all jobs from disk (test file: `tests/integration.daemon-lifecycle.test.ts`)
 
 ## Out of scope

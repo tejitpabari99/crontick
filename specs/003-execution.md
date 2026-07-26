@@ -22,7 +22,7 @@ preserving observability through captured logs and structured run records.
 | Term | Definition |
 |------|-----------|
 | Run | A single execution attempt of a job, identified by a UUID. |
-| Run status | One of: `queued`, `running`, `success`, `failed`, `canceled`, `timeout`. |
+| Run status | One of: `queued`, `running`, `success`, `failed`, `canceled`, `timeout`. (A seventh status, `missed`, is inserted directly by daemon startup for a fire that occurred while no daemon was running -- see spec 004 R-004-28. It is never produced by the runner and is out of scope for this spec.) |
 | Overlap policy | `skip`: drop new tick if active; `queue`: serialize; `cancel-previous`: abort active. |
 | Retry | Re-attempt after backoff on failure (not on cancel/timeout). |
 
@@ -36,7 +36,7 @@ preserving observability through captured logs and structured run records.
 - **R-003-4**: `overlap=cancel-previous`: If a run for the same job is active, the runner MUST abort it (via `AbortController`) before starting the new run.
 - **R-003-5**: `overlap=queue`: Runs MUST be serialized in FIFO order per job; the queue drains sequentially.
 - **R-003-6**: For `script` actions, the runner MUST write the script to a temp file, resolve the shell (`auto` -> pwsh on Windows, bash elsewhere), and spawn the shell with the temp file as argument.
-- **R-003-7**: For `exec` actions, the runner MUST spawn `command` with `args` directly (shell=false).
+- **R-003-7**: For `exec` actions, the runner MUST spawn `command` with `args` directly and verbatim (shell=false): no shell interpretation, no whitespace splitting, no re-quoting. `args` is the array already produced by the CLI's `--` separator (or the library API's `args` field), so an argument containing a space or shell metacharacter MUST pass through to the child exactly as given.
 - **R-003-8**: For `prompt` actions, the runner MUST resolve the engine command via `buildPromptRunCommand()` and spawn it with shell=false.
 - **R-003-9**: All spawned processes MUST inherit `process.env` merged with `action.env` (action.env wins). If `envFile` is specified, its variables are merged below `action.env` but above `process.env`.
 - **R-003-10**: `action.cwd` MUST be used as the working directory; if omitted, `process.cwd()` MUST be used.
@@ -52,6 +52,10 @@ preserving observability through captured logs and structured run records.
 - **R-003-20**: `safeRedact` MUST only redact text-like chunks; binary data (containing NUL bytes or failing UTF-8 round-trip) MUST be stored as-is.
 - **R-003-21**: For `script` actions, the temp file MUST be deleted after the process exits (best-effort).
 - **R-003-22**: `cancelRun(runId)` MUST abort the active run by its run ID and return true; if no such active run exists, it MUST return false.
+- **R-003-25**: Every spawn (script, exec, and prompt actions alike) MUST pass `detached: true, windowsHide: true` to the child process, identically on every platform, so that a daemon restart or graceful stop never kills in-flight work as a side effect on any platform.
+- **R-003-26**: The child process's `pid` MUST be persisted to the run record (`Store.updateRun()`) as soon as the process spawns, before any output arrives; `missed` runs (spec 004 R-004-28) never spawn a process and so never get a `pid`.
+- **R-003-27**: Captured stdout/stderr for a single run MUST be capped at `retention.maxOutputBytesPerRun` (default 2,000,000; configurable range 1024..1,000,000,000). Once the cap is reached, the runner MUST append a single truncation marker, set the run's `outputTruncated` field, and drop all further output for that run without persisting it. Hitting the cap MUST NOT kill, signal, or otherwise affect the child process itself; only capture stops.
+- **R-003-28**: `Runner.adoptRun(jobId, runId, pid, store)` MUST re-attach a run that survived a daemon restart (per spec 004 R-004-8) into this daemon's overlap tracking (`activeRunIds`), so that `overlap: 'skip'` and `overlap: 'cancel-previous'` hold for a subsequent tick of the same job exactly as they would for a run spawned by this daemon process. Since no `ChildProcess` handle exists for an adopted run, the runner MUST poll process liveness periodically instead of listening for a native `'exit'` event, and MUST finalize the run once the poll observes the process has exited.
 
 ### Non-functional requirements
 
@@ -86,6 +90,8 @@ preserving observability through captured logs and structured run records.
 - Runner callback throws during log append: Run finalized as `failed` with `RUNNER_CALLBACK_FAILED` prefix; child is killed.
 - Overlapping cancel-previous race: Active abort maps only cleared if they still point to the current run's controller.
 - Binary stdout/stderr: Stored unredacted.
+- Output exceeds `retention.maxOutputBytesPerRun`: capture truncates, `outputTruncated` is set, the run otherwise completes normally.
+- Daemon restarts mid-run: the detached child keeps running; the next startup's orphan reconciliation adopts it (liveness confirmed) or cancels the run (liveness confirmed dead) -- see spec 004 R-004-8.
 
 ## Acceptance criteria
 
@@ -101,6 +107,11 @@ preserving observability through captured logs and structured run records.
 - [x] safeRedact skips binary data (test file: `tests/redact.test.ts`)
 - [x] cancelRun aborts active run (test file: `tests/runner.test.ts`)
 - [x] ENOENT for prompt engine produces actionable error (test file: `tests/runner.test.ts`)
+- [x] Spawn sets `detached: true` and `windowsHide: true` for every action kind (test file: `tests/runner.test.ts`, "spawn: sets detached:true and windowsHide:true...")
+- [x] Child `pid` is persisted on the run row as soon as the process spawns (test file: `tests/runner.test.ts`, "spawn: persists the child pid on the run row...")
+- [x] Output byte cap truncates capture, sets `outputTruncated`, and never affects the child process (test file: `tests/runner.test.ts`, output byte cap describe block)
+- [x] `adoptRun` re-attaches overlap tracking for `skip` and `cancel-previous` across a restart (test file: `tests/runner.test.ts`, `adoptRun` describe block)
+- [x] `--exec` takes its command and args verbatim, with no whitespace splitting (test file: `tests/job-input.test.ts`, "buildJobFromCreateOptions -- --exec verbatim + rawArgs"; `tests/cli.test.ts`, "new --help describes --exec's real verbatim-command + -- args behavior")
 
 ## Out of scope
 
@@ -116,7 +127,10 @@ None.
 
 - [001-job-definition.md](001-job-definition.md)
 - [002-scheduling.md](002-scheduling.md)
+- [004-daemon.md](004-daemon.md)
 - [006-state-and-persistence.md](006-state-and-persistence.md)
 - [007-prompt-jobs.md](007-prompt-jobs.md)
 - `../docs/reference/`
 - `../docs/concepts/`
+- `../docs/decisions/0016-detached-children-cross-platform.md`
+- `../docs/decisions/0018-exec-dash-dash-args.md`

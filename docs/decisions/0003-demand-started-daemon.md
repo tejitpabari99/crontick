@@ -65,7 +65,9 @@ because the user's terminal session would need to stay open.
 **Impossible:**
 
 - Firing jobs while the daemon is stopped and no client triggers it (by design -- see
-  `docs/concepts/daemon-lifecycle.md`).
+  `docs/concepts/daemon-lifecycle.md`). What is not impossible: the daemon reports every
+  fire it missed as a `missed`-status run on its next start, so the gap is visible rather
+  than silent (see ADR 0015).
 
 ## Revisit when
 

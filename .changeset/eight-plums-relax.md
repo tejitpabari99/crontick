@@ -2,9 +2,9 @@
 "crontick": minor
 ---
 
-Changed the `error` message stored on `runs` for orphaned runs (a run left `running`/`queued` when
-the daemon restarts, then canceled on the next startup). It previously reported the bare string
-`"daemon-restart"`; it now reports a descriptive message prefixed with `"DAEMON_RESTART: "` (e.g.
-`"DAEMON_RESTART: run was canceled because the daemon restarted while it was queued or running"`).
-If you have code that matches the exact previous string, match on the `DAEMON_RESTART:` prefix
-instead.
+An orphaned run (one left `running`/`queued` because the daemon that started it is no longer
+live) records a structured `error` on its run row: a message prefixed `"DAEMON_RESTART: "` (e.g.
+`"DAEMON_RESTART: run was canceled because the daemon restarted while it was queued or running"`),
+keyed by the stable code `ORPHAN_RUN_ERROR_CODE` (`"DAEMON_RESTART"`) rather than an ad hoc string.
+Match on the `DAEMON_RESTART:` prefix (or the exported error code) if you need to detect this case
+programmatically.

@@ -49,7 +49,7 @@ tests/
   mcp.test.ts              Integration: MCP server via SDK client
   client.test.ts           CrontickClient against fake/real daemons
   surface-drift.test.ts    Parity: all surfaces expose every capability
-  store.test.ts            Unit: SQLite store CRUD, migrations, run retention
+  store.test.ts            Unit: SQLite store CRUD, schedule state, missed runs, run retention
   scheduler.test.ts        Unit: cron/interval/one-shot scheduling
   runner.test.ts           Unit: process spawning, overlap, timeout
   config.test.ts           Unit: config load/write/engines, retention bounds
@@ -254,7 +254,7 @@ publishing.
 ### State directory
 
 - [ ] Delete `CRONTICK_HOME` entirely; `crontick daemon start` recreates it
-- [ ] With an existing populated state directory, upgrade (reinstall new version); jobs and runs survive
+- [ ] With an existing populated state directory, reinstall/upgrade to a new 1.x patch or minor version; jobs and runs survive (a `runs.db` from before 1.0.0 is not a supported input -- see ADR 0017)
 
 ### Three surfaces
 

@@ -17,10 +17,14 @@ Before spawning, the Runner checks the job's `overlap` policy:
 - **cancel-previous**: the active run's `AbortController` is signaled, then the new run proceeds.
 - **queue**: the new run is placed in a per-job FIFO queue; a drain loop executes entries sequentially.
 
-Overlap state (which run is active per job, and its queue) is tracked only in the daemon
-process's memory, not persisted to `runs.db`. A daemon restart while a run is still alive drops
-that tracking, so the overlap guarantee you configured can be violated across a restart -- see
-[daemon-lifecycle.md](./daemon-lifecycle.md#limitations-and-known-gaps) for the full explanation.
+Overlap state (which run is active per job, and its queue) is tracked in the daemon process's
+memory, not persisted to `runs.db`. A daemon restart drops that in-memory state, but it is
+rebuilt for any run that survived the restart: on startup, `Store.reconcileOrphanRuns()`
+liveness-checks each `running` run's recorded `pid` and, if the process is still alive (or
+liveness can't be ruled out), calls `Runner.adoptRun()` to re-register it in the new process's
+overlap tracking, so a `skip`/`cancel-previous` policy still holds for that job. See
+[daemon-lifecycle.md](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down) for the full
+reconciliation behavior.
 
 ## Process spawn
 
@@ -33,8 +37,19 @@ All action kinds spawn a child process with `shell: false` using Node.js `child_
   signal: abortController.signal,
   shell: false,
   timeout: action.timeoutSec ? action.timeoutSec * 1000 : undefined,
+  detached: true,
+  windowsHide: true,
 }
 ```
+
+`detached: true` is set for every action kind on every platform, so a child's survival across a
+daemon restart or crash is uniform: on POSIX the child reparents to init as before; on Windows it
+runs in its own process group instead of the daemon's job object, so it is no longer killed when
+the daemon exits. `windowsHide` suppresses the console window that `detached` would otherwise
+pop on Windows. The child's `pid` is persisted onto its run row (`Store.updateRun(runId, { pid })`)
+as soon as it is known, and `child.unref()` is called so a detached child never keeps the daemon's
+event loop alive. See [daemon-lifecycle.md](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down)
+for how a surviving child is reconciled on the next daemon start.
 
 ### Script jobs
 
@@ -50,7 +65,14 @@ The temp file is deleted after the process exits (or on error).
 
 ### Exec jobs
 
-The `command` is spawned directly with `args`. No shell interpretation occurs.
+The `command` is spawned directly with `args`. No shell interpretation occurs. `command` is used
+verbatim -- it is never split on whitespace -- so a command string containing spaces (e.g. a path)
+is passed through unchanged as a single argv element. `args` come from whatever a surface passes
+through (for the CLI, everything after a literal `--`), so an individual argument containing
+spaces is preserved intact rather than being re-split. See
+[cli.md](../reference/cli.md#crontick-new) for the CLI's `--`-based syntax and its two
+Windows shell-shim caveats, and [ADR 0018](../decisions/0018-exec-dash-dash-args.md) for why `--`
+was chosen over whitespace splitting.
 
 ### Prompt jobs
 
@@ -75,6 +97,15 @@ The `envFile` is resolved relative to `action.cwd` (or `process.cwd()`) when not
 
 Both streams are captured chunk-by-chunk. Each chunk passes through `safeRedact()`, which applies secret redaction only to valid UTF-8 text (binary data is stored as-is). Redacted chunks are inserted into `run_logs` with the stream name and a timestamp.
 
+Captured output per run is bounded by `retention.maxOutputBytesPerRun` (default 2,000,000 bytes,
+configurable `1024..1_000_000_000` -- see [configuration reference](../reference/configuration.md)).
+Once a run's captured output reaches the cap, crontick appends a truncation marker line to
+`run_logs` and stops persisting any further chunks; the run's `outputTruncated` field is set to
+`true`. This only stops output *capture* -- the job's own child process is never killed,
+throttled, or otherwise affected by hitting the cap; it keeps running to completion. See
+[internals/executors.md](../internals/executors.md#output-capture-cap) for the exact enforcement
+point.
+
 ## Timeouts
 
 When `action.timeoutSec` is set, it is passed as `timeout` (in ms) to the spawn options. Node.js sends SIGTERM to the child on timeout. The Runner interprets the `ETIMEDOUT` error code as status `timeout`.
@@ -90,6 +121,11 @@ When `action.timeoutSec` is set, it is passed as `timeout` (in ms) to the spawn 
 | ETIMEDOUT | `timeout` |
 | ENOENT (prompt engine not found) | `failed` with descriptive error |
 | No exit code (null) | `failed` |
+
+`missed` is a seventh terminal status, but it is never produced by the Runner or by this
+tick-to-run pipeline: it is recorded directly by the daemon's startup missed-fire pass for a
+schedule fire that had no run at all because the daemon was not running at the time. See
+[daemon-lifecycle.md](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down).
 
 ## Retry behavior
 

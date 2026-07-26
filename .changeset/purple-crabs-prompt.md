@@ -4,9 +4,11 @@
 
 Add first-class prompt cron jobs for Copilot and Agency. Prompt jobs can be created from the CLI,
 client, HTTP API, or MCP with `action.kind: "prompt"`, raw engine args, explicit sessions, and
-first-run session reuse. Daemon-backed CLI/MCP/client operations now start the daemon on demand;
-prompt files are normalized to persisted prompt text before jobs are stored.
+first-run session reuse. Prompt files are normalized to persisted prompt text before jobs are
+stored.
 
-BREAKING: remove install-time and login/startup registration surfaces used to launch the daemon
-automatically. Users should let daemon-backed commands start the daemon on demand or run
-`crontick daemon start` explicitly when they want manual lifecycle control.
+The daemon is demand-started: any daemon-backed CLI, MCP, or client operation starts it
+automatically on first use, and `crontick daemon start` is available for explicit manual
+lifecycle control. There is no install-time or login/startup registration -- crontick does not
+register itself to launch automatically when you log in or start your machine; see
+`docs/concepts/daemon-lifecycle.md` and ADR 0003 for the reasoning.

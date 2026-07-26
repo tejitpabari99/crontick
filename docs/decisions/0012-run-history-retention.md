@@ -34,9 +34,9 @@ Add a per-job count cap, `retention.maxRunsPerJob` (default `100`, bounds `1..10
   fix. `run_logs` for an evicted run are deleted before the `runs` row in the same transaction.
 - The cap is **re-read on `crontick daemon reload`** (`Store.setRunRetentionCap()`), so an
   operator can change it without restarting the daemon.
-- Migration `002_run_retention_index` replaces `idx_runs_job_id` with a composite
-  `(job_id, started_at)` index so the eviction query's ordered walk does not require a
-  scan-then-sort.
+- The composite index `idx_runs_job_id_started_at` on `(job_id, started_at)` (created directly
+  in the schema; there is no separate migration step -- see ADR 0017) supports the eviction
+  query's ordered walk without a scan-then-sort.
 
 See [internals/storage.md](../internals/storage.md) for the full algorithm and
 [reference/configuration.md](../reference/configuration.md) for the config surface.
@@ -89,14 +89,18 @@ groups of 500 also bounds how long any single transaction holds the tables.
 
 **Impossible (by design, honestly recorded, not hidden):**
 
-- **No age-based or byte-based cap.** A job that fires every minute keeps roughly 100 minutes
-  of history under the default cap; a job that fires monthly keeps years. There is no way to
-  say "keep 30 days regardless of frequency" today.
-- **No cap on a single run's output size.** A run with very large captured stdout/stderr still
-  produces a large `run_logs` row no matter how few runs are retained.
-- **No export, warning, dry-run, or undo before eviction.** Eviction is a hard delete; there is
-  no way to recover pruned run history, and no notification is emitted when it happens beyond a
-  debug-level log line.
+- **No age-based or byte-based cap on run *count*.** A job that fires every minute keeps
+  roughly 100 minutes of history under the default cap; a job that fires monthly keeps years.
+  There is no way to say "keep 30 days regardless of frequency" today. (A single run's captured
+  *output* size is bounded independently -- see `retention.maxOutputBytesPerRun` in
+  [reference/configuration.md](../reference/configuration.md) -- but that is an orthogonal cap,
+  not a substitute for age-based run retention.)
+- **No automatic export, warning, or undo before eviction.** Eviction is a hard delete inside
+  the daemon; there is no built-in prompt or automatic backup at the moment a run is pruned, and
+  no notification is emitted beyond a debug-level log line. The available mitigation is
+  operator-initiated: `crontick export --include-runs` (and the corresponding `import`) lets an
+  operator snapshot run history before it ages out of the cap, but nothing does this
+  automatically or on a schedule.
 - **Eviction can temporarily let a job exceed the cap** by the number of currently-active runs,
   since active runs are never evicted; this is intentional (never delete in-flight state) but
   means the cap is not a hard ceiling on total row count at every instant.
@@ -106,9 +110,7 @@ groups of 500 also bounds how long any single transaction holds the tables.
 - A user needs age-based retention (e.g. compliance requiring "no run data older than N days")
   in addition to, or instead of, the count cap -- this would be an additive
   `retention.maxAgeDays`-style field, not a replacement for the count cap.
-- Captured run output size becomes a real operational problem (e.g. a job that legitimately
-  produces gigabytes of output) -- would need a separate per-run output-size limit, independent
-  of this ADR's per-job run-count limit.
-- Users request an export-before-delete or dry-run mode; this was consciously deferred to keep
-  the initial implementation simple and because eviction is currently rare enough (100 runs by
-  default) that data loss risk is low for typical usage patterns.
+- Users request an automatic export-before-delete or dry-run mode; this was consciously
+  deferred to keep eviction simple. `crontick export --include-runs` covers the manual case
+  today; an automatic variant (e.g. "always snapshot the last N runs before evicting them")
+  would be a separate, later decision.

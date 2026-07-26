@@ -23,6 +23,7 @@ class Scheduler extends EventEmitter {
   unscheduleAll(): void;
   previewNext(schedule: Schedule, opts?: PreviewOptions): string[];
   validateSchedule(schedule: Schedule): ValidateResult;
+  enumerateFiresBetween(schedule: Schedule, fromExclusiveMs: number, toExclusiveMs: number, opts?: { cap?: number }): { fires: number[]; capped: boolean };
 }
 ```
 
@@ -136,9 +137,32 @@ silently skipped after unschedule.
 
 ---
 
+## Enumerating Past Fires (`enumerateFiresBetween`)
+
+`enumerateFiresBetween(schedule, fromExclusiveMs, toExclusiveMs, { cap })` walks a schedule
+forward from `fromExclusiveMs` (exclusive) and collects every fire time strictly before
+`toExclusiveMs`, without registering any timer or side effect — the same static computation
+`previewNext` uses, but bounded by a time window instead of a fire count. It stops early and
+sets `capped: true` once it has collected `cap` fires (`DEFAULT_ENUMERATE_FIRES_CAP = 500`),
+so a job whose schedule fired thousands of times while the daemon was down does not force an
+unbounded loop.
+
+This is used exactly once in the codebase: by the daemon's startup missed-fire pass, which calls
+it with `fromExclusiveMs` = the job's `job_schedule_state.last_tick_at` watermark and
+`toExclusiveMs` = "now", to compute exactly which fires happened while no daemon process was
+running. See [daemon.md](./daemon.md#missed-fire-reporting) for the full startup sequence and
+[storage.md](./storage.md#missed-fire-reporting) for how each fire becomes a `missed` run.
+
+---
+
 ## Drift Handling
 
 There is no explicit drift correction. Croner handles cron drift internally.
 Interval jobs may accumulate drift from Node.js event-loop delays (standard
-`setInterval` behavior). One-shot jobs fire once and are not retried if the
-daemon was down at the scheduled time.
+`setInterval` behavior). One-shot and recurring jobs alike are not retried if the daemon was
+down at a scheduled fire time — that fire is never executed after the fact. It is, however,
+never silently lost: the daemon's startup missed-fire pass (built on
+`enumerateFiresBetween` above) records it as a `missed` run, so the gap is always visible in
+`crontick runs list` and in `daemon status`'s `missedFires` summary, even though nothing runs to
+fill it. See [ADR 0015](../decisions/0015-report-missed-fires-not-replay.md) for why replay was
+rejected in favor of reporting.
