@@ -45,7 +45,7 @@ crontick new <id> [engineArgs...]
 | `--at <iso>` | string | — | One-shot run-at ISO-8601 time |
 | `--tz <tz>` | string | — | Timezone for cron schedule |
 | `--script <body>` | string | — | Inline script body |
-| `--exec <cmd>` | string | — | Command to exec (use `--` for args) |
+| `--exec <cmd>` | string | — | Command to exec, split naively on whitespace into command + args |
 | `--prompt <text>` | string | — | Prompt text for a prompt action |
 | `--prompt-file <path>` | string | — | UTF-8 `.txt` file to read into the prompt |
 | `--engine <engine>` | string | config `defaultEngine` | Configured prompt engine name |
@@ -64,6 +64,14 @@ crontick new <id> [engineArgs...]
 unchanged — there is no update-time default, so a partial update never silently resets these
 fields. See [job-schema.md](job-schema.md#update-vs-create-semantics) and
 [jobs.md](../concepts/jobs.md).
+
+`--exec` does not support a `--` separator for arguments: the entire `<cmd>` string is split
+naively on whitespace into a command plus args (see `src/job-input.ts`). This means an argument
+containing a space -- e.g. a file path or message with embedded spaces -- cannot be expressed
+through `--exec`. Use `--script` (which runs through a shell and supports normal quoting), or
+`--file` with an explicit `action.args` array (each array element is passed as one argument,
+untouched by whitespace splitting) for anything that needs precise arguments. See
+[job-schema.md](job-schema.md#kind-exec) for the `exec` action's JSON shape.
 
 Exactly one schedule source (`--cron`, `--every`, `--at`) and one action source (`--script`, `--exec`, `--prompt`, `--prompt-file`) are required unless `--file` is used.
 

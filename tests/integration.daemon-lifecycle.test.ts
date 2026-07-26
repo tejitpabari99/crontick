@@ -323,7 +323,7 @@ describe('Integration: daemon lifecycle', () => {
   }, 25_000);
 
   // ── T-RETENTION-RELOAD ───────────────────────────────────────────────────
-  // specs/006-state-and-persistence.md R-006-23: a running daemon MUST apply
+  // specs/006-state-and-persistence.md R-006-20: a running daemon MUST apply
   // an updated retention cap without a restart.
 
   it('reload applies a newly-lowered retention.maxRunsPerJob without a daemon restart', async () => {

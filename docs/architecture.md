@@ -365,3 +365,27 @@ Prompt jobs delegate execution to external binaries resolved from config (e.g. `
 ### No network egress from daemon
 
 The daemon process itself makes no outbound network calls. It only listens on loopback. Child processes spawned by job actions are unconstrained and may make arbitrary network calls.
+
+## Limitations
+
+crontick trades reliability guarantees for a zero-install, no-privileges local daemon. Stated
+plainly, for anyone evaluating whether this fits their needs:
+
+- **No supervision or alerting.** Nothing restarts a crashed daemon or notifies you when jobs stop
+  firing; a reboot, logout, or crash silently pauses every schedule until something demand-starts
+  crontick again.
+- **Overlap-policy enforcement (`skip`/`cancel-previous`/`queue`) is in-memory only** and does not
+  survive a daemon restart mid-run.
+- **Run records carry no OS PID**, so the daemon cannot verify after a restart whether an
+  in-flight process actually died; orphan reconciliation assumes it did.
+- **Child-process survival on daemon termination is platform-dependent and undocumented-by-default
+  behavior**: killing the daemon kills in-flight children on Windows (Job Objects) but likely
+  orphans them on POSIX.
+- **Run-history retention is destructive by default**: upgrading prunes any run history beyond
+  `retention.maxRunsPerJob` (default 100) permanently, with no export or undo.
+
+See [concepts/daemon-lifecycle.md](concepts/daemon-lifecycle.md#limitations-and-known-gaps) for
+the daemon-related gaps in full, and
+[troubleshooting.md](troubleshooting.md#my-schedule-silently-stopped-running) and
+[troubleshooting.md](troubleshooting.md#my-old-runs-disappeared) for user-facing mitigation and
+recovery steps.

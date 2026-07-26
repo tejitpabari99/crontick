@@ -158,7 +158,7 @@ function commonJobOptions(command: Command): Command {
     .option('--at <iso>', 'One-shot run-at ISO-8601 time')
     .option('--tz <tz>', 'Timezone for cron schedule')
     .option('--script <body>', 'Inline script body')
-    .option('--exec <cmd>', 'Command to exec (use -- for args)')
+    .option('--exec <cmd>', 'Command to exec, split naively on whitespace into command + args (an argument containing a space cannot be expressed this way -- use --script, or --file with an explicit args array)')
     .option('--prompt <text>', 'Prompt text for a prompt action')
     .option('--prompt-file <path>', 'UTF-8 .txt file to read into the prompt')
     .option('--engine <engine>', 'Configured prompt engine name (default: config defaultEngine)')

@@ -3,7 +3,7 @@
 // See docs/internals/storage.md
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
-import { writeFileSync, readFileSync, unlinkSync, readdirSync, existsSync } from 'node:fs';
+import { writeFileSync, readFileSync, unlinkSync, readdirSync, existsSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { runsDbPath, jobsDir } from '../paths.js';
 import { JobSchema, type Job, type PromptAction } from '../schemas/job.js';
@@ -178,9 +178,10 @@ export class Store {
       )
       .run(persisted.id, json, now);
     const filePath = join(this.jobsPath, `${persisted.id}.json`);
-    writeFileSync(filePath, json, 'utf-8');
-    writeFileSync(join(this.jobsPath, `${persisted.id}.schema.json`), jobJsonSchemaText(), 'utf-8');
-    this.logger.debug('Persisted job files', { jobId: persisted.id, filePath, schemaPath: join(this.jobsPath, `${persisted.id}.schema.json`) });
+    const schemaPath = join(this.jobsPath, `${persisted.id}.schema.json`);
+    writeJobFileHardened(filePath, json);
+    writeJobFileHardened(schemaPath, jobJsonSchemaText());
+    this.logger.debug('Persisted job files', { jobId: persisted.id, filePath, schemaPath });
   }
 
   /**
@@ -253,8 +254,9 @@ export class Store {
     const files = readdirSync(this.jobsPath).filter((f) => f.endsWith('.json') && !f.endsWith('.schema.json'));
     let loaded = 0;
     for (const file of files) {
+      const filePath = join(this.jobsPath, file);
       try {
-        const raw = readFileSync(join(this.jobsPath, file), 'utf-8');
+        const raw = readFileSync(filePath, 'utf-8');
         const parsed = JobSchema.safeParse(JSON.parse(raw));
         if (parsed.success) {
           const json = JSON.stringify(parsed.data);
@@ -264,9 +266,15 @@ export class Store {
             )
             .run(parsed.data.id, json, Date.now());
           loaded++;
+        } else {
+          // warn (not debug): a job silently vanishing from the schedule after a
+          // crash mid-write or a hand edit must be visible without --verbose.
+          const first = parsed.error.issues[0];
+          const reason = first ? `${first.path.join('.') || '<root>'}: ${first.message}` : parsed.error.message;
+          this.logger.warn('Skipped job file failing schema validation', { filePath, reason });
         }
-      } catch {
-        // skip malformed job files
+      } catch (err) {
+        this.logger.warn('Skipped unreadable or malformed job file', { filePath, reason: err instanceof Error ? err.message : String(err) });
       }
     }
     this.logger.debug('Loaded jobs from disk', { jobsPath: this.jobsPath, files: files.length, loaded });
@@ -470,7 +478,7 @@ export class Store {
     }
 
     if (totalEvicted > 0) {
-      this.logger.debug('Evicted runs exceeding retention cap', { jobId, evicted: totalEvicted, cap });
+      this.logger.info('Evicted runs exceeding retention cap', { jobId, evicted: totalEvicted, cap });
     }
     return totalEvicted;
   }
@@ -496,8 +504,11 @@ export class Store {
         this.logger.error('Run retention backfill failed for job; continuing with other jobs', { jobId: job_id, error: String(err) });
       }
     }
+    // info (not debug): this is startup history loss the user should be able to
+    // see without turning on --verbose, but only logged when it actually pruned
+    // something, so a healthy startup stays silent.
     if (total > 0) {
-      this.logger.debug('Pruned run history across all jobs on startup', { jobsScanned: jobIds.length, evicted: total, cap });
+      this.logger.info(`Pruned run history on startup: ${total} run(s) removed across ${jobIds.length} job(s) (cap ${cap})`, { jobsScanned: jobIds.length, evicted: total, cap });
     }
     return total;
   }
@@ -572,4 +583,22 @@ function normalizeJobForPersistence(job: Job): Job {
       reuseSession: false,
     },
   };
+}
+
+// Owner-only (rw-------), matching the mode config.ts already applies to
+// config.json: job files can contain inline scripts and prompt text, so they
+// should not be world-readable under a typical umask. writeFileSync's mode
+// option only takes effect when the file is newly created, so an explicit
+// chmodSync also re-hardens a file that already existed (e.g. from a version
+// predating this fix). chmodSync is a best-effort no-op on Windows (POSIX
+// modes aren't enforced there) and never throws for that reason.
+const PRIVATE_FILE_MODE = 0o600;
+
+function writeJobFileHardened(filePath: string, contents: string): void {
+  writeFileSync(filePath, contents, { encoding: 'utf-8', mode: PRIVATE_FILE_MODE });
+  try {
+    chmodSync(filePath, PRIVATE_FILE_MODE);
+  } catch {
+    // best-effort hardening only; must never block a job write
+  }
 }

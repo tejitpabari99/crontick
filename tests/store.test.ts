@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { Store } from '../src/daemon/store.js';
+import { createLogger, type LogEvent } from '../src/logger.js';
 import type { Job } from '../src/schemas/job.js';
 
 function makeTmpDir(): string {
@@ -13,6 +14,14 @@ function makeTmpDir(): string {
 function makeStore(dir: string): Store {
   const store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
   return store;
+}
+
+/** Store wired to a capturing logger so log level/content can be asserted directly. */
+function makeStoreWithEvents(dir: string): { store: Store; events: LogEvent[] } {
+  const events: LogEvent[] = [];
+  const logger = createLogger({ level: 'debug', sink: (event) => events.push(event) });
+  const store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'), logger);
+  return { store, events };
 }
 
 function execJob(id: string): Job {
@@ -76,6 +85,18 @@ describe('Store', () => {
       prompt: 'Summarize status',
       engine: 'copilot',
     });
+  });
+
+  it('upsertJob writes job JSON files with owner-only permissions on POSIX', () => {
+    store.upsertJob(execJob('perm-job'));
+    const jobFile = join(dir, 'jobs', 'perm-job.json');
+    const schemaFile = join(dir, 'jobs', 'perm-job.schema.json');
+    expect(existsSync(jobFile)).toBe(true);
+    expect(existsSync(schemaFile)).toBe(true);
+    if (process.platform !== 'win32') {
+      expect(statSync(jobFile).mode & 0o777).toBe(0o600);
+      expect(statSync(schemaFile).mode & 0o777).toBe(0o600);
+    }
   });
 
   it('tryCapturePromptSession only updates an unchanged reusable prompt job', () => {
@@ -243,6 +264,32 @@ describe('Store', () => {
     expect(store.listJobs()).toHaveLength(0);
   });
 
+  it('loadJobsFromDisk warns (not just debug-logs) with the file path and reason for an unreadable/malformed job file', () => {
+    const { store: store2, events } = makeStoreWithEvents(dir);
+    store2.open();
+    const badPath = join(dir, 'jobs', 'bad.json');
+    writeFileSync(badPath, 'not valid json{{{');
+    store2.loadJobsFromDisk();
+    store2.close();
+
+    const warning = events.find((e) => e.level === 'warn' && e.message.includes('malformed job file'));
+    expect(warning).toBeTruthy();
+    expect((warning?.data as { filePath?: string } | undefined)?.filePath).toBe(badPath);
+  });
+
+  it('loadJobsFromDisk warns with the file path and reason for a job file failing schema validation', () => {
+    const { store: store2, events } = makeStoreWithEvents(dir);
+    store2.open();
+    const invalidPath = join(dir, 'jobs', 'schema-invalid.json');
+    writeFileSync(invalidPath, JSON.stringify({ id: 'schema-invalid' })); // missing required fields
+    store2.loadJobsFromDisk();
+    store2.close();
+
+    const warning = events.find((e) => e.level === 'warn' && e.message.includes('schema validation'));
+    expect(warning).toBeTruthy();
+    expect((warning?.data as { filePath?: string } | undefined)?.filePath).toBe(invalidPath);
+  });
+
   // ── Run retention ─────────────────────────────────────────────────────────────
 
   it('evicts the oldest run at exactly the 101st run for a job', () => {
@@ -259,6 +306,56 @@ describe('Store', () => {
     expect(store.listRuns({ jobId: 'job-a' })).toHaveLength(100);
     expect(store.getRun(oldest.id)).toBeUndefined();
     expect(store.getRun(run101.id)).toBeTruthy();
+  });
+
+  it('logs eviction at info level (visible without --verbose) only when a run is actually evicted', () => {
+    const { store: store2, events } = makeStoreWithEvents(dir);
+    store2.open();
+    try {
+      // 100 runs exactly at the cap: no eviction should happen, so no info-level
+      // eviction log should be emitted (steady state must stay silent).
+      for (let i = 0; i < 100; i++) {
+        const run = store2.insertRun('job-info-a', 1000 + i);
+        store2.updateRun(run.id, { status: 'success' });
+      }
+      expect(events.filter((e) => e.level === 'info' && e.message.includes('Evicted'))).toHaveLength(0);
+
+      // The 101st run pushes one run past the cap: exactly one eviction, so
+      // exactly one info-level log, with the job id and evicted count.
+      const run101 = store2.insertRun('job-info-a', 1000 + 100);
+      store2.updateRun(run101.id, { status: 'success' });
+      const evictionLogs = events.filter((e) => e.level === 'info' && e.message.includes('Evicted'));
+      expect(evictionLogs).toHaveLength(1);
+      expect(evictionLogs[0].data).toMatchObject({ jobId: 'job-info-a', evicted: 1 });
+    } finally {
+      store2.close();
+    }
+  });
+
+  it('pruneAllJobsRunHistory startup backfill logs a concise info-level line with the number of runs pruned', () => {
+    const dbPath = join(dir, 'runs.db');
+    store.close();
+
+    const raw = new DatabaseSync(dbPath);
+    raw.exec('BEGIN;');
+    const insert = raw.prepare('INSERT INTO runs (id, job_id, started_at, status) VALUES (?, ?, ?, ?)');
+    for (let i = 0; i < 150; i++) insert.run(`backfill-${i}`, 'job-backfill', i, 'success');
+    raw.exec('COMMIT;');
+    raw.close();
+
+    const events: LogEvent[] = [];
+    const logger = createLogger({ level: 'info', sink: (event) => events.push(event) });
+    const backfillStore = new Store(dbPath, join(dir, 'jobs'), logger, 100);
+    backfillStore.open();
+    try {
+      const evicted = backfillStore.pruneAllJobsRunHistory();
+      expect(evicted).toBe(50);
+      const backfillLogs = events.filter((e) => e.level === 'info' && e.message.toLowerCase().includes('pruned'));
+      expect(backfillLogs).toHaveLength(1);
+      expect(backfillLogs[0].message).toContain('50');
+    } finally {
+      backfillStore.close();
+    }
   });
 
   it('never evicts in-flight (running/queued) runs even when they are the oldest', () => {

@@ -17,6 +17,11 @@ Before spawning, the Runner checks the job's `overlap` policy:
 - **cancel-previous**: the active run's `AbortController` is signaled, then the new run proceeds.
 - **queue**: the new run is placed in a per-job FIFO queue; a drain loop executes entries sequentially.
 
+Overlap state (which run is active per job, and its queue) is tracked only in the daemon
+process's memory, not persisted to `runs.db`. A daemon restart while a run is still alive drops
+that tracking, so the overlap guarantee you configured can be violated across a restart -- see
+[daemon-lifecycle.md](./daemon-lifecycle.md#limitations-and-known-gaps) for the full explanation.
+
 ## Process spawn
 
 All action kinds spawn a child process with `shell: false` using Node.js `child_process.spawn`. The spawn options are:

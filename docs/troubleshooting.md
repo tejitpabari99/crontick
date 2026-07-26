@@ -106,6 +106,36 @@ Then run `crontick doctor`. If it still fails, inspect the ensure log in the cro
 `logs/daemon.ensure.log`. crontick is not a supervisor; if the daemon died while idle, scheduled jobs
 pause until you start it or run another daemon-backed command.
 
+### My schedule silently stopped running
+
+crontick has no supervisor and no alerting: if a job stops firing, nothing notifies you. This is
+expected behavior of the demand-started daemon model, not a bug -- see
+[daemon-lifecycle.md](concepts/daemon-lifecycle.md#limitations-and-known-gaps) for why. Common
+causes, in rough order of likelihood:
+
+- **Nothing has demand-started the daemon since a reboot or logout.** The daemon only starts when
+  a crontick command (CLI, MCP, or client) runs. After a reboot, if nothing has invoked crontick
+  yet, the daemon simply is not running and no job fires -- there is no missed-tick record.
+- **The daemon process died** (crash, out-of-memory kill, manual `kill -9`/Task Manager, etc.)
+  while otherwise idle between ticks.
+- **The overlap policy was violated across a restart.** If the daemon restarted while a run for a
+  `skip`/`cancel-previous` job was still active, the new process has no memory of that run, since
+  overlap tracking is in-memory only (see [execution.md](concepts/execution.md#overlap-enforcement)).
+
+Check and mitigate:
+
+```sh
+crontick daemon status
+crontick doctor
+```
+
+If the daemon is not running, start it explicitly (`crontick daemon start`) or run any other
+daemon-backed command, which demand-starts it. There is no built-in way to be notified
+automatically today; the practical mitigation is to periodically run `crontick daemon status` or
+`crontick doctor` yourself (from your own monitoring, or simply a habit), or to keep a terminal or
+script that periodically invokes crontick, since that is what keeps the demand-started daemon
+alive in the first place.
+
 ### Need more crontick diagnostics
 
 Use `crontick --verbose ...` (or `-v`) or set `CRONTICK_VERBOSE=1`. Verbose output goes to stderr,
@@ -165,6 +195,32 @@ If the file is corrupt, delete it and reinitialize:
 ```sh
 crontick config init --force
 ```
+
+### Daemon won't start: `Error: file is not a database`
+
+This means `runs.db` (the SQLite run-history database) is corrupted. The daemon opens it
+unconditionally on startup and does not attempt repair, so it fails to start entirely -- no jobs
+run, scheduled or otherwise -- until the file is removed. Recovery:
+
+1. Stop the daemon if it is still running (`crontick daemon stop`); if it never started, skip this.
+2. Find the data directory: `CRONTICK_HOME` if set, otherwise the platform default (Windows
+   `%LOCALAPPDATA%\crontick`, macOS `~/Library/Application Support/crontick`, Linux
+   `~/.local/share/crontick`). `crontick doctor` also prints the resolved path.
+3. Delete `runs.db` and its WAL side files in that directory: `runs.db`, `runs.db-wal`,
+   `runs.db-shm`. All three must go together -- removing only `runs.db` can leave a stale
+   `-wal`/`-shm` pair that the next open tries to replay against the new, empty database file.
+4. Start the daemon again (`crontick daemon start`, or let the next daemon-backed command
+   demand-start it). A fresh `runs.db` is created and migrated automatically.
+
+**What this loses:** run history and logs only -- every past run, its stdout/stderr, exit code,
+and timestamps. **Job definitions are not affected**: jobs are the JSON files under
+`<dataDir>/jobs/`, a separate store from `runs.db`, and are untouched by this recovery.
+
+**Confirm recovery:** `crontick doctor` should report the daemon and dashboard reachable again,
+and `crontick list` should show your jobs unchanged with empty run history (`crontick logs
+<job-id>` returns no runs until the job fires again). See
+[internals/storage.md](internals/storage.md) for the on-disk schema and
+[state-and-storage.md](concepts/state-and-storage.md) for the persistence model.
 
 ### DAEMON_START_LOCK_TIMEOUT
 

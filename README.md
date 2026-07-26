@@ -5,7 +5,7 @@ A standalone cron daemon, CLI, and MCP server for local scheduled jobs.
 crontick lets you define periodic and one-shot jobs (shell scripts, direct commands, or LLM
 prompt invocations) and manage them identically from a terminal, a Node.js program, or an
 AI agent over MCP. A demand-started daemon handles scheduling and execution; three thin shims
-(CLI, library client, stdio MCP server) expose the same 36 capabilities with no drift.
+(CLI, library client, stdio MCP server) expose the same 37 capabilities with no drift.
 
 ### Documentation
 
@@ -90,13 +90,17 @@ crontick new backup --cron "0 2 * * *" --script "pg_dump mydb > /backups/db.sql"
 ### One-shot reminder
 
 ```sh
-crontick new deploy-reminder --once "2026-08-01T09:00:00" --exec "notify-send" --args "Deploy v2 today"
+crontick new deploy-reminder --at "2026-08-01T09:00:00" --script "notify-send 'Deploy v2 today'"
 ```
+
+`--exec` splits its argument on whitespace (see [CLI reference](docs/reference/cli.md)), so an
+argument containing a space -- like the reminder text above -- needs `--script` (which runs
+through a shell) instead.
 
 ### Execute a binary directly
 
 ```sh
-crontick new healthcheck --interval 30 --exec "curl" --args "-sf http://localhost:3000/health"
+crontick new healthcheck --every 30 --exec "curl -sf http://localhost:3000/health"
 ```
 
 ### AI prompt job
@@ -117,7 +121,7 @@ Add to your MCP client configuration:
 }
 ```
 
-The MCP server exposes all 36 capabilities as tools (e.g., `crontick_job_create`,
+The MCP server exposes all 37 capabilities as tools (e.g., `crontick_job_create`,
 `crontick_job_list`, `crontick_schedule_preview`).
 
 ---
@@ -134,7 +138,7 @@ The library entry point (`import ... from 'crontick'`) exports:
 
 | Export | Purpose |
 |--------|---------|
-| `createClient` / `CrontickClient` | Programmatic access to all 36 capabilities |
+| `createClient` / `CrontickClient` | Programmatic access to all 37 capabilities |
 | `CrontickError` | Typed error with `code`, `message`, `details` |
 | `ORPHAN_RUN_ERROR_CODE` / `ORPHAN_RUN_ERROR_MESSAGE` | Stored `runs.error` value/prefix for a run canceled by a daemon restart (not a thrown `CrontickError` code) |
 | `SURFACE_CAPABILITIES` | Registry of all capability names, client methods, CLI commands, and MCP tool names |

@@ -65,7 +65,7 @@ describe('startup registration removal guards', () => {
           `This guard blocks the removed "${removed}" feature (OS login-item / registry-based daemon`,
           'launch) from reappearing in src/, plugin/, scripts/, README.md, package.json, package-lock.json,',
           'or tsup.config.ts. If this is a genuine reintroduction, it needs explicit sign-off per',
-          '"Implementation rules" #1 in AGENTS.md before it can be added back. If this is an unrelated',
+          '"Implementation rules" #8 in AGENTS.md before it can be added back. If this is an unrelated',
           'false-positive substring match, narrow the needle list or add a targeted exception here --',
           'do not delete or reword legitimate product code or documentation to dodge this test.',
         ].join('\n'),

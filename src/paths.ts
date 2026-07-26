@@ -45,8 +45,14 @@ export function portFilePath(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 
+// Owner-only (rwx------): job/prompt definitions on disk can contain inline
+// scripts and prompt text, so directories default to a private mode rather
+// than the umask-dependent default. mode is a no-op on Windows (fs simply
+// ignores it there rather than throwing), so this is safe cross-platform.
+const PRIVATE_DIR_MODE = 0o700;
+
 export function ensureDirs(env: NodeJS.ProcessEnv = process.env): void {
   for (const dir of [dataDir(env), jobsDir(env), logsDir(env)]) {
-    mkdirSync(dir, { recursive: true });
+    mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
   }
 }

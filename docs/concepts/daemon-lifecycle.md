@@ -75,6 +75,41 @@ daemon start tolerates and overwrites stale PID/port files. See
 - **No ticks fire.** The scheduler only runs inside the daemon process. Missed ticks are not caught up.
 - **Orphan reconciliation.** On next startup, any runs left in `running` or `queued` state are set to `canceled` with `error` set to the stored value `DAEMON_RESTART: run was canceled because the daemon restarted while it was queued or running` via `Store.reconcileOrphanRuns()`.
 - **Jobs are safe.** Job definitions live in JSON files on disk; they are not lost when the daemon stops.
+- **Nothing tells you it stopped.** Demand-start means the daemon exists only because something invoked crontick; if nothing does, it never starts and no job ever fires, silently. A reboot, a logout, or the daemon process dying on its own (crash, out-of-memory kill, etc.) all stop every scheduled job with no notification, no missed-tick record, and no alert -- see [Limitations and known gaps](#limitations-and-known-gaps).
+
+## Limitations and known gaps
+
+crontick is a local, unsupervised, demand-started daemon. This section states plainly what that
+model does not give you, so you can decide whether it fits your reliability requirements.
+
+- **No supervision, no notification.** There is no system service, watchdog, or external monitor.
+  If the daemon is not running -- because nothing has invoked a crontick command since the last
+  reboot/logout, or because it crashed -- scheduled jobs simply do not fire. Nothing emails,
+  pages, or otherwise alerts you; the only evidence is the absence of expected runs.
+- **Overlap-policy state does not survive a restart.** `skip`/`cancel-previous`/`queue` tracking
+  lives only in the daemon process's memory (see [execution.md](./execution.md#overlap-enforcement)).
+  If the daemon restarts while a run is still alive, the new process has no memory of it, so the
+  overlap guarantee you configured for that job can be violated across the restart.
+- **Runs are not verified against the OS process table.** A run row in `runs.db` does not record
+  the OS PID of its child process. Orphan reconciliation (above) assumes any run left
+  `running`/`queued` after a restart is dead and marks it `canceled`; it has no way to confirm the
+  underlying process actually exited, so the database and reality can diverge if a child process
+  outlives the daemon that spawned it.
+- **Child-process survival on daemon kill differs by platform, and this is not configurable.** On
+  Windows, killing the daemon process also kills its in-flight child job process: Node's child
+  processes are placed in an OS Job Object tied to the parent by default, and closing that job
+  terminates the whole tree. On POSIX (macOS/Linux), killing the daemon does not automatically
+  kill an in-flight child; without `detached`/process-group handling, the child is typically
+  reparented to init and keeps running as an orphan. Nothing in crontick reconciles this
+  divergence today.
+
+**Practical mitigation available today:** there is no built-in alerting, so visibility is manual.
+Run `crontick daemon status` or `crontick doctor` periodically (e.g. from your own monitoring, a
+separate scheduler, or just a habit) to confirm the daemon is up and jobs are firing as expected.
+Keeping a terminal or script that periodically invokes any crontick command also keeps the
+demand-started daemon alive, since that is what starts it in the first place. See
+[troubleshooting.md](../troubleshooting.md#my-schedule-silently-stopped-running) for the concrete
+commands.
 
 ## Why not a system service
 

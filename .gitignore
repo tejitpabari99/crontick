@@ -16,3 +16,8 @@ npm-debug.log*
 # scratch artifacts from scripts/verify-package-install.mjs
 .verify-package-scratch/
 *.tgz
+
+# ad hoc scratch dumps (e.g. Get-Process snapshots) accidentally left at the
+# repo root during manual debugging -- never commit these; use a directory
+# outside the repo instead
+/*.txt

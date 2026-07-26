@@ -114,6 +114,13 @@ describe('CLI binary (dist/cli/index.js)', () => {
     expect(result.stdout).not.toContain('-f,');
   });
 
+  it('new --help describes --exec\'s real whitespace-splitting behavior, not a nonexistent -- separator', () => {
+    const result = cli(['new', '--help']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain('use -- for args');
+    expect(result.stdout).toContain('split naively on whitespace');
+  });
+
   it('daemon-backed list auto-starts the daemon when down', async () => {
     const tmp = makeTmpDir();
     try {

@@ -204,6 +204,33 @@ describe('MCP server — full contract', () => {
     }
   });
 
+  it('read-only tools are annotated readOnlyHint, and destructive tools are annotated destructiveHint', async () => {
+    const result = await client.listTools();
+    const byName = new Map(result.tools.map((t) => [t.name, t]));
+
+    const readOnlyTools = ['crontick_job_list', 'crontick_job_get', 'crontick_run_list', 'crontick_stats_summary', 'crontick_doctor'];
+    for (const name of readOnlyTools) {
+      expect(byName.get(name)?.annotations?.readOnlyHint, `${name} should be readOnlyHint`).toBe(true);
+    }
+
+    const destructiveTools = ['crontick_job_create', 'crontick_job_update', 'crontick_job_run_now', 'crontick_job_delete', 'crontick_import'];
+    for (const name of destructiveTools) {
+      const annotations = byName.get(name)?.annotations;
+      expect(annotations?.readOnlyHint, `${name} should not be readOnlyHint`).toBe(false);
+      expect(annotations?.destructiveHint, `${name} should be destructiveHint`).toBe(true);
+    }
+  });
+
+  it('crontick_job_create and crontick_job_run_now descriptions warn they execute on the machine and to confirm first', async () => {
+    const result = await client.listTools();
+    const byName = new Map(result.tools.map((t) => [t.name, t]));
+    for (const name of ['crontick_job_create', 'crontick_job_run_now']) {
+      const description = byName.get(name)?.description ?? '';
+      expect(description, `${name} description should mention executing on the machine`).toMatch(/execut/i);
+      expect(description, `${name} description should tell the caller to confirm first`).toMatch(/confirm/i);
+    }
+  });
+
   // ── Job CRUD round-trip ──────────────────────────────────────────────────────
 
   const testJobId = 'mcp-test-job';

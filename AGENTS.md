@@ -54,6 +54,7 @@ Do not import from `src/daemon/`, `src/cli/`, or `src/mcp/` internals outside th
 5. Prefer Node.js platform APIs (`node:fs`, `node:sqlite`, `node:crypto`, etc.) over third-party packages.
 6. Keep filesystem, network, and timing side effects behind injectable interfaces.
 7. Shims contain zero business logic -- all behavior lives in the core client and daemon modules.
+8. A feature removed from the product (guarded by a regression test, e.g. `tests/autostart-removal.test.ts`) MUST NOT be reintroduced without explicit sign-off in the PR description explaining why the original removal rationale no longer applies.
 
 ## Surface parity rule
 

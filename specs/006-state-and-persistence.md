@@ -51,13 +51,13 @@ both human-editability of jobs and efficient querying of run history.
 - **R-006-17**: Malformed job JSON files (parse failure or schema validation failure) MUST be silently skipped during `loadJobsFromDisk()`.
 - **R-006-18**: Config file MUST be located at `<dataDir>/config.json`.
 - **R-006-19**: Config writes MUST be atomic (write to temp file, rename over original).
-- **R-006-23**: The store MUST cap retained runs per job at `config.retention.maxRunsPerJob` (default 100, range 1-100,000). `Store.pruneRunsForJob()` MUST evict the oldest terminal runs (and their `run_logs`) once a job exceeds the cap, MUST NOT evict `running`/`queued` runs, and MUST tie-break same-timestamp evictions deterministically. `Store.pruneAllJobsRunHistory()` MUST run this backfill across every job on daemon startup, and `Store.setRunRetentionCap()` MUST let a running daemon apply an updated cap without restart (see R-004-21/reload).
+- **R-006-20**: The store MUST cap retained runs per job at `config.retention.maxRunsPerJob` (default 100, range 1-100,000). `Store.pruneRunsForJob()` MUST evict the oldest terminal runs (and their `run_logs`) once a job exceeds the cap, MUST NOT evict `running`/`queued` runs, and MUST tie-break same-timestamp evictions deterministically. `Store.pruneAllJobsRunHistory()` MUST run this backfill across every job on daemon startup, and `Store.setRunRetentionCap()` MUST let a running daemon apply an updated cap without restart (see R-004-21/reload).
 
 ### Non-functional requirements
 
-- **R-006-20**: The data directory layout SHOULD remain stable across minor versions.
-- **R-006-21**: Adding new SQLite columns SHOULD be done via new migrations, not by altering existing ones.
-- **R-006-22**: The daemon SHOULD NOT hold exclusive locks on job JSON files (allow external inspection).
+- **R-006-21**: The data directory layout SHOULD remain stable across minor versions.
+- **R-006-22**: Adding new SQLite columns SHOULD be done via new migrations, not by altering existing ones.
+- **R-006-23**: The daemon SHOULD NOT hold exclusive locks on job JSON files (allow external inspection).
 
 ## Behavior
 
@@ -90,7 +90,7 @@ both human-editability of jobs and efficient querying of run history.
 2. Read applied migration names.
 3. For each unapplied migration in order: exec SQL, insert into migrations.
 
-Applied migrations include `001_initial` (base schema) and `002_run_retention_index` (adds the index `pruneRunsForJob`/`pruneAllJobsRunHistory` scan by, supporting R-006-23).
+Applied migrations include `001_initial` (base schema) and `002_run_retention_index` (adds the index `pruneRunsForJob`/`pruneAllJobsRunHistory` scan by, supporting R-006-20).
 
 ## Inputs and outputs
 
