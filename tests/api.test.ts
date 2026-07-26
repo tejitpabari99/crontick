@@ -313,6 +313,39 @@ describe('Daemon HTTP API', () => {
     });
   });
 
+  // Major 2: POST /api/import's optional `runs` array used to be cast
+  // straight to Run[] with no validation, so one malformed row threw
+  // mid-loop and aborted the whole import (rows already inserted stayed,
+  // the rest were lost) behind a 500. It must now validate each row, skip
+  // bad ones individually, and still return 200 with the valid rows applied.
+  it('POST /api/import validates and skips malformed runs individually instead of failing the whole import behind a 500', async () => {
+    const importJob = {
+      id: 'imported-job',
+      schedule: { kind: 'cron', cron: '0 * * * *' },
+      action: { kind: 'exec', command: 'echo', args: [] },
+    };
+    const { status, data } = await apiCall(port, 'POST', '/api/import', {
+      jobs: [importJob],
+      runs: [
+        { id: 'api-run-ok', jobId: 'imported-job', startedAt: 1000, status: 'success', outputTruncated: false },
+        // Missing startedAt: the exact shape that used to throw mid-loop and
+        // abort the entire import (partial data + a 500), non-atomically.
+        { id: 'api-run-bad', jobId: 'imported-job', status: 'success', outputTruncated: false },
+        // Out-of-union status: previously persisted verbatim, no validation.
+        { id: 'api-run-bad-status', jobId: 'imported-job', startedAt: 1000, status: 'not-a-real-status', outputTruncated: false },
+      ],
+    });
+
+    expect(status, JSON.stringify(data)).toBe(200);
+    const body = data as { runsImported: number; runsSkipped: Array<{ id: string; error: string }> };
+    expect(body.runsImported).toBe(1);
+    expect(body.runsSkipped.map((r) => r.id).sort()).toEqual(['api-run-bad', 'api-run-bad-status']);
+
+    const run = await apiCall(port, 'GET', '/api/runs/api-run-ok');
+    expect(run.status).toBe(200);
+    expect(await apiCall(port, 'GET', '/api/runs/api-run-bad')).toMatchObject({ status: 404 });
+  });
+
   // ── Run logs ───────────────────────────────────────────────────────────────────
 
   it('GET /api/runs/:id/logs returns log array', async () => {

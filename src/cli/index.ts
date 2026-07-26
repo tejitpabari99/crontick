@@ -158,9 +158,10 @@ function commonJobOptions(command: Command): Command {
     .option('--at <iso>', 'One-shot run-at ISO-8601 time')
     .option('--tz <tz>', 'Timezone for cron schedule')
     .option('--script <body>', 'Inline script body')
-    .option('--exec <cmd>', 'Command to exec, taken verbatim (no whitespace splitting); pass arguments after -- (e.g. --exec node -- -e "process.stdout.write(1)")')
+    .option('--exec <cmd>', 'Command to exec, taken verbatim (no whitespace splitting). Pass arguments with repeatable --arg <value> (always correct on every shell/shim, including Windows crontick.cmd/.ps1) — e.g. --exec node --arg -e --arg "process.stdout.write(1)". As a convenience (not guaranteed on every shim), args may instead follow -- (e.g. --exec node -- -e "process.stdout.write(1)"); --arg and -- cannot be combined')
     .option('--prompt <text>', 'Prompt text for a prompt action')
     .option('--prompt-file <path>', 'UTF-8 .txt file to read into the prompt')
+    .option('--arg <value>', 'Argument to pass to --exec or --prompt; repeatable (e.g. --arg -e --arg "a b"). Always safe: works identically on every shell and every Windows shim (crontick.cmd, crontick.ps1, npx), and round-trips spaces, quotes, and leading dashes verbatim. This is the documented way to pass arguments; cannot be combined with -- positional args in the same command.', collectOption)
     .option('--engine <engine>', 'Configured prompt engine name (default: config defaultEngine)')
     .option('--session-id <id>', 'Reuse this prompt engine session every run')
     .option('--reuse-session', 'Capture the first successful run session id and reuse it')
@@ -184,6 +185,7 @@ function collectJobOptions(id: string, engineArgs: string[], opts: Record<string
   return {
     id,
     rawArgs: Array.isArray(engineArgs) ? engineArgs : [],
+    args: stringArrayOption(opts.arg),
     file: stringOption(opts.file),
     cron: stringOption(opts.cron),
     every: numberOption(opts.every),
@@ -209,6 +211,7 @@ function collectPatchOptions(engineArgs: string[], opts: Record<string, unknown>
   if (opts.enable && opts.disable) throw new CrontickError('VALIDATION_ERROR', '--enable and --disable are mutually exclusive');
   return {
     rawArgs: Array.isArray(engineArgs) ? engineArgs : [],
+    args: stringArrayOption(opts.arg),
     file: stringOption(opts.file),
     cron: stringOption(opts.cron),
     every: numberOption(opts.every),
@@ -251,6 +254,10 @@ function booleanOption(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
 }
 
+function stringArrayOption(value: unknown): string[] | undefined {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : undefined;
+}
+
 function parseScheduleJson(raw: string): Schedule {
   return JSON.parse(raw) as Schedule;
 }
@@ -267,6 +274,78 @@ function parseJsonValue(raw: string): unknown {
 /** Commander repeatable option accumulator (e.g. --arg a --arg b → ['a','b']). */
 function collectOption(value: string, previous: string[] | undefined): string[] {
   return [...(previous ?? []), value];
+}
+
+/**
+ * Guards against the case where a user places a crontick flag (e.g. --json)
+ * after `--`, expecting it to still be parsed as a crontick option. Commander
+ * treats everything after a literal `--` as positional (this is standard,
+ * documented `--` semantics), so such a token instead becomes a literal
+ * argument to the job's exec/prompt action — silently corrupting the job
+ * instead of doing what the user meant.
+ *
+ * Only long-form flags (`--foo`) registered on this command or the top-level
+ * program are checked; short flags (`-v`, `-e`, ...) are common, legitimate
+ * literal arguments to arbitrary commands (e.g. `node -e`) and are not
+ * flagged. Anyone who genuinely needs to pass a literal value that happens to
+ * match a crontick flag name should use `--arg` instead, which is never
+ * inspected for collisions.
+ */
+function assertNoCrontickFlagCollision(rawArgs: string[], cmd: Command): void {
+  const known = new Set<string>();
+  for (const opt of [...program.options, ...cmd.options]) {
+    if (opt.long) known.add(opt.long);
+  }
+  const collisions = rawArgs.filter((token) => known.has(token));
+  if (collisions.length === 0) return;
+  throw new CrontickError(
+    'VALIDATION_ERROR',
+    `Argument(s) ${collisions.join(', ')} placed after -- match a crontick flag name and were NOT applied as crontick options -- ` +
+      'this would otherwise silently store them as literal job arguments. Move crontick flags before the -- delimiter, or, ' +
+      `if you meant them literally, pass them with --arg (e.g. --arg "${collisions[0]}") which is never treated as a crontick flag.`,
+  );
+}
+
+/**
+ * Commander's root `program` recognizes `--json`, `-v`/`--verbose`,
+ * `-h`/`--help`, and `-V`/`--version` ANYWHERE in argv, not just before the
+ * subcommand name (verified empirically: `program.parseOptions()` flat-scans
+ * the whole array unless `enablePositionalOptions`/`passThroughOptions` is
+ * set, which this CLI intentionally does not do, since every subcommand
+ * relies on being able to place --json/--verbose at the end of the command).
+ * That means `--arg -v` or `--arg --json` (two separate argv tokens) gets
+ * silently intercepted by the ROOT program as its own global flag before the
+ * `new`/`update`/`engine` subcommand ever sees "-v"/"--json" as `--arg`'s
+ * value — exactly the kind of silent corruption `--arg` exists to prevent.
+ * `--arg=-v` (a single combined token) does not collide, because Commander's
+ * exact-match root scan only matches whole tokens. Rewriting the vulnerable
+ * two-token form into the equivalent single `--arg=<value>` token here, before
+ * Commander ever sees argv, makes `--arg`'s round-trip guarantee hold for
+ * every value with no user-visible difference and no change to Commander's
+ * global option-parsing behavior elsewhere.
+ */
+const ARG_COLLISION_RISK_TOKENS = new Set(['--json', '-v', '--verbose', '-h', '--help', '-V', '--version']);
+
+function rewriteArgValuesCollidingWithGlobalFlags(argv: string[]): string[] {
+  const result: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    if (token === '--') {
+      // Everything after a literal -- is already immune (Commander stops its
+      // own global-flag scan there too) and is the user's own positional
+      // data, not a `--arg` occurrence of ours — leave it untouched.
+      result.push(...argv.slice(i));
+      break;
+    }
+    const next = argv[i + 1];
+    if (token === '--arg' && next !== undefined && ARG_COLLISION_RISK_TOKENS.has(next)) {
+      result.push(`--arg=${next}`);
+      i++; // consumed as part of the merged token above
+      continue;
+    }
+    result.push(token);
+  }
+  return result;
 }
 
 function parseEnvEntries(entries: string[] | undefined): Record<string, string> | undefined {
@@ -304,9 +383,10 @@ program
   .option('-v, --verbose', 'Write crontick diagnostic logs to stderr (also enabled by CRONTICK_VERBOSE=1)');
 
 commonJobOptions(program.command('new <id> [engineArgs...]').description('Create a new job'))
-  .action(async (id: string, engineArgs: string[], opts) => {
+  .action(async (id: string, engineArgs: string[], opts, cmd: Command) => {
     const c = client();
     try {
+      assertNoCrontickFlagCollision(engineArgs, cmd);
       const result = await c.createJobFromCliOptions(collectJobOptions(id, engineArgs, opts));
       printNotices(c);
       print(result);
@@ -318,10 +398,11 @@ commonJobOptions(program.command('new <id> [engineArgs...]').description('Create
 commonJobOptions(program.command('update <id> [engineArgs...]').description('Update an existing job'))
   .option('--enable', 'Enable the job')
   .option('--disable', 'Disable the job')
-  .action(async (id: string, engineArgs: string[], opts) => {
+  .action(async (id: string, engineArgs: string[], opts, cmd: Command) => {
     const c = client();
     const notices: string[] = [];
     try {
+      assertNoCrontickFlagCollision(engineArgs, cmd);
       const patch = buildJobPatchFromUpdateOptions(collectPatchOptions(engineArgs, opts), {
         cwd: process.cwd(),
         onNotice: (message) => notices.push(message),
@@ -611,4 +692,4 @@ Example MCP host config (Claude Desktop):
     process.exit(result.status ?? 0);
   });
 
-program.parse();
+program.parse(rewriteArgValuesCollidingWithGlobalFlags(process.argv));

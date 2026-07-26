@@ -1,7 +1,7 @@
 // Unit tests for the L4 pid-liveness/pid-reuse helper (src/process-liveness.ts).
 // Uses real child processes (no fakes) since this module's entire job is to
 // shell out to the real OS — a mock would just test the mock.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { spawn } from 'node:child_process';
 import {
   isProcessAlive,
@@ -9,6 +9,23 @@ import {
   createProcessLivenessCheck,
   PID_START_TOLERANCE_MS,
 } from '../src/process-liveness.js';
+
+// MAJOR 4 regression test below needs to count real spawnSync invocations
+// without breaking every other test in this file that relies on the real OS
+// call going through — node:child_process's spawnSync isn't a redefinable
+// property (vi.spyOn throws), so it's wrapped via vi.mock + a hoisted spy
+// that still delegates to the real implementation.
+const { spawnSyncSpy } = vi.hoisted(() => ({ spawnSyncSpy: vi.fn() }));
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    spawnSync: (...args: Parameters<typeof actual.spawnSync>) => {
+      spawnSyncSpy(...args);
+      return actual.spawnSync(...args);
+    },
+  };
+});
 
 const node = process.execPath;
 
@@ -57,16 +74,38 @@ describe('process-liveness', () => {
     expect(check.isRunAlive(pid, Date.now())).toBe(false);
   }, 10_000);
 
-  it('createProcessLivenessCheck: isRunAlive returns true for a live pid whose recorded startedAt predates its real OS start time', () => {
-    // The daemon records `started_at` when the run row is inserted, strictly
-    // before the child is actually spawned (see index.ts's insertRun() call
-    // at tick time vs. runner.ts's spawn()) — so a genuine (non-reused) match
-    // always has OS start time >= recorded startedAt. Using the *current*
-    // process (this test runner) with a startedAt safely in its own past
-    // reproduces exactly that "genuine" shape without needing a live child.
+  it('createProcessLivenessCheck: isRunAlive returns true for a live pid whose recorded startedAt closely matches its real OS start time (genuine match)', async () => {
+    // Mirrors the real flow: startedAt is recorded immediately before spawn()
+    // (index.ts's insertRun() happens right before runner.ts's spawn()), so a
+    // genuine match's real OS start time differs from startedAt only by
+    // scheduling/reporting latency — comfortably inside PID_START_TOLERANCE_MS.
+    // (Replaces a prior version of this test that used a 60s-old startedAt,
+    // which is not what a genuine spawn latency looks like and only passed by
+    // coincidence under the old, buggy asymmetric tolerance check.)
+    const startedAt = Date.now();
+    const child = spawn(node, ['-e', 'setTimeout(() => {}, 5000)']);
     const check = createProcessLivenessCheck();
-    const recordedStartedAt = Date.now() - 60_000; // 60s "before" now, comfortably before this process's own start
-    expect(check.isRunAlive(process.pid, recordedStartedAt)).toBe(true);
+    try {
+      expect(check.isRunAlive(child.pid!, startedAt)).toBe(true);
+    } finally {
+      child.kill();
+    }
+  }, 10_000);
+
+  it('createProcessLivenessCheck: isRunAlive returns false for a live pid whose real start time is much LATER than the recorded startedAt (reused-pid shape)', () => {
+    // Reproduces the exact reported bug shape: a process that reused a pid
+    // necessarily started AFTER the original run's recorded startedAt, so the
+    // old asymmetric check (`startTime >= startedAt - tolerance`) always said
+    // true for this case — the pid-reuse guard guarded nothing. The current
+    // test process started well within the last hour, so using it here with a
+    // 1-hour-old startedAt reproduces "isRunAlive(pid, Date.now() - 3600_000)"
+    // from the bug report directly.
+    const check = createProcessLivenessCheck();
+    const recordedStartedAt = Date.now() - 3_600_000;
+    const result = check.isRunAlive(process.pid, recordedStartedAt);
+    if (result !== undefined) {
+      expect(result).toBe(false);
+    }
   });
 
   it('createProcessLivenessCheck: isRunAlive returns false when startedAt is impossibly after the pid\'s real OS start time (pid-reuse signal)', () => {
@@ -89,5 +128,21 @@ describe('process-liveness', () => {
     const check = createProcessLivenessCheck();
     expect(() => check.isRunAlive(999_999_999, Date.now())).not.toThrow();
     expect(check.isRunAlive(999_999_999, Date.now())).toBe(false);
+  });
+
+  it('createProcessLivenessCheck: queries the OS once total across repeated calls, not once per call (MAJOR 4 regression)', () => {
+    // Before the fix, every isRunAlive() call did its own spawnSync
+    // (~400ms on Windows via powershell.exe); a startup reconciliation with
+    // dozens of orphaned runs meant dozens of sequential spawns. One check
+    // object must now do a single bulk process-listing spawnSync, cached for
+    // its lifetime, no matter how many times isRunAlive() is called on it —
+    // mirroring reconcileOrphanRuns() calling isRunAlive() once per orphaned
+    // run from the same check instance.
+    const callsBefore = spawnSyncSpy.mock.calls.length;
+    const check = createProcessLivenessCheck();
+    check.isRunAlive(process.pid, Date.now());
+    check.isRunAlive(process.pid, Date.now());
+    check.isRunAlive(process.pid, Date.now());
+    expect(spawnSyncSpy.mock.calls.length - callsBefore).toBe(1);
   });
 });

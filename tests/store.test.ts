@@ -636,3 +636,103 @@ describe('Store', () => {
     }
   });
 });
+
+// ── importRuns — validation, atomicity, retention (Major 2) ──────────────────
+// Prior to the fix, importRuns() cast `body.runs as Run[]` with no validation:
+// a single malformed row (e.g. missing startedAt) threw partway through the
+// loop, aborting the whole import non-atomically (rows already inserted
+// stayed, the rest were lost), an arbitrary `status` string could be
+// persisted, and retention was never enforced after a bulk restore. These
+// tests cover all of that.
+
+describe('Store.importRuns', () => {
+  let importDir: string;
+  let importStore: Store;
+
+  beforeEach(() => {
+    importDir = makeTmpDir();
+    mkdirSync(join(importDir, 'jobs'), { recursive: true });
+    importStore = makeStore(importDir);
+    importStore.open();
+  });
+
+  afterEach(() => {
+    importStore.close();
+    rmSync(importDir, { recursive: true, force: true });
+  });
+
+  it('imports valid rows and skips a malformed row (missing startedAt) individually, without aborting the batch', () => {
+    importStore.upsertJob(execJob('imp-job'));
+    const result = importStore.importRuns([
+      { id: 'run-ok-1', jobId: 'imp-job', startedAt: 1000, status: 'success', outputTruncated: false },
+      // Malformed: startedAt is missing entirely -- this is exactly the row
+      // shape that used to throw on an undefined bind and abort the batch.
+      { id: 'run-bad', jobId: 'imp-job', status: 'success', outputTruncated: false } as unknown,
+      { id: 'run-ok-2', jobId: 'imp-job', startedAt: 2000, status: 'failed', outputTruncated: false },
+    ]);
+
+    expect(result.imported).toBe(2);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]).toMatchObject({ id: 'run-bad' });
+    expect(result.skipped[0].error).toMatch(/validation failed/);
+
+    // Both valid rows landed; the batch was not aborted by the bad row, and
+    // no partial/corrupt row leaked in for the bad one.
+    const runs = importStore.listRuns({ jobId: 'imp-job' });
+    expect(runs.map((r) => r.id).sort()).toEqual(['run-ok-1', 'run-ok-2']);
+    expect(importStore.getRun('run-bad')).toBeUndefined();
+  });
+
+  it('rejects a run whose status is outside the RunStatus union instead of persisting it', () => {
+    importStore.upsertJob(execJob('imp-status-job'));
+    const result = importStore.importRuns([
+      { id: 'run-bad-status', jobId: 'imp-status-job', startedAt: 1000, status: 'not-a-real-status', outputTruncated: false },
+    ]);
+    expect(result.imported).toBe(0);
+    expect(result.skipped).toEqual([{ id: 'run-bad-status', error: expect.stringMatching(/validation failed/) }]);
+    expect(importStore.getRun('run-bad-status')).toBeUndefined();
+  });
+
+  it('skips a row referencing a job that does not exist, without affecting other rows', () => {
+    importStore.upsertJob(execJob('imp-exists-job'));
+    const result = importStore.importRuns([
+      { id: 'run-orphan', jobId: 'no-such-job', startedAt: 1000, status: 'success', outputTruncated: false },
+      { id: 'run-fine', jobId: 'imp-exists-job', startedAt: 1000, status: 'success', outputTruncated: false },
+    ]);
+    expect(result.imported).toBe(1);
+    expect(result.skipped).toEqual([{ id: 'run-orphan', error: 'job not found' }]);
+    expect(importStore.getRun('run-fine')).toBeTruthy();
+  });
+
+  it('is idempotent on id: re-importing the same rows does not re-count them as imported or duplicate them', () => {
+    importStore.upsertJob(execJob('imp-idempotent-job'));
+    const rows = [{ id: 'run-dup', jobId: 'imp-idempotent-job', startedAt: 1000, status: 'success', outputTruncated: false }];
+    expect(importStore.importRuns(rows).imported).toBe(1);
+    expect(importStore.importRuns(rows).imported).toBe(0);
+    expect(importStore.listRuns({ jobId: 'imp-idempotent-job' })).toHaveLength(1);
+  });
+
+  it('enforces the retention cap for jobs affected by a large import that exceeds it', () => {
+    const smallCapStore = new Store(join(importDir, 'runs.db'), join(importDir, 'jobs'), undefined, 3);
+    smallCapStore.open();
+    try {
+      smallCapStore.upsertJob(execJob('imp-cap-job'));
+      const rows = Array.from({ length: 10 }, (_, i) => ({
+        id: `imp-cap-run-${i}`,
+        jobId: 'imp-cap-job',
+        startedAt: i,
+        status: 'success' as const,
+        outputTruncated: false,
+      }));
+      const result = smallCapStore.importRuns(rows);
+      // All 10 rows are genuinely inserted (imported reflects the insert, not
+      // the post-retention count) ...
+      expect(result.imported).toBe(10);
+      // ... but retention is enforced immediately after, not left until the
+      // job's next real run.
+      expect(smallCapStore.listRuns({ jobId: 'imp-cap-job' })).toHaveLength(3);
+    } finally {
+      smallCapStore.close();
+    }
+  });
+});

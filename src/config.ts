@@ -47,7 +47,7 @@ export const BUILT_IN_CONFIG: CrontickConfig = Object.freeze({
   engines: {
     copilot: Object.freeze({ command: 'copilot', args: [], env: {} }),
   },
-  retention: Object.freeze({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000 }),
+  retention: Object.freeze({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 }),
 });
 
 /** Resolves config file path: explicit `options.path` > `<dataDir>/config.json`. */

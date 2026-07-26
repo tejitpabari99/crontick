@@ -13,10 +13,13 @@ import {
   readFileSync,
   writeFileSync,
   existsSync,
+  readdirSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir, platform } from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { createServer } from 'node:http';
+import { stopDaemon } from '../src/daemon/lifecycle.js';
 
 const DAEMON_SCRIPT = join(process.cwd(), 'dist', 'daemon', 'index.js');
 const node = process.execPath;
@@ -379,6 +382,84 @@ describe('Integration: daemon lifecycle', () => {
     expect(afterCounts.length).toBe(NEW_CAP);
   }, 30_000);
 
+  // ── T-LOG-RETENTION (Minor 6) ────────────────────────────────────────────
+  // Unlike run history, daemon logs previously had no cap or cleanup at all —
+  // an install left running for months accumulates a daemon-YYYY-MM-DD.log
+  // per day forever. Retention is now configured via retention.maxLogFiles,
+  // consistent with retention.maxRunsPerJob, and enforced at startup.
+
+  it('startup prunes old daemon log files beyond retention.maxLogFiles, keeping the newest', async () => {
+    const dir = makeTmpDir('crontick-log-retention-');
+    liveDirs.add(dir);
+    const logsPath = join(dir, 'logs');
+
+    // Seed 10 fake daily logs dated well in the past, plus a low cap — the
+    // daemon's own "today" log (written the moment it starts logging) sorts
+    // after all of these lexicographically, so it must survive the prune.
+    const seeded: string[] = [];
+    for (let i = 30; i >= 1; i--) {
+      const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const name = `daemon-${d}.log`;
+      writeFileSync(join(logsPath, name), 'old log content\n', 'utf-8');
+      seeded.push(name);
+    }
+    expect(readdirSync(logsPath).length).toBe(seeded.length);
+
+    const MAX_LOG_FILES = 3;
+    writeFileSync(
+      join(dir, 'config.json'),
+      JSON.stringify({ retention: { maxLogFiles: MAX_LOG_FILES } }),
+      'utf-8',
+    );
+
+    const { proc, port } = await spawnDaemon(dir);
+    liveProcs.add(proc);
+    const health = await apiCall(port, 'GET', '/health');
+    expect(health.status).toBe(200);
+
+    // Prune runs synchronously during main(), before /health is reachable,
+    // so no polling is needed here — the port file only appears after it.
+    const remaining = readdirSync(logsPath).filter((n) => /^daemon-\d{4}-\d{2}-\d{2}\.log$/.test(n));
+    expect(remaining.length).toBe(MAX_LOG_FILES);
+
+    const today = new Date().toISOString().slice(0, 10);
+    expect(remaining).toContain(`daemon-${today}.log`);
+    // The oldest seeded files must be the ones removed, not the newest.
+    expect(remaining).not.toContain(seeded[0]);
+  }, 20_000);
+
+  it('reload applies a newly-lowered retention.maxLogFiles without a daemon restart', async () => {
+    const dir = makeTmpDir('crontick-log-retention-reload-');
+    liveDirs.add(dir);
+    const logsPath = join(dir, 'logs');
+    const { proc, port } = await spawnDaemon(dir);
+    liveProcs.add(proc);
+
+    // Seed extra fake old logs after startup so the default cap (30) does not
+    // already remove them — this isolates the assertion to reload-time
+    // pruning specifically, not the startup pass covered by the test above.
+    for (let i = 20; i >= 1; i--) {
+      const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      writeFileSync(join(logsPath, `daemon-${d}.log`), 'old log content\n', 'utf-8');
+    }
+    expect(
+      readdirSync(logsPath).filter((n) => /^daemon-\d{4}-\d{2}-\d{2}\.log$/.test(n)).length,
+    ).toBeGreaterThan(20);
+
+    const NEW_CAP = 4;
+    writeFileSync(
+      join(dir, 'config.json'),
+      JSON.stringify({ retention: { maxLogFiles: NEW_CAP } }),
+      'utf-8',
+    );
+    const reload = await apiCall(port, 'POST', '/api/daemon/reload');
+    expect(reload.status).toBe(200);
+    expect((reload.data as { ok: boolean }).ok).toBe(true);
+
+    const remaining = readdirSync(logsPath).filter((n) => /^daemon-\d{4}-\d{2}-\d{2}\.log$/.test(n));
+    expect(remaining.length).toBe(NEW_CAP);
+  }, 20_000);
+
   // ── T-FRESH-INSTALL ───────────────────────────────────────────────────────
 
   // ── T-GRACEFUL-STOP (L1 + L8) ────────────────────────────────────────────
@@ -454,7 +535,162 @@ describe('Integration: daemon lifecycle', () => {
     expect(existsSync(doneFile)).toBe(true);
   }, 30_000);
 
-  // ── T-MISSED-FIRES (L2) ───────────────────────────────────────────────────
+  // ── T-STOP-REPORTS-ACTIVE-RUNS (Major 4) ─────────────────────────────────
+  // A prior version of POST /api/daemon/stop only ever returned
+  // { ok, stopping, pid } — an in-flight run (deliberately left running past
+  // the daemon's own exit, L8) vanished from view with nothing tracking it
+  // afterwards. This proves the stop response now reports which runs were
+  // still active at the moment of shutdown, so the caller can act instead of
+  // the work silently disappearing.
+  it('POST /api/daemon/stop reports runs still in progress instead of silently abandoning them (Major 4)', async () => {
+    const dir = makeTmpDir('crontick-stop-report-');
+    liveDirs.add(dir);
+    const { proc, port } = await spawnDaemon(dir);
+    liveProcs.add(proc);
+
+    const startedFile = join(dir, 'active-started.txt');
+    const script =
+      `const fs = require('fs');` +
+      `fs.writeFileSync(${JSON.stringify(startedFile)}, 'started');` +
+      `setTimeout(() => {}, 5000);`;
+
+    const jobId = 'stop-report-job';
+    const created = await apiCall(port, 'POST', '/api/jobs', {
+      id: jobId,
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: { kind: 'exec', command: node, args: ['-e', script] },
+    });
+    expect(created.status).toBe(201);
+
+    const runRes = await apiCall(port, 'POST', `/api/jobs/${jobId}/run`);
+    expect(runRes.status).toBe(202);
+    const runId = (runRes.data as { runId: string }).runId;
+
+    const startDeadline = Date.now() + 10_000;
+    while (Date.now() < startDeadline && !existsSync(startedFile)) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(existsSync(startedFile)).toBe(true);
+
+    const stopRes = await apiCall(port, 'POST', '/api/daemon/stop');
+    expect(stopRes.status).toBe(200);
+    const activeRuns = (stopRes.data as { activeRuns?: Array<{ id: string; jobId: string }> }).activeRuns;
+    expect(activeRuns).toEqual(expect.arrayContaining([{ id: runId, jobId }]));
+
+    const pid = readPidFile(dir);
+    if (pid !== undefined) await waitForPidExit(pid, 10_000);
+    liveProcs.delete(proc);
+  }, 30_000);
+
+  // ── T-DELETE-CANCELS-RUN (Major 4) ───────────────────────────────────────
+  // A prior version of DELETE /api/jobs/:id never touched the job's active
+  // run: deleting the job left its process running with the job definition
+  // gone. This proves the delete now cancels the in-flight run (and its real
+  // child process) rather than orphaning it.
+  it('DELETE /api/jobs/:id cancels the job\'s active run instead of orphaning its process (Major 4)', async () => {
+    const dir = makeTmpDir('crontick-delete-cancel-');
+    liveDirs.add(dir);
+    const { proc, port } = await spawnDaemon(dir);
+    liveProcs.add(proc);
+
+    const startedFile = join(dir, 'delete-started.txt');
+    const doneFile = join(dir, 'delete-done.txt');
+    const script =
+      `const fs = require('fs');` +
+      `fs.writeFileSync(${JSON.stringify(startedFile)}, 'started');` +
+      `setTimeout(() => fs.writeFileSync(${JSON.stringify(doneFile)}, 'done'), 4000);`;
+
+    const jobId = 'delete-cancel-job';
+    const created = await apiCall(port, 'POST', '/api/jobs', {
+      id: jobId,
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: { kind: 'exec', command: node, args: ['-e', script] },
+    });
+    expect(created.status).toBe(201);
+
+    const runRes = await apiCall(port, 'POST', `/api/jobs/${jobId}/run`);
+    expect(runRes.status).toBe(202);
+    const runId = (runRes.data as { runId: string }).runId;
+
+    const startDeadline = Date.now() + 10_000;
+    while (Date.now() < startDeadline && !existsSync(startedFile)) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(existsSync(startedFile)).toBe(true);
+    expect(existsSync(doneFile)).toBe(false);
+
+    const deleteRes = await apiCall(port, 'DELETE', `/api/jobs/${jobId}`);
+    expect(deleteRes.status).toBe(200);
+    expect(deleteRes.data).toMatchObject({ ok: true, canceledRun: true });
+
+    // The run row must reflect the cancellation, and — crucially — the real
+    // child process must not be left running to completion after its job
+    // definition is gone.
+    const runDeadline = Date.now() + 10_000;
+    let finalStatus: string | undefined;
+    while (Date.now() < runDeadline) {
+      const runCheck = await apiCall(port, 'GET', `/api/runs/${runId}`);
+      finalStatus = (runCheck.data as { status?: string }).status;
+      if (finalStatus === 'canceled') break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(finalStatus).toBe('canceled');
+
+    await new Promise((r) => setTimeout(r, 4500));
+    expect(existsSync(doneFile)).toBe(false);
+  }, 30_000);
+
+  // ── T-STALL-ESCALATE (Major 3) ───────────────────────────────────────────
+  // A prior version of stopDaemon() treated a 200 from POST /api/daemon/stop
+  // as good enough to call the shutdown "graceful", and returned
+  // { stopped: false, mode: 'graceful' } with no further action if the
+  // process didn't actually exit within the wait window — a stalled/wedged
+  // daemon was left running forever with no automatic recovery. This stands
+  // up a fake daemon (a real child process + a stub HTTP server that
+  // accepts the stop request without ever terminating it) to prove
+  // stopDaemon() now escalates (SIGTERM, then SIGKILL if needed) and reports
+  // the escalation accurately.
+  it('stopDaemon escalates to SIGTERM/SIGKILL when the graceful HTTP route accepts the stop but the process never exits (Major 3)', async () => {
+    const dir = makeTmpDir('crontick-stall-');
+    liveDirs.add(dir);
+
+    const stalled = spawn(node, ['-e', 'setInterval(() => {}, 1000);'], { stdio: 'ignore' });
+    await new Promise((r) => setTimeout(r, 200));
+    const fakePid = stalled.pid!;
+    writeFileSync(join(dir, 'daemon.pid'), String(fakePid));
+
+    // Stub server standing in for the real daemon's stop route: accepts the
+    // request (200) but never actually terminates the pid, simulating a
+    // daemon wedged mid-shutdown after having already accepted the request.
+    const server = createServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/api/daemon/stop') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, stopping: true, pid: fakePid, activeRuns: [] }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const stubPort = (server.address() as { port: number }).port;
+    writeFileSync(join(dir, 'daemon.port'), String(stubPort));
+
+    try {
+      const result = await stopDaemon({ env: { CRONTICK_HOME: dir }, timeoutMs: 500 });
+      // Previously: { stopped: false, mode: 'graceful' } — no escalation.
+      expect(result.stopped).toBe(true);
+      expect(result.mode).toBe('hard-kill');
+      expect(result.message.toLowerCase()).toMatch(/sigterm|sigkill/);
+
+      // The pid must actually be gone, not just reported as stopped.
+      expect(() => process.kill(fakePid, 0)).toThrow();
+    } finally {
+      server.close();
+      try { stalled.kill('SIGKILL'); } catch { /* already gone */ }
+    }
+  }, 20_000);
+
+
   // Report-only: missed fires while the daemon was down are recorded as
   // 'missed' runs and surfaced in /api/daemon/status, but never replayed.
 

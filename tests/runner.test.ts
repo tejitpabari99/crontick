@@ -6,7 +6,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { spawn as nodeSpawn } from 'node:child_process';
-import { Runner, DEFAULT_MAX_OUTPUT_BYTES_PER_RUN, truncationMarker, ADOPTED_RUN_EXITED_MESSAGE } from '../src/daemon/runner.js';
+import { Runner, DEFAULT_MAX_OUTPUT_BYTES_PER_RUN, truncationMarker, ADOPTED_RUN_EXITED_MESSAGE, truncateToUtf8Boundary } from '../src/daemon/runner.js';
 import { isProcessAlive } from '../src/process-liveness.js';
 import { Store } from '../src/daemon/store.js';
 import type { Job } from '../src/schemas/job.js';
@@ -195,6 +195,38 @@ describe('Runner', () => {
     expect(store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('')).toContain('from-script');
   });
 
+  it('script: shell="auto" (the default job kind) captures non-empty output on every platform (BLOCKER 1 regression)', async () => {
+    // Before the L1 fix, spawn(..., { detached: true }) on Windows gave
+    // pwsh/powershell.exe no console at all (Win32 DETACHED_PROCESS flag —
+    // see nodejs/node#51018), and PowerShell's host silently never wrote to
+    // its (validly redirected) stdio pipes: a script job on the DEFAULT
+    // shell ('auto' -> pwsh on Windows) reported status: 'success' with zero
+    // captured output. That's exactly the README's first example
+    // (`crontick new hello --script "echo hello"`), so this must exercise
+    // 'auto' specifically — the test above pins an explicit non-pwsh shell
+    // and would not have caught this.
+    const isWindows = platform() === 'win32';
+    const job: Job = {
+      id: 'script-job-auto-shell',
+      enabled: true,
+      schedule: { kind: 'cron', cron: '* * * * *' },
+      action: {
+        kind: 'script',
+        script: isWindows ? "Write-Output 'from-auto-script'\r\n" : 'printf "from-auto-script\\n"\n',
+        shell: 'auto',
+      },
+      overlap: 'skip',
+      retry: { max: 0, backoffSec: 30 },
+    };
+    const run = store.insertRun(job.id);
+    await runner.run(job, run.id, store);
+    const updated = store.getRun(run.id)!;
+    expect(updated.status).toBe('success');
+    const output = store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('');
+    expect(output.length).toBeGreaterThan(0);
+    expect(output).toContain('from-auto-script');
+  }, 15_000);
+
   // ── Timeout ──────────────────────────────────────────────────────────────────
 
   it('exec: timeout cancels long-running job', async () => {
@@ -207,8 +239,12 @@ describe('Runner', () => {
     const run = store.insertRun(job.id);
     await runner.run(job, run.id, store);
     const updated = store.getRun(run.id)!;
-    // Should be canceled or timeout (signal kills the process)
-    expect(['canceled', 'timeout', 'failed']).toContain(updated.status);
+    // L-timeout fix: Node's spawn(..., {timeout}) kills with plain SIGTERM and
+    // never emits ETIMEDOUT, so before the fix this was always recorded as
+    // 'canceled' (indistinguishable from a user cancellation). Must be
+    // exactly 'timeout' — not a broad accept-set, which is what hid the bug.
+    expect(updated.status).toBe('timeout');
+    expect(updated.error).toMatch(/timeoutSec/);
   }, 10000);
 
   // ── Retry ────────────────────────────────────────────────────────────────────
@@ -698,6 +734,39 @@ describe('Runner', () => {
       expect(store.getRun(run.id)!.outputTruncated).toBe(false);
       expect(DEFAULT_MAX_OUTPUT_BYTES_PER_RUN).toBe(2_000_000);
     });
+
+    it('truncateToUtf8Boundary: trims a trailing split multi-byte character but keeps preceding whole characters (MINOR 7 regression)', () => {
+      // '€' (U+20AC) encodes as 3 UTF-8 bytes (0xE2 0x82 0xAC). Keeping only
+      // the first 2 of those 3 bytes reproduces exactly what an arbitrary
+      // byte-offset truncation cap does when it cuts mid-character.
+      const euro = Buffer.from('€', 'utf-8');
+      expect(euro.length).toBe(3);
+      const splitOnly = euro.subarray(0, 2);
+      expect(truncateToUtf8Boundary(splitOnly).length).toBe(0); // dangling partial char dropped entirely
+      const wholeThenSplit = Buffer.concat([Buffer.from('ab', 'utf-8'), splitOnly]);
+      expect(truncateToUtf8Boundary(wholeThenSplit).toString('utf-8')).toBe('ab');
+      // A buffer that already ends on a full character must be left untouched.
+      const wholeOnly = Buffer.from('ab€', 'utf-8');
+      expect(truncateToUtf8Boundary(wholeOnly)).toEqual(wholeOnly);
+    });
+
+    it('captureChunk: truncation at the byte cap does not split a multi-byte character (MINOR 7 regression)', async () => {
+      // Cap lands 2 bytes into the 3-byte '€' that follows "ab": before the
+      // fix, the raw byte slice kept that dangling partial character, which
+      // decodes as U+FFFD (the UTF-8 replacement character) — corrupting the
+      // stored log text right before the truncation marker.
+      const cap = 4;
+      runner = new Runner(undefined, undefined, cap);
+      const job = execJob('output-cap-utf8', node, ['-e', 'process.stdout.write("ab€cd")']);
+      const run = store.insertRun(job.id);
+      await runner.run(job, run.id, store);
+      expect(store.getRun(run.id)!.outputTruncated).toBe(true);
+
+      const text = store.getLogs(run.id).map((l) => l.chunk.toString('utf-8')).join('');
+      const beforeMarker = text.split(truncationMarker(cap))[0];
+      expect(beforeMarker).not.toContain('\uFFFD');
+      expect(beforeMarker).toBe('ab');
+    });
   });
 
   // ── L3/L4: adoptRun restores overlap invariants across a restart ─────────────
@@ -772,6 +841,68 @@ describe('Runner', () => {
         status: 'canceled',
         error: expect.stringContaining('terminated'),
       });
+    }, 15_000);
+
+    it('cancelRun called directly on an adopted run attributes deliberate termination, not ADOPTED_RUN_EXITED_MESSAGE', async () => {
+      // Distinct from the overlap=cancel-previous scenario above: this exercises
+      // the explicit `crontick jobs cancel`/API path (Runner.cancelRun) against an
+      // adopted run directly, with no competing new run involved at all.
+      const jobId = 'adopt-direct-cancel';
+      const child = nodeSpawn(node, ['-e', 'setTimeout(() => process.exit(0), 10000)']);
+      const adoptedRun = store.insertRun(jobId);
+      store.updateRun(adoptedRun.id, { status: 'running', pid: child.pid! });
+
+      runner = new Runner(undefined, undefined, undefined, 50);
+      runner.adoptRun(jobId, adoptedRun.id, child.pid!, store);
+
+      expect(runner.cancelRun(adoptedRun.id)).toBe(true);
+
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && store.getRun(adoptedRun.id)!.status === 'running') {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(store.getRun(adoptedRun.id)).toMatchObject({
+        status: 'canceled',
+        error: expect.stringContaining('terminated'),
+      });
+    }, 15_000);
+
+    it('adoption poll re-verifies pid identity every tick, not just isProcessAlive (pid-reuse-during-poll regression, L3)', async () => {
+      // Simulates a pid reused mid-poll: the child spawned below is genuinely
+      // alive for the whole test (so isProcessAlive(pid) alone would say
+      // "still running" forever), but the adopted run's recorded startedAt is
+      // deliberately set 24h in the past — a real OS start time that recent
+      // can never match it, exactly the "different process now owns this pid"
+      // shape. Before the fix, adoptRun()'s poll only called
+      // isProcessAlive(pid) and would never notice; the job would stay marked
+      // active in this daemon's memory forever, and a later cancel-previous
+      // decision could eventually SIGTERM this now-unrelated process.
+      const jobId = 'adopt-poll-pid-reuse';
+      const child = nodeSpawn(node, ['-e', 'setTimeout(() => process.exit(0), 10000)']);
+      const bogusStartedAt = Date.now() - 24 * 60 * 60 * 1000;
+      const adoptedRun = store.insertRun(jobId, bogusStartedAt);
+      store.updateRun(adoptedRun.id, { status: 'running', pid: child.pid! });
+
+      runner = new Runner(undefined, undefined, undefined, 50);
+      runner.adoptRun(jobId, adoptedRun.id, child.pid!, store);
+
+      try {
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline && store.getRun(adoptedRun.id)!.status === 'running') {
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        expect(store.getRun(adoptedRun.id)).toMatchObject({
+          status: 'canceled',
+          error: ADOPTED_RUN_EXITED_MESSAGE,
+        });
+        // This mismatch-detection path only clears bookkeeping — it must never
+        // itself signal the pid, since (from crontick's point of view, given
+        // the mismatched startedAt) this might not even be the process it
+        // thinks it is.
+        expect(isProcessAlive(child.pid!)).toBe(true);
+      } finally {
+        child.kill();
+      }
     }, 15_000);
   });
 });

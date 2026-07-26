@@ -2,7 +2,7 @@
 // Re-execs with --experimental-sqlite on Node < 24 when the flag is absent.
 // See docs/internals/daemon.md
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, unlinkSync, existsSync, appendFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, unlinkSync, existsSync, appendFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   ensureDirs,
@@ -17,12 +17,47 @@ import { Scheduler } from './scheduler.js';
 import { Runner } from './runner.js';
 import { createApiServer } from './api.js';
 import type { ApiContext } from './api.js';
-import { createLogger, isVerboseEnv, type LogEvent } from '../logger.js';
+import { createLogger, isVerboseEnv, type LogEvent, type Logger } from '../logger.js';
 import { loadConfig } from '../config.js';
 import { createProcessLivenessCheck } from '../process-liveness.js';
 
 /** Cap on missed fires recorded per job at startup (see enumerateFiresBetween()). */
 const MISSED_FIRE_CAP_PER_JOB = 500;
+
+/** Matches the daily daemon log filenames written below (`daemon-YYYY-MM-DD.log`). */
+const DAEMON_LOG_FILE_PATTERN = /^daemon-\d{4}-\d{2}-\d{2}\.log$/;
+
+/**
+ * Minor 6: run history has always been bounded by retention.maxRunsPerJob,
+ * but daemon logs had no cap or cleanup at all — an install left running for
+ * months would accumulate a `daemon-YYYY-MM-DD.log` file per day forever.
+ * Deletes the oldest daily log files beyond `maxLogFiles`, keeping the most
+ * recent ones (filenames are ISO-dated, so a plain string sort is
+ * chronological). Best-effort: a failure to list/delete is logged but must
+ * never prevent the daemon from starting or reloading.
+ */
+export function pruneOldDaemonLogs(dir: string, maxLogFiles: number, logger: Logger): number {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch (err) {
+    logger.error('Failed to list log directory for retention', { dir, error: String(err) });
+    return 0;
+  }
+  const logFiles = entries.filter((name) => DAEMON_LOG_FILE_PATTERN.test(name)).sort();
+  const excess = logFiles.length - maxLogFiles;
+  if (excess <= 0) return 0;
+  let removed = 0;
+  for (const name of logFiles.slice(0, excess)) {
+    try {
+      unlinkSync(join(dir, name));
+      removed++;
+    } catch (err) {
+      logger.error('Failed to remove old daemon log file during retention', { file: name, error: String(err) });
+    }
+  }
+  return removed;
+}
 
 // ── SQLite shim ───────────────────────────────────────────────────────────────
 // node:sqlite is experimental on Node <24; re-exec with the flag so the child
@@ -118,7 +153,18 @@ if (needsSqliteShim) {
     writeFileSync(pidFilePath(), String(process.pid), 'utf-8');
 
     const startedAt = new Date();
-    const retentionCap = loadConfig().retention.maxRunsPerJob;
+    const startupConfig = loadConfig();
+    const retentionCap = startupConfig.retention.maxRunsPerJob;
+    // Minor 6: bounded log retention, configured alongside run retention.
+    // Best-effort — must never block startup.
+    try {
+      const prunedLogs = pruneOldDaemonLogs(logsDir(), startupConfig.retention.maxLogFiles, logger);
+      if (prunedLogs > 0) {
+        logger.info(`Pruned ${prunedLogs} old daemon log file(s) exceeding the retention cap of ${startupConfig.retention.maxLogFiles}`);
+      }
+    } catch (err) {
+      logger.error('Daemon log retention failed on startup; continuing without it', { error: String(err) });
+    }
     const store = new Store(runsDbPath(), jobsDir(), logger, retentionCap);
     store.open();
     // Backfill pass for databases that predate the retention cap (or predate an
@@ -251,7 +297,8 @@ if (needsSqliteShim) {
       // an empty scheduler until the next successful reload or a restart —
       // every job silently stops firing. Computing reloadedCap first means a
       // failed reload leaves the previous schedule fully intact.
-      const reloadedCap = loadConfig().retention.maxRunsPerJob;
+      const reloadedConfig = loadConfig();
+      const reloadedCap = reloadedConfig.retention.maxRunsPerJob;
       scheduler.unscheduleAll();
       store.loadJobsFromDisk();
       // Re-read config here too so a changed retention.maxRunsPerJob takes
@@ -259,6 +306,17 @@ if (needsSqliteShim) {
       // restart (only the cap is config-driven at reload time; other config,
       // e.g. engines, is already re-read per prompt-action run).
       store.setRunRetentionCap(reloadedCap);
+      // Minor 6: a lowered retention.maxLogFiles also takes effect immediately
+      // on reload, same as the run-retention cap, rather than requiring a
+      // full daemon restart. Best-effort — never blocks reload.
+      try {
+        const prunedLogs = pruneOldDaemonLogs(logsDir(), reloadedConfig.retention.maxLogFiles, logger);
+        if (prunedLogs > 0) {
+          logger.info(`Pruned ${prunedLogs} old daemon log file(s) exceeding the retention cap of ${reloadedConfig.retention.maxLogFiles}`);
+        }
+      } catch (err) {
+        logger.error('Daemon log retention failed on reload; continuing without it', { error: String(err) });
+      }
       const reloaded = store.listJobs();
       for (const job of reloaded) {
         if (job.enabled) scheduler.schedule(job);

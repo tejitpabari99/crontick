@@ -4,7 +4,7 @@
 import { spawn } from 'node:child_process';
 import { writeFileSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir, platform } from 'node:os';
-import { join, isAbsolute } from 'node:path';
+import { join, isAbsolute, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Job, PromptAction } from '../schemas/job.js';
 import type { Store, RunStatus } from './store.js';
@@ -12,18 +12,15 @@ import { CrontickError } from '../errors.js';
 import { extractSessionId } from './prompt-session.js';
 import { buildPromptRunCommand, loadConfig } from '../config.js';
 import { nullLogger, redactText, type Logger } from '../logger.js';
-import { isProcessAlive } from '../process-liveness.js';
+import { isProcessAlive, isSameRunProcess } from '../process-liveness.js';
 
 // ── Output cap (L5) ───────────────────────────────────────────────────────────
 
 /**
  * Default bytes captured per run before further stdout/stderr is dropped
- * (mirrors the design's `retention.maxOutputBytesPerRun`). This is the
- * daemon-side default until that config key lands; see resolveMaxOutputBytesPerRun().
- *
- * Expected config shape once added by the surface agent (src/schemas/config.ts):
- *   retention.maxOutputBytesPerRun: number (int, min 1024, max 1_000_000_000, default 2_000_000)
- * Read defensively below since the key doesn't exist on RetentionConfig yet.
+ * (mirrors `retention.maxOutputBytesPerRun` on RetentionConfig, see
+ * src/schemas/config.ts). Used as the fallback when config loading fails;
+ * see resolveMaxOutputBytesPerRun().
  */
 export const DEFAULT_MAX_OUTPUT_BYTES_PER_RUN = 2_000_000;
 
@@ -32,14 +29,10 @@ export function truncationMarker(maxBytes: number): string {
   return `\n[crontick] output truncated: exceeded ${maxBytes} bytes (retention.maxOutputBytesPerRun); further output from this run is not stored\n`;
 }
 
-/** Reads retention.maxOutputBytesPerRun defensively — the key may not exist on the schema yet. */
+/** Reads retention.maxOutputBytesPerRun; falls back to the default if config loading itself fails. */
 function resolveMaxOutputBytesPerRun(): number {
   try {
-    const retention = loadConfig().retention as unknown as Record<string, unknown>;
-    const raw = retention['maxOutputBytesPerRun'];
-    return typeof raw === 'number' && Number.isFinite(raw) && raw > 0
-      ? raw
-      : DEFAULT_MAX_OUTPUT_BYTES_PER_RUN;
+    return loadConfig().retention.maxOutputBytesPerRun;
   } catch {
     return DEFAULT_MAX_OUTPUT_BYTES_PER_RUN;
   }
@@ -83,6 +76,35 @@ function safeRedact(chunk: Buffer): Buffer {
   if (!Buffer.from(str, 'utf8').equals(chunk)) return chunk;
   const cleaned = redactText(str);
   return Buffer.from(cleaned, 'utf8');
+}
+
+/**
+ * Trims trailing bytes that would split a multi-byte UTF-8 character in two.
+ * The output byte cap (captureChunk()) cuts a chunk at an arbitrary byte
+ * offset; without this, the last stored bytes before the truncation marker
+ * can be an incomplete UTF-8 sequence, corrupting whatever reads the log
+ * back as text. Only ever removes bytes from the very end of `buf` (never
+ * adds/reorders), so callers can safely pass the result straight to
+ * safeRedact()/store.appendLog().
+ */
+export function truncateToUtf8Boundary(buf: Buffer): Buffer {
+  const len = buf.length;
+  if (len === 0) return buf;
+  const scanStart = Math.max(0, len - 4); // longest UTF-8 sequence is 4 bytes
+  for (let i = len - 1; i >= scanStart; i--) {
+    const byte = buf[i]!;
+    if ((byte & 0xc0) === 0x80) continue; // continuation byte — keep scanning back for its lead byte
+    let seqLen: number;
+    if ((byte & 0x80) === 0x00) seqLen = 1;
+    else if ((byte & 0xe0) === 0xc0) seqLen = 2;
+    else if ((byte & 0xf0) === 0xe0) seqLen = 3;
+    else if ((byte & 0xf8) === 0xf0) seqLen = 4;
+    else return buf; // not a valid UTF-8 lead byte — not a boundary split, leave untouched
+    return i + seqLen <= len ? buf : buf.subarray(0, i);
+  }
+  // Ran out of scan window without finding a lead byte (>=4 trailing
+  // continuation bytes) — already-invalid input; leave untouched.
+  return buf;
 }
 
 // ── Env-file loader ───────────────────────────────────────────────────────────
@@ -153,6 +175,10 @@ export class Runner {
    */
   adoptRun(jobId: string, runId: string, pid: number, store: Store): void {
     this.activeRunIds.set(jobId, runId);
+    // Fetched once here (not re-queried every poll tick) since startedAt is
+    // immutable for a run; used below to re-verify pid identity on every
+    // tick, not just at this initial reconciliation moment.
+    const startedAt = store.getRun(runId)?.startedAt;
 
     const ctrl = new AbortController();
     let canceledByAbort = false;
@@ -167,7 +193,16 @@ export class Runner {
     this.activeAborts.set(jobId, ctrl);
 
     const poll = setInterval(() => {
-      if (isProcessAlive(pid)) return;
+      // L3 fix: re-verify pid identity every tick, not just isProcessAlive().
+      // If the adopted process exited between ticks and the OS reused its pid
+      // for an unrelated process, isProcessAlive(pid) alone would keep
+      // reporting "alive" forever, and a later cancel-previous/skip decision
+      // would send SIGTERM to that unrelated process. isSameRunProcess also
+      // checks the OS-reported start time against this run's startedAt.
+      // undefined (inconclusive — start time unavailable) errs toward "still
+      // alive", matching reconcileOrphanRuns()'s conservative contract.
+      const alive = startedAt === undefined ? isProcessAlive(pid) : isSameRunProcess(pid, startedAt) !== false;
+      if (alive) return;
       clearInterval(poll);
       this.adoptedPolls.delete(runId);
       if (this.activeAborts.get(jobId) === ctrl) this.activeAborts.delete(jobId);
@@ -367,14 +402,34 @@ export class Runner {
       // on Windows now that detached is always set (Node opens one by default
       // otherwise). Combined with L3/L4's pid-based adoption, a child that's still
       // alive when the daemon comes back up is re-attached instead of double-run.
+      //
+      // EXCEPTION — pwsh/powershell.exe on Windows: Node's `detached: true` maps to
+      // Win32's DETACHED_PROCESS creation flag there (libuv src/win/process.c), which
+      // gives the child no console at all. PowerShell's host requires an attached
+      // console to initialize and, without one, never reaches the point of writing to
+      // its (still perfectly valid) stdout/stderr handles — confirmed by reproducing
+      // with both pipe- and file-redirected stdio: both come back completely empty,
+      // while the same detached spawn works fine for cmd.exe and node.exe (see
+      // nodejs/node#51018). windowsHide is unrelated and not the cause (verified
+      // independently). Silent output loss is unacceptable, so for this one
+      // command/platform combination we deliberately drop `detached` and accept the
+      // trade-off: a pwsh/powershell.exe script job's child will NOT survive the
+      // daemon being killed via Ctrl+C propagated through the shared console (though
+      // an abrupt crash/kill -9 still leaves it running, since Windows doesn't
+      // cascade-kill unrelated processes on its own). Every other shell/command keeps
+      // both guarantees.
+      const isWindowsPowerShellHost = platform() === 'win32' && isPowerShellHostCommand(cmd);
       const spawnOpts: Parameters<typeof spawn>[2] = {
         cwd: action.cwd ?? process.cwd(),
         env: { ...process.env, ...promptEnv, ...(action.env ?? {}) } as NodeJS.ProcessEnv,
         signal,
         shell: false,
-        detached: true,
+        detached: !isWindowsPowerShellHost,
         windowsHide: true,
       };
+      if (isWindowsPowerShellHost) {
+        this.appendDiagnosticLog(store, runId, 'detached disabled for pwsh/powershell.exe on Windows (output-capture trade-off, see runner.ts)');
+      }
 
       // Merge envFile variables (lower priority than action.env, higher than process.env).
       if (action.envFile) {
@@ -396,10 +451,17 @@ export class Runner {
         }
       }
 
-      // Timeout enforcement: passed as ms to spawn; Node emits ETIMEDOUT on expiry.
-      if (action.timeoutSec) {
-        spawnOpts.timeout = action.timeoutSec * 1000;
-      }
+      // Timeout enforcement (L-timeout): tracked manually rather than via spawn()'s
+      // `timeout` option. Node's own timeout kills with SIGTERM and fires `close`
+      // with (code: null, signal: 'SIGTERM') — it never emits an 'error' with
+      // ETIMEDOUT, so that branch in the 'error' handler below was unreachable, and
+      // the close handler's generic "killed by signal" check saw every timeout as a
+      // plain SIGTERM and recorded status: 'canceled'. `timedOut` is set by our own
+      // timer just before we send the same SIGTERM ourselves, so the close handler
+      // can tell "we killed it because it ran too long" apart from "someone/something
+      // else sent SIGTERM" and record status: 'timeout' accordingly.
+      let timedOut = false;
+      let timeoutHandle: NodeJS.Timeout | undefined;
 
       // Ring buffer for prompt session ID extraction (max 128 KB of combined output).
       const maxTranscriptBytes = 128 * 1024;
@@ -424,7 +486,10 @@ export class Runner {
         if (outputTruncated) return; // marker already emitted; drop silently, child keeps running
         if (capturedBytes + chunk.length > maxOutputBytes) {
           const room = Math.max(0, maxOutputBytes - capturedBytes);
-          if (room > 0) store.appendLog(runId, stream, safeRedact(chunk.subarray(0, room)));
+          // truncateToUtf8Boundary (L5 fix): the cap cuts at an arbitrary byte
+          // offset — trim back to a full character so the last stored bytes
+          // before the marker are never an invalid, split UTF-8 sequence.
+          if (room > 0) store.appendLog(runId, stream, safeRedact(truncateToUtf8Boundary(chunk.subarray(0, room))));
           store.appendLog(runId, stream, Buffer.from(truncationMarker(maxOutputBytes), 'utf-8'));
           try {
             store.updateRun(runId, { outputTruncated: true });
@@ -439,8 +504,9 @@ export class Runner {
       };
 
       const result = await new Promise<RunResult>((resolve) => {
-        this.logger.debug('Spawning child process', { jobId: job.id, runId, command: cmd, args, cwd: spawnOpts.cwd, timeoutMs: spawnOpts.timeout });
-        this.appendDiagnosticLog(store, runId, 'spawn', { command: cmd, args, cwd: spawnOpts.cwd, timeoutMs: spawnOpts.timeout });
+        const timeoutMs = action.timeoutSec ? action.timeoutSec * 1000 : undefined;
+        this.logger.debug('Spawning child process', { jobId: job.id, runId, command: cmd, args, cwd: spawnOpts.cwd, timeoutMs });
+        this.appendDiagnosticLog(store, runId, 'spawn', { command: cmd, args, cwd: spawnOpts.cwd, timeoutMs });
         const child = this.spawnFn(cmd, args, spawnOpts);
         // Persist the OS pid the instant it's known (L4) — nothing before this
         // point could reconcile against it. unref() so a detached child never
@@ -453,12 +519,24 @@ export class Runner {
           }
         }
         child.unref?.();
+        if (timeoutMs !== undefined) {
+          timeoutHandle = setTimeout(() => {
+            timedOut = true;
+            try {
+              if (!signal.aborted) child.kill('SIGTERM');
+            } catch {
+              // already gone
+            }
+          }, timeoutMs);
+          timeoutHandle.unref?.();
+        }
         const startedAt = Date.now();
         const captureAction = promptCaptureAction;
         let settled = false;
         const finish = (runResult: RunResult) => {
           if (settled) return;
           settled = true;
+          if (timeoutHandle) clearTimeout(timeoutHandle);
           resolve(runResult);
         };
         const failFromCallback = (err: unknown) => {
@@ -494,6 +572,11 @@ export class Runner {
           this.appendDiagnosticLog(store, runId, 'child closed', { code, signal: sig, durationMs });
           if (signal.aborted) {
             finish({ status: 'canceled', error: 'aborted' });
+          } else if (timedOut) {
+            // Checked before the generic signal branch below: our own timer sent
+            // this SIGTERM, so close() looks identical to a user cancellation
+            // (code: null, signal: 'SIGTERM') unless we track intent ourselves.
+            finish({ status: 'timeout', error: `run exceeded timeoutSec (${action.timeoutSec}s)` });
           } else if (sig === 'SIGTERM' || sig === 'SIGKILL') {
             finish({ status: 'canceled', error: `killed by signal ${sig}` });
           } else if (code === null) {
@@ -551,8 +634,6 @@ export class Runner {
           this.appendDiagnosticLog(store, runId, 'child error', { code: err.code, message: err.message });
           if (err.code === 'ABORT_ERR' || signal.aborted) {
             finish({ status: 'canceled', error: 'aborted' });
-          } else if (err.code === 'ETIMEDOUT') {
-            finish({ status: 'timeout', error: 'timed out' });
           } else if (err.code === 'ENOENT' && promptEngineBinary) {
             finish({
               status: 'failed',
@@ -634,6 +715,18 @@ function resolveShellExt(shell: string): string {
   if (resolved === 'pwsh') return '.ps1';
   if (resolved === 'cmd') return '.bat';
   return '.sh';
+}
+
+/**
+ * True if `cmd` invokes PowerShell (Core `pwsh` or Windows PowerShell
+ * `powershell`), by executable basename, case-insensitively and with/without
+ * a `.exe` suffix or leading path. Used to disable `detached` on Windows only
+ * for this specific command (see the spawnOpts comment in spawn()) — every
+ * other command keeps detached:true.
+ */
+function isPowerShellHostCommand(cmd: string): boolean {
+  const name = basename(cmd).toLowerCase().replace(/\.exe$/, '');
+  return name === 'pwsh' || name === 'powershell';
 }
 
 function sleep(ms: number): Promise<void> {

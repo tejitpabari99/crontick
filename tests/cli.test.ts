@@ -114,12 +114,13 @@ describe('CLI binary (dist/cli/index.js)', () => {
     expect(result.stdout).not.toContain('-f,');
   });
 
-  it('new --help describes --exec\'s real verbatim-command + -- args behavior', () => {
+  it('new --help describes --exec\'s real verbatim-command + --arg/-- args behavior', () => {
     const result = cli(['new', '--help']);
     expect(result.status).toBe(0);
     expect(result.stdout).not.toContain('split naively on whitespace');
     expect(result.stdout).toContain('taken verbatim');
-    expect(result.stdout).toContain('pass arguments after --');
+    expect(result.stdout).toContain('--arg <value>');
+    expect(result.stdout.toLowerCase()).toContain('always safe');
   });
 
   it('daemon-backed list auto-starts the daemon when down', async () => {
@@ -276,6 +277,65 @@ describe('CLI e2e with daemon', () => {
     expect(readFileSync(join(dir, 'jobs', 'e2e-job.schema.json'), 'utf-8')).toBe(jobJsonSchemaText());
   });
 
+  // ── Blocker 1: --arg is the documented, shim-independent way to pass args ────
+
+  it('crontick new --arg round-trips a value with spaces, embedded double quotes, and a leading dash', () => {
+    const tricky = '-flag with spaces and "embedded quotes"';
+    const r = cli(['--json', 'new', 'arg-tricky-job', '--cron', '0 0 * * *', '--exec', 'echo', '--arg', tricky], env());
+    expect(r.status, r.stderr).toBe(0);
+    const data = JSON.parse(r.stdout);
+    expect(data.action).toMatchObject({ kind: 'exec', command: 'echo', args: [tricky] });
+  });
+
+  it('crontick new --arg round-trips a value that is itself a crontick global flag spelling (e.g. -v, --json)', () => {
+    // Commander's root program recognizes --json/-v/--verbose/-h/--help/-V/
+    // --version ANYWHERE in argv (not just before the subcommand name), so an
+    // --arg value that happens to equal one of those exact strings must not
+    // be silently swallowed as the global flag instead of stored as the job's
+    // literal argument.
+    const r = cli(['--json', 'new', 'arg-global-flag-collision-job', '--cron', '0 0 * * *', '--exec', 'node', '--arg', '-e', '--arg', 'console.log(1)', '--arg', '-v', '--arg', '--json'], env());
+    expect(r.status, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout).action).toMatchObject({
+      kind: 'exec',
+      command: 'node',
+      args: ['-e', 'console.log(1)', '-v', '--json'],
+    });
+  });
+
+  it('crontick new --arg is repeatable and produces the same result as -- for equivalent values', () => {
+    const viaArg = cli(['--json', 'new', 'arg-repeat-job', '--cron', '0 0 * * *', '--exec', 'node', '--arg', '-e', '--arg', 'process.exit(0)'], env());
+    expect(viaArg.status, viaArg.stderr).toBe(0);
+    expect(JSON.parse(viaArg.stdout).action).toMatchObject({ kind: 'exec', command: 'node', args: ['-e', 'process.exit(0)'] });
+
+    const viaDashDash = cli(['--json', 'new', 'dashdash-repeat-job', '--cron', '0 0 * * *', '--exec', 'node', '--', '-e', 'process.exit(0)'], env());
+    expect(viaDashDash.status, viaDashDash.stderr).toBe(0);
+    expect(JSON.parse(viaDashDash.stdout).action).toEqual(JSON.parse(viaArg.stdout).action);
+  });
+
+  it('crontick update --arg round-trips the same tricky value as new', () => {
+    const created = cli(['--json', 'new', 'arg-update-job', '--cron', '0 0 * * *', '--exec', 'echo', '--arg', 'placeholder'], env());
+    expect(created.status, created.stderr).toBe(0);
+    const tricky = '-flag with spaces and "embedded quotes"';
+    const updated = cli(['--json', 'update', 'arg-update-job', '--exec', 'echo', '--arg', tricky], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    expect(JSON.parse(updated.stdout).action).toMatchObject({ kind: 'exec', command: 'echo', args: [tricky] });
+  });
+
+  it('crontick new rejects combining --arg with -- positional args (ambiguous args source)', () => {
+    const r = cli(['--json', 'new', 'arg-conflict-job', '--cron', '0 0 * * *', '--exec', 'node', '--arg', '-e', '--', 'process.exit(0)'], env());
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/Cannot combine --arg/);
+  });
+
+  it('crontick new rejects a crontick flag placed after -- instead of silently storing it as a job arg', () => {
+    const r = cli(['--json', 'new', 'flag-after-dashdash-job', '--cron', '0 0 * * *', '--exec', 'node', '--', '-e', 'process.exit(0)', '--json'], env());
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/--json.*match a crontick flag name|match a crontick flag name.*--json/);
+    // Confirm the job was never created with --json swallowed into its args.
+    const list = cli(['--json', 'list'], env());
+    expect(JSON.parse(list.stdout).some((job: { id: string }) => job.id === 'flag-after-dashdash-job')).toBe(false);
+  });
+
   it('crontick new creates a prompt job with default engine', () => {
     const r = cli(['--json', 'new', 'prompt-cli-job', '--cron', '0 9 * * *', '--prompt', 'Summarize'], env());
     expect(r.status, r.stderr).toBe(0);
@@ -405,7 +465,7 @@ describe('CLI e2e with daemon', () => {
   it('crontick new rejects prompt-only flags outside prompt mode', () => {
     const raw = cli(['new', 'bad-raw-job', '--cron', '0 0 * * *', '--script', 'echo hi', '--', '--silent'], env());
     expect(raw.status).not.toBe(0);
-    expect(raw.stderr).toContain('Raw args after --');
+    expect(raw.stderr).toContain('Arguments (via --arg or --) are valid only with');
 
     const session = cli(['new', 'bad-session-job', '--cron', '0 0 * * *', '--script', 'echo hi', '--session-id', 'sess-12345678'], env());
     expect(session.status).not.toBe(0);

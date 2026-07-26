@@ -247,6 +247,21 @@ describe('MCP server — full contract', () => {
     expect(readFileSync(join(dir, 'jobs', `${testJobId}.schema.json`), 'utf-8')).toBe(jobJsonSchemaText());
   });
 
+  // Blocker 1 parity: MCP's args array is unaffected by CLI/shim quoting, but
+  // must still round-trip the same tricky value (spaces, embedded double
+  // quotes, leading dash) byte-for-byte, matching the CLI's --arg guarantee
+  // (see 'crontick new --arg round-trips ...' in tests/cli.test.ts).
+  it('crontick_job_create round-trips an exec arg with spaces, embedded double quotes, and a leading dash', async () => {
+    const tricky = '-flag with spaces and "embedded quotes"';
+    const { json, isError } = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-arg-tricky-job',
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: { kind: 'exec', command: 'echo', args: [tricky] },
+    });
+    expect(isError).toBe(false);
+    expect((json as { action: unknown }).action).toMatchObject({ kind: 'exec', command: 'echo', args: [tricky] });
+  });
+
   it('crontick_job_update merges a partial patch onto the existing definition rather than replacing it', async () => {
     const created = await callTool(client, 'crontick_job_create', {
       id: 'mcp-merge-job',

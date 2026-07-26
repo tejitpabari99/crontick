@@ -24,6 +24,15 @@ export interface DaemonStopResult {
   message: string;
   /** L1: how the daemon was asked to stop (or that it was already stopped). */
   mode: 'already-stopped' | 'graceful' | 'hard-kill';
+  /**
+   * Major 4: runs that were still `status: 'running'` at the moment the
+   * daemon accepted the stop request. Detached children (L8) deliberately
+   * survive the daemon's own exit, so these are never canceled here — they
+   * are surfaced so the caller can act (wait for them, check back later via
+   * `crontick runs list --status running`, or cancel manually) instead of
+   * the work silently vanishing from view.
+   */
+  activeRuns?: Array<{ id: string; jobId: string }>;
 }
 
 export interface DaemonRestartResult extends DaemonInfo {
@@ -70,6 +79,12 @@ const HTTP_STOP_TIMEOUT_MS = 2_000;
  * back to a SIGTERM/hard-kill if the HTTP route can't be reached (older
  * daemon build, port file stale/missing, connection refused) so `crontick
  * daemon stop` still works against a wedged or already-broken daemon.
+ *
+ * Major 3: a 200 from the route only means the daemon *accepted* the stop
+ * request, not that it exited — if the process is still alive after
+ * `timeoutMs` (stalled/wedged mid-shutdown), this escalates to SIGTERM and
+ * then SIGKILL rather than returning `{ stopped: false, mode: 'graceful' }`
+ * with no further recovery.
  */
 export async function stopDaemon(options: { env?: NodeJS.ProcessEnv; timeoutMs?: number; logger?: Logger } = {}): Promise<DaemonStopResult> {
   const logger = (options.logger ?? nullLogger).child('stop');
@@ -82,16 +97,55 @@ export async function stopDaemon(options: { env?: NodeJS.ProcessEnv; timeoutMs?:
 
   const timeoutMs = options.timeoutMs ?? 5_000;
   const graceful = await tryGracefulHttpStop(env, logger);
-  if (graceful) {
+  if (graceful.accepted) {
+    const activeRunsNote = formatActiveRunsNote(graceful.activeRuns);
     const stopped = await waitForStopped(pid, env, timeoutMs);
-    logger.debug('Graceful daemon stop completed', { pid, stopped });
+    if (stopped) {
+      logger.debug('Graceful daemon stop completed', { pid, stopped });
+      return {
+        ok: true,
+        running: false,
+        pid,
+        stopped: true,
+        mode: 'graceful',
+        message: `Stopped daemon (pid ${pid}) via graceful HTTP shutdown${activeRunsNote}`,
+        activeRuns: graceful.activeRuns,
+      };
+    }
+
+    // Major 3: the route accepted the request (200 — `stopping: true`) but
+    // the process never actually exited within timeoutMs. Previously this
+    // was reported as `{ stopped: false, mode: 'graceful' }` with no further
+    // action, leaving a stalled/wedged daemon running forever with no
+    // automatic recovery. Escalate the same way the "route unreachable"
+    // fallback below already does, rather than only escalating when the
+    // HTTP request itself failed.
+    logger.debug('Graceful shutdown accepted but daemon did not exit in time; escalating to SIGTERM', { pid, timeoutMs });
+    const termStopped = await escalate(pid, 'SIGTERM', env, timeoutMs);
+    if (termStopped) {
+      return {
+        ok: true,
+        running: false,
+        pid,
+        stopped: true,
+        mode: 'hard-kill',
+        message: `Graceful shutdown of daemon (pid ${pid}) stalled; escalated to SIGTERM${activeRunsNote}`,
+        activeRuns: graceful.activeRuns,
+      };
+    }
+
+    logger.debug('SIGTERM did not stop the stalled daemon in time; escalating to SIGKILL', { pid });
+    const killStopped = await escalate(pid, 'SIGKILL', env, timeoutMs);
     return {
       ok: true,
-      running: !stopped,
+      running: !killStopped,
       pid,
-      stopped,
-      mode: 'graceful',
-      message: stopped ? `Stopped daemon (pid ${pid}) via graceful HTTP shutdown` : `Requested graceful shutdown of daemon (pid ${pid})`,
+      stopped: killStopped,
+      mode: 'hard-kill',
+      message: killStopped
+        ? `Graceful shutdown of daemon (pid ${pid}) stalled; escalated to SIGKILL${activeRunsNote}`
+        : `Daemon (pid ${pid}) did not stop after a graceful request, SIGTERM, and SIGKILL; it may require manual intervention${activeRunsNote}`,
+      activeRuns: graceful.activeRuns,
     };
   }
 
@@ -107,29 +161,72 @@ export async function stopDaemon(options: { env?: NodeJS.ProcessEnv; timeoutMs?:
   }
 
   const stopped = await waitForStopped(pid, env, timeoutMs);
-  logger.debug('Daemon stop completed', { pid, stopped });
+  if (stopped) {
+    logger.debug('Daemon stop completed', { pid, stopped });
+    return {
+      ok: true,
+      running: false,
+      pid,
+      stopped: true,
+      mode: 'hard-kill',
+      message: `Stopped daemon (pid ${pid})`,
+    };
+  }
+
+  // Major 3: SIGTERM alone didn't stop it either — escalate to SIGKILL rather
+  // than reporting an unstopped daemon as merely "sent SIGTERM".
+  logger.debug('SIGTERM did not stop daemon in time; escalating to SIGKILL', { pid });
+  const killStopped = await escalate(pid, 'SIGKILL', env, timeoutMs);
+  logger.debug('Daemon stop completed', { pid, stopped: killStopped });
   return {
     ok: true,
-    running: !stopped,
+    running: !killStopped,
     pid,
-    stopped,
+    stopped: killStopped,
     mode: 'hard-kill',
-    message: stopped ? `Stopped daemon (pid ${pid})` : `Sent SIGTERM to daemon (pid ${pid})`,
+    message: killStopped
+      ? `Daemon (pid ${pid}) did not respond to SIGTERM; escalated to SIGKILL`
+      : `Sent SIGTERM and SIGKILL to daemon (pid ${pid}), but it did not exit`,
   };
 }
 
-/** POST /api/daemon/stop and return true only once the daemon has accepted (200) the request. */
-async function tryGracefulHttpStop(env: NodeJS.ProcessEnv, logger: Logger): Promise<boolean> {
+/** Send `signal` to `pid` and wait up to `timeoutMs` for it to exit. Treats an already-gone pid as stopped. */
+async function escalate(pid: number, signal: NodeJS.Signals, env: NodeJS.ProcessEnv, timeoutMs: number): Promise<boolean> {
+  try {
+    process.kill(pid, signal);
+  } catch {
+    return true; // process already gone
+  }
+  return waitForStopped(pid, env, timeoutMs);
+}
+
+/** Human-readable suffix noting runs left in progress (Major 4) — empty string when none. */
+function formatActiveRunsNote(activeRuns?: Array<{ id: string; jobId: string }>): string {
+  if (!activeRuns || activeRuns.length === 0) return '';
+  return ` (${activeRuns.length} run(s) still in progress will keep running after the daemon exits: ${activeRuns.map((r) => r.id).join(', ')})`;
+}
+
+/** POST /api/daemon/stop and return whether the daemon accepted (200) the request, plus any runs it reported as still in progress. */
+async function tryGracefulHttpStop(env: NodeJS.ProcessEnv, logger: Logger): Promise<{ accepted: boolean; activeRuns?: Array<{ id: string; jobId: string }> }> {
   try {
     const baseUrl = await resolveDaemonBaseUrl({ env, logger });
     const res = await fetch(`${baseUrl}/api/daemon/stop`, {
       method: 'POST',
       signal: AbortSignal.timeout(HTTP_STOP_TIMEOUT_MS),
     });
-    return res.ok;
+    if (!res.ok) return { accepted: false };
+    let activeRuns: Array<{ id: string; jobId: string }> | undefined;
+    try {
+      const body = (await res.json()) as { activeRuns?: Array<{ id: string; jobId: string }> };
+      if (Array.isArray(body?.activeRuns) && body.activeRuns.length > 0) activeRuns = body.activeRuns;
+    } catch {
+      // Body didn't parse as JSON with the expected shape — treat as "no
+      // active-run info available", not as a failed stop request.
+    }
+    return { accepted: true, activeRuns };
   } catch (err) {
     logger.debug('Graceful HTTP stop request failed', { error: err instanceof Error ? err.message : String(err) });
-    return false;
+    return { accepted: false };
   }
 }
 

@@ -124,6 +124,15 @@ export interface JobCreateCliOptions {
   id: string;
   engineArgs?: string[];
   rawArgs?: string[];
+  /**
+   * Explicit, repeatable `--arg <value>` values for --exec/--prompt actions.
+   * This is the always-correct, shim-independent way to pass arguments: it
+   * never depends on `--` surviving a Windows shim (crontick.ps1/crontick.cmd),
+   * and never risks a crontick flag being swallowed as a literal argument.
+   * Mutually exclusive with rawArgs/engineArgs (the `--` convention) — see
+   * resolveActionArgs.
+   */
+  args?: string[];
   file?: string;
   cron?: string;
   every?: number;
@@ -258,13 +267,35 @@ function withEngineDefaultForNewPromptAction(
   return { ...mergedAction, engine: loadConfig({ env: options.env }).defaultEngine };
 }
 
+/**
+ * Resolves the effective args for --exec/--prompt actions from the two
+ * mutually exclusive CLI sources: explicit repeatable `--arg <value>` flags
+ * (always correct, shim-independent) and legacy `--` positional args (a
+ * convenience that only survives intact on invocations where the shell/shim
+ * doesn't mangle it — see cli/index.ts's --exec help text). Combining both in
+ * the same command is rejected rather than silently picking one, since that
+ * combination is never what the user intended.
+ */
+function resolveActionArgs(input: JobPatchCliOptions): string[] {
+  const rawArgs = input.rawArgs ?? input.engineArgs ?? [];
+  const explicitArgs = input.args ?? [];
+  if (rawArgs.length > 0 && explicitArgs.length > 0) {
+    throw new CrontickError(
+      'VALIDATION_ERROR',
+      'Cannot combine --arg with -- positional arguments in the same command. Use repeatable --arg <value> (always correct) or -- (convenience) but not both.',
+    );
+  }
+  return explicitArgs.length > 0 ? explicitArgs : rawArgs;
+}
+
 /** Constructs a full Job from CLI flags; supports --file (JSON) as an alternative to flags. */
 export function buildJobFromCreateOptions(
   input: JobCreateCliOptions,
   options: NormalizeJobInputOptions = {},
 ): Job {
+  const resolvedArgs = resolveActionArgs(input);
   if (input.file) {
-    assertFileModeExclusive(input, input.rawArgs ?? input.engineArgs ?? []);
+    assertFileModeExclusive(input, resolvedArgs);
     const filePath = resolve(options.cwd ?? process.cwd(), input.file);
     const raw = readFileSync(filePath, 'utf-8');
     return normalizeJobInput(JSON.parse(raw) as JobCreateInput, {
@@ -273,13 +304,12 @@ export function buildJobFromCreateOptions(
     });
   }
 
-  const rawArgs = input.rawArgs ?? input.engineArgs ?? [];
   const jobData = {
     id: input.id,
     description: input.desc,
     enabled: input.enabled,
     schedule: buildSchedule(input),
-    action: buildAction(input, rawArgs),
+    action: buildAction(input, resolvedArgs),
     overlap: (input.overlap ?? 'skip') as JobCreateInput['overlap'],
     retry: input.retry !== undefined ? { max: input.retry, backoffSec: 30 } : undefined,
   } satisfies JobCreateInput;
@@ -290,8 +320,9 @@ export function buildJobPatchFromUpdateOptions(
   input: JobPatchCliOptions,
   options: NormalizeJobInputOptions = {},
 ): JobPatchInput {
+  const resolvedArgs = resolveActionArgs(input);
   if (input.file) {
-    assertFileModeExclusive(input, input.rawArgs ?? input.engineArgs ?? []);
+    assertFileModeExclusive(input, resolvedArgs);
     const filePath = resolve(options.cwd ?? process.cwd(), input.file);
     const raw = readFileSync(filePath, 'utf-8');
     const parsed = JobPatchInputSchema.safeParse(JSON.parse(raw));
@@ -301,13 +332,12 @@ export function buildJobPatchFromUpdateOptions(
       : parsed.data;
   }
 
-  const rawArgs = input.rawArgs ?? input.engineArgs ?? [];
   const patch: JobPatchInput = {};
   if (input.desc !== undefined) patch.description = input.desc;
   if (input.enabled !== undefined) patch.enabled = input.enabled;
   const schedule = maybeBuildSchedule(input);
   if (schedule !== undefined) patch.schedule = schedule;
-  const action = maybeBuildAction(input, rawArgs);
+  const action = maybeBuildAction(input, resolvedArgs);
   if (action !== undefined) patch.action = normalizeActionInput(action, options, false) as ActionInput;
   // Commander no longer supplies a hardcoded default for --overlap (see
   // commonJobOptions in cli/index.ts), so `undefined` unambiguously means
@@ -426,14 +456,15 @@ function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[]): ActionI
   }
 
   const promptMode = input.prompt !== undefined || input.promptFile !== undefined;
-  // --exec reuses the same `--` positional-args convention prompt mode already
-  // uses: the command is taken verbatim (no whitespace splitting) and
-  // everything after `--` becomes action.args.
+  // --exec reuses the same args convention prompt mode already uses: the
+  // command is taken verbatim (no whitespace splitting) and its arguments
+  // come from repeatable --arg <value> flags (always correct) or, as a
+  // convenience, everything after `--` (see resolveActionArgs).
   const rawArgsMode = promptMode || input.exec !== undefined;
   if (!rawArgsMode && rawArgs.length > 0) {
     throw new CrontickError(
       'VALIDATION_ERROR',
-      'Raw args after -- are valid only with --exec, --prompt, or --prompt-file. Remove the raw args or use one of those action sources.',
+      'Arguments (via --arg or --) are valid only with --exec, --prompt, or --prompt-file. Remove them or use one of those action sources.',
     );
   }
   if (!promptMode && (input.engine !== undefined || input.sessionId !== undefined || input.reuseSession)) {

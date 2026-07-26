@@ -48,7 +48,7 @@ describe('crontick config core', () => {
     expect(loadConfig({ env })).toEqual({
       defaultEngine: 'copilot',
       engines: { copilot: { command: 'copilot', args: [], env: {} } },
-      retention: { maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000 },
+      retention: { maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 },
     });
     expect(validateConfigFile({ env })).toMatchObject({ ok: true, path, problems: [] });
   });

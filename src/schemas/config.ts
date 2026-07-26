@@ -33,10 +33,20 @@ export const EngineConfigSchema = z.object({
  * docs/internals/executors.md and src/daemon/runner.ts's captureChunk).
  * `min(1024)`: below this, even the truncation marker line barely fits.
  * `max(1_000_000_000)`: a sanity ceiling, same rationale as maxRunsPerJob.
+ *
+ * `maxLogFiles` (Minor 6): caps how many daily `daemon-YYYY-MM-DD.log` files
+ * are kept under logsDir before the oldest are deleted (see
+ * pruneOldDaemonLogs() in src/daemon/index.ts) — run history has always been
+ * bounded by maxRunsPerJob; daemon logs previously had no cap or cleanup at
+ * all and could accumulate indefinitely on a long-lived install.
+ * `min(1)`: always keep at least today's log file. `max(3650)`: a sanity
+ * ceiling (roughly 10 years of daily files), same rationale as the other
+ * retention fields.
  */
 export const RetentionConfigSchema = z.object({
   maxRunsPerJob: z.number().int().min(1).max(100_000).default(100),
   maxOutputBytesPerRun: z.number().int().min(1024).max(1_000_000_000).default(2_000_000),
+  maxLogFiles: z.number().int().min(1).max(3650).default(30),
 }).strict();
 
 /**
@@ -49,7 +59,7 @@ export const ConfigSchema = z.object({
   engines: z.record(EngineNameSchema, EngineConfigSchema).default({
     copilot: { command: 'copilot', args: [], env: {} },
   }),
-  retention: RetentionConfigSchema.default({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000 }),
+  retention: RetentionConfigSchema.default({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 }),
 }).strict().superRefine((config, ctx) => {
   if (Object.keys(config.engines).length === 0) {
     ctx.addIssue({

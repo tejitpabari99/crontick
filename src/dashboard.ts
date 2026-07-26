@@ -156,17 +156,26 @@ export function buildDashboardHealth(ctx: DashboardContext, jobs: Job[], runs24h
   };
 }
 
+// Minor 5: statuses whose durationMs reflects real elapsed execution time.
+// 'missed', 'queued', and 'running' rows never ran to completion (duration
+// 0/undefined), and 'canceled' rows are likewise recorded with duration 0 —
+// including any of them in the average drags it toward zero as they
+// accumulate (up to 500 missed rows per job), rather than reflecting how
+// long jobs actually take to run.
+const EXECUTED_RUN_STATUSES: ReadonlySet<Run['status']> = new Set(['success', 'failed', 'timeout']);
+
 export function buildDashboardStats(jobs: Job[], runs: Run[]): DashboardStats {
   const failed = runs.filter((run) => run.status === 'failed').length;
   const succeeded = runs.filter((run) => run.status === 'success').length;
+  const executedRuns = runs.filter((run) => EXECUTED_RUN_STATUSES.has(run.status));
   return {
     totalJobs: jobs.length,
     enabledJobs: jobs.filter((job) => job.enabled).length,
     totalRuns: runs.length,
     succeeded,
     failed,
-    avgDurationMs: runs.length > 0
-      ? Math.round(runs.reduce((sum, run) => sum + (run.durationMs ?? 0), 0) / runs.length)
+    avgDurationMs: executedRuns.length > 0
+      ? Math.round(executedRuns.reduce((sum, run) => sum + (run.durationMs ?? 0), 0) / executedRuns.length)
       : null,
   };
 }

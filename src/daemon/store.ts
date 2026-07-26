@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { writeFileSync, readFileSync, unlinkSync, readdirSync, existsSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
+import { z } from 'zod';
 import { runsDbPath, jobsDir } from '../paths.js';
 import { JobSchema, type Job, type PromptAction } from '../schemas/job.js';
 import { CrontickError, ORPHAN_RUN_ERROR_MESSAGE } from '../errors.js';
@@ -31,6 +32,34 @@ export interface Run {
   pid?: number; // OS pid of the spawned child, set once known (see updateRun); absent for 'queued'/'missed' runs.
   outputTruncated: boolean; // true once a run's captured output hit the byte cap (NOT NULL DEFAULT 0 column, always present).
 }
+
+/** Every RunStatus value, kept as a runtime array so RunImportSchema's z.enum
+ *  stays in sync with the RunStatus type union above without hand-duplication
+ *  drifting out of date. */
+const RUN_STATUS_VALUES = ['queued', 'running', 'success', 'failed', 'canceled', 'timeout', 'missed'] as const;
+
+/**
+ * Validates one row of a `runs` import payload (see importRuns()). Mirrors
+ * the Run interface field-for-field: required fields must be present and of
+ * the right type (a missing/malformed `startedAt` or an out-of-union
+ * `status` are the two concrete corruption cases this schema exists to
+ * catch), while optional fields are genuinely optional so a valid partial
+ * row round-trips. Unknown extra keys are ignored rather than rejected, so a
+ * forward-compatible export (e.g. one with an added field) doesn't fail an
+ * older import.
+ */
+export const RunImportSchema = z.object({
+  id: z.string().min(1),
+  jobId: z.string().min(1),
+  startedAt: z.number(),
+  endedAt: z.number().optional(),
+  status: z.enum(RUN_STATUS_VALUES),
+  exitCode: z.number().optional(),
+  error: z.string().optional(),
+  durationMs: z.number().optional(),
+  pid: z.number().optional(),
+  outputTruncated: z.boolean().optional(),
+});
 
 export interface RunLog {
   runId: string;
@@ -431,38 +460,77 @@ export class Store {
    * mitigation for hard-delete retention). Inserts are archival only: no
    * execution, no scheduler interaction. Idempotent on `id` (INSERT OR IGNORE
    * — a run already present, e.g. from re-importing the same backup, is left
-   * untouched and not counted as imported). Rows referencing a job that
-   * doesn't exist in this store are skipped individually so a partial restore
-   * still succeeds for everything else.
+   * untouched and not counted as imported).
+   *
+   * Every row is validated against RunImportSchema before it is ever bound to
+   * a statement (mirrors the per-item validate-and-collect pattern the jobs
+   * loop in api.ts's POST /api/import already uses): a malformed row (bad
+   * `status`, missing `startedAt`, wrong types, ...) is skipped individually
+   * with a reason rather than throwing and aborting the whole batch. Rows
+   * referencing a job that doesn't exist in this store are likewise skipped
+   * individually. Each row is also its own try/catch around the INSERT itself
+   * so an unexpected DB-level failure on one row can never take down the
+   * rows around it — the loop has no surrounding transaction, so every row
+   * that does succeed is durably committed independently of any row that
+   * doesn't (atomic-per-row, not all-or-nothing).
+   *
+   * After the loop, retention is enforced (pruneRunsForJob) for every job
+   * that received at least one imported row, so a large restore can't leave a
+   * job permanently above its cap until its next real run.
    */
-  importRuns(runs: Run[]): { imported: number; skipped: Array<{ id: string; error: string }> } {
+  importRuns(runs: unknown[]): { imported: number; skipped: Array<{ id: string; error: string }> } {
     const skipped: Array<{ id: string; error: string }> = [];
     let imported = 0;
+    const affectedJobIds = new Set<string>();
     const jobExists = this.db.prepare('SELECT 1 FROM jobs WHERE id = ?');
     const insert = this.db.prepare(
       `INSERT OR IGNORE INTO runs
          (id, job_id, started_at, ended_at, status, exit_code, error, duration_ms, pid, output_truncated)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
-    for (const run of runs) {
+    for (const raw of runs) {
+      const parsed = RunImportSchema.safeParse(raw);
+      if (!parsed.success) {
+        const idGuess = isRecord(raw) && typeof raw.id === 'string' ? raw.id : '?';
+        skipped.push({ id: idGuess, error: `validation failed: ${parsed.error.issues.map((issue) => issue.message).join('; ')}` });
+        continue;
+      }
+      const run = parsed.data;
       if (!jobExists.get(run.jobId)) {
         skipped.push({ id: run.id, error: 'job not found' });
         continue;
       }
-      const result = insert.run(
-        run.id,
-        run.jobId,
-        run.startedAt,
-        run.endedAt ?? null,
-        run.status,
-        run.exitCode ?? null,
-        run.error ?? null,
-        run.durationMs ?? null,
-        run.pid ?? null,
-        run.outputTruncated ? 1 : 0,
-      ) as { changes: number };
-      if (result.changes > 0) imported += 1;
-      // else: id already present -- idempotent re-import, not an error.
+      try {
+        const result = insert.run(
+          run.id,
+          run.jobId,
+          run.startedAt,
+          run.endedAt ?? null,
+          run.status,
+          run.exitCode ?? null,
+          run.error ?? null,
+          run.durationMs ?? null,
+          run.pid ?? null,
+          run.outputTruncated ? 1 : 0,
+        ) as { changes: number };
+        if (result.changes > 0) {
+          imported += 1;
+          affectedJobIds.add(run.jobId);
+        }
+        // else: id already present -- idempotent re-import, not an error.
+      } catch (err) {
+        skipped.push({ id: run.id, error: `insert failed: ${String(err)}` });
+      }
+    }
+    for (const jobId of affectedJobIds) {
+      // Best-effort per job, same as pruneAllJobsRunHistory(): retention is
+      // maintenance, not correctness, so one job's prune failure must not
+      // affect the reported import result or any other job's retention.
+      try {
+        this.pruneRunsForJob(jobId);
+      } catch (err) {
+        this.logger.error('Run retention prune failed after import; rows were still imported', { jobId, error: String(err) });
+      }
     }
     this.logger.debug('Imported runs', { requested: runs.length, imported, skipped: skipped.length });
     return { imported, skipped };
@@ -708,6 +776,12 @@ interface DbScheduleStateRow {
   job_id: string;
   last_tick_at: number;
   updated_at: number;
+}
+
+/** Type guard used by importRuns() to best-effort recover an `id` for the
+ *  skipped-row report when a raw import row fails schema validation. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function rowToRun(row: DbRunRow): Run {

@@ -180,7 +180,62 @@ describe('buildJobFromCreateOptions — --exec verbatim + rawArgs (L6)', () => {
   it('rejects rawArgs (--) on --script, unchanged from before L6', () => {
     expect(() =>
       buildJobFromCreateOptions({ id: 'exec-job', cron: '0 9 * * *', script: 'echo hi', rawArgs: ['extra'] }),
-    ).toThrow(/Raw args after --/);
+    ).toThrow(/valid only with --exec/);
+  });
+});
+
+// ── buildJobFromCreateOptions — explicit --arg (Blocker 1) ─────────────────────
+// --arg <value> is the new, always-correct, shim-independent way to pass args
+// to --exec/--prompt actions: it never depends on `--` surviving a Windows
+// shim (crontick.cmd/.ps1), so it round-trips spaces, embedded double quotes,
+// and leading dashes byte-for-byte, unlike the shim-mangled `--` convention.
+
+describe('buildJobFromCreateOptions — explicit --arg (Blocker 1)', () => {
+  it('builds exec args from --arg, equivalent to the -- convention for the same values', () => {
+    const viaArg = buildJobFromCreateOptions({
+      id: 'exec-job', cron: '0 9 * * *', exec: 'node', args: ['-e', 'process.exit(0)'],
+    });
+    const viaDashDash = buildJobFromCreateOptions({
+      id: 'exec-job', cron: '0 9 * * *', exec: 'node', rawArgs: ['-e', 'process.exit(0)'],
+    });
+    expect(viaArg.action).toEqual(viaDashDash.action);
+  });
+
+  it('round-trips a single --arg value containing spaces, embedded double quotes, and a leading dash', () => {
+    const tricky = '-flag with spaces and "embedded quotes"';
+    const job = buildJobFromCreateOptions({
+      id: 'exec-job', cron: '0 9 * * *', exec: 'echo', args: [tricky],
+    });
+    expect(job.action).toMatchObject({ kind: 'exec', command: 'echo', args: [tricky] });
+  });
+
+  it('supports repeatable --arg for multiple values', () => {
+    const job = buildJobFromCreateOptions({
+      id: 'exec-job', cron: '0 9 * * *', exec: 'node', args: ['-e', 'a b', '--weird-flag'],
+    });
+    expect(job.action).toMatchObject({ kind: 'exec', args: ['-e', 'a b', '--weird-flag'] });
+  });
+
+  it('works identically for --prompt actions', () => {
+    const tricky = '-flag with spaces and "embedded quotes"';
+    const job = buildJobFromCreateOptions({
+      id: 'prompt-job', cron: '0 9 * * *', prompt: 'hi', args: [tricky],
+    });
+    expect(job.action).toMatchObject({ kind: 'prompt', args: [tricky] });
+  });
+
+  it('rejects combining --arg with -- positional args in the same command (ambiguous)', () => {
+    expect(() =>
+      buildJobFromCreateOptions({
+        id: 'exec-job', cron: '0 9 * * *', exec: 'node', args: ['-e'], rawArgs: ['x'],
+      }),
+    ).toThrow(/Cannot combine --arg/);
+  });
+
+  it('rejects --arg on --script, same as -- positional args', () => {
+    expect(() =>
+      buildJobFromCreateOptions({ id: 'exec-job', cron: '0 9 * * *', script: 'echo hi', args: ['extra'] }),
+    ).toThrow(/valid only with --exec/);
   });
 });
 

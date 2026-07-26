@@ -143,7 +143,14 @@ async function handleRequest(
         const deleted = ctx.store.deleteJob(id);
         if (!deleted) return sendError(res, 404, 'NOT_FOUND', `Job ${id} not found`);
         ctx.scheduler.unschedule(id);
-        return sendJson(res, 200, { ok: true });
+        // Major 4: unlike a daemon stop (where a detached child surviving is
+        // deliberate, L8), deleting a job removes the definition entirely, so
+        // there is nothing left for an in-flight run to belong to. Cancel any
+        // active run for this job rather than leaving its process running
+        // against a job that no longer exists. Visible via `canceledRun` in
+        // the response instead of silently orphaning it.
+        const canceledRun = ctx.runner.cancelJob(id);
+        return sendJson(res, 200, { ok: true, canceledRun });
       }
 
       if (method === 'POST' && sub === '/enable') {
@@ -308,7 +315,13 @@ async function handleRequest(
         return sendError(res, 501, 'NOT_IMPLEMENTED', 'Graceful shutdown is not wired for this context');
       }
       const doShutdown = ctx.shutdown;
-      sendJson(res, 200, { ok: true, stopping: true, pid: process.pid });
+      // Major 4: detached children (L8) are deliberately left running past the
+      // daemon's own exit, so report which runs are still in progress at the
+      // moment of shutdown — visible to the caller (see stopDaemon() in
+      // lifecycle.ts and `crontick daemon stop`'s output) instead of silently
+      // abandoning them with no trace.
+      const activeRuns = ctx.store.listRuns({ status: 'running' }).map((r) => ({ id: r.id, jobId: r.jobId }));
+      sendJson(res, 200, { ok: true, stopping: true, pid: process.pid, activeRuns });
       res.on('finish', () => {
         void doShutdown('HTTP /api/daemon/stop');
       });
@@ -342,7 +355,11 @@ async function handleRequest(
       }
       // L7: optional `runs` array (as produced by GET /api/export?includeRuns=1)
       // is restored archivally -- no execution, no scheduler interaction.
-      const runs = Array.isArray(body?.runs) ? (body.runs as Run[]) : undefined;
+      // Passed through unvalidated (`unknown[]`, not cast to `Run[]`) --
+      // Store.importRuns() validates each row itself (see RunImportSchema)
+      // and skips malformed rows individually, the same way the jobs loop
+      // above does, instead of trusting the wire payload's shape.
+      const runs = Array.isArray(body?.runs) ? body.runs : undefined;
       const runsResult = runs ? ctx.store.importRuns(runs) : undefined;
       return sendJson(res, 200, {
         imported: results.filter((r) => r.ok).length,
