@@ -242,7 +242,8 @@ crontick uses [changesets](https://github.com/changesets/changesets) for version
 follows semver strictly. On-disk state format compatibility is covered by
 [specs/006-state-and-persistence.md](specs/006-state-and-persistence.md).
 
-There are currently no pending breaking changes.
+The pending 1.0.0 release consumes the changesets in `.changeset/`; see them for the
+behavior it introduces.
 
 ---
 
