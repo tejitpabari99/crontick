@@ -1,3 +1,10 @@
+/**
+ * CLI shim — thin adapter over CrontickClient via Commander v12.
+ * Translates flags/positionals into client method calls, formats output to
+ * stdout (JSON or tabular), and prints errors to stderr with exit code 1.
+ * Contains no business logic; all scheduling, persistence, and validation live
+ * in the client and daemon.
+ */
 import { Command } from 'commander';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -21,6 +28,7 @@ function mcpScript(): string {
   return resolve(__dirname, '../mcp/index.js');
 }
 
+/** Factory: startDaemon=true (default) demand-starts the daemon on first use. */
 function client(startDaemon = true) {
   const verbose = useVerbose();
   return createClient({
@@ -37,6 +45,7 @@ function useJson(): boolean {
   return !!(program.opts() as { json?: boolean }).json;
 }
 
+/** Also enabled by CRONTICK_VERBOSE=1 so verbose diagnostics work in scripts. */
 function useVerbose(): boolean {
   return !!(program.opts() as { verbose?: boolean }).verbose || isVerboseEnv();
 }
@@ -54,6 +63,7 @@ function renderLogEvent(event: LogEvent): void {
   stderr(`[crontick:${event.level}] ${event.component ? `${event.component} ` : ''}${event.message}${data}`);
 }
 
+/** Render output: --json emits JSON; otherwise tabular for arrays, key:value for objects. */
 function print(data: unknown, json = useJson()): void {
   if (json) {
     stdout(JSON.stringify(data, null, 2));
@@ -129,7 +139,19 @@ function printDashboardData(data: unknown): void {
   }
 }
 
-function handleError(err: unknown): never {
+/**
+ * Map any error to stderr + a non-zero exit code. CrontickError includes a
+ * machine-readable code.
+ *
+ * Deliberately sets `process.exitCode` instead of calling `process.exit()`.
+ * Daemon-backed errors arrive after an in-flight `fetch()` (undici) request;
+ * calling `process.exit()` immediately can race the socket/handle teardown
+ * that fetch schedules for after the response body is read, which trips
+ * `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` in libuv on
+ * Windows. Setting `exitCode` and returning lets Node drain the event loop
+ * (finishing that teardown) before exiting on its own with the same code.
+ */
+function handleError(err: unknown): void {
   if (err instanceof CrontickError) {
     stderr(`Error [${err.code}]: ${err.message}`);
   } else if (err instanceof Error) {
@@ -137,7 +159,7 @@ function handleError(err: unknown): never {
   } else {
     stderr(`Error: ${String(err)}`);
   }
-  process.exit(1);
+  process.exitCode = 1;
 }
 
 function commonJobOptions(command: Command): Command {
@@ -147,17 +169,25 @@ function commonJobOptions(command: Command): Command {
     .option('--at <iso>', 'One-shot run-at ISO-8601 time')
     .option('--tz <tz>', 'Timezone for cron schedule')
     .option('--script <body>', 'Inline script body')
-    .option('--exec <cmd>', 'Command to exec (use -- for args)')
+    .option('--exec <cmd>', 'Command to exec, taken verbatim (no whitespace splitting). Pass arguments with repeatable --arg <value> (always correct on every shell/shim, including Windows crontick.cmd/.ps1) — e.g. --exec node --arg -e --arg "process.stdout.write(1)". As a convenience (not guaranteed on every shim), args may instead follow -- (e.g. --exec node -- -e "process.stdout.write(1)"); --arg and -- cannot be combined')
     .option('--prompt <text>', 'Prompt text for a prompt action')
     .option('--prompt-file <path>', 'UTF-8 .txt file to read into the prompt')
+    .option('--arg <value>', 'Argument to pass to --exec or --prompt; repeatable (e.g. --arg -e --arg "a b"). Always safe: works identically on every shell and every Windows shim (crontick.cmd, crontick.ps1, npx), and round-trips spaces, quotes, and leading dashes verbatim. This is the documented way to pass arguments; cannot be combined with -- positional args in the same command.', collectOption)
     .option('--engine <engine>', 'Configured prompt engine name (default: config defaultEngine)')
     .option('--session-id <id>', 'Reuse this prompt engine session every run')
     .option('--reuse-session', 'Capture the first successful run session id and reuse it')
     .option('--file <path>', 'Load job JSON from a file')
-    .option('--shell <shell>', 'Shell: auto|bash|pwsh|cmd', 'auto')
+    // No hardcoded default here (unlike most flags): a Commander default would
+    // be indistinguishable from the user explicitly typing the same value,
+    // which on `update` previously caused an omitted flag to silently reset
+    // a customized shell/overlap policy back to the default. Leaving it
+    // undefined when omitted lets job-input.ts tell "not specified" apart
+    // from "explicitly set to the default value" on both `new` and `update`.
+    // `new` still defaults to auto/skip explicitly in job-input.ts.
+    .option('--shell <shell>', 'Shell: auto|bash|pwsh|cmd (default on create: auto; omit on update to leave unchanged)')
     .option('--env-file <path>', 'Load extra environment variables from a .env file')
     .option('--timeout <sec>', 'Timeout in seconds', parseInteger)
-    .option('--overlap <policy>', 'Overlap policy: skip|queue|cancel-previous', 'skip')
+    .option('--overlap <policy>', 'Overlap policy: skip|queue|cancel-previous (default on create: skip; omit on update to leave unchanged)')
     .option('--retry <max>', 'Retry count', parseInteger)
     .option('--desc <description>', 'Job description');
 }
@@ -166,6 +196,7 @@ function collectJobOptions(id: string, engineArgs: string[], opts: Record<string
   return {
     id,
     rawArgs: Array.isArray(engineArgs) ? engineArgs : [],
+    args: stringArrayOption(opts.arg),
     file: stringOption(opts.file),
     cron: stringOption(opts.cron),
     every: numberOption(opts.every),
@@ -191,6 +222,7 @@ function collectPatchOptions(engineArgs: string[], opts: Record<string, unknown>
   if (opts.enable && opts.disable) throw new CrontickError('VALIDATION_ERROR', '--enable and --disable are mutually exclusive');
   return {
     rawArgs: Array.isArray(engineArgs) ? engineArgs : [],
+    args: stringArrayOption(opts.arg),
     file: stringOption(opts.file),
     cron: stringOption(opts.cron),
     every: numberOption(opts.every),
@@ -233,10 +265,15 @@ function booleanOption(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
 }
 
+function stringArrayOption(value: unknown): string[] | undefined {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : undefined;
+}
+
 function parseScheduleJson(raw: string): Schedule {
   return JSON.parse(raw) as Schedule;
 }
 
+/** Attempt JSON parse; fall back to raw string for bare values like `true` or `hello`. */
 function parseJsonValue(raw: string): unknown {
   try {
     return JSON.parse(raw);
@@ -245,8 +282,81 @@ function parseJsonValue(raw: string): unknown {
   }
 }
 
+/** Commander repeatable option accumulator (e.g. --arg a --arg b → ['a','b']). */
 function collectOption(value: string, previous: string[] | undefined): string[] {
   return [...(previous ?? []), value];
+}
+
+/**
+ * Guards against the case where a user places a crontick flag (e.g. --json)
+ * after `--`, expecting it to still be parsed as a crontick option. Commander
+ * treats everything after a literal `--` as positional (this is standard,
+ * documented `--` semantics), so such a token instead becomes a literal
+ * argument to the job's exec/prompt action — silently corrupting the job
+ * instead of doing what the user meant.
+ *
+ * Only long-form flags (`--foo`) registered on this command or the top-level
+ * program are checked; short flags (`-v`, `-e`, ...) are common, legitimate
+ * literal arguments to arbitrary commands (e.g. `node -e`) and are not
+ * flagged. Anyone who genuinely needs to pass a literal value that happens to
+ * match a crontick flag name should use `--arg` instead, which is never
+ * inspected for collisions.
+ */
+function assertNoCrontickFlagCollision(rawArgs: string[], cmd: Command): void {
+  const known = new Set<string>();
+  for (const opt of [...program.options, ...cmd.options]) {
+    if (opt.long) known.add(opt.long);
+  }
+  const collisions = rawArgs.filter((token) => known.has(token));
+  if (collisions.length === 0) return;
+  throw new CrontickError(
+    'VALIDATION_ERROR',
+    `Argument(s) ${collisions.join(', ')} placed after -- match a crontick flag name and were NOT applied as crontick options -- ` +
+      'this would otherwise silently store them as literal job arguments. Move crontick flags before the -- delimiter, or, ' +
+      `if you meant them literally, pass them with --arg (e.g. --arg "${collisions[0]}") which is never treated as a crontick flag.`,
+  );
+}
+
+/**
+ * Commander's root `program` recognizes `--json`, `-v`/`--verbose`,
+ * `-h`/`--help`, and `-V`/`--version` ANYWHERE in argv, not just before the
+ * subcommand name (verified empirically: `program.parseOptions()` flat-scans
+ * the whole array unless `enablePositionalOptions`/`passThroughOptions` is
+ * set, which this CLI intentionally does not do, since every subcommand
+ * relies on being able to place --json/--verbose at the end of the command).
+ * That means `--arg -v` or `--arg --json` (two separate argv tokens) gets
+ * silently intercepted by the ROOT program as its own global flag before the
+ * `new`/`update`/`engine` subcommand ever sees "-v"/"--json" as `--arg`'s
+ * value — exactly the kind of silent corruption `--arg` exists to prevent.
+ * `--arg=-v` (a single combined token) does not collide, because Commander's
+ * exact-match root scan only matches whole tokens. Rewriting the vulnerable
+ * two-token form into the equivalent single `--arg=<value>` token here, before
+ * Commander ever sees argv, makes `--arg`'s round-trip guarantee hold for
+ * every value with no user-visible difference and no change to Commander's
+ * global option-parsing behavior elsewhere.
+ */
+const ARG_COLLISION_RISK_TOKENS = new Set(['--json', '-v', '--verbose', '-h', '--help', '-V', '--version']);
+
+function rewriteArgValuesCollidingWithGlobalFlags(argv: string[]): string[] {
+  const result: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    if (token === '--') {
+      // Everything after a literal -- is already immune (Commander stops its
+      // own global-flag scan there too) and is the user's own positional
+      // data, not a `--arg` occurrence of ours — leave it untouched.
+      result.push(...argv.slice(i));
+      break;
+    }
+    const next = argv[i + 1];
+    if (token === '--arg' && next !== undefined && ARG_COLLISION_RISK_TOKENS.has(next)) {
+      result.push(`--arg=${next}`);
+      i++; // consumed as part of the merged token above
+      continue;
+    }
+    result.push(token);
+  }
+  return result;
 }
 
 function parseEnvEntries(entries: string[] | undefined): Record<string, string> | undefined {
@@ -284,9 +394,10 @@ program
   .option('-v, --verbose', 'Write crontick diagnostic logs to stderr (also enabled by CRONTICK_VERBOSE=1)');
 
 commonJobOptions(program.command('new <id> [engineArgs...]').description('Create a new job'))
-  .action(async (id: string, engineArgs: string[], opts) => {
+  .action(async (id: string, engineArgs: string[], opts, cmd: Command) => {
     const c = client();
     try {
+      assertNoCrontickFlagCollision(engineArgs, cmd);
       const result = await c.createJobFromCliOptions(collectJobOptions(id, engineArgs, opts));
       printNotices(c);
       print(result);
@@ -298,10 +409,11 @@ commonJobOptions(program.command('new <id> [engineArgs...]').description('Create
 commonJobOptions(program.command('update <id> [engineArgs...]').description('Update an existing job'))
   .option('--enable', 'Enable the job')
   .option('--disable', 'Disable the job')
-  .action(async (id: string, engineArgs: string[], opts) => {
+  .action(async (id: string, engineArgs: string[], opts, cmd: Command) => {
     const c = client();
     const notices: string[] = [];
     try {
+      assertNoCrontickFlagCollision(engineArgs, cmd);
       const patch = buildJobPatchFromUpdateOptions(collectPatchOptions(engineArgs, opts), {
         cwd: process.cwd(),
         onNotice: (message) => notices.push(message),
@@ -342,15 +454,23 @@ program.command('cancel-run <runId>').description('Cancel an in-progress run').a
   try { print(await client().cancelRun(runId)); } catch (err) { handleError(err); }
 });
 
+const RUN_STATUSES = ['queued', 'running', 'success', 'failed', 'canceled', 'timeout', 'missed'] as const;
+
 const runs = program.command('runs').description('Inspect run history');
 runs.command('list')
   .description('List recent runs')
   .option('--job <id>', 'Filter by job ID')
   .option('--limit <n>', 'Maximum runs to return', parseInteger)
   .option('--since <ms>', 'Only runs since epoch milliseconds', parseInteger)
+  .option('--status <status>', `Filter by run status (${RUN_STATUSES.join('|')})`)
   .action(async (opts) => {
     try {
-      print(await client().listRuns({ jobId: opts.job as string | undefined, limit: opts.limit as number | undefined, since: opts.since as number | undefined }));
+      print(await client().listRuns({
+        jobId: opts.job as string | undefined,
+        limit: opts.limit as number | undefined,
+        since: opts.since as number | undefined,
+        status: opts.status as string | undefined,
+      }));
     } catch (err) { handleError(err); }
   });
 runs.command('get <runId>').description('Get a run by ID').action(async (runId: string) => {
@@ -391,6 +511,8 @@ stats.command('job <id>').description('Show statistics for one job').action(asyn
   try { print(await client().statsJob(id)); } catch (err) { handleError(err); }
 });
 
+// Config commands pass startDaemon=false — they operate on the local config file
+// without needing the daemon running.
 const config = program.command('config').description('Inspect and edit crontick config');
 config.command('get [path]').description('Get the effective config or one config value').action((path?: string) => {
   try { print(client(false).getConfigValue(path)); } catch (err) { handleError(err); }
@@ -410,7 +532,7 @@ config.command('validate [path]').description('Validate the config file').action
   try {
     const result = client(false).validateConfig(path);
     print(result);
-    if (!result.ok) process.exit(1);
+    if (!result.ok) process.exit(1); // non-zero exit for CI/script usage
   } catch (err) { handleError(err); }
 });
 
@@ -439,9 +561,10 @@ configEngines.command('remove <name>').description('Remove an engine').action((n
 program.command('export')
   .description('Export all jobs')
   .option('--out <file>', 'Output file (default: stdout)')
+  .option('--include-runs', 'Also include run history in the export')
   .action(async (opts) => {
     try {
-      const data = await client().exportJobs();
+      const data = await client().exportJobs({ includeRuns: opts.includeRuns as boolean | undefined });
       const json = JSON.stringify(data, null, 2);
       if (opts.out) {
         writeFileSync(resolve(process.cwd(), opts.out as string), json, 'utf-8');
@@ -452,12 +575,13 @@ program.command('export')
     } catch (err) { handleError(err); }
   });
 
-program.command('import <file>').description('Import jobs from a JSON file').action(async (file: string) => {
+program.command('import <file>').description('Import jobs (and run history, if present) from a JSON file').action(async (file: string) => {
   try {
     const filePath = resolve(process.cwd(), file);
-    const data = JSON.parse(readFileSync(filePath, 'utf-8')) as { jobs?: unknown[] } | unknown[];
+    const data = JSON.parse(readFileSync(filePath, 'utf-8')) as { jobs?: unknown[]; runs?: unknown[] } | unknown[];
     const jobs = Array.isArray(data) ? data : data.jobs;
-    print(await client().importJobs(Array.isArray(jobs) ? jobs : [], { fileBaseDir: dirname(filePath) }));
+    const runs = Array.isArray(data) ? undefined : data.runs;
+    print(await client().importJobs(Array.isArray(jobs) ? jobs : [], { fileBaseDir: dirname(filePath), runs }));
   } catch (err) { handleError(err); }
 });
 
@@ -471,7 +595,7 @@ program.command('doctor').description('Check system health').action(async () => 
         stdout(`${check.ok ? '✓' : '✗'} ${check.name}${check.note ? ` (${check.note})` : ''}`);
       }
     }
-    if (!result.ok) process.exit(1);
+    if (!result.ok) process.exitCode = 1;
   } catch (err) { handleError(err); }
 });
 
@@ -487,7 +611,11 @@ daemon.command('start')
     } catch (err) { handleError(err); }
   });
 daemon.command('stop').description('Stop the daemon').action(async () => {
-  try { stdout((await client(false).daemonStop()).message); } catch (err) { handleError(err); }
+  try {
+    const result = await client(false).daemonStop();
+    if (useJson()) print(result);
+    else stdout(`${result.message} (mode: ${result.mode})`);
+  } catch (err) { handleError(err); }
 });
 daemon.command('status').description('Show daemon status').action(async () => {
   try { print(await client(false).daemonStatus()); } catch { stdout('Daemon is not running'); }
@@ -543,6 +671,9 @@ dashboard.command('stop').description('Stop the dashboard server').action(async 
   } catch (err) { handleError(err); }
 });
 
+// The `mcp` subcommand launches the MCP server process directly via spawnSync
+// (inheriting stdio for JSON-RPC). It is NOT listed in SURFACE_CAPABILITIES
+// because it starts a server rather than proxying a daemon operation.
 program.command('mcp')
   .description('Start the crontick MCP server on stdio (for use with Claude Desktop, Copilot, Cursor, etc.)')
   .option('--no-start-daemon', 'Set startDaemon=false for MCP daemon-backed tools')
@@ -572,4 +703,4 @@ Example MCP host config (Claude Desktop):
     process.exit(result.status ?? 0);
   });
 
-program.parse();
+program.parse(rewriteArgValuesCollidingWithGlobalFlags(process.argv));

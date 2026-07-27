@@ -1,3 +1,6 @@
+// Per-job timer management: cron (via croner), interval, and one-shot schedules.
+// Emits 'tick' events consumed by the daemon to trigger runs.
+// See docs/internals/scheduler.md
 import { EventEmitter } from 'node:events';
 import { Cron, type CronOptions } from 'croner';
 import type { Job, Schedule } from '../schemas/job.js';
@@ -20,6 +23,17 @@ export interface ValidateResult {
   error?: string;
 }
 
+/** Result of enumerateFiresBetween(): the fires found (capped) plus whether more existed beyond the cap. */
+export interface EnumerateFiresResult {
+  /** Ascending epoch-ms fire times, length <= the requested cap. */
+  fires: number[];
+  /** True if the schedule had more fires in the window than the cap allowed to enumerate. */
+  capped: boolean;
+}
+
+/** Default cap for enumerateFiresBetween() when the caller doesn't specify one. */
+export const DEFAULT_ENUMERATE_FIRES_CAP = 500;
+
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
 export class Scheduler extends EventEmitter {
@@ -31,8 +45,9 @@ export class Scheduler extends EventEmitter {
     this.logger = logger.child('scheduler');
   }
 
+  /** Register a timer for a job. Calls unschedule first (idempotent re-schedule without leaking timers). */
   schedule(job: Job): void {
-    this.unschedule(job.id); // idempotent
+    this.unschedule(job.id);
 
     if (!job.enabled) {
       this.logger.debug('Skipping disabled job', { jobId: job.id });
@@ -69,6 +84,7 @@ export class Scheduler extends EventEmitter {
 
   // ── Preview / Validate ─────────────────────────────────────────────────────
 
+  /** Compute the next N fire times without registering timers (side-effect free). */
   previewNext(schedule: Schedule, opts: PreviewOptions = {}): string[] {
     const n = opts.n ?? 5;
 
@@ -95,6 +111,7 @@ export class Scheduler extends EventEmitter {
     return [];
   }
 
+  /** Validate structural correctness of a schedule without side effects. */
   validateSchedule(schedule: Schedule): ValidateResult {
     if (schedule.kind === 'cron') {
       try {
@@ -127,6 +144,43 @@ export class Scheduler extends EventEmitter {
     return { ok: false, error: 'Unknown schedule kind' };
   }
 
+  // ── Missed-fire enumeration ─────────────────────────────────────────────────
+
+  /**
+   * Enumerate the fire times a schedule would have produced strictly between
+   * `fromExclusiveMs` and `toExclusiveMs`, without registering any live timer
+   * — used only by the daemon's startup missed-fire pass (see
+   * docs/concepts/daemon-lifecycle.md and Store.recordMissedRun()). Bounded
+   * by `opts.cap` (default 500) so a pathological every-second job left down
+   * for a long time can't stall startup or flood `runs` with individual rows;
+   * when the cap is hit, the caller records one synthetic summary row instead
+   * of iterating further. `fromExclusiveMs >= toExclusiveMs` (clock moved
+   * backwards, or nothing to compute) returns zero fires rather than
+   * throwing.
+   */
+  enumerateFiresBetween(
+    schedule: Schedule,
+    fromExclusiveMs: number,
+    toExclusiveMs: number,
+    opts: { cap?: number } = {},
+  ): EnumerateFiresResult {
+    const cap = opts.cap ?? DEFAULT_ENUMERATE_FIRES_CAP;
+    if (fromExclusiveMs >= toExclusiveMs) return { fires: [], capped: false };
+
+    if (schedule.kind === 'cron') {
+      return enumerateCronFires(schedule.cron, schedule.tz, fromExclusiveMs, toExclusiveMs, cap);
+    }
+    if (schedule.kind === 'interval') {
+      return enumerateIntervalFires(schedule.everySec, fromExclusiveMs, toExclusiveMs, cap);
+    }
+    if (schedule.kind === 'one-shot') {
+      const t = new Date(schedule.runAt).getTime();
+      if (isNaN(t) || t <= fromExclusiveMs || t >= toExclusiveMs) return { fires: [], capped: false };
+      return { fires: [t], capped: false };
+    }
+    return { fires: [], capped: false };
+  }
+
   // ── Private helpers ────────────────────────────────────────────────────────
 
   private fireTick(jobId: string, plannedAt: Date): void {
@@ -155,7 +209,11 @@ export class Scheduler extends EventEmitter {
   ): void {
     const intervalMs = everySec * 1000;
 
-    // Calculate initial delay
+    // Calculate initial delay:
+    // - No startAt → wait one full interval.
+    // - startAt in the future → fire at startAt.
+    // - startAt in the past → align to the next interval boundary so the cadence
+    //   is preserved relative to the original start.
     let delay = intervalMs;
     if (startAt) {
       const startTime = new Date(startAt);
@@ -171,14 +229,28 @@ export class Scheduler extends EventEmitter {
       }
     }
 
-    const timer = safeSetTimeout(() => {
+    // Stable disposer: the SAME closure identity is stored in `entries` for the
+    // entire lifetime of this job's schedule, across both the pre-fire (timeout)
+    // and post-fire (interval) phases — unlike the old code, which replaced the
+    // map entry object when the timer transitioned. `disposed` guards against
+    // unschedule() being called synchronously from within this job's own first
+    // tick listener: without the guard, the code below would unconditionally
+    // re-arm a setInterval even though the job was just unscheduled from inside
+    // its own tick callback (see docs/internals/scheduler.md).
+    let disposed = false;
+    let currentTimer: { clear(): void } = safeSetTimeout(() => {
+      if (disposed) return;
       this.fireTick(job.id, new Date());
+      if (disposed) return;
       const interval = setInterval(() => this.fireTick(job.id, new Date()), intervalMs);
-      this.entries.set(job.id, { stop: () => clearInterval(interval) });
+      currentTimer = { clear: () => clearInterval(interval) };
     }, delay);
 
     this.entries.set(job.id, {
-      stop: () => timer.clear(),
+      stop: () => {
+        disposed = true;
+        currentTimer.clear();
+      },
     });
   }
 
@@ -187,6 +259,7 @@ export class Scheduler extends EventEmitter {
     if (isNaN(t.getTime())) return;
 
     const delay = t.getTime() - Date.now();
+    // One-shot whose time has already passed: silently skip (no retroactive firing).
     if (delay <= 0) {
       return;
     }
@@ -203,9 +276,9 @@ export class Scheduler extends EventEmitter {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * `setTimeout` clamps delays > 2^31-1 ms (~24.8 days) to 1 ms, causing
- * far-future timers to fire immediately.  This helper chains intermediate
- * 2 000 000 000 ms timeouts until the remaining delay is safe.
+ * setTimeout clamps delays > 2^31-1 ms (~24.8 days) to 1 ms, causing
+ * far-future timers to fire immediately. This helper chains intermediate
+ * 2,000,000,000 ms timeouts until the remaining delay is within the safe range.
  */
 const MAX_SAFE_TIMEOUT_MS = 2_000_000_000;
 
@@ -230,6 +303,62 @@ function safeSetTimeout(cb: () => void, ms: number): SafeTimer {
   };
 }
 
+/** Iterate croner's nextRun() forward from `fromExclusiveMs`, capped, without registering a live timer. */
+function enumerateCronFires(
+  pattern: string,
+  tz: string | undefined,
+  fromExclusiveMs: number,
+  toExclusiveMs: number,
+  cap: number,
+): EnumerateFiresResult {
+  try {
+    const options: CronOptions = { paused: true };
+    if (tz) options.timezone = tz;
+    const cron = new Cron(pattern, options);
+    const fires: number[] = [];
+    let ref = new Date(fromExclusiveMs);
+    let capped = false;
+    for (;;) {
+      const next = cron.nextRun(ref) as Date | null;
+      if (!next || next.getTime() >= toExclusiveMs) break;
+      if (fires.length >= cap) {
+        capped = true;
+        break;
+      }
+      fires.push(next.getTime());
+      ref = new Date(next.getTime() + 1);
+    }
+    cron.stop();
+    return { fires, capped };
+  } catch {
+    return { fires: [], capped: false };
+  }
+}
+
+/** Compute equally-spaced interval fires forward from `fromExclusiveMs`, capped. */
+function enumerateIntervalFires(
+  everySec: number,
+  fromExclusiveMs: number,
+  toExclusiveMs: number,
+  cap: number,
+): EnumerateFiresResult {
+  const intervalMs = everySec * 1000;
+  if (intervalMs <= 0) return { fires: [], capped: false };
+  const fires: number[] = [];
+  let t = fromExclusiveMs + intervalMs;
+  let capped = false;
+  while (t < toExclusiveMs) {
+    if (fires.length >= cap) {
+      capped = true;
+      break;
+    }
+    fires.push(t);
+    t += intervalMs;
+  }
+  return { fires, capped };
+}
+
+/** Iterate croner's nextRun() N times from now without registering a live timer. */
 function cronNextN(pattern: string, tz: string | undefined, n: number): string[] {
   try {
     const options: CronOptions = { paused: true };

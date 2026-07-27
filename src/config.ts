@@ -1,13 +1,31 @@
+/**
+ * Configuration management for crontick. Handles `config.json` read/write, engine
+ * CRUD, and config key-path operations. The built-in default config provides the
+ * `copilot` engine; file config is deep-merged over it.
+ *
+ * Precedence for engine resolution: file config > BUILT_IN_CONFIG.
+ * Writes use atomic rename (write-to-tmp, rename) for crash safety.
+ */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
 import { CrontickError } from './errors.js';
 import { configPath as defaultConfigPath, ensureDirs } from './paths.js';
-import { ConfigKeySchema, ConfigSchema, EngineConfigSchema, type CrontickConfig, type EngineConfig } from './schemas/config.js';
+import {
+  ConfigKeySchema,
+  ConfigSchema,
+  EngineConfigSchema,
+  PersistedConfigSchema,
+  RetentionConfigSchema,
+  type CrontickConfig,
+  type EngineConfig,
+  type PersistedConfig,
+  type RetentionConfig,
+} from './schemas/config.js';
 import type { PromptAction } from './schemas/job.js';
 import { nullLogger, type Logger } from './logger.js';
 
-export { ConfigSchema, EngineConfigSchema, type CrontickConfig, type EngineConfig };
+export { ConfigSchema, EngineConfigSchema, RetentionConfigSchema, type CrontickConfig, type EngineConfig, type RetentionConfig };
 
 export interface ConfigOptions {
   env?: NodeJS.ProcessEnv;
@@ -33,17 +51,21 @@ export interface PromptRunCommand {
   engine: string;
 }
 
+/** Built-in fallback config used when no file exists; also serves as the merge base. */
 export const BUILT_IN_CONFIG: CrontickConfig = Object.freeze({
   defaultEngine: 'copilot',
   engines: {
     copilot: Object.freeze({ command: 'copilot', args: [], env: {} }),
   },
+  retention: Object.freeze({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 }),
 });
 
+/** Resolves config file path: explicit `options.path` > `<dataDir>/config.json`. */
 export function configFilePath(options: ConfigOptions = {}): string {
   return options.path ? resolve(options.path) : defaultConfigPath(options.env);
 }
 
+/** Loads config: reads file and deep-merges over BUILT_IN_CONFIG. Returns built-in if no file. */
 export function loadConfig(options: ConfigOptions = {}): CrontickConfig {
   const filePath = configFilePath(options);
   const logger = (options.logger ?? nullLogger).child('config');
@@ -119,18 +141,16 @@ export function getConfigValue(path: string | undefined, options: ConfigOptions 
 
 export function setConfigValue(path: string, value: unknown, options: ConfigOptions = {}): CrontickConfig {
   const keyPath = parseKeyPath(path);
-  const current = loadConfig(options);
-  const updated = cloneConfig(current);
+  const updated = cloneRaw(readRawStoredConfig(options));
   writePath(updated as unknown as Record<string, unknown>, keyPath, value);
-  return writeConfigFile(updated, options);
+  return persistRawConfig(updated, options);
 }
 
 export function removeConfigValue(path: string, options: ConfigOptions = {}): CrontickConfig {
   const keyPath = parseKeyPath(path);
-  const current = loadConfig(options);
-  const updated = cloneConfig(current);
+  const updated = cloneRaw(readRawStoredConfig(options));
   removePath(updated as unknown as Record<string, unknown>, keyPath);
-  return writeConfigFile(updated, options);
+  return persistRawConfig(updated, options);
 }
 
 export function listEngines(options: ConfigOptions = {}): Record<string, EngineConfig> {
@@ -147,17 +167,15 @@ export function updateEngine(name: string, engine: unknown, options: ConfigOptio
 
 export function removeEngine(name: string, options: ConfigOptions = {}): CrontickConfig {
   const key = parseEngineName(name);
-  const current = loadConfig(options);
-  if (!Object.prototype.hasOwnProperty.call(current.engines, key)) {
+  const effective = loadConfig(options);
+  if (!Object.prototype.hasOwnProperty.call(effective.engines, key)) {
     throw new CrontickError(
       'CONFIG_ENGINE_NOT_FOUND',
       `Engine "${key}" is not defined in ${configFilePath(options)}. Choose an existing engine or add it first.`,
       { path: configFilePath(options), key: `engines.${key}` },
     );
   }
-  const updated = cloneConfig(current);
-  delete updated.engines[key];
-  if (updated.defaultEngine === key) {
+  if (effective.defaultEngine === key) {
     throw new CrontickError(
       'CONFIG_VALIDATION_ERROR',
       `Cannot remove default engine "${key}" from ${configFilePath(options)}. Set defaultEngine to another engine first, then remove "${key}".`,
@@ -171,9 +189,18 @@ export function removeEngine(name: string, options: ConfigOptions = {}): Crontic
       { path: configFilePath(options), key: `engines.${key}` },
     );
   }
-  return writeConfigFile(updated, options);
+  const updated = cloneRaw(readRawStoredConfig(options));
+  const engines = updated.engines;
+  if (isRecord(engines) && Object.prototype.hasOwnProperty.call(engines, key)) {
+    delete engines[key];
+  }
+  return persistRawConfig(updated, options);
 }
 
+/**
+ * Builds the full command+args for executing a prompt action via its engine.
+ * Merges engine-level args, the prompt text, job-level args, and optional sessionId.
+ */
 export function buildPromptRunCommand(action: PromptAction, options: ConfigOptions = {}): PromptRunCommand {
   const logger = (options.logger ?? nullLogger).child('config');
   const config = loadConfig(options);
@@ -210,8 +237,8 @@ export function buildPromptRunCommand(action: PromptAction, options: ConfigOptio
 
 function setEngine(name: string, engine: unknown, mustExist: boolean, options: ConfigOptions): CrontickConfig {
   const key = parseEngineName(name);
-  const current = loadConfig(options);
-  const existing = current.engines[key];
+  const effective = loadConfig(options);
+  const existing = effective.engines[key];
   if (mustExist && !existing) {
     throw new CrontickError(
       'CONFIG_ENGINE_NOT_FOUND',
@@ -228,11 +255,13 @@ function setEngine(name: string, engine: unknown, mustExist: boolean, options: C
   }
   const parsed = EngineConfigSchema.safeParse({ ...(mustExist ? existing : {}), ...(isRecord(engine) ? engine : {}) });
   if (!parsed.success) throw configValidationError(configFilePath(options), parsed.error);
-  const updated = cloneConfig(current);
-  updated.engines[key] = parsed.data;
-  return writeConfigFile(updated, options);
+  const updated = cloneRaw(readRawStoredConfig(options));
+  if (!isRecord(updated.engines)) updated.engines = {};
+  (updated.engines as Record<string, unknown>)[key] = parsed.data;
+  return persistRawConfig(updated, options);
 }
 
+/** Deep-merges file config over BUILT_IN_CONFIG then validates via ConfigSchema. */
 function parseConfig(input: unknown, filePath: string): CrontickConfig {
   const merged = deepMerge(cloneConfig(BUILT_IN_CONFIG), input);
   const parsed = ConfigSchema.safeParse(merged);
@@ -264,12 +293,48 @@ function configValidationError(filePath: string, error: z.ZodError): CrontickErr
   );
 }
 
-function writeJsonAtomic(filePath: string, config: CrontickConfig, env?: NodeJS.ProcessEnv): void {
+/** Atomic write: tmp file with restrictive mode (0o600), then rename into place. */
+function writeJsonAtomic(filePath: string, config: unknown, env?: NodeJS.ProcessEnv): void {
   ensureDirs(env);
   mkdirSync(dirname(filePath), { recursive: true });
   const tmpPath = `${filePath}.${process.pid}.tmp`;
   writeFileSync(tmpPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600 });
   renameSync(tmpPath, filePath);
+}
+
+/**
+ * Reads exactly what's explicitly stored in config.json — no BUILT_IN_CONFIG
+ * merge, no schema `.default(...)` applied. Returns `{}` when the file
+ * doesn't exist. This (not `loadConfig`) is the base every write operation
+ * (`setConfigValue`, `removeConfigValue`, engine CRUD) must clone and mutate,
+ * so that a key which was never explicitly set — or one that's just been
+ * removed — stays absent from the file instead of being re-baked in from
+ * BUILT_IN_CONFIG/schema defaults on the next write.
+ */
+function readRawStoredConfig(options: ConfigOptions): PersistedConfig {
+  const filePath = configFilePath(options);
+  if (!existsSync(filePath)) return {};
+  const parsed = PersistedConfigSchema.safeParse(readConfigJson(filePath));
+  if (!parsed.success) throw configValidationError(filePath, parsed.error);
+  return parsed.data;
+}
+
+/**
+ * Validates a raw (possibly partial) config by computing its effective value
+ * (merged over BUILT_IN_CONFIG, checked against the full refined
+ * `ConfigSchema`) — but persists the raw object as-is, unmerged. Returns the
+ * effective config so callers keep returning fully-resolved values.
+ */
+function persistRawConfig(raw: PersistedConfig, options: ConfigOptions): CrontickConfig {
+  const filePath = configFilePath(options);
+  const effective = parseConfig(raw, filePath);
+  writeJsonAtomic(filePath, raw, options.env);
+  (options.logger ?? nullLogger).child('config').debug('Wrote config file', { path: filePath, keys: Object.keys(raw) });
+  return effective;
+}
+
+function cloneRaw(raw: PersistedConfig): PersistedConfig {
+  return JSON.parse(JSON.stringify(raw)) as PersistedConfig;
 }
 
 function parseKeyPath(path: string): string[] {

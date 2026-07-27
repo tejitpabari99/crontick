@@ -1,3 +1,7 @@
+// Daemon discovery and demand-start protocol shared by CLI, MCP, and library.
+// Resolves the daemon URL (from option, env, or port file), probes /health,
+// and spawns the daemon if needed with an exclusive file lock to prevent races.
+// See docs/concepts/daemon-lifecycle.md
 import * as childProcess from 'node:child_process';
 import {
   closeSync,
@@ -35,10 +39,14 @@ export interface DaemonInfo {
 const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
 const DEFAULT_HEALTH_TIMEOUT_MS = 2_000;
 const DEFAULT_LOCK_TIMEOUT_MS = 15_000;
+/** Polling interval while waiting for daemon health or lock release. */
 const POLL_MS = 100;
+/** Max bytes to read from daemon.ensure.log for error diagnostics. */
 const STDERR_LIMIT = 4096;
+/** Health probe rejects responses whose product field doesn't match. */
 const HEALTH_PRODUCT = 'crontick';
 
+/** Resolve the daemon base URL without starting a new daemon. Throws DAEMON_NOT_RUNNING if unresolvable. */
 export async function resolveDaemonBaseUrl(options: { daemonUrl?: string; env?: NodeJS.ProcessEnv; logger?: Logger } = {}): Promise<string> {
   const logger = (options.logger ?? nullLogger).child('resolve');
   const env = { ...process.env, ...(options.env ?? {}) };
@@ -59,6 +67,10 @@ export async function resolveDaemonBaseUrl(options: { daemonUrl?: string; env?: 
   return `http://127.0.0.1:${port}`;
 }
 
+/**
+ * Ensure a daemon is running and return its connection info.
+ * Protocol: probe explicit URL → probe port file → acquire exclusive lock → spawn → poll health.
+ */
 export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<DaemonInfo> {
   const logger = (options.logger ?? nullLogger).child('ensure');
   const env = { ...process.env, ...(options.env ?? {}) };
@@ -111,6 +123,8 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<D
       ownsLock = tryAcquireLock(lockPath);
       if (ownsLock) {
         logger.debug('Acquired daemon start lock', { lockPath });
+        // Double-check: another process may have started the daemon while we
+        // were waiting to acquire the lock.
         const rechecked = await probePortFile(env, healthTimeoutMs);
         if (rechecked) {
           logger.debug('Daemon became healthy after lock acquisition', { baseUrl: rechecked.baseUrl });
@@ -257,6 +271,11 @@ async function probePortFile(
   return { ...healthy.info, baseUrl, port };
 }
 
+/**
+ * Probe /health and validate the response matches the crontick product signature.
+ * Rejects responses where the reported port doesn't match the URL (prevents
+ * accidentally connecting to a different service on the same port).
+ */
 async function probeHealth(
   baseUrl: string,
   timeoutMs: number,
@@ -388,6 +407,7 @@ async function waitForChildExit(hasExited: () => boolean, timeoutMs: number): Pr
   return hasExited();
 }
 
+/** Acquire the exclusive startup lock via openSync('wx') — atomic create-or-fail. */
 function tryAcquireLock(lockPath: string): boolean {
   try {
     const fd = openSync(lockPath, 'wx');
@@ -399,6 +419,7 @@ function tryAcquireLock(lockPath: string): boolean {
   }
 }
 
+/** Remove a stale lock if its owning PID is dead or its age exceeds lockTimeoutMs. */
 function cleanupStaleLock(lockPath: string, lockTimeoutMs: number): void {
   try {
     const raw = readFileSync(lockPath, 'utf-8');

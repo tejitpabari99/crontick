@@ -71,7 +71,7 @@ Thin shims/surfaces:
   surfaces; domain behavior here is suspect unless delegated to core/daemon.
 
 Context: `package.json` ships `crontick`, `crontick-daemon`, and `crontick-mcp`;
-the architecture and roadmap docs make client/core source-of-truth and
+the architecture docs make client/core source-of-truth and
 MCP/client drift explicit.
 
 ## Checkable architecture rubric

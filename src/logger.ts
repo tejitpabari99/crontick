@@ -1,3 +1,8 @@
+/**
+ * Structured logging with secret redaction. Four levels (error, warn, info, debug)
+ * and a sink-based architecture: each surface provides its own sink (file, stderr, array).
+ * All log events are sanitized before emission to strip known secret patterns.
+ */
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
 
 export interface LogEvent {
@@ -37,7 +42,9 @@ const LEVELS: Record<LogLevel, number> = {
   debug: 3,
 };
 
+/** Matches env-var-style secret keys for value-level redaction. */
 const SECRET_KEY = /(?:token|secret|password|credential|apikey|api_key|authorization|cookie)/i;
+/** Patterns applied to log text to strip tokens/keys before they reach the sink. */
 const SECRET_PATTERNS = [
   /(?:AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|GITHUB_TOKEN|GH_TOKEN|GCLOUD_SERVICE_KEY|GOOGLE_CREDENTIALS|API_KEY|PASSWORD|TOKEN|SECRET)=[^\s]*/gi,
   /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi,
@@ -55,6 +62,7 @@ export function createLogger(options: LoggerOptions = {}): Logger {
   );
 }
 
+/** Reads CRONTICK_VERBOSE; accepts 1|true|yes|on|debug (case-insensitive). */
 export function isVerboseEnv(env: NodeJS.ProcessEnv = process.env): boolean {
   const value = env['CRONTICK_VERBOSE'];
   return typeof value === 'string' && /^(1|true|yes|on|debug)$/i.test(value.trim());

@@ -1,7 +1,10 @@
+// Loopback-only HTTP API for the daemon. All routes enforce localhost access.
+// See docs/internals/daemon.md for the full route table.
 import http from 'node:http';
 import { createReadStream } from 'node:fs';
 import { URL } from 'node:url';
 import type { Store } from './store.js';
+import type { Run, RunStatus } from './store.js';
 import type { Scheduler } from './scheduler.js';
 import type { Runner } from './runner.js';
 import { JobSchema } from '../schemas/job.js';
@@ -18,7 +21,9 @@ import { nullLogger, type Logger } from '../logger.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
+// Invariant: only loopback addresses may connect. Non-loopback → 403.
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+/** Poll interval for SSE log streaming. Stream closes when run reaches a terminal status. */
 const SSE_POLL_MS = 200;
 
 // ── Context shared with handlers ──────────────────────────────────────────────
@@ -31,10 +36,20 @@ export interface ApiContext {
   port: number;
   reload: () => Promise<void>;
   logger?: Logger;
+  /** L1: graceful in-process shutdown, wired by index.ts after the HTTP server exists. */
+  shutdown?: (signal: string) => Promise<void>;
+  /** L2: summary of fires missed while the daemon was down, computed once at startup. */
+  missedFireSummary?: {
+    jobsWithMissedFires: number;
+    missedRunsRecorded: number;
+    jobsCapped: number;
+    capPerJob: number;
+  };
 }
 
 // ── Server factory ────────────────────────────────────────────────────────────
 
+/** Create the daemon HTTP server. Enforces loopback-only access on every request. */
 export function createApiServer(ctx: ApiContext): http.Server {
   const server = http.createServer((req, res) => {
     // Enforce localhost-only
@@ -87,6 +102,9 @@ async function handleRequest(
       ctx.store.upsertJob(job);
       const stored = ctx.store.getJob(job.id) ?? job;
       ctx.scheduler.schedule(stored);
+      // L2: seed the missed-fire watermark so a restart computes forward from
+      // "job just created/updated", not from some earlier (or absent) state.
+      ctx.store.recordTick(stored.id);
       return sendJson(res, 201, stored);
     }
 
@@ -114,6 +132,10 @@ async function handleRequest(
         ctx.store.upsertJob(job);
         const stored = ctx.store.getJob(id) ?? job;
         ctx.scheduler.schedule(stored);
+        // L2: same watermark seed as job creation — an update can re-enable a
+        // job or change its schedule, both of which should compute missed
+        // fires forward from now, not from a stale pre-update state.
+        ctx.store.recordTick(stored.id);
         return sendJson(res, 200, stored);
       }
 
@@ -121,7 +143,14 @@ async function handleRequest(
         const deleted = ctx.store.deleteJob(id);
         if (!deleted) return sendError(res, 404, 'NOT_FOUND', `Job ${id} not found`);
         ctx.scheduler.unschedule(id);
-        return sendJson(res, 200, { ok: true });
+        // Major 4: unlike a daemon stop (where a detached child surviving is
+        // deliberate, L8), deleting a job removes the definition entirely, so
+        // there is nothing left for an in-flight run to belong to. Cancel any
+        // active run for this job rather than leaving its process running
+        // against a job that no longer exists. Visible via `canceledRun` in
+        // the response instead of silently orphaning it.
+        const canceledRun = ctx.runner.cancelJob(id);
+        return sendJson(res, 200, { ok: true, canceledRun });
       }
 
       if (method === 'POST' && sub === '/enable') {
@@ -130,6 +159,8 @@ async function handleRequest(
         const updated = { ...job, enabled: true };
         ctx.store.upsertJob(updated);
         ctx.scheduler.schedule(updated);
+        // L2: re-enabling starts a fresh watermark, same reasoning as create/update.
+        ctx.store.recordTick(id);
         return sendJson(res, 200, updated);
       }
 
@@ -146,7 +177,7 @@ async function handleRequest(
         const job = ctx.store.getJob(id);
         if (!job) return sendError(res, 404, 'NOT_FOUND', `Job ${id} not found`);
         const run = ctx.store.insertRun(id);
-        // fire async, don't await
+        // Fire-and-forget: return 202 immediately while the run executes async
         ctx.runner.run(job, run.id, ctx.store).catch(() => {});
         return sendJson(res, 202, { runId: run.id });
       }
@@ -161,7 +192,8 @@ async function handleRequest(
       const since = url.searchParams.has('since')
         ? parseInt(url.searchParams.get('since')!, 10)
         : undefined;
-      return sendJson(res, 200, ctx.store.listRuns({ jobId, limit, since }));
+      const status = (url.searchParams.get('status') ?? undefined) as RunStatus | undefined;
+      return sendJson(res, 200, ctx.store.listRuns({ jobId, limit, since, status }));
     }
 
     // /api/runs/:id/*
@@ -257,6 +289,13 @@ async function handleRequest(
         version: VERSION,
         uptimeSec: Math.floor((Date.now() - ctx.startedAt.getTime()) / 1000),
         jobs: ctx.store.listJobs().length,
+        // L2: report-only missed-fire summary computed once at startup.
+        missedFires: ctx.missedFireSummary ?? {
+          jobsWithMissedFires: 0,
+          missedRunsRecorded: 0,
+          jobsCapped: 0,
+          capPerJob: 0,
+        },
       });
     }
 
@@ -265,9 +304,38 @@ async function handleRequest(
       return sendJson(res, 200, { ok: true });
     }
 
+    // L1: graceful in-process stop. Respond first (200, before the socket is
+    // torn down), then trigger the real shutdown once the response has been
+    // flushed — see the `res.on('finish', ...)` below. Client-side callers
+    // should treat "request succeeded" as "shutdown has started", not
+    // "daemon has exited"; use the PID/port files disappearing (or a
+    // connection-refused health probe) to confirm the process is gone.
+    if (method === 'POST' && path === '/api/daemon/stop') {
+      if (!ctx.shutdown) {
+        return sendError(res, 501, 'NOT_IMPLEMENTED', 'Graceful shutdown is not wired for this context');
+      }
+      const doShutdown = ctx.shutdown;
+      // Major 4: detached children (L8) are deliberately left running past the
+      // daemon's own exit, so report which runs are still in progress at the
+      // moment of shutdown — visible to the caller (see stopDaemon() in
+      // lifecycle.ts and `crontick daemon stop`'s output) instead of silently
+      // abandoning them with no trace.
+      const activeRuns = ctx.store.listRuns({ status: 'running' }).map((r) => ({ id: r.id, jobId: r.jobId }));
+      sendJson(res, 200, { ok: true, stopping: true, pid: process.pid, activeRuns });
+      res.on('finish', () => {
+        void doShutdown('HTTP /api/daemon/stop');
+      });
+      return;
+    }
+
     // ── Export / Import ───────────────────────────────────────────────────────
     if (method === 'GET' && path === '/api/export') {
-      return sendJson(res, 200, { jobs: ctx.store.listJobs() });
+      // L7: run history is opt-in via ?includeRuns=1 to keep the common
+      // (jobs-only) export small; bounded by whatever retention has left.
+      const includeRuns = url.searchParams.get('includeRuns') === '1';
+      const payload: { jobs: ReturnType<Store['listJobs']>; runs?: Run[] } = { jobs: ctx.store.listJobs() };
+      if (includeRuns) payload.runs = ctx.store.listRuns({});
+      return sendJson(res, 200, payload);
     }
 
     if (method === 'POST' && path === '/api/import') {
@@ -285,7 +353,19 @@ async function handleRequest(
           results.push({ id: String(raw?.id ?? '?'), ok: false, error: 'validation failed' });
         }
       }
-      return sendJson(res, 200, { imported: results.filter((r) => r.ok).length, results });
+      // L7: optional `runs` array (as produced by GET /api/export?includeRuns=1)
+      // is restored archivally -- no execution, no scheduler interaction.
+      // Passed through unvalidated (`unknown[]`, not cast to `Run[]`) --
+      // Store.importRuns() validates each row itself (see RunImportSchema)
+      // and skips malformed rows individually, the same way the jobs loop
+      // above does, instead of trusting the wire payload's shape.
+      const runs = Array.isArray(body?.runs) ? body.runs : undefined;
+      const runsResult = runs ? ctx.store.importRuns(runs) : undefined;
+      return sendJson(res, 200, {
+        imported: results.filter((r) => r.ok).length,
+        results,
+        ...(runsResult ? { runsImported: runsResult.imported, runsSkipped: runsResult.skipped } : {}),
+      });
     }
 
     // ── Dashboard ─────────────────────────────────────────────────────────────
@@ -327,6 +407,8 @@ async function handleRequest(
 }
 
 // ── SSE log streaming ─────────────────────────────────────────────────────────
+// Sends existing log entries immediately, then polls for new entries every
+// SSE_POLL_MS until the run reaches a terminal status or the client disconnects.
 
 function streamLogs(
   req: http.IncomingMessage,
@@ -358,7 +440,7 @@ function streamLogs(
       if (log.ts > lastTs) lastTs = log.ts;
     }
 
-    const terminal = new Set(['success', 'failed', 'canceled', 'timeout']);
+    const terminal = new Set(['success', 'failed', 'canceled', 'timeout', 'missed']);
     if (!run || terminal.has(run.status)) {
       sseEvent(res, { done: true, status: run?.status });
       clearInterval(poll);

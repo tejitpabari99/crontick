@@ -1,6 +1,13 @@
+/**
+ * Prompt action runtime validation. Enforces two constraints before a prompt
+ * job can be persisted:
+ * 1. User-supplied args must not include crontick-managed flags (--prompt, --session-id, etc.)
+ * 2. Estimated Windows command-line length must stay under the safe limit (30K of 32K max)
+ */
 export const WINDOWS_COMMAND_LINE_LIMIT = 32_767;
 export const SAFE_PROMPT_COMMAND_LINE_LIMIT = 30_000;
 
+/** Args that crontick manages internally; users cannot pass these as raw engine args. */
 export const RESERVED_PROMPT_ARGS = new Set([
   '-p',
   '--prompt',

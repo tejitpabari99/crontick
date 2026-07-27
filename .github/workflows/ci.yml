@@ -31,6 +31,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Typecheck examples
+        run: npm run typecheck:examples
+
       - name: Lint
         run: npm run lint
 
@@ -71,8 +74,14 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Typecheck examples against published types
+        run: npm run typecheck:examples:dist
+
       - name: Pack dry-run
         run: npm pack --dry-run
 
       - name: Verify tarball contents
         run: node scripts/verify-tarball.mjs
+
+      - name: Install tarball and exercise public exports + all bins
+        run: npm run verify-package-install

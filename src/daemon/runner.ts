@@ -1,14 +1,58 @@
+// Job execution engine: spawns child processes, enforces overlap policies,
+// retry with backoff, timeout, and stream capture with secret redaction.
+// See docs/internals/executors.md
 import { spawn } from 'node:child_process';
 import { writeFileSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir, platform } from 'node:os';
-import { join, isAbsolute } from 'node:path';
+import { join, isAbsolute, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Job, PromptAction } from '../schemas/job.js';
 import type { Store, RunStatus } from './store.js';
 import { CrontickError } from '../errors.js';
 import { extractSessionId } from './prompt-session.js';
-import { buildPromptRunCommand } from '../config.js';
+import { buildPromptRunCommand, loadConfig } from '../config.js';
 import { nullLogger, redactText, type Logger } from '../logger.js';
+import { isProcessAlive, isSameRunProcess } from '../process-liveness.js';
+
+// ── Output cap (L5) ───────────────────────────────────────────────────────────
+
+/**
+ * Default bytes captured per run before further stdout/stderr is dropped
+ * (mirrors `retention.maxOutputBytesPerRun` on RetentionConfig, see
+ * src/schemas/config.ts). Used as the fallback when config loading fails;
+ * see resolveMaxOutputBytesPerRun().
+ */
+export const DEFAULT_MAX_OUTPUT_BYTES_PER_RUN = 2_000_000;
+
+/** Marker line appended exactly once when a run's captured output hits the cap. */
+export function truncationMarker(maxBytes: number): string {
+  return `\n[crontick] output truncated: exceeded ${maxBytes} bytes (retention.maxOutputBytesPerRun); further output from this run is not stored\n`;
+}
+
+/** Reads retention.maxOutputBytesPerRun; falls back to the default if config loading itself fails. */
+function resolveMaxOutputBytesPerRun(): number {
+  try {
+    return loadConfig().retention.maxOutputBytesPerRun;
+  } catch {
+    return DEFAULT_MAX_OUTPUT_BYTES_PER_RUN;
+  }
+}
+
+// ── Adopted-run polling (L3/L4) ────────────────────────────────────────────────
+
+/** How often an adopted run's pid is polled for liveness (see Runner.adoptRun()). */
+const ADOPTED_RUN_POLL_MS = 3_000;
+
+/**
+ * Sentinel error recorded on an adopted run once its process is observed to
+ * have exited on its own (not via our SIGTERM) while the daemon was down or
+ * busy starting up. Distinct from ORPHAN_RUN_ERROR_MESSAGE (src/errors.ts),
+ * which means "this run was still alive/unknown and we canceled it" — this
+ * one means "it already finished, but without a daemon around to capture the
+ * exit code."
+ */
+export const ADOPTED_RUN_EXITED_MESSAGE =
+  'DAEMON_RESTART: process exited while the daemon was not running or between adoption and this check; exit code unknown';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -32,6 +76,35 @@ function safeRedact(chunk: Buffer): Buffer {
   if (!Buffer.from(str, 'utf8').equals(chunk)) return chunk;
   const cleaned = redactText(str);
   return Buffer.from(cleaned, 'utf8');
+}
+
+/**
+ * Trims trailing bytes that would split a multi-byte UTF-8 character in two.
+ * The output byte cap (captureChunk()) cuts a chunk at an arbitrary byte
+ * offset; without this, the last stored bytes before the truncation marker
+ * can be an incomplete UTF-8 sequence, corrupting whatever reads the log
+ * back as text. Only ever removes bytes from the very end of `buf` (never
+ * adds/reorders), so callers can safely pass the result straight to
+ * safeRedact()/store.appendLog().
+ */
+export function truncateToUtf8Boundary(buf: Buffer): Buffer {
+  const len = buf.length;
+  if (len === 0) return buf;
+  const scanStart = Math.max(0, len - 4); // longest UTF-8 sequence is 4 bytes
+  for (let i = len - 1; i >= scanStart; i--) {
+    const byte = buf[i]!;
+    if ((byte & 0xc0) === 0x80) continue; // continuation byte — keep scanning back for its lead byte
+    let seqLen: number;
+    if ((byte & 0x80) === 0x00) seqLen = 1;
+    else if ((byte & 0xe0) === 0xc0) seqLen = 2;
+    else if ((byte & 0xf0) === 0xe0) seqLen = 3;
+    else if ((byte & 0xf8) === 0xf0) seqLen = 4;
+    else return buf; // not a valid UTF-8 lead byte — not a boundary split, leave untouched
+    return i + seqLen <= len ? buf : buf.subarray(0, i);
+  }
+  // Ran out of scan window without finding a lead byte (>=4 trailing
+  // continuation bytes) — already-invalid input; leave untouched.
+  return buf;
 }
 
 // ── Env-file loader ───────────────────────────────────────────────────────────
@@ -63,19 +136,92 @@ export function parseEnvFile(contents: string): Record<string, string> {
 // ── Runner ────────────────────────────────────────────────────────────────────
 
 export class Runner {
-  /** Per-job queues for overlap=queue policy */
+  /** Per-job FIFO queues for overlap='queue' policy */
   private queues: Map<string, QueueEntry[]> = new Map();
-  /** Abort controllers for currently active runs per job */
+  /** AbortControllers for the currently active run per job (overlap enforcement) */
   private activeAborts: Map<string, AbortController> = new Map();
-  /** Active run IDs per job */
+  /** Maps job ID → active run ID (used by cancelRun to locate the right controller) */
   private activeRunIds: Map<string, string> = new Map();
-  /** Whether a job's queue is currently being drained */
+  /** Tracks which job queues are currently being drained */
   private draining: Set<string> = new Set();
+  /** Poll timers for adopted runs (see adoptRun()), keyed by runId so they can be cleared. */
+  private adoptedPolls: Map<string, ReturnType<typeof setInterval>> = new Map();
 
   private readonly logger: Logger;
 
-  constructor(private readonly spawnFn: typeof spawn = spawn, logger: Logger = nullLogger) {
+  constructor(
+    private readonly spawnFn: typeof spawn = spawn,
+    logger: Logger = nullLogger,
+    private readonly maxOutputBytesPerRunOverride?: number,
+    /** Test-only seam: overrides ADOPTED_RUN_POLL_MS so adoptRun() tests don't wait 3s per poll tick. */
+    private readonly adoptedPollMsOverride?: number,
+  ) {
     this.logger = logger.child('runner');
+  }
+
+  /**
+   * Re-attach in-memory overlap tracking (L3) to a run the store's
+   * reconcileOrphanRuns() confirmed (or couldn't rule out) is still alive
+   * from a previous daemon session (L4). This restores `overlap: skip` (the
+   * job is seen as active) and `overlap: cancel-previous` (abort() best-
+   * effort SIGTERMs the real pid, since there is no in-process ChildProcess
+   * handle for it) across a restart.
+   *
+   * A lightweight poll detects the adopted process exiting on its own so the
+   * job doesn't stay "active" forever in this daemon's memory — without it,
+   * overlap=skip would permanently skip every future tick for this job until
+   * the next full daemon restart, which would be a worse regression than the
+   * orphan-cancel behavior this replaces.
+   */
+  adoptRun(jobId: string, runId: string, pid: number, store: Store): void {
+    this.activeRunIds.set(jobId, runId);
+    // Fetched once here (not re-queried every poll tick) since startedAt is
+    // immutable for a run; used below to re-verify pid identity on every
+    // tick, not just at this initial reconciliation moment.
+    const startedAt = store.getRun(runId)?.startedAt;
+
+    const ctrl = new AbortController();
+    let canceledByAbort = false;
+    ctrl.signal.addEventListener('abort', () => {
+      canceledByAbort = true;
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        // already gone
+      }
+    });
+    this.activeAborts.set(jobId, ctrl);
+
+    const poll = setInterval(() => {
+      // L3 fix: re-verify pid identity every tick, not just isProcessAlive().
+      // If the adopted process exited between ticks and the OS reused its pid
+      // for an unrelated process, isProcessAlive(pid) alone would keep
+      // reporting "alive" forever, and a later cancel-previous/skip decision
+      // would send SIGTERM to that unrelated process. isSameRunProcess also
+      // checks the OS-reported start time against this run's startedAt.
+      // undefined (inconclusive — start time unavailable) errs toward "still
+      // alive", matching reconcileOrphanRuns()'s conservative contract.
+      const alive = startedAt === undefined ? isProcessAlive(pid) : isSameRunProcess(pid, startedAt) !== false;
+      if (alive) return;
+      clearInterval(poll);
+      this.adoptedPolls.delete(runId);
+      if (this.activeAborts.get(jobId) === ctrl) this.activeAborts.delete(jobId);
+      if (this.activeRunIds.get(jobId) === runId) this.activeRunIds.delete(jobId);
+      try {
+        const run = store.getRun(runId);
+        if (run && run.status === 'running') {
+          store.updateRun(runId, {
+            status: 'canceled',
+            error: canceledByAbort ? 'DAEMON_RESTART: adopted run was terminated' : ADOPTED_RUN_EXITED_MESSAGE,
+            endedAt: Date.now(),
+          });
+        }
+      } catch (err) {
+        this.logger.error('Failed to finalize adopted run after exit', { jobId, runId, error: String(err) });
+      }
+    }, this.adoptedPollMsOverride ?? ADOPTED_RUN_POLL_MS);
+    poll.unref?.();
+    this.adoptedPolls.set(runId, poll);
   }
 
   /**
@@ -160,6 +306,7 @@ export class Runner {
           this.appendDiagnosticLog(store, runId, 'retry backoff', { attempt, backoffSec });
           await sleep(backoffSec * 1000);
         }
+        // Check abort before each retry attempt (cancel-previous or manual cancel)
         if (ctrl.signal.aborted) {
           lastResult = { status: 'canceled', error: 'canceled before retry' };
           break;
@@ -171,8 +318,8 @@ export class Runner {
         if (lastResult.status === 'canceled' || lastResult.status === 'timeout') break;
       }
     } finally {
-      // Only delete if these maps still point to THIS run's ctrl/runId.
-      // A newer run (cancel-previous) may have already overwritten them.
+      // Only clear if these maps still point to THIS run's state. A newer run
+      // via cancel-previous may have already overwritten them.
       if (this.activeAborts.get(job.id) === ctrl) this.activeAborts.delete(job.id);
       if (this.activeRunIds.get(job.id) === runId) this.activeRunIds.delete(job.id);
     }
@@ -246,16 +393,45 @@ export class Runner {
         this.appendDiagnosticLog(store, runId, 'resolved prompt command', { engine: promptEngineBinary, command: cmd, args, envKeys: Object.keys(promptEnv) });
       }
 
+      // All action kinds use shell:false — no shell interpretation, preventing injection.
+      // detached + windowsHide (L8): children survive the daemon's death uniformly on
+      // both platforms — POSIX reparents to init (unchanged from before), and on
+      // Windows CREATE_NEW_PROCESS_GROUP decouples the child from the daemon's Job
+      // Object so it isn't torn down when the daemon exits/crashes/restarts.
+      // windowsHide prevents a visible console window from appearing for every job
+      // on Windows now that detached is always set (Node opens one by default
+      // otherwise). Combined with L3/L4's pid-based adoption, a child that's still
+      // alive when the daemon comes back up is re-attached instead of double-run.
+      //
+      // EXCEPTION — pwsh/powershell.exe on Windows: Node's `detached: true` maps to
+      // Win32's DETACHED_PROCESS creation flag there (libuv src/win/process.c), which
+      // gives the child no console at all. PowerShell's host requires an attached
+      // console to initialize and, without one, never reaches the point of writing to
+      // its (still perfectly valid) stdout/stderr handles — confirmed by reproducing
+      // with both pipe- and file-redirected stdio: both come back completely empty,
+      // while the same detached spawn works fine for cmd.exe and node.exe (see
+      // nodejs/node#51018). windowsHide is unrelated and not the cause (verified
+      // independently). Silent output loss is unacceptable, so for this one
+      // command/platform combination we deliberately drop `detached` and accept the
+      // trade-off: a pwsh/powershell.exe script job's child will NOT survive the
+      // daemon being killed via Ctrl+C propagated through the shared console (though
+      // an abrupt crash/kill -9 still leaves it running, since Windows doesn't
+      // cascade-kill unrelated processes on its own). Every other shell/command keeps
+      // both guarantees.
+      const isWindowsPowerShellHost = platform() === 'win32' && isPowerShellHostCommand(cmd);
       const spawnOpts: Parameters<typeof spawn>[2] = {
         cwd: action.cwd ?? process.cwd(),
         env: { ...process.env, ...promptEnv, ...(action.env ?? {}) } as NodeJS.ProcessEnv,
         signal,
         shell: false,
+        detached: !isWindowsPowerShellHost,
+        windowsHide: true,
       };
+      if (isWindowsPowerShellHost) {
+        this.appendDiagnosticLog(store, runId, 'detached disabled for pwsh/powershell.exe on Windows (output-capture trade-off, see runner.ts)');
+      }
 
-      // Merge envFile variables (lower priority than action.env).
-      // We intentionally do not log environment snapshots, so secret-shaped
-      // env-file values are not emitted to logs.
+      // Merge envFile variables (lower priority than action.env, higher than process.env).
       if (action.envFile) {
         const envFilePath = isAbsolute(action.envFile)
           ? action.envFile
@@ -275,10 +451,19 @@ export class Runner {
         }
       }
 
-      if (action.timeoutSec) {
-        spawnOpts.timeout = action.timeoutSec * 1000;
-      }
+      // Timeout enforcement (L-timeout): tracked manually rather than via spawn()'s
+      // `timeout` option. Node's own timeout kills with SIGTERM and fires `close`
+      // with (code: null, signal: 'SIGTERM') — it never emits an 'error' with
+      // ETIMEDOUT, so that branch in the 'error' handler below was unreachable, and
+      // the close handler's generic "killed by signal" check saw every timeout as a
+      // plain SIGTERM and recorded status: 'canceled'. `timedOut` is set by our own
+      // timer just before we send the same SIGTERM ourselves, so the close handler
+      // can tell "we killed it because it ran too long" apart from "someone/something
+      // else sent SIGTERM" and record status: 'timeout' accordingly.
+      let timedOut = false;
+      let timeoutHandle: NodeJS.Timeout | undefined;
 
+      // Ring buffer for prompt session ID extraction (max 128 KB of combined output).
       const maxTranscriptBytes = 128 * 1024;
       let transcriptTail = Buffer.alloc(0);
       const appendTranscript = (chunk: Buffer) => {
@@ -289,16 +474,69 @@ export class Runner {
         }
       };
 
+      // Byte cap on captured output (L5): re-read per run (not cached at Runner
+      // construction) so a config change via `crontick daemon reload` takes
+      // effect for new runs without a full restart, mirroring the
+      // maxRunsPerJob reload pattern. The child process itself is never
+      // killed or throttled here — only persistence of further chunks stops.
+      const maxOutputBytes = this.maxOutputBytesPerRunOverride ?? resolveMaxOutputBytesPerRun();
+      let capturedBytes = 0;
+      let outputTruncated = false;
+      const captureChunk = (stream: 'stdout' | 'stderr', chunk: Buffer): void => {
+        if (outputTruncated) return; // marker already emitted; drop silently, child keeps running
+        if (capturedBytes + chunk.length > maxOutputBytes) {
+          const room = Math.max(0, maxOutputBytes - capturedBytes);
+          // truncateToUtf8Boundary (L5 fix): the cap cuts at an arbitrary byte
+          // offset — trim back to a full character so the last stored bytes
+          // before the marker are never an invalid, split UTF-8 sequence.
+          if (room > 0) store.appendLog(runId, stream, safeRedact(truncateToUtf8Boundary(chunk.subarray(0, room))));
+          store.appendLog(runId, stream, Buffer.from(truncationMarker(maxOutputBytes), 'utf-8'));
+          try {
+            store.updateRun(runId, { outputTruncated: true });
+          } catch (err) {
+            this.logger.error('Failed to persist outputTruncated flag', { jobId: job.id, runId, error: String(err) });
+          }
+          outputTruncated = true;
+          return;
+        }
+        capturedBytes += chunk.length;
+        store.appendLog(runId, stream, safeRedact(chunk));
+      };
+
       const result = await new Promise<RunResult>((resolve) => {
-        this.logger.debug('Spawning child process', { jobId: job.id, runId, command: cmd, args, cwd: spawnOpts.cwd, timeoutMs: spawnOpts.timeout });
-        this.appendDiagnosticLog(store, runId, 'spawn', { command: cmd, args, cwd: spawnOpts.cwd, timeoutMs: spawnOpts.timeout });
+        const timeoutMs = action.timeoutSec ? action.timeoutSec * 1000 : undefined;
+        this.logger.debug('Spawning child process', { jobId: job.id, runId, command: cmd, args, cwd: spawnOpts.cwd, timeoutMs });
+        this.appendDiagnosticLog(store, runId, 'spawn', { command: cmd, args, cwd: spawnOpts.cwd, timeoutMs });
         const child = this.spawnFn(cmd, args, spawnOpts);
+        // Persist the OS pid the instant it's known (L4) — nothing before this
+        // point could reconcile against it. unref() so a detached child never
+        // keeps the daemon's event loop alive on its own.
+        if (child.pid !== undefined) {
+          try {
+            store.updateRun(runId, { pid: child.pid });
+          } catch (err) {
+            this.logger.error('Failed to persist run pid', { jobId: job.id, runId, error: String(err) });
+          }
+        }
+        child.unref?.();
+        if (timeoutMs !== undefined) {
+          timeoutHandle = setTimeout(() => {
+            timedOut = true;
+            try {
+              if (!signal.aborted) child.kill('SIGTERM');
+            } catch {
+              // already gone
+            }
+          }, timeoutMs);
+          timeoutHandle.unref?.();
+        }
         const startedAt = Date.now();
         const captureAction = promptCaptureAction;
         let settled = false;
         const finish = (runResult: RunResult) => {
           if (settled) return;
           settled = true;
+          if (timeoutHandle) clearTimeout(timeoutHandle);
           resolve(runResult);
         };
         const failFromCallback = (err: unknown) => {
@@ -313,7 +551,7 @@ export class Runner {
         child.stdout?.on('data', (chunk: Buffer) => {
           try {
             appendTranscript(chunk);
-            store.appendLog(runId, 'stdout', safeRedact(chunk));
+            captureChunk('stdout', chunk);
           } catch (err) {
             failFromCallback(err);
           }
@@ -322,7 +560,7 @@ export class Runner {
         child.stderr?.on('data', (chunk: Buffer) => {
           try {
             appendTranscript(chunk);
-            store.appendLog(runId, 'stderr', safeRedact(chunk));
+            captureChunk('stderr', chunk);
           } catch (err) {
             failFromCallback(err);
           }
@@ -334,6 +572,11 @@ export class Runner {
           this.appendDiagnosticLog(store, runId, 'child closed', { code, signal: sig, durationMs });
           if (signal.aborted) {
             finish({ status: 'canceled', error: 'aborted' });
+          } else if (timedOut) {
+            // Checked before the generic signal branch below: our own timer sent
+            // this SIGTERM, so close() looks identical to a user cancellation
+            // (code: null, signal: 'SIGTERM') unless we track intent ourselves.
+            finish({ status: 'timeout', error: `run exceeded timeoutSec (${action.timeoutSec}s)` });
           } else if (sig === 'SIGTERM' || sig === 'SIGKILL') {
             finish({ status: 'canceled', error: `killed by signal ${sig}` });
           } else if (code === null) {
@@ -391,8 +634,6 @@ export class Runner {
           this.appendDiagnosticLog(store, runId, 'child error', { code: err.code, message: err.message });
           if (err.code === 'ABORT_ERR' || signal.aborted) {
             finish({ status: 'canceled', error: 'aborted' });
-          } else if (err.code === 'ETIMEDOUT') {
-            finish({ status: 'timeout', error: 'timed out' });
           } else if (err.code === 'ENOENT' && promptEngineBinary) {
             finish({
               status: 'failed',
@@ -458,6 +699,7 @@ export class Runner {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/** Resolve shell per platform: 'auto' → pwsh on Windows, bash elsewhere. */
 function resolveShell(shell: string): 'bash' | 'pwsh' | 'cmd' {
   if (shell === 'auto') {
     return platform() === 'win32' ? 'pwsh' : 'bash';
@@ -467,11 +709,24 @@ function resolveShell(shell: string): 'bash' | 'pwsh' | 'cmd' {
   return 'bash';
 }
 
+/** Map shell name to temp-file extension (.ps1, .bat, .sh). */
 function resolveShellExt(shell: string): string {
   const resolved = resolveShell(shell);
   if (resolved === 'pwsh') return '.ps1';
   if (resolved === 'cmd') return '.bat';
   return '.sh';
+}
+
+/**
+ * True if `cmd` invokes PowerShell (Core `pwsh` or Windows PowerShell
+ * `powershell`), by executable basename, case-insensitively and with/without
+ * a `.exe` suffix or leading path. Used to disable `detached` on Windows only
+ * for this specific command (see the spawnOpts comment in spawn()) — every
+ * other command keeps detached:true.
+ */
+function isPowerShellHostCommand(cmd: string): boolean {
+  const name = basename(cmd).toLowerCase().replace(/\.exe$/, '');
+  return name === 'pwsh' || name === 'powershell';
 }
 
 function sleep(ms: number): Promise<void> {
