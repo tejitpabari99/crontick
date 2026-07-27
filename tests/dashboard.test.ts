@@ -111,6 +111,53 @@ describe('core dashboard data model', () => {
   it('rejects dashboard asset traversal in the core resolver', () => {
     expect(() => resolveDashboardAsset('/dashboard/../../package.json')).toThrow(CrontickError);
   });
+
+  // Minor 5: avgDurationMs previously divided total duration by runs.length,
+  // which counts every row including 'missed'/'queued'/'running'/'canceled'
+  // ones whose durationMs is 0 — up to 500 missed rows could drag the
+  // reported average toward zero. It must instead average only over runs
+  // that actually executed to completion.
+  it('excludes missed/queued/running/canceled runs from avgDurationMs (Minor 5)', () => {
+    dir = makeScratchDir('avg-duration');
+    store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
+    scheduler = new Scheduler();
+    store.open();
+    const job = {
+      id: 'avg-duration-job',
+      enabled: true,
+      schedule: { kind: 'interval', everySec: 60 },
+      action: { kind: 'exec', command: process.execPath, args: ['-v'] },
+      overlap: 'skip',
+      retry: { max: 0, backoffSec: 30 },
+    } satisfies Job;
+    store.upsertJob(job);
+    scheduler.schedule(job);
+
+    // Two executed runs averaging 100ms...
+    const ok1 = store.insertRun(job.id, Date.now() - 1000);
+    store.updateRun(ok1.id, { status: 'success', endedAt: Date.now(), durationMs: 50, exitCode: 0 });
+    const ok2 = store.insertRun(job.id, Date.now() - 1000);
+    store.updateRun(ok2.id, { status: 'failed', endedAt: Date.now(), durationMs: 150, exitCode: 1 });
+
+    // ...swamped by non-executed rows with durationMs 0, which must not
+    // count toward the average or its denominator.
+    for (let i = 0; i < 20; i++) {
+      const missed = store.insertRun(job.id, Date.now() - 1000);
+      store.updateRun(missed.id, { status: 'missed', durationMs: 0 });
+    }
+    const queued = store.insertRun(job.id, Date.now() - 1000);
+    store.updateRun(queued.id, { status: 'queued', durationMs: 0 });
+    const running = store.insertRun(job.id, Date.now() - 1000);
+    store.updateRun(running.id, { status: 'running' });
+    const canceled = store.insertRun(job.id, Date.now() - 1000);
+    store.updateRun(canceled.id, { status: 'canceled', durationMs: 0 });
+
+    const data = buildDashboardData({ store, scheduler, startedAt: new Date(Date.now() - 5000), port: 12345, pid: 6789 }, { runsLimit: 100 });
+
+    // (50 + 150) / 2 = 100 — not dragged toward 0 by the 23 non-executed rows.
+    expect(data.stats.avgDurationMs).toBe(100);
+    expect(data.stats.totalRuns).toBe(25);
+  });
 });
 
 describe('Dashboard serving', () => {

@@ -31,11 +31,17 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Typecheck examples against published types
+        run: npm run typecheck:examples:dist
+
       - name: Test
         run: npm test
 
       - name: Verify tarball contents
         run: node scripts/verify-tarball.mjs
+
+      - name: Install tarball and exercise public exports + all bins
+        run: npm run verify-package-install
 
   release:
     name: Release

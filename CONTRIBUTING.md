@@ -41,3 +41,18 @@ We use [Changesets](https://github.com/changesets/changesets) for versioning.
 
 - TypeScript strict mode. No `any` casts without a comment explaining why.
 - Prettier + ESLint enforced in CI. Run `npm run format` before committing.
+
+## Commit style
+
+Prefer focused commits with imperative subjects using conventional-commit prefixes:
+
+- `feat: add cron preview validation`
+- `fix: redact github tokens in run logs`
+- `docs: expand MCP setup guide`
+
+## Release requirements
+
+- CI green on supported OS/Node matrix
+- Lockfile verification passes
+- Tarball verification passes
+- Docs updated when behavior changes

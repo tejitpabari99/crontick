@@ -1,3 +1,8 @@
+/**
+ * Zod schemas for job definitions — the validation rules users hit on every
+ * create/update. The schemas form discriminated unions keyed on `kind` for both
+ * schedules and actions. All action schemas use `.strict()` to reject unknown fields.
+ */
 import { z } from 'zod';
 import { promptRuntimeValidationMessage } from '../prompt-runtime.js';
 import { EngineNameSchema } from './config.js';
@@ -21,6 +26,7 @@ export const OneShotScheduleSchema = z.object({
   runAt: z.string().min(1), // ISO-8601
 });
 
+/** Schedule discriminated union; croner v9 validates the cron expression at runtime. */
 export const ScheduleSchema = z.discriminatedUnion('kind', [
   CronScheduleSchema,
   IntervalScheduleSchema,
@@ -52,6 +58,11 @@ export const ExecActionSchema = z.object({
 
 export const PromptEngineSchema = EngineNameSchema;
 
+/**
+ * Prompt action before runtime refinement; used as the base for the
+ * discriminated union (superRefine is applied on ActionSchema, not here)
+ * so that union discrimination on `kind` works correctly.
+ */
 export const PromptActionBaseSchema = z.object({
   kind: z.literal('prompt'),
   prompt: z.string().min(1),
@@ -62,8 +73,14 @@ export const PromptActionBaseSchema = z.object({
   ...CommonActionFields,
 }).strict();
 
+/** Standalone prompt action schema with runtime validation (Windows cmd-line length, reserved args). */
 export const PromptActionSchema = PromptActionBaseSchema.superRefine(addPromptRuntimeIssues);
 
+/**
+ * Action discriminated union keyed on `kind`. Uses PromptActionBaseSchema
+ * (not PromptActionSchema) as the union member because Zod discriminatedUnion
+ * requires plain objects; the prompt refinement is re-applied via superRefine.
+ */
 export const ActionSchema = z.discriminatedUnion('kind', [
   ScriptActionSchema,
   ExecActionSchema,
@@ -81,6 +98,7 @@ export const RetrySchema = z.object({
 
 // ── Job ───────────────────────────────────────────────────────────────────────
 
+/** Permanent: job IDs are kebab-case, used as filenames and primary keys. Cannot be renamed. */
 const kebabCase = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export const JobSchema = z.object({
@@ -89,6 +107,7 @@ export const JobSchema = z.object({
   enabled: z.boolean().default(true),
   schedule: ScheduleSchema,
   action: ActionSchema,
+  /** Default 'skip' means new ticks are discarded when a run is already active. */
   overlap: z.enum(['skip', 'queue', 'cancel-previous']).default('skip'),
   retry: RetrySchema.default({ max: 0, backoffSec: 30 }),
 });
@@ -100,6 +119,7 @@ export type Action = z.infer<typeof ActionSchema>;
 export type PromptAction = z.infer<typeof PromptActionBaseSchema>;
 export type PromptEngine = z.infer<typeof PromptEngineSchema>;
 
+/** Applies Windows cmd-line length check and reserved-arg detection to prompt actions. */
 function addPromptRuntimeIssues(action: z.infer<typeof PromptActionBaseSchema>, ctx: z.RefinementCtx): void {
   const message = promptRuntimeValidationMessage(action);
   if (message) {

@@ -202,6 +202,39 @@ describe('Daemon HTTP API', () => {
     expect(Array.isArray(data)).toBe(true);
   });
 
+  it('GET /api/runs?status= filters by run status', async () => {
+    // Use a node-based action (cross-platform) rather than api-test-job's
+    // 'echo' action, which isn't a real executable on Windows.
+    await apiCall(port, 'POST', '/api/jobs', {
+      id: 'status-filter-job',
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
+    });
+    const { data: runData } = await apiCall(port, 'POST', '/api/jobs/status-filter-job/run');
+    const runId = (runData as { runId: string }).runId;
+
+    // Poll (no fixed sleep) until the quick run reaches a terminal status.
+    const deadline = Date.now() + 8000;
+    let found: { id: string; status: string } | undefined;
+    while (Date.now() < deadline) {
+      const { data } = await apiCall(port, 'GET', '/api/runs?jobId=status-filter-job&status=success');
+      found = (data as Array<{ id: string; status: string }>).find((r) => r.id === runId);
+      if (found) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(found?.status).toBe('success');
+
+    const { status: status2, data: data2 } = await apiCall(
+      port,
+      'GET',
+      '/api/runs?jobId=status-filter-job&status=missed',
+    );
+    expect(status2).toBe(200);
+    expect((data2 as unknown[]).some((r) => (r as { id: string }).id === runId)).toBe(false);
+
+    await apiCall(port, 'DELETE', '/api/jobs/status-filter-job');
+  }, 10_000);
+
   // ── Schedules ─────────────────────────────────────────────────────────────────
 
   it('POST /api/schedules/validate returns ok for valid cron', async () => {
@@ -239,6 +272,16 @@ describe('Daemon HTTP API', () => {
     expect(typeof (data as { pid: number }).pid).toBe('number');
   });
 
+  it('GET /api/daemon/status includes missedFires summary (L2)', async () => {
+    const { status, data } = await apiCall(port, 'GET', '/api/daemon/status');
+    expect(status).toBe(200);
+    const missedFires = (data as { missedFires: Record<string, number> }).missedFires;
+    expect(typeof missedFires.jobsWithMissedFires).toBe('number');
+    expect(typeof missedFires.missedRunsRecorded).toBe('number');
+    expect(typeof missedFires.jobsCapped).toBe('number');
+    expect(typeof missedFires.capPerJob).toBe('number');
+  });
+
   // ── Export / Import ────────────────────────────────────────────────────────────
 
   it('GET /api/export exports jobs', async () => {
@@ -268,6 +311,39 @@ describe('Daemon HTTP API', () => {
       kind: 'prompt',
       engine: 'copilot',
     });
+  });
+
+  // Major 2: POST /api/import's optional `runs` array used to be cast
+  // straight to Run[] with no validation, so one malformed row threw
+  // mid-loop and aborted the whole import (rows already inserted stayed,
+  // the rest were lost) behind a 500. It must now validate each row, skip
+  // bad ones individually, and still return 200 with the valid rows applied.
+  it('POST /api/import validates and skips malformed runs individually instead of failing the whole import behind a 500', async () => {
+    const importJob = {
+      id: 'imported-job',
+      schedule: { kind: 'cron', cron: '0 * * * *' },
+      action: { kind: 'exec', command: 'echo', args: [] },
+    };
+    const { status, data } = await apiCall(port, 'POST', '/api/import', {
+      jobs: [importJob],
+      runs: [
+        { id: 'api-run-ok', jobId: 'imported-job', startedAt: 1000, status: 'success', outputTruncated: false },
+        // Missing startedAt: the exact shape that used to throw mid-loop and
+        // abort the entire import (partial data + a 500), non-atomically.
+        { id: 'api-run-bad', jobId: 'imported-job', status: 'success', outputTruncated: false },
+        // Out-of-union status: previously persisted verbatim, no validation.
+        { id: 'api-run-bad-status', jobId: 'imported-job', startedAt: 1000, status: 'not-a-real-status', outputTruncated: false },
+      ],
+    });
+
+    expect(status, JSON.stringify(data)).toBe(200);
+    const body = data as { runsImported: number; runsSkipped: Array<{ id: string; error: string }> };
+    expect(body.runsImported).toBe(1);
+    expect(body.runsSkipped.map((r) => r.id).sort()).toEqual(['api-run-bad', 'api-run-bad-status']);
+
+    const run = await apiCall(port, 'GET', '/api/runs/api-run-ok');
+    expect(run.status).toBe(200);
+    expect(await apiCall(port, 'GET', '/api/runs/api-run-bad')).toMatchObject({ status: 404 });
   });
 
   // ── Run logs ───────────────────────────────────────────────────────────────────

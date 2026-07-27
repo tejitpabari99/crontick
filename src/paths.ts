@@ -1,3 +1,11 @@
+/**
+ * Data directory path resolution. All crontick state (jobs, runs, config, logs)
+ * lives under a single root directory.
+ *
+ * Precedence: CRONTICK_HOME env var > platform default via env-paths.
+ * Platform defaults: Windows %LOCALAPPDATA%\crontick, macOS ~/Library/Application Support/crontick,
+ * Linux ~/.local/share/crontick.
+ */
 import envPaths from 'env-paths';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -5,7 +13,6 @@ import { join } from 'node:path';
 function root(env: NodeJS.ProcessEnv = process.env): string {
   const override = env['CRONTICK_HOME'];
   if (override) return override;
-  // env-paths v3: data dir on windows = %LOCALAPPDATA%\crontick
   return envPaths('crontick', { suffix: '' }).data;
 }
 
@@ -38,8 +45,14 @@ export function portFilePath(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 
+// Owner-only (rwx------): job/prompt definitions on disk can contain inline
+// scripts and prompt text, so directories default to a private mode rather
+// than the umask-dependent default. mode is a no-op on Windows (fs simply
+// ignores it there rather than throwing), so this is safe cross-platform.
+const PRIVATE_DIR_MODE = 0o700;
+
 export function ensureDirs(env: NodeJS.ProcessEnv = process.env): void {
   for (const dir of [dataDir(env), jobsDir(env), logsDir(env)]) {
-    mkdirSync(dir, { recursive: true });
+    mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
   }
 }

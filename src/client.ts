@@ -1,4 +1,16 @@
+/**
+ * Core client — the single programmatic entry point for all crontick operations.
+ * CLI, MCP, and library surfaces are thin shims that instantiate this class and
+ * call its methods; no business logic lives outside this module and the daemon.
+ *
+ * Communication with the daemon is via loopback HTTP. If the daemon is not
+ * running, the client demand-starts it (unless `startDaemon` is false).
+ * Transport failures are converted to structured `CrontickError` instances with
+ * machine-readable codes; see `src/errors.ts`.
+ */
 import { CrontickError } from './errors.js';
+import { dirname, resolve as resolvePath } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   ensureDaemon,
   resolveDaemonBaseUrl,
@@ -53,6 +65,23 @@ export interface CrontickClientOptions extends Omit<EnsureDaemonOptions, 'startD
   logger?: Logger;
 }
 
+// Bundled layout: client.ts's compiled chunk and index.js both live directly
+// under dist/, with dist/daemon/index.js and dist/mcp/index.js as siblings --
+// see tsup.config.ts. Library consumers who never pass an explicit
+// daemonScript/mcpScript (the common case; see README's Library quick start)
+// otherwise fell through to daemon/ensure.ts's own import.meta.url-relative
+// fallback, which assumes ensure.ts's *source* sibling layout (src/daemon/) and
+// resolves to the wrong file once bundled. Defaulting here, relative to this
+// module's own bundled location, is correct for both the installed package and
+// this repo's dist/.
+const distDir = dirname(fileURLToPath(import.meta.url));
+function defaultDaemonScript(): string {
+  return resolvePath(distDir, 'daemon', 'index.js');
+}
+function defaultMcpScript(): string {
+  return resolvePath(distDir, 'mcp', 'index.js');
+}
+
 export interface LogEntry {
   runId?: string;
   stream: string;
@@ -87,11 +116,21 @@ export class CrontickClient {
   private readonly options: CrontickClientOptions;
   private readonly verbose: boolean;
   private readonly logger: Logger;
+  /** Cached after first successful `ensure()` to avoid redundant port-file reads. */
   private cachedBaseUrl?: string;
+  /** Accumulated notices from normalizeJobInput; drained by surfaces after each op. */
   private notices: string[] = [];
 
   constructor(options: CrontickClientOptions = {}) {
-    this.options = options;
+    // Default daemonScript/mcpScript so library consumers who never set them
+    // (the documented createClient() quick start) resolve the real bundled
+    // daemon/mcp entry points instead of ensure.ts's broken source-relative
+    // fallback (see defaultDaemonScript above).
+    this.options = {
+      ...options,
+      daemonScript: options.daemonScript ?? defaultDaemonScript(),
+      mcpScript: options.mcpScript ?? defaultMcpScript(),
+    };
     this.verbose = options.verbose ?? isVerboseEnv(options.env ?? process.env);
     this.logger = (options.logger ?? createLogger({
       verbose: this.verbose,
@@ -100,6 +139,7 @@ export class CrontickClient {
     }));
   }
 
+  /** Resolves daemon URL, probes health, and demand-starts if needed. Library-only (not in surface parity). */
   async ensure(): Promise<DaemonInfo> {
     this.logger.debug('Ensuring daemon', { startDaemon: this.shouldStartDaemon() });
     const info = await ensureDaemon({
@@ -113,6 +153,7 @@ export class CrontickClient {
     return info;
   }
 
+  /** Library-only health probe; defaults to no demand-start unlike other HTTP methods. */
   async health(options: { ensure?: boolean } = {}): Promise<unknown> {
     return this.request('GET', '/health', undefined, { ensure: options.ensure ?? false });
   }
@@ -122,6 +163,7 @@ export class CrontickClient {
     return this.request<Job>('POST', '/api/jobs', job);
   }
 
+  /** CLI convenience: builds a Job from raw CLI flags before delegating to createJob. Library-only. */
   async createJobFromCliOptions(input: JobCreateCliOptions): Promise<Job> {
     return this.createJob(buildJobFromCreateOptions(input, this.normalizeOptions({ cwd: this.options.cwd ?? process.cwd() })));
   }
@@ -134,6 +176,7 @@ export class CrontickClient {
     return this.request<Job>('GET', `/api/jobs/${encodeURIComponent(id)}`);
   }
 
+  /** Fetches the existing job first so the patch is applied over the current state. */
   async updateJob(id: string, patch: JobPatchInput, options: NormalizeJobInputOptions = {}): Promise<Job> {
     const existing = await this.getJob(id);
     const normalized = normalizeJobPatch(id, existing, patch, this.normalizeOptions(options));
@@ -164,11 +207,12 @@ export class CrontickClient {
     return this.request('GET', `/api/runs/${encodeURIComponent(runId)}`);
   }
 
-  async listRuns(options: { jobId?: string; limit?: number; since?: number } = {}): Promise<unknown[]> {
+  async listRuns(options: { jobId?: string; limit?: number; since?: number; status?: string } = {}): Promise<unknown[]> {
     const params = new URLSearchParams();
     if (options.jobId) params.set('jobId', options.jobId);
     if (options.limit !== undefined) params.set('limit', String(options.limit));
     if (options.since !== undefined) params.set('since', String(options.since));
+    if (options.status !== undefined) params.set('status', options.status);
     const qs = params.toString();
     return this.request<unknown[]>('GET', `/api/runs${qs ? `?${qs}` : ''}`);
   }
@@ -179,13 +223,13 @@ export class CrontickClient {
     return { runId, lines };
   }
 
-  async exportJobs(): Promise<{ jobs: Job[] }> {
-    return this.request<{ jobs: Job[] }>('GET', '/api/export');
+  async exportJobs(options: { includeRuns?: boolean } = {}): Promise<{ jobs: Job[]; runs?: unknown[] }> {
+    return this.request('GET', `/api/export${options.includeRuns ? '?includeRuns=1' : ''}`);
   }
 
-  async importJobs(jobs: unknown[], options: NormalizeJobInputOptions = {}): Promise<unknown> {
+  async importJobs(jobs: unknown[], options: NormalizeJobInputOptions & { runs?: unknown[] } = {}): Promise<unknown> {
     const normalized = jobs.map((job) => normalizeJobInput(job as JobCreateInput, this.normalizeOptions(options)));
-    return this.request('POST', '/api/import', { jobs: normalized });
+    return this.request('POST', '/api/import', { jobs: normalized, runs: options.runs });
   }
 
   async validateSchedule(schedule: Schedule): Promise<unknown> {
@@ -274,10 +318,12 @@ export class CrontickClient {
     }
   }
 
+  /** Returns the JSON Schema derived from Zod JobSchema. Library-only (not in surface parity). */
   jobJsonSchema(): unknown {
     return jobJsonSchema();
   }
 
+  /** Library-only: loads config without daemon (local-only operation). */
   getConfig(): CrontickConfig {
     return loadConfig({ env: this.effectiveEnv(), logger: this.logger.child('config') });
   }
@@ -318,16 +364,24 @@ export class CrontickClient {
     return validateConfigFile({ env: this.effectiveEnv(), logger: this.logger.child('config'), path });
   }
 
+  /** Drains accumulated normalization notices (e.g. promptFile read). Library-only. */
   drainNotices(): string[] {
     const drained = this.notices;
     this.notices = [];
     return drained;
   }
 
+  /** Library-only verbose accessor. */
   isVerbose(): boolean {
     return this.verbose;
   }
 
+  /**
+   * Central HTTP transport. On network error with auto-start allowed, clears
+   * the cached URL, re-ensures the daemon (demand-start), waits 100 ms, and
+   * retries once. Non-2xx responses are translated to CrontickError using the
+   * code/message from the daemon response body.
+   */
   private async request<T = unknown>(
     method: string,
     path: string,
@@ -342,6 +396,7 @@ export class CrontickClient {
     try {
       res = await this.fetchRequest(baseUrl, method, path, body);
     } catch (err) {
+      // No retry when: ensure disabled, startDaemon off, or explicit daemonUrl (user-managed).
       if (!ensure || !this.shouldStartDaemon() || this.options.daemonUrl) {
         this.logger.debug('HTTP request failed without retry', { method, path, baseUrl, error: errorMessage(err), durationMs: Date.now() - startedAt });
         throw this.daemonRequestError(baseUrl, method, path, err);
@@ -376,6 +431,7 @@ export class CrontickClient {
     return data as T;
   }
 
+  /** Resolves base URL: ensure=true triggers full demand-start; false reads cache/port file only. */
   private async baseUrl(options: { ensure: boolean }): Promise<string> {
     if (options.ensure) {
       return (await this.ensure()).baseUrl;
@@ -406,6 +462,7 @@ export class CrontickClient {
     return this.options.startDaemon ?? true;
   }
 
+  /** Propagates verbose flag into the env so spawned daemon inherits it. */
   private effectiveEnv(): NodeJS.ProcessEnv | undefined {
     const source = this.options.env;
     if (!this.verbose) return source;
@@ -435,10 +492,12 @@ export class CrontickClient {
   }
 }
 
+/** Factory used by all three surfaces (CLI, MCP, library) to instantiate the client. */
 export function createClient(options?: CrontickClientOptions): CrontickClient {
   return new CrontickClient(options);
 }
 
+/** Fixed 100 ms backoff between demand-start and first retry — enough for port file flush. */
 async function boundedBackoff(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 100));
 }

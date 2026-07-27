@@ -1,3 +1,13 @@
+/**
+ * Canonical mapping of every user-facing operation to its expression across the
+ * CLI, MCP, and library surfaces. Adding a capability here requires a matching
+ * CrontickClient method, a Commander subcommand in cli/index.ts, a registerTool
+ * call in mcp/index.ts, and (if new types are needed) an export in index.ts.
+ *
+ * tests/surface-drift.test.ts asserts all four columns stay in sync — it will
+ * fail if any surface drifts from this table.
+ */
+
 export interface SurfaceCapability {
   capability: string;
   clientMethod: string;
@@ -45,5 +55,8 @@ export const SURFACE_CAPABILITIES = [
   { capability: 'config-validate', clientMethod: 'validateConfig', cliCommand: ['config', 'validate'], mcpTool: 'crontick_config_validate' },
 ] as const satisfies readonly SurfaceCapability[];
 
+/** All client method names covered by the parity contract. */
 export const CLIENT_METHODS = SURFACE_CAPABILITIES.map((capability) => capability.clientMethod);
+
+/** All MCP tool names covered by the parity contract. */
 export const MCP_TOOLS = SURFACE_CAPABILITIES.map((capability) => capability.mcpTool);
