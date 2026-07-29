@@ -152,6 +152,7 @@ export interface JobCreateCliOptions {
   retry?: number;
   desc?: string;
   enabled?: boolean;
+  force?: boolean;
 }
 
 export type JobPatchCliOptions = Omit<JobCreateCliOptions, 'id'>;

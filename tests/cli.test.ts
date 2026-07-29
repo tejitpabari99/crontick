@@ -277,6 +277,40 @@ describe('CLI e2e with daemon', () => {
     expect(readFileSync(join(dir, 'jobs', 'e2e-job.schema.json'), 'utf-8')).toBe(jobJsonSchemaText());
   });
 
+  it('crontick new rejects duplicate ids unless --force is explicit, and --force intentionally replaces the job', () => {
+    const original = cli([
+      '--json', 'new', 'duplicate-cli-job', '--every', '60', '--exec', process.execPath,
+      '--arg', '-e', '--arg', 'process.exit(0)', '--desc', 'original cli definition',
+    ], env());
+    expect(original.status, original.stderr).toBe(0);
+
+    const duplicate = cli([
+      'new', 'duplicate-cli-job', '--cron', '15 6 * * *', '--exec', process.execPath,
+      '--arg', '-e', '--arg', 'process.exit(1)', '--desc', 'replacement cli definition',
+    ], env());
+    expect(duplicate.status).not.toBe(0);
+    expect(duplicate.stderr).toContain('JOB_ALREADY_EXISTS');
+
+    const fetchedOriginal = cli(['--json', 'get', 'duplicate-cli-job'], env());
+    expect(fetchedOriginal.status, fetchedOriginal.stderr).toBe(0);
+    expect(JSON.parse(fetchedOriginal.stdout)).toMatchObject({
+      description: 'original cli definition',
+      schedule: { kind: 'interval', everySec: 60 },
+      action: { args: ['-e', 'process.exit(0)'] },
+    });
+
+    const forced = cli([
+      '--json', 'new', 'duplicate-cli-job', '--force', '--cron', '15 6 * * *', '--exec', process.execPath,
+      '--arg', '-e', '--arg', 'process.exit(1)', '--desc', 'replacement cli definition',
+    ], env());
+    expect(forced.status, forced.stderr).toBe(0);
+    expect(JSON.parse(forced.stdout)).toMatchObject({
+      description: 'replacement cli definition',
+      schedule: { kind: 'cron', cron: '15 6 * * *' },
+      action: { args: ['-e', 'process.exit(1)'] },
+    });
+  });
+
   // ── Blocker 1: --arg is the documented, shim-independent way to pass args ────
 
   it('crontick new --arg round-trips a value with spaces, embedded double quotes, and a leading dash', () => {

@@ -65,6 +65,10 @@ export interface CrontickClientOptions extends Omit<EnsureDaemonOptions, 'startD
   logger?: Logger;
 }
 
+export interface CreateJobOptions extends NormalizeJobInputOptions {
+  force?: boolean;
+}
+
 // Bundled layout: client.ts's compiled chunk and index.js both live directly
 // under dist/, with dist/daemon/index.js and dist/mcp/index.js as siblings --
 // see tsup.config.ts. Library consumers who never pass an explicit
@@ -158,14 +162,18 @@ export class CrontickClient {
     return this.request('GET', '/health', undefined, { ensure: options.ensure ?? false });
   }
 
-  async createJob(input: Job | JobCreateInput, options: NormalizeJobInputOptions = {}): Promise<Job> {
-    const job = normalizeJobInput(input as JobCreateInput, this.normalizeOptions(options));
-    return this.request<Job>('POST', '/api/jobs', job);
+  async createJob(input: Job | JobCreateInput, options: CreateJobOptions = {}): Promise<Job> {
+    const { force, ...normalizeInputOptions } = options;
+    const job = normalizeJobInput(input as JobCreateInput, this.normalizeOptions(normalizeInputOptions));
+    return this.request<Job>('POST', force ? '/api/jobs?force=1' : '/api/jobs', job);
   }
 
   /** CLI convenience: builds a Job from raw CLI flags before delegating to createJob. Library-only. */
   async createJobFromCliOptions(input: JobCreateCliOptions): Promise<Job> {
-    return this.createJob(buildJobFromCreateOptions(input, this.normalizeOptions({ cwd: this.options.cwd ?? process.cwd() })));
+    return this.createJob(
+      buildJobFromCreateOptions(input, this.normalizeOptions({ cwd: this.options.cwd ?? process.cwd() })),
+      { force: input.force },
+    );
   }
 
   async listJobs(): Promise<Job[]> {

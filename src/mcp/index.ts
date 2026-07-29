@@ -140,11 +140,16 @@ export function createMcpServer(): McpServer {
       description:
         'Create and schedule a new cron job. This executes arbitrary commands, scripts, or prompts on the user\'s machine on a recurring or future schedule that persists and outlives this session -- confirm the job definition (schedule and action) with the user before calling. Provide the full job definition including id, schedule (kind: cron|interval|one-shot), and action (kind: script|exec|prompt). Prompt actions use prompt, optional configured engine name, args, sessionId, or reuseSession. Validate the schedule first with crontick_schedule_validate.',
       inputSchema: withVerbose({
-...JobCreateInputSchema.shape,
+        ...JobCreateInputSchema.shape,
+        force: z.boolean().optional(),
       }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.createJob(withoutVerbose(args))),
+    async (args) => {
+      const { force, verbose: _verbose, ...input } = args;
+      void _verbose;
+      return toolWrap(args, (client) => client.createJob(input, { force }));
+    },
   );
 
   server.registerTool(

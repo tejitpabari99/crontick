@@ -99,6 +99,10 @@ async function handleRequest(
         return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid job', parsed.error.format());
       }
       const job = applyConfigDefaults(parsed.data);
+      const force = forceParam(url);
+      if (!force && ctx.store.getJob(job.id)) {
+        return sendDuplicateCreateError(res, job.id);
+      }
       if (!validateJobSchedule(res, ctx.scheduler, job.schedule)) return;
       ctx.store.upsertJob(job);
       const stored = ctx.store.getJob(job.id) ?? job;
@@ -414,6 +418,20 @@ async function handleRequest(
     const msg = err instanceof Error ? err.message : String(err);
     return sendError(res, 500, 'INTERNAL_ERROR', msg);
   }
+}
+
+function forceParam(url: URL): boolean {
+  const raw = (url.searchParams.get('force') ?? '').toLowerCase();
+  return raw === '1' || raw === 'true';
+}
+
+function sendDuplicateCreateError(res: http.ServerResponse, jobId: string): void {
+  sendError(
+    res,
+    409,
+    'JOB_ALREADY_EXISTS',
+    `Job "${jobId}" already exists. Use "crontick update ${jobId}" to change it, or re-run create with --force (CLI) or force: true (library/MCP) to intentionally replace it.`,
+  );
 }
 
 function validateJobSchedule(

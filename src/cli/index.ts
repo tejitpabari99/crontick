@@ -215,6 +215,7 @@ function collectJobOptions(id: string, engineArgs: string[], opts: Record<string
     overlap: stringOption(opts.overlap),
     retry: numberOption(opts.retry),
     desc: stringOption(opts.desc),
+    force: booleanOption(opts.force),
   };
 }
 
@@ -394,6 +395,7 @@ program
   .option('-v, --verbose', 'Write crontick diagnostic logs to stderr (also enabled by CRONTICK_VERBOSE=1)');
 
 commonJobOptions(program.command('new <id> [engineArgs...]').description('Create a new job'))
+  .option('--force', 'Replace an existing job when the same id already exists')
   .action(async (id: string, engineArgs: string[], opts, cmd: Command) => {
     const c = client();
     try {

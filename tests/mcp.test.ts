@@ -247,6 +247,46 @@ describe('MCP server — full contract', () => {
     expect(readFileSync(join(dir, 'jobs', `${testJobId}.schema.json`), 'utf-8')).toBe(jobJsonSchemaText());
   });
 
+  it('crontick_job_create requires force to replace an existing job', async () => {
+    const jobId = 'mcp-duplicate-create-job';
+    const original = await callTool(client, 'crontick_job_create', {
+      id: jobId,
+      description: 'original mcp definition',
+      schedule: { kind: 'interval', everySec: 60 },
+      action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
+    });
+    expect(original.isError).toBe(false);
+
+    const duplicate = await callTool(client, 'crontick_job_create', {
+      id: jobId,
+      description: 'replacement mcp definition',
+      schedule: { kind: 'cron', cron: '15 6 * * *' },
+      action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(1)'] },
+    });
+    expect(duplicate.isError).toBe(true);
+    expect(duplicate.text).toMatch(/already exists|JOB_ALREADY_EXISTS/);
+
+    const fetchedOriginal = await callTool(client, 'crontick_job_get', { id: jobId });
+    expect(fetchedOriginal.isError).toBe(false);
+    expect(fetchedOriginal.json).toMatchObject({
+      description: 'original mcp definition',
+      schedule: { kind: 'interval', everySec: 60 },
+    });
+
+    const forced = await callTool(client, 'crontick_job_create', {
+      id: jobId,
+      force: true,
+      description: 'replacement mcp definition',
+      schedule: { kind: 'cron', cron: '15 6 * * *' },
+      action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(1)'] },
+    });
+    expect(forced.isError).toBe(false);
+    expect(forced.json).toMatchObject({
+      description: 'replacement mcp definition',
+      schedule: { kind: 'cron', cron: '15 6 * * *' },
+    });
+  });
+
   // Blocker 1 parity: MCP's args array is unaffected by CLI/shim quoting, but
   // must still round-trip the same tricky value (spaces, embedded double
   // quotes, leading dash) byte-for-byte, matching the CLI's --arg guarantee
