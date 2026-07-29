@@ -123,37 +123,6 @@ function withoutVerbose<T extends RawArgs>(args: T): Omit<T, 'verbose'> {
   return rest;
 }
 
-type SingleRunIdArgs = RawArgs & { id?: string; runId?: string };
-
-const DEPRECATED_RUN_ID_DESCRIPTION = 'Deprecated alias for id. If both are provided, id wins.';
-
-function singleRunIdInputSchema<T extends Record<string, z.ZodTypeAny>>(extraShape: T = {} as T) {
-  return z.object(withVerbose({
-    id: z.string().optional(),
-    runId: z.string().optional().describe(DEPRECATED_RUN_ID_DESCRIPTION),
-    ...extraShape,
-  })).superRefine((args, ctx) => {
-    const ids = args as SingleRunIdArgs;
-    if (typeof ids.id === 'string' && ids.id.length > 0) return;
-    if (typeof ids.runId === 'string' && ids.runId.length > 0) return;
-    ctx.addIssue({
-      code: 'custom',
-      message: 'Missing required identifier: provide id (preferred) or deprecated runId.',
-    });
-  }).meta({
-    anyOf: [
-      { required: ['id'] },
-      { required: ['runId'] },
-    ],
-  });
-}
-
-function normalizeSingleRunId(args: SingleRunIdArgs): string {
-  if (typeof args.id === 'string' && args.id.length > 0) return args.id;
-  if (typeof args.runId === 'string' && args.runId.length > 0) return args.runId;
-  throw new Error('Missing required identifier: provide id (preferred) or deprecated runId.');
-}
-
 // ── MCP server setup ──────────────────────────────────────────────────────────
 
 /** Build and return the McpServer with all tools registered. Separated from main() for testing. */
@@ -265,11 +234,11 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
   server.registerTool(
     'crontick_job_cancel_run',
     {
-      description: 'Cancel an in-progress run by its run ID. Prefer `id`; deprecated alias: `runId`.',
-      inputSchema: singleRunIdInputSchema(),
+      description: 'Cancel an in-progress run by its run ID.',
+      inputSchema: withVerbose({ id: z.string() }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.cancelRun(normalizeSingleRunId(args))),
+    async (args) => toolWrap(args, (client) => client.cancelRun(args.id)),
   );
 
   // ── Runs ───────────────────────────────────────────────────────────────────
@@ -292,24 +261,25 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
   server.registerTool(
     'crontick_run_get',
     {
-      description: 'Get the details and current status of a specific run. Prefer `id`; deprecated alias: `runId`. Includes the run pid (if it was spawned) and whether its output was truncated by the retention output cap.',
-      inputSchema: singleRunIdInputSchema(),
+      description: 'Get the details and current status of a specific run. Includes the run pid (if it was spawned) and whether its output was truncated by the retention output cap.',
+      inputSchema: withVerbose({ id: z.string() }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.getRun(normalizeSingleRunId(args))),
+    async (args) => toolWrap(args, (client) => client.getRun(args.id)),
   );
 
   server.registerTool(
     'crontick_run_logs_tail',
     {
       description:
-        'Get the last N lines of output for a run. Prefer `id`; deprecated alias: `runId`. Useful for diagnosing failures.',
-      inputSchema: singleRunIdInputSchema({
+        'Get the last N lines of output for a run. Useful for diagnosing failures.',
+      inputSchema: withVerbose({
+        id: z.string(),
         lines: z.number().int().positive().default(50),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.getLogs(normalizeSingleRunId(args), { lines: args.lines })),
+    async (args) => toolWrap(args, (client) => client.getLogs(args.id, { lines: args.lines })),
   );
 
   // ── Schedules ─────────────────────────────────────────────────────────────

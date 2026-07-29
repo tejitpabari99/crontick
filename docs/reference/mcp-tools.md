@@ -44,16 +44,6 @@ node dist/mcp/index.js
 
 Every tool accepts an optional `verbose: boolean` parameter. When `true` (or when `CRONTICK_VERBOSE` is set), the tool result wraps the payload in `{ result: ..., diagnostics: [...] }` instead of returning the raw result.
 
-## Deprecated aliases
-
-Single-run MCP tools now standardize on `id` for their primary identifier. The following legacy aliases are still accepted for backward compatibility:
-
-- `crontick_job_cancel_run`: `runId` (deprecated; use `id`)
-- `crontick_run_get`: `runId` (deprecated; use `id`)
-- `crontick_run_logs_tail`: `runId` (deprecated; use `id`)
-
-For each of these tools, provide `id` or deprecated `runId`. If both are supplied, `id` wins.
-
 ## Result Shape
 
 Success:
@@ -203,13 +193,11 @@ Cancel an in-progress run by its run ID.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes* | - | Preferred run ID |
-| `runId` | `string` | no | - | Deprecated alias for `id` |
+| `id` | `string` | yes | - | Run ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `{ ok: true, canceled: boolean }`
 
-Provide `id` or deprecated `runId`; if both are supplied, `id` wins.
 
 ---
 
@@ -236,14 +224,12 @@ and whether its captured output was truncated by the retention output cap.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes* | - | Preferred run ID |
-| `runId` | `string` | no | - | Deprecated alias for `id` |
+| `id` | `string` | yes | - | Run ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Run object, including `pid` (number, absent for `missed` runs) and `outputTruncated`
 (boolean). Secret-like text fields are redacted before serialization.
 
-Provide `id` or deprecated `runId`; if both are supplied, `id` wins.
 
 ---
 
@@ -253,15 +239,13 @@ Get the last N lines of output for a run.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes* | - | Preferred run ID |
-| `runId` | `string` | no | - | Deprecated alias for `id` |
+| `id` | `string` | yes | - | Run ID |
 | `lines` | `integer` (positive) | no | `50` | Number of text lines to return after reconstructing newline-delimited output from stored log chunks |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `{ runId: string, lines: LogEntry[] }` with log text redacted for common
 secret shapes.
 
-Provide `id` or deprecated `runId`; if both are supplied, `id` wins.
 
 ---
 

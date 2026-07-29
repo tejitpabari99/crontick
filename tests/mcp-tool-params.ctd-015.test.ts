@@ -7,7 +7,6 @@ import { MCP_TOOLS } from '../src/surface.js';
 
 const MCP = resolve('dist', 'mcp', 'index.js');
 const RUN_ID = 'ctd-015-run';
-const OTHER_RUN_ID = 'ctd-015-other-run';
 const LOG_LINES = [
   { runId: RUN_ID, stream: 'stdout', ts: 1, data: 'line-1\n' },
   { runId: RUN_ID, stream: 'stdout', ts: 2, data: 'line-2\n' },
@@ -21,10 +20,10 @@ const EXPECTED_TOOL_PARAMS = {
   crontick_job_enable: ['id'],
   crontick_job_disable: ['id'],
   crontick_job_run_now: ['id'],
-  crontick_job_cancel_run: ['id', 'runId'],
+  crontick_job_cancel_run: ['id'],
   crontick_run_list: ['jobId', 'limit', 'since', 'status'],
-  crontick_run_get: ['id', 'runId'],
-  crontick_run_logs_tail: ['id', 'runId', 'lines'],
+  crontick_run_get: ['id'],
+  crontick_run_logs_tail: ['id', 'lines'],
   crontick_schedule_validate: ['schedule'],
   crontick_schedule_preview: ['schedule', 'n', 'tz'],
   crontick_stats_summary: [],
@@ -58,6 +57,7 @@ type ListedTool = {
   description?: string;
   inputSchema?: {
     properties?: Record<string, unknown>;
+    required?: string[];
     anyOf?: Array<{
       properties?: Record<string, unknown>;
       required?: string[];
@@ -103,8 +103,8 @@ function topLevelParams(tool: ListedTool): string[] {
   return [...merged];
 }
 
-function requiredAlternatives(tool: ListedTool): string[][] {
-  return (tool.inputSchema?.anyOf ?? []).map((variant) => (variant.required ?? []).filter((name) => name !== 'verbose'));
+function requiredParams(tool: ListedTool): string[] {
+  return (tool.inputSchema?.required ?? []).filter((name) => name !== 'verbose');
 }
 
 beforeAll(async () => {
@@ -171,62 +171,40 @@ describe('CTD-015 MCP parameter naming', () => {
     for (const name of ['crontick_job_cancel_run', 'crontick_run_get', 'crontick_run_logs_tail']) {
       const tool = byName.get(name)!;
       const params = topLevelParams(tool);
-      expect(params.indexOf('id'), `${name} should expose id`).toBeGreaterThanOrEqual(0);
-      expect(params.indexOf('runId'), `${name} should retain runId alias`).toBeGreaterThan(params.indexOf('id'));
-      expect(tool.description ?? '', `${name} should document the deprecation`).toMatch(/deprecated alias/i);
-      expect(requiredAlternatives(tool), `${name} should advertise id/runId requiredness`).toContainEqual(['id']);
-      expect(requiredAlternatives(tool), `${name} should advertise id/runId requiredness`).toContainEqual(['runId']);
+      expect(params, `${name} should expose id`).toContain('id');
+      expect(params, `${name} should not expose the removed runId alias`).not.toContain('runId');
+      expect(tool.description ?? '', `${name} should not mention a deprecated alias`).not.toMatch(/deprecated alias/i);
+      expect(requiredParams(tool), `${name} should require id`).toContain('id');
     }
   });
 
-  it('accepts id, keeps runId as an alias, and prefers id when both are supplied', async () => {
+  it('accepts id as the only single-run identifier', async () => {
     const cases = [
-      {
-        name: 'crontick_run_get',
-        withId: { id: RUN_ID },
-        withAlias: { runId: RUN_ID },
-        withBoth: { id: RUN_ID, runId: OTHER_RUN_ID },
-      },
-      {
-        name: 'crontick_run_logs_tail',
-        withId: { id: RUN_ID, lines: 2 },
-        withAlias: { runId: RUN_ID, lines: 2 },
-        withBoth: { id: RUN_ID, runId: OTHER_RUN_ID, lines: 2 },
-      },
-      {
-        name: 'crontick_job_cancel_run',
-        withId: { id: RUN_ID },
-        withAlias: { runId: RUN_ID },
-        withBoth: { id: RUN_ID, runId: OTHER_RUN_ID },
-      },
-    ] as const;
-
-    for (const testCase of cases) {
-      const preferred = await callTool(testCase.name, testCase.withId);
-      expect(preferred.isError, `${testCase.name} should accept id`).toBe(false);
-
-      const alias = await callTool(testCase.name, testCase.withAlias);
-      expect(alias.isError, `${testCase.name} should accept runId`).toBe(false);
-      expect(alias.json).toEqual(preferred.json);
-
-      const both = await callTool(testCase.name, testCase.withBoth);
-      expect(both.isError, `${testCase.name} should prefer id when both identifiers are supplied`).toBe(false);
-      expect(both.json).toEqual(preferred.json);
-    }
-  });
-
-  it('rejects missing identifiers at schema validation with clear guidance', async () => {
-    const cases = [
-      { name: 'crontick_run_get', args: {} },
-      { name: 'crontick_run_logs_tail', args: { lines: 1 } },
-      { name: 'crontick_job_cancel_run', args: {} },
+      { name: 'crontick_run_get', args: { id: RUN_ID } },
+      { name: 'crontick_run_logs_tail', args: { id: RUN_ID, lines: 2 } },
+      { name: 'crontick_job_cancel_run', args: { id: RUN_ID } },
     ] as const;
 
     for (const testCase of cases) {
       const result = await callTool(testCase.name, testCase.args);
-      expect(result.isError, `${testCase.name} should reject a missing identifier`).toBe(true);
-      expect(result.json.error ?? '').toContain('provide id');
-      expect(result.json.error ?? '').toContain('runId');
+      expect(result.isError, `${testCase.name} should accept id`).toBe(false);
+    }
+  });
+
+  it('rejects missing id and no longer accepts legacy runId', async () => {
+    const cases = [
+      { name: 'crontick_run_get', args: {}, label: 'missing id' },
+      { name: 'crontick_run_get', args: { runId: RUN_ID }, label: 'legacy runId only' },
+      { name: 'crontick_run_logs_tail', args: { lines: 1 }, label: 'missing id' },
+      { name: 'crontick_run_logs_tail', args: { runId: RUN_ID, lines: 1 }, label: 'legacy runId only' },
+      { name: 'crontick_job_cancel_run', args: {}, label: 'missing id' },
+      { name: 'crontick_job_cancel_run', args: { runId: RUN_ID }, label: 'legacy runId only' },
+    ] as const;
+
+    for (const testCase of cases) {
+      const result = await callTool(testCase.name, testCase.args);
+      expect(result.isError, `${testCase.name} should reject ${testCase.label}`).toBe(true);
+      expect(String(result.json.error ?? ''), `${testCase.name} should mention id`).toContain('id');
     }
   });
 });
