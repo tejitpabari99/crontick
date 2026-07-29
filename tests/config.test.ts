@@ -7,6 +7,7 @@ import {
   buildPromptRunCommand,
   getConfigValue,
   initConfig,
+  listEngines,
   loadConfig,
   removeConfigValue,
   setConfigValue,
@@ -158,6 +159,32 @@ describe('crontick config core', () => {
     expect(client.removeEngine('agency')).not.toHaveProperty('engines.agency');
     expect(client.removeConfigValue('engines.copilot.args')).toMatchObject({ engines: { copilot: { args: [] } } });
     expect(client.validateConfig()).toMatchObject({ ok: true, problems: [] });
+  });
+
+
+  it('redacts secret-like engine env values on config read helpers without mutating config.json', () => {
+    const { env, path } = makeHome();
+    const secret = `sk-proj-${'R'.repeat(28)}`;
+    writeRawConfig(path, {
+      defaultEngine: 'agency',
+      engines: {
+        agency: { command: 'agency', env: { OPENAI_API_KEY: secret } },
+      },
+    });
+    const client = createClient({ env, startDaemon: false });
+
+    expect(loadConfig({ env }).engines.agency.env.OPENAI_API_KEY).toBe(secret);
+    expect(client.getConfig().engines.agency.env.OPENAI_API_KEY).toBe('[REDACTED]');
+    expect(listEngines({ env })).toMatchObject({ agency: { env: { OPENAI_API_KEY: '[REDACTED]' } } });
+    expect(validateConfigFile({ env })).toMatchObject({
+      ok: true,
+      config: { engines: { agency: { env: { OPENAI_API_KEY: '[REDACTED]' } } } },
+    });
+    expect(client.validateConfig()).toMatchObject({
+      ok: true,
+      config: { engines: { agency: { env: { OPENAI_API_KEY: '[REDACTED]' } } } },
+    });
+    expect(readFileSync(path, 'utf-8')).toContain(secret);
   });
 
   it('retention.maxRunsPerJob defaults to 100 and round-trips through get/set', () => {

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync, type ChildProcess, type SpawnOptions } from 'node:child_process';
@@ -46,6 +47,17 @@ function streamBytes(store: Store, runId: string, stream: 'stdout' | 'stderr'): 
       .filter((entry) => entry.stream === stream)
       .map((entry) => entry.chunk),
   );
+}
+
+function persistedStreamBytes(dir: string, runId: string, stream: 'stdout' | 'stderr'): Buffer {
+  const db = new DatabaseSync(join(dir, 'runs.db'));
+  try {
+    const rows = db.prepare('SELECT chunk FROM run_logs WHERE run_id = ? AND stream = ? ORDER BY id')
+      .all(runId, stream) as Array<{ chunk: Uint8Array }>;
+    return Buffer.concat(rows.map((row) => Buffer.from(row.chunk)));
+  } finally {
+    db.close();
+  }
 }
 
 interface SpawnCall {
@@ -145,11 +157,11 @@ describe('CTD-008 PowerShell UTF-8 fidelity', () => {
       await runner.run(job, run.id, store);
 
       expect(store.getRun(run.id)).toMatchObject({ status: 'success', exitCode: 0 });
-      const stdoutBytes = streamBytes(store, run.id, 'stdout');
+      const persistedBytes = persistedStreamBytes(dir, run.id, 'stdout');
       const expected = Buffer.from('café 你好 😀\r\n', 'utf-8');
-      expect(stdoutBytes).toEqual(expected);
-      expect(stdoutBytes.includes(Buffer.from([0xef, 0xbf, 0xbd]))).toBe(false);
-      expect(stdoutBytes.toString('utf-8')).toBe('café 你好 😀\r\n');
+      expect(persistedBytes).toEqual(expected);
+      expect(persistedBytes.includes(Buffer.from([0xef, 0xbf, 0xbd]))).toBe(false);
+      expect(persistedBytes.toString('utf-8')).toBe('café 你好 😀\r\n');
     }, 15_000);
   });
 });

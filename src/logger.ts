@@ -77,11 +77,80 @@ const SECRET_PATTERNS: SecretPattern[] = [
   { pattern: /\bAIza[0-9A-Za-z\-_]{35}\b/g, replacement: '[REDACTED]' },
   { pattern: /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b/g, replacement: '[REDACTED]' },
   { pattern: /\bAKIA[0-9A-Z]{16}\b/g, replacement: '[REDACTED]' },
-  {
-    pattern: /(\b[\w.-]*?(?:token|secret|password|passwd|api(?:[_-]?key)?|credential|private[_-]?key|cookie|subscription[_-]?key)[\w.-]*\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi,
-    replacement: '$1[REDACTED]',
-  },
 ];
+
+function isSecretAssignmentKeyChar(char: string | undefined): boolean {
+  if (!char) return false;
+  const code = char.charCodeAt(0);
+  return (code >= 48 && code <= 57)
+    || (code >= 65 && code <= 90)
+    || (code >= 97 && code <= 122)
+    || char === '_'
+    || char === '-'
+    || char === '.';
+}
+
+function isAsciiWhitespace(char: string | undefined): boolean {
+  if (!char) return false;
+  const code = char.charCodeAt(0);
+  return code === 32 || (code >= 9 && code <= 13);
+}
+
+function scanSecretAssignmentValueEnd(text: string, start: number): number {
+  if (start >= text.length) return start;
+  const quote = text[start];
+  if (quote === '"' || quote === "'") {
+    let end = start + 1;
+    while (end < text.length) {
+      const char = text[end];
+      if (char === quote) return end + 1;
+      if (char === '\r' || char === '\n') return end;
+      end++;
+    }
+    return end;
+  }
+  let end = start;
+  while (end < text.length) {
+    const char = text[end];
+    if (isAsciiWhitespace(char) || char === ',' || char === ';') return end;
+    end++;
+  }
+  return end;
+}
+
+function redactSecretAssignments(text: string): string {
+  let output = '';
+  let cursor = 0;
+  let i = 0;
+  while (i < text.length) {
+    if (isSecretAssignmentKeyChar(text[i]) && !isSecretAssignmentKeyChar(text[i - 1])) {
+      let keyEnd = i + 1;
+      while (keyEnd < text.length && isSecretAssignmentKeyChar(text[keyEnd])) keyEnd++;
+      const key = text.slice(i, keyEnd);
+      if (SECRET_KEY.test(key)) {
+        let separatorStart = keyEnd;
+        while (separatorStart < text.length && isAsciiWhitespace(text[separatorStart])) separatorStart++;
+        const separator = text[separatorStart];
+        if (separator === '=' || separator === ':') {
+          let valueStart = separatorStart + 1;
+          while (valueStart < text.length && isAsciiWhitespace(text[valueStart])) valueStart++;
+          const valueEnd = scanSecretAssignmentValueEnd(text, valueStart);
+          if (valueEnd > valueStart) {
+            output += text.slice(cursor, valueStart);
+            output += '[REDACTED]';
+            cursor = valueEnd;
+            i = valueEnd;
+            continue;
+          }
+        }
+      }
+      i = keyEnd;
+      continue;
+    }
+    i++;
+  }
+  return cursor === 0 ? text : `${output}${text.slice(cursor)}`;
+}
 
 export function createLogger(options: LoggerOptions = {}): Logger {
   return new CoreLogger(
@@ -103,7 +172,7 @@ export function redactText(text: string): string {
   for (const { pattern, replacement } of SECRET_PATTERNS) {
     output = output.replace(pattern, replacement);
   }
-  return output;
+  return redactSecretAssignments(output);
 }
 
 export function redactValue(value: unknown, keyHint?: string): unknown {

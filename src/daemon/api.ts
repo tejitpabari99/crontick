@@ -349,7 +349,7 @@ async function handleRequest(
       const includeRuns = url.searchParams.get('includeRuns') === '1';
       const payload: { jobs: ReturnType<Store['listJobs']>; runs?: Run[] } = { jobs: ctx.store.listJobs() };
       if (includeRuns) payload.runs = ctx.store.listRuns({});
-      return sendJson(res, 200, payload);
+      return sendJson(res, 200, redactValue(payload));
     }
 
     if (method === 'POST' && path === '/api/import') {

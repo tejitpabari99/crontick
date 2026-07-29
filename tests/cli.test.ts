@@ -237,6 +237,33 @@ describe('CLI binary (dist/cli/index.js)', () => {
     }
   });
 
+
+  it('config read commands redact secret engine env values', () => {
+    const tmp = makeTmpDir();
+    const secret = `sk-proj-${'S'.repeat(28)}`;
+    try {
+      expect(cli(['--json', 'config', 'init'], { CRONTICK_HOME: tmp }).status).toBe(0);
+      expect(cli(['config', 'set', 'engines.copilot.env.OPENAI_API_KEY', JSON.stringify(secret)], { CRONTICK_HOME: tmp }).status).toBe(0);
+
+      let result = cli(['--json', 'config', 'engines'], { CRONTICK_HOME: tmp });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).not.toContain(secret);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        copilot: { env: { OPENAI_API_KEY: '[REDACTED]' } },
+      });
+
+      result = cli(['--json', 'config', 'validate'], { CRONTICK_HOME: tmp });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).not.toContain(secret);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: true,
+        config: { engines: { copilot: { env: { OPENAI_API_KEY: '[REDACTED]' } } } },
+      });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('uninstall command is not available', () => {
     const result = cli(['--help']);
     expect(result.status).toBe(0);

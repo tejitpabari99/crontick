@@ -820,6 +820,33 @@ describe('MCP server — full contract', () => {
     expect((await callTool(client, 'crontick_config_validate')).json).toMatchObject({ ok: true });
   });
 
+
+  it('config read tools redact secret engine env values', async () => {
+    const secret = `sk-proj-${'T'.repeat(28)}`;
+    expect((await callTool(client, 'crontick_config_init', { force: true })).isError).toBe(false);
+    expect((await callTool(client, 'crontick_config_set', {
+      path: 'engines.copilot.env.OPENAI_API_KEY',
+      value: secret,
+    })).isError).toBe(false);
+
+    const engines = await callTool(client, 'crontick_config_engine_list');
+    expect(engines.isError).toBe(false);
+    const enginesText = JSON.stringify(engines.json);
+    expect(enginesText).not.toContain(secret);
+    expect(engines.json).toMatchObject({
+      copilot: { env: { OPENAI_API_KEY: '[REDACTED]' } },
+    });
+
+    const validated = await callTool(client, 'crontick_config_validate');
+    expect(validated.isError).toBe(false);
+    const validatedText = JSON.stringify(validated.json);
+    expect(validatedText).not.toContain(secret);
+    expect(validated.json).toMatchObject({
+      ok: true,
+      config: { engines: { copilot: { env: { OPENAI_API_KEY: '[REDACTED]' } } } },
+    });
+  });
+
   it('tool verbose option returns MCP diagnostics without stderr protocol pollution', async () => {
     const { json, isError } = await callTool(client, 'crontick_config_get', { verbose: true });
     expect(isError).toBe(false);

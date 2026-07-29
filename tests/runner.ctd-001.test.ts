@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import type { AddressInfo } from 'node:net';
 import { Runner } from '../src/daemon/runner.js';
 import { Store } from '../src/daemon/store.js';
+import { createClient } from '../src/client.js';
 import { createApiServer } from '../src/daemon/api.js';
 import type { Logger } from '../src/logger.js';
 import type { Job } from '../src/schemas/job.js';
@@ -66,6 +67,22 @@ async function withHome<T>(dir: string, fn: () => Promise<T>): Promise<T> {
     if (previousHome === undefined) delete process.env['CRONTICK_HOME'];
     else process.env['CRONTICK_HOME'] = previousHome;
   }
+}
+
+const TERMINAL_STATUSES = new Set(['success', 'failed', 'canceled', 'timeout', 'missed']);
+
+async function waitForTerminalRun(
+  client: ReturnType<typeof createClient>,
+  runId: string,
+  maxMs = 5_000,
+): Promise<{ id: string; status: string; error?: string }> {
+  const deadline = Date.now() + maxMs;
+  let lastRun = await client.getRun(runId) as { id: string; status: string; error?: string };
+  while (!TERMINAL_STATUSES.has(lastRun.status) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    lastRun = await client.getRun(runId) as { id: string; status: string; error?: string };
+  }
+  return lastRun;
 }
 
 function trackTerminalFinalizations(store: Store): { count: () => number; restore: () => void } {
@@ -163,6 +180,65 @@ describe('CTD-001 runner setup failures', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+
+  it('run-now through the API/client reaches terminal failed instead of sticking at running', async () => {
+    const dir = makeTmpDir();
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({
+      defaultEngine: 'copilot',
+      engines: { copilot: { command: 'copilot', args: [] } },
+    }), 'utf-8');
+    const store = makeStore(dir);
+    const runner = new Runner();
+    const job = promptJob('api-run-now-terminal-failure', { engine: 'ghost' });
+    store.upsertJob(job);
+    const scheduler = {
+      schedule: () => {},
+      unschedule: () => {},
+      validateSchedule: () => ({ ok: true }),
+      previewNext: () => [],
+    } as unknown as Scheduler;
+    const ctx = {
+      store,
+      scheduler,
+      runner,
+      startedAt: new Date(),
+      port: 0,
+      reload: async () => {},
+    };
+    const server = createApiServer(ctx);
+
+    try {
+      await withHome(dir, async () => {
+        await new Promise<void>((resolve, reject) => {
+          server.listen(0, '127.0.0.1', () => resolve());
+          server.on('error', reject);
+        });
+        const port = (server.address() as AddressInfo).port;
+        ctx.port = port;
+        const client = createClient({
+          daemonUrl: `http://127.0.0.1:${port}`,
+          startDaemon: false,
+          env: { ...process.env, CRONTICK_HOME: dir },
+        });
+
+        const started = await client.runNow(job.id);
+        const run = await waitForTerminalRun(client, started.runId, 5_000);
+        expect(run).toMatchObject({
+          id: started.runId,
+          status: 'failed',
+          error: expect.stringContaining('Prompt job requested engine "ghost"'),
+        });
+
+        const listed = await client.listRuns({ jobId: job.id }) as Array<{ id: string; status: string }>;
+        expect(listed.find((entry) => entry.id === started.runId)).toMatchObject({ status: 'failed' });
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
 
   it('finalizes synchronous spawn throws exactly once as failed', async () => {
     const dir = makeTmpDir();

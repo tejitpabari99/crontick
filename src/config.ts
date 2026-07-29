@@ -60,6 +60,10 @@ export const BUILT_IN_CONFIG: CrontickConfig = Object.freeze({
   retention: Object.freeze({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 }),
 });
 
+export function redactConfigForRead(config: CrontickConfig): CrontickConfig {
+  return redactValue(config) as CrontickConfig;
+}
+
 /** Resolves config file path: explicit `options.path` > `<dataDir>/config.json`. */
 export function configFilePath(options: ConfigOptions = {}): string {
   return options.path ? resolve(options.path) : defaultConfigPath(options.env);
@@ -119,11 +123,11 @@ export function validateConfigFile(options: ConfigOptions = {}): ConfigValidatio
   const logger = (options.logger ?? nullLogger).child('config');
   logger.debug('Validating config file', { path: filePath });
   if (!existsSync(filePath)) {
-    return { ok: true, path: filePath, config: cloneConfig(BUILT_IN_CONFIG), problems: [] };
+    return { ok: true, path: filePath, config: redactConfigForRead(cloneConfig(BUILT_IN_CONFIG)), problems: [] };
   }
   try {
     const config = parseConfig(readConfigJson(filePath), filePath);
-    return { ok: true, path: filePath, config, problems: [] };
+    return { ok: true, path: filePath, config: redactConfigForRead(config), problems: [] };
   } catch (err) {
     return {
       ok: false,
@@ -134,11 +138,9 @@ export function validateConfigFile(options: ConfigOptions = {}): ConfigValidatio
 }
 
 export function getConfigValue(path: string | undefined, options: ConfigOptions = {}): unknown {
-  const config = loadConfig(options);
+  const config = redactConfigForRead(loadConfig(options));
   const keyPath = path ? parseKeyPath(path) : undefined;
-  const value = keyPath ? readPath(config, keyPath) : config;
-  const lastSegment = keyPath?.[keyPath.length - 1];
-  return redactValue(value, typeof lastSegment === 'string' ? lastSegment : undefined);
+  return keyPath ? readPath(config, keyPath) : config;
 }
 
 export function setConfigValue(path: string, value: unknown, options: ConfigOptions = {}): CrontickConfig {
@@ -156,7 +158,7 @@ export function removeConfigValue(path: string, options: ConfigOptions = {}): Cr
 }
 
 export function listEngines(options: ConfigOptions = {}): Record<string, EngineConfig> {
-  return loadConfig(options).engines;
+  return redactConfigForRead(loadConfig(options)).engines;
 }
 
 export function addEngine(name: string, engine: unknown, options: ConfigOptions = {}): CrontickConfig {

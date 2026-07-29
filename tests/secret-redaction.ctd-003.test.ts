@@ -2,6 +2,8 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { performance } from 'node:perf_hooks';
+import { DatabaseSync } from 'node:sqlite';
 import type { AddressInfo } from 'node:net';
 import { join, resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -9,6 +11,7 @@ import { describe, it, expect } from 'vitest';
 import { createClient } from '../src/client.js';
 import { createApiServer } from '../src/daemon/api.js';
 import { Runner } from '../src/daemon/runner.js';
+import { redactText } from '../src/logger.js';
 import { Scheduler } from '../src/daemon/scheduler.js';
 import { Store } from '../src/daemon/store.js';
 import type { Job } from '../src/schemas/job.js';
@@ -195,11 +198,11 @@ const SECRET_CASES: SecretCase[] = [
   {
     name: 'authorization bearer header',
     runtimeText: BEARER_HEADER,
-    expectedRuntime: 'Authorization: Bearer [REDACTED]',
+    expectedRuntime: 'Authorization: [REDACTED] [REDACTED]',
     rawSecrets: [JWT],
     configKey: 'REQUEST_AUTH',
     configValue: BEARER_HEADER,
-    expectedConfig: 'Authorization: Bearer [REDACTED]',
+    expectedConfig: 'Authorization: [REDACTED] [REDACTED]',
   },
   {
     name: 'connection strings',
@@ -269,6 +272,23 @@ function logText(store: Store, runId: string): string {
   return Buffer.concat(store.getLogs(runId).map((entry) => entry.chunk)).toString('utf-8');
 }
 
+function persistedLogBytes(dir: string, runId: string): Buffer {
+  const db = new DatabaseSync(join(dir, 'runs.db'));
+  try {
+    const rows = db.prepare('SELECT chunk FROM run_logs WHERE run_id = ? ORDER BY id')
+      .all(runId) as Array<{ chunk: Uint8Array }>;
+    return Buffer.concat(rows.map((row) => Buffer.from(row.chunk)));
+  } finally {
+    db.close();
+  }
+}
+
+function expectRawSecretBytesAbsent(buffer: Buffer, rawSecrets: string[], surface: string): void {
+  for (const rawSecret of rawSecrets) {
+    expect(buffer.includes(Buffer.from(rawSecret, 'utf-8')), `${surface} leaked raw bytes for ${rawSecret}`).toBe(false);
+  }
+}
+
 function writeConfig(dir: string, env: Record<string, string>): void {
   writeFileSync(join(dir, 'config.json'), `${JSON.stringify({
     defaultEngine: 'copilot',
@@ -327,7 +347,7 @@ function expectRedacted(text: string, rawSecrets: string[], expected: string, su
 }
 
 describe('CTD-003 shared secret redaction', () => {
-  it('redacts each secret shape across persisted logs, run get, logs tail, dashboard data, and config get', async () => {
+  it('redacts each secret shape across persisted logs, run reads, config reads, dashboard data, and exports', async () => {
     const fixture = await createFixture('matrix');
     try {
       writeConfig(
@@ -341,7 +361,9 @@ describe('CTD-003 shared secret redaction', () => {
         const captureJob = jobWithEnv(`ctd003-capture-${index}`, {});
         const captureRun = fixture.store.insertRun(captureJob.id);
         await captureRunner.run(captureJob, captureRun.id, fixture.store);
-        expectRedacted(logText(fixture.store, captureRun.id), entry.rawSecrets, entry.expectedRuntime, `${entry.name} persisted log bytes`);
+        const logBytes = persistedLogBytes(fixture.dir, captureRun.id);
+        expectRawSecretBytesAbsent(logBytes, entry.rawSecrets, `${entry.name} persisted log bytes`);
+        expectRedacted(logBytes.toString('utf-8'), entry.rawSecrets, entry.expectedRuntime, `${entry.name} persisted log text`);
 
         const dashboardJob = jobWithEnv(`ctd003-dashboard-${index}`, { EXPOSED_VALUE: entry.configValue });
         fixture.store.upsertJob(dashboardJob);
@@ -368,6 +390,16 @@ describe('CTD-003 shared secret redaction', () => {
         const configValue = fixture.client.getConfigValue(`engines.copilot.env.${entry.configKey}`);
         const configText = typeof configValue === 'string' ? configValue : JSON.stringify(configValue);
         expectRedacted(configText, entry.rawSecrets, entry.expectedConfig, `${entry.name} config get`);
+
+        const engines = fixture.client.listEngines();
+        const enginesText = JSON.stringify(engines);
+        expectRedacted(enginesText, entry.rawSecrets, entry.expectedConfig, `${entry.name} config engines`);
+        expect(engines.copilot?.env?.[entry.configKey]).toBe(entry.expectedConfig);
+
+        const validation = fixture.client.validateConfig();
+        const validationText = JSON.stringify(validation);
+        expectRedacted(validationText, entry.rawSecrets, entry.expectedConfig, `${entry.name} config validate`);
+        expect(validation.config?.engines.copilot?.env?.[entry.configKey]).toBe(entry.expectedConfig);
       }
 
       const dashboard = await fixture.client.dashboardData({ runsLimit: SECRET_CASES.length * 4 }) as {
@@ -388,16 +420,41 @@ describe('CTD-003 shared secret redaction', () => {
         expect(dashboardRun?.error).toBe(`failure ${entry.expectedRuntime}`);
       }
 
-      const fullConfig = fixture.client.getConfigValue();
+      const fullConfig = fixture.client.getConfig();
       const fullConfigText = JSON.stringify(fullConfig);
       for (const entry of SECRET_CASES) {
         for (const rawSecret of entry.rawSecrets) {
           expect(fullConfigText).not.toContain(rawSecret);
         }
+        expect(fullConfig.engines.copilot.env[entry.configKey]).toBe(entry.expectedConfig);
+      }
+
+      const exported = await fixture.client.exportJobs({ includeRuns: true }) as {
+        jobs: Array<{ id: string; action: { env?: Record<string, string> } }>;
+        runs?: Array<{ id: string; error?: string | null }>;
+      };
+      const exportedText = JSON.stringify(exported);
+      for (const [index, entry] of SECRET_CASES.entries()) {
+        expectRedacted(exportedText, entry.rawSecrets, entry.expectedConfig, `${entry.name} export payload`);
+        expect(exported.jobs.find((job) => job.id === `ctd003-dashboard-${index}`)?.action.env?.['EXPOSED_VALUE']).toBe(entry.expectedConfig);
+        expect(exported.runs?.find((run) => run.id === dashboardRunIds.get(entry.name))?.error).toBe(`failure ${entry.expectedRuntime}`);
       }
     } finally {
       await fixture.close();
     }
+  });
+
+
+  it('redacts generic assignment lookalikes in linear time on large non-matching input', () => {
+    const adversarial = 'tokentoken.'.repeat(5_000);
+    redactText('token=warmup');
+
+    const startedAt = performance.now();
+    const redacted = redactText(adversarial);
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(redacted).toBe(adversarial);
+    expect(elapsedMs).toBeLessThan(200);
   });
 
   it('does not redact a clearly non-secret ordinary value on any shared surface', async () => {

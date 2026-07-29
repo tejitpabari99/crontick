@@ -44,6 +44,7 @@ import {
   initConfig,
   listEngines,
   loadConfig,
+  redactConfigForRead,
   removeConfigValue,
   removeEngine,
   setConfigValue,
@@ -333,7 +334,7 @@ export class CrontickClient {
 
   /** Library-only: loads config without daemon (local-only operation). */
   getConfig(): CrontickConfig {
-    return loadConfig({ env: this.effectiveEnv(), logger: this.logger.child('config') });
+    return redactConfigForRead(loadConfig({ env: this.effectiveEnv(), logger: this.logger.child('config') }));
   }
 
   getConfigValue(path?: string): unknown {
