@@ -60,6 +60,9 @@ Error:
 
 Error messages are redacted via `redactForLlm()`: loopback addresses become `<daemon-addr>`, filesystem paths become `<path>`.
 
+Tools that expose config values, run rows, log text, or dashboard payloads also redact
+common secret shapes before serializing successful results.
+
 ---
 
 ## Tools
@@ -77,9 +80,12 @@ Create and schedule a new cron job.
 | `action` | `ActionInput` | yes | — | Action with `kind` discriminator; prompt actions accept `promptFile` instead of `prompt` |
 | `overlap` | `"skip"\|"queue"\|"cancel-previous"` | no | `"skip"` | Overlap policy |
 | `retry` | `{ max: number, backoffSec: number }` | no | `{ max: 0, backoffSec: 30 }` | Retry config |
+| `force` | `boolean` | no | `false` | Replace an existing job with the same id |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** The created `Job` object.
+**Result:** The created `Job` object. Duplicate ids are rejected with
+`JOB_ALREADY_EXISTS` unless `force=true` is supplied. Schedule validation runs before
+any existing job is replaced.
 
 ---
 
@@ -221,7 +227,7 @@ and whether its captured output was truncated by the retention output cap.
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Run object, including `pid` (number, absent for `missed` runs) and `outputTruncated`
-(boolean).
+(boolean). Secret-like text fields are redacted before serialization.
 
 ---
 
@@ -235,7 +241,8 @@ Get the last N lines of output for a run.
 | `lines` | `integer` (positive) | no | `50` | Number of lines to return |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ runId: string, lines: LogEntry[] }`
+**Result:** `{ runId: string, lines: LogEntry[] }` with log text redacted for common
+secret shapes.
 
 ---
 
@@ -428,7 +435,8 @@ Return the core dashboard data model.
 | `runsLimit` | `integer` (positive) | no | — | Maximum recent runs |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `DashboardData` object (health, stats, jobs, runs).
+**Result:** `DashboardData` object (health, stats, jobs, runs), with secret-like text
+fields redacted.
 
 ---
 
@@ -465,7 +473,7 @@ Get effective crontick config, or a single value by dot-separated path.
 | `path` | `string` | no | — | Dot-separated config path |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** The config value or full config object.
+**Result:** The config value or full config object, with secret-like values redacted.
 
 ---
 

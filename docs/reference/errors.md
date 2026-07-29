@@ -85,6 +85,14 @@ class CrontickError extends Error {
 | **Message shape** | Includes the requested ID |
 | **Details** | — |
 
+### JOB_ALREADY_EXISTS
+
+| | |
+|---|---|
+| **When** | `createJob`, `crontick new`, MCP `crontick_job_create`, or HTTP `POST /api/jobs` attempts to create an ID that already exists without explicit overwrite intent |
+| **Message shape** | `Job "<id>" already exists. Use "crontick update <id>" ... or re-run create with --force / force: true ...` |
+| **Details** | — |
+
 ### PARSE_ERROR
 
 | | |

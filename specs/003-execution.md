@@ -2,7 +2,7 @@
 
 - Status: Active
 - Owner: crontick maintainers
-- Last reviewed: 2026-07-25
+- Last reviewed: 2026-07-28
 
 ## Summary
 
@@ -35,14 +35,14 @@ preserving observability through captured logs and structured run records.
 - **R-003-3**: `overlap=skip`: If a run for the same job is already active, the new run MUST be immediately finalized as `canceled` with the error `"overlap=skip: another run is already active"`.
 - **R-003-4**: `overlap=cancel-previous`: If a run for the same job is active, the runner MUST abort it (via `AbortController`) before starting the new run.
 - **R-003-5**: `overlap=queue`: Runs MUST be serialized in FIFO order per job; the queue drains sequentially.
-- **R-003-6**: For `script` actions, the runner MUST write the script to a temp file, resolve the shell (`auto` -> pwsh on Windows, bash elsewhere), and spawn the shell with the temp file as argument.
+- **R-003-6**: For `script` actions, the runner MUST write the script to a temp file, resolve the shell (`auto` -> pwsh on Windows, bash elsewhere), and spawn the shell with the temp file as argument. When the resolved shell is PowerShell (`pwsh`/`powershell`), the runner MUST invoke a wrapper script that preserves an explicit user `exit N`, promotes PowerShell/native failures to a truthful non-zero exit status, and sets UTF-8 output encoding before the user script runs.
 - **R-003-7**: For `exec` actions, the runner MUST spawn `command` with `args` directly and verbatim (shell=false): no shell interpretation, no whitespace splitting, no re-quoting. `args` is the array produced by the CLI's repeatable `--arg <value>` flag (the primary, shim-independent mechanism) or its `--` convenience form (or the library API's `args` field), so an argument containing a space or shell metacharacter MUST pass through to the child exactly as given.
 - **R-003-8**: For `prompt` actions, the runner MUST resolve the engine command via `buildPromptRunCommand()` and spawn it with shell=false.
 - **R-003-9**: All spawned processes MUST inherit `process.env` merged with `action.env` (action.env wins). If `envFile` is specified, its variables are merged below `action.env` but above `process.env`.
 - **R-003-10**: `action.cwd` MUST be used as the working directory; if omitted, `process.cwd()` MUST be used.
 - **R-003-11**: If `action.timeoutSec` is set, the runner MUST start its own timer for `timeoutSec * 1000` ms (not the spawn-level `timeout` option, which cannot be distinguished from a user cancellation -- see R-003-15) and, on expiry, send `SIGTERM` to the child itself.
-- **R-003-12**: stdout and stderr MUST be captured, redacted via `safeRedact()`, and stored via `Store.appendLog()`.
-- **R-003-13**: On exit code 0, run status MUST be `success`. On non-zero exit, status MUST be `failed`.
+- **R-003-12**: stdout and stderr MUST be captured, redacted via `safeRedact()`, and stored via `Store.appendLog()`. For PowerShell script jobs, capture MUST preserve UTF-8 byte sequences exactly across chunk boundaries instead of splitting a multibyte character.
+- **R-003-13**: On exit code 0, run status MUST be `success`. On non-zero exit, status MUST be `failed`. For PowerShell script jobs this includes non-terminating errors, uncaught terminating errors, command-not-found, missing-module failures, and native non-zero exits that occur without an explicit `exit N`; an explicit `exit N` remains authoritative.
 - **R-003-14**: On `SIGTERM`/`SIGKILL` signal that was NOT sent by the runner's own timeout timer (R-003-11) -- i.e. a user cancellation or overlap-policy abort -- run status MUST be `canceled`.
 - **R-003-15**: On expiry of the runner's own timeout timer (R-003-11), run status MUST be `timeout`, distinct from `canceled`, with an error message naming `timeoutSec`.
 - **R-003-16**: On `ABORT_ERR` or signal aborted, run status MUST be `canceled`.
@@ -67,8 +67,8 @@ preserving observability through captured logs and structured run records.
 1. Tick arrives -> daemon calls `store.insertRun(jobId, plannedAt)` -> status=`queued`.
 2. `runner.run(job, runId, store)` evaluates overlap policy.
 3. If allowed to proceed, run transitions to `running`.
-4. Runner resolves command/args per action kind; spawns child process.
-5. stdout/stderr `data` events -> `safeRedact` -> `store.appendLog`.
+4. Runner resolves command/args per action kind; a PowerShell script job emits a wrapper + user script pair so exit semantics and UTF-8 output are normalized before spawn.
+5. stdout/stderr `data` events -> per-stream UTF-8 buffering (when needed) -> `safeRedact` -> `store.appendLog`.
 6. Child `close` event determines status from exit code/signal.
 7. If failed and retries remain, waits backoff then re-spawns (step 4).
 8. `finalizeRun` writes terminal status, endedAt, durationMs to store.
@@ -85,6 +85,8 @@ preserving observability through captured logs and structured run records.
 
 - Command not found (`ENOENT`): Run finalized as `failed` with descriptive error.
 - envFile not found/unreadable: Run fails with `ENV_FILE_ERROR` before spawn.
+- PowerShell non-terminating or uncaught terminating error without explicit `exit N`: the wrapper exits non-zero and the run finalizes `failed` instead of `success/0`.
+- PowerShell UTF-8 output split across chunk boundaries: buffered per stream and reconstructed exactly before persistence.
 - Process exits without code (null): Status is `failed`, error "process exited without code".
 - Abort during retry backoff: Run finalized as `canceled`, error "canceled before retry".
 - Runner callback throws during log append: Run finalized as `failed` with `RUNNER_CALLBACK_FAILED` prefix; child is killed.
@@ -111,6 +113,8 @@ preserving observability through captured logs and structured run records.
 - [x] Child `pid` is persisted on the run row as soon as the process spawns (test file: `tests/runner.test.ts`, "spawn: persists the child pid on the run row...")
 - [x] Output byte cap truncates capture at a UTF-8 character boundary, sets `outputTruncated`, and never affects the child process (test file: `tests/runner.test.ts`, "truncateToUtf8Boundary: ..." and "captureChunk: truncation at the byte cap does not split a multi-byte character (MINOR 7 regression)")
 - [x] `adoptRun` re-attaches overlap tracking for `skip` and `cancel-previous` across a restart (test file: `tests/runner.test.ts`, `adoptRun` describe block)
+- [x] PowerShell script jobs fail truthfully for implicit PowerShell/native failures while preserving explicit `exit N` (test file: `tests/powershell-exit.ctd-002.test.ts`)
+- [x] PowerShell script jobs preserve exact UTF-8 bytes across Windows code pages and chunk boundaries (test file: `tests/powershell-utf8.ctd-008.test.ts`)
 - [x] Repeatable `--arg <value>` round-trips spaces, embedded quotes, and a leading dash, and is mutually exclusive with `--` (test file: `tests/cli.test.ts`, "crontick new --arg round-trips a value with spaces, embedded double quotes, and a leading dash"; "crontick new rejects combining --arg with -- positional args (ambiguous args source)")
 - [x] `--exec` takes its command and args verbatim, with no whitespace splitting (test file: `tests/job-input.test.ts`, "buildJobFromCreateOptions -- --exec verbatim + rawArgs"; `tests/cli.test.ts`, "new --help describes --exec's real verbatim-command + --arg/-- args behavior")
 

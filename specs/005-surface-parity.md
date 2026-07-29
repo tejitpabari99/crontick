@@ -2,13 +2,16 @@
 
 - Status: Active
 - Owner: crontick maintainers
-- Last reviewed: 2026-07-25
+- Last reviewed: 2026-07-28
 
 ## Summary
 
 Every user-facing capability in crontick MUST be available on all three surfaces: CLI,
 MCP server, and library API (CrontickClient). A canonical table (`SURFACE_CAPABILITIES`
-in `src/surface.ts`) encodes this mapping and an automated drift test enforces it.
+in `src/surface.ts`) encodes this mapping and an automated drift test enforces it. When
+a change extends an existing capability rather than adding a new one (for example the
+`create-job` capability's `force` option), the same table may also annotate the
+parity-coupled option names.
 
 ## Motivation
 
@@ -31,7 +34,7 @@ CI fails.
 ### Functional requirements
 
 - **R-005-1**: `SURFACE_CAPABILITIES` MUST be defined in `src/surface.ts` as a readonly array of `SurfaceCapability` objects.
-- **R-005-2**: Each `SurfaceCapability` MUST have: `capability` (kebab-case name), `clientMethod` (CrontickClient method name), `cliCommand` (array of CLI command segments), `mcpTool` (MCP tool name).
+- **R-005-2**: Each `SurfaceCapability` MUST have: `capability` (kebab-case name), `clientMethod` (CrontickClient method name), `cliCommand` (array of CLI command segments), `mcpTool` (MCP tool name). It MAY additionally document parity-coupled option names (for example `optionNames: ['force']`) when an existing capability gains a new user-visible option without becoming a new capability row.
 - **R-005-3**: For every entry in `SURFACE_CAPABILITIES`, `CrontickClient.prototype` MUST have a matching method with name equal to `clientMethod`.
 - **R-005-4**: For every entry in `SURFACE_CAPABILITIES`, the built CLI MUST register a command matching `cliCommand` (verified via `--help` exit code 0).
 - **R-005-5**: For every entry in `SURFACE_CAPABILITIES`, the MCP server MUST register a tool with name equal to `mcpTool`.
@@ -39,7 +42,7 @@ CI fails.
 - **R-005-7**: Every MCP tool prefixed `crontick_` MUST have a corresponding entry in `SURFACE_CAPABILITIES`.
 - **R-005-8**: Every MCP tool MUST accept an optional `verbose: boolean` parameter.
 - **R-005-9**: The non-parity exclusion set MUST be explicitly declared in the drift test (currently: `ensure`, `health`, `createJobFromCliOptions`, `jobJsonSchema`, `getConfig`, `drainNotices`, `isVerbose`, `request`, `baseUrl`, `normalizeOptions`, `shouldStartDaemon`, `effectiveEnv`, `fetchRequest`, `daemonRequestError`).
-- **R-005-10**: When adding a new capability, the developer MUST add it to `SURFACE_CAPABILITIES` and implement it on all three surfaces in the same change.
+- **R-005-10**: When adding a new capability, the developer MUST add it to `SURFACE_CAPABILITIES` and implement it on all three surfaces in the same change. When extending an existing capability with a new user-visible option, the developer MUST update the CLI flag(s), library options, MCP schema/input, and any documented `optionNames` on that existing capability row in the same change; option growth MUST NOT invent a new capability row unless the operation itself is new.
 
 ### Non-functional requirements
 
@@ -67,6 +70,7 @@ The drift test (`tests/surface-drift.test.ts`) performs four checks:
 ## Edge cases and failure modes
 
 - New client method added without surface entry: Test 2 fails naming the method.
+- New parity-coupled option added on only one surface (for example CLI-only `--force` on create): behavioral parity drifts even though the capability count stays the same; document the option on the existing capability row and update all three surfaces together.
 - New MCP tool added without surface entry: Test 4 reports unexpected tool.
 - CLI command fails to register (typo in command name): Test 3 fails with non-zero exit.
 - MCP server fails to start (build broken): Test 4 times out or errors on connect.
@@ -79,7 +83,7 @@ The drift test (`tests/surface-drift.test.ts`) performs four checks:
 - [x] CLI exposes every table capability command (test file: `tests/surface-drift.test.ts`)
 - [x] MCP exposes every table capability tool (test file: `tests/surface-drift.test.ts`)
 - [x] All MCP tools have verbose parameter (test file: `tests/surface-drift.test.ts`)
-- [x] Documentation updated when capability count changes (test file: `tests/surface-drift.test.ts`)
+- [x] Documentation updated when capability count or parity-coupled option metadata changes (test file: `tests/surface-drift.test.ts`)
 
 ## Out of scope
 

@@ -65,6 +65,10 @@ crontick daemon status
 > `crontick.ps1`, `npx crontick`) and round-trips spaces, quotes, and leading dashes verbatim. See
 > [CLI reference](docs/reference/cli.md#windows-shells---arg-vs---) for the full behavior matrix,
 > including why the `--` convenience form is unreliable on `crontick.ps1`.
+>
+> Create is no longer an upsert: reusing an existing job id with `crontick new` or `createJob()`
+> now fails with `JOB_ALREADY_EXISTS`. Use `crontick update <id>` to mutate an existing job, or
+> pass `--force` / `force: true` when you intentionally want replacement.
 
 ### Library (ESM)
 
@@ -243,7 +247,10 @@ follows semver strictly. On-disk state format compatibility is covered by
 [specs/006-state-and-persistence.md](specs/006-state-and-persistence.md).
 
 The pending 1.0.0 release consumes the changesets in `.changeset/`; see them for the
-behavior it introduces.
+behavior it introduces. One breaking change already queued there: creating a job is no
+longer a silent upsert. A duplicate id now fails with `JOB_ALREADY_EXISTS` unless you
+pass explicit overwrite intent (`--force` on the CLI, `force: true` in library/MCP);
+invalid schedules are rejected before any existing job can be replaced.
 
 ---
 

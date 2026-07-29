@@ -114,6 +114,18 @@ built-in default change, or restoring `config.json` from an older version, no lo
 touching that key. To see exactly what's explicitly set (as opposed to inherited), read
 `config.json` directly: any key absent from the file is inherited from the built-in default.
 
+### Redaction on read surfaces
+
+`crontick config get`, `CrontickClient.getConfigValue()`, and the MCP
+`crontick_config_get` tool return effective config values with secret-like material
+redacted. This uses the same shared redaction contract as run reads, log tails, and
+dashboard data: GitHub/OpenAI/Anthropic/Stripe/Slack-style tokens, JWT-like blobs,
+private keys, key/value assignments such as `token=...`, and connection-string
+passwords are masked before they are printed or serialized.
+
+This is presentation-only redaction. The underlying `config.json` file on disk is not
+rewritten; read the file directly if you need the literal stored bytes.
+
 ### Multi-Engine Example
 
 ```json

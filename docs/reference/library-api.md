@@ -35,7 +35,7 @@ class CrontickClient {
 |--------|-----------|---------|--------|
 | `ensure` | `(): Promise<DaemonInfo>` | `DaemonInfo` | `CrontickError` (`DAEMON_START_FAILED`, `DAEMON_TIMEOUT`, `DAEMON_START_LOCK_TIMEOUT`) |
 | `health` | `(options?: { ensure?: boolean }): Promise<unknown>` | Health response | `CrontickError` |
-| `createJob` | `(input: Job \| JobCreateInput, options?: NormalizeJobInputOptions): Promise<Job>` | Created `Job` | `CrontickError` (`VALIDATION_ERROR`, `DAEMON_REQUEST_FAILED`) |
+| `createJob` | `(input: Job \| JobCreateInput, options?: CreateJobOptions): Promise<Job>` | Created `Job` | `CrontickError` (`VALIDATION_ERROR`, `JOB_ALREADY_EXISTS`, `DAEMON_REQUEST_FAILED`) |
 | `createJobFromCliOptions` | `(input: JobCreateCliOptions): Promise<Job>` | Created `Job` | `CrontickError` |
 | `listJobs` | `(): Promise<Job[]>` | Array of `Job` | `CrontickError` |
 | `getJob` | `(id: string): Promise<Job>` | `Job` | `CrontickError` (`NOT_FOUND`) |
@@ -79,6 +79,11 @@ class CrontickClient {
 | `isVerbose` | `(): boolean` | Verbose flag | — |
 
 **Library-only methods (not in `SURFACE_CAPABILITIES`, no CLI/MCP equivalent):** `ensure`, `health`, `createJobFromCliOptions`, `jobJsonSchema`, `getConfig`, `drainNotices`, `isVerbose`. These are intentionally excluded from the parity contract because they serve internal wiring, direct-use library scenarios, or launch infrastructure rather than proxying a daemon operation.
+
+Read methods that surface config values or captured text (`getConfigValue`, `getRun`,
+`listRuns`, `getLogs`, and `dashboardData`) redact common secret shapes before returning
+strings or structured text fields. The same contract applies on CLI, MCP, and HTTP read
+surfaces.
 
 ---
 
@@ -193,6 +198,17 @@ interface NormalizeJobInputOptions {
 }
 ```
 
+### CreateJobOptions
+
+```ts
+interface CreateJobOptions extends NormalizeJobInputOptions {
+  force?: boolean;
+}
+```
+
+`force` intentionally replaces an existing job with the same id. When omitted or
+`false`, `createJob()` rejects duplicates with `JOB_ALREADY_EXISTS`.
+
 ### JobCreateCliOptions
 
 ```ts
@@ -220,6 +236,7 @@ interface JobCreateCliOptions {
   retry?: number;
   desc?: string;
   enabled?: boolean;
+  force?: boolean;
 }
 ```
 
@@ -492,7 +509,9 @@ A logger at `error` level with no sink (discards all output).
 function redactText(text: string): string;
 ```
 
-Replaces known secret patterns (Bearer tokens, AWS keys, GitHub PATs, `KEY=VALUE` env leaks) with `[REDACTED]`.
+Replaces common secret patterns (provider tokens/keys, JWT-like bearer blobs, private
+keys, key/value secret assignments, and connection-string passwords) with
+`[REDACTED]`.
 
 ### redactValue
 
@@ -500,7 +519,9 @@ Replaces known secret patterns (Bearer tokens, AWS keys, GitHub PATs, `KEY=VALUE
 function redactValue(value: unknown, keyHint?: string): unknown;
 ```
 
-Recursively redacts secrets from objects. Keys matching `/token|secret|password|credential|apikey|api_key|authorization|cookie/i` are fully replaced.
+Recursively redacts secret-like strings from objects and arrays. Keys matching the
+shared secret-key matcher (for example `token`, `secret`, `password`, `api_key`,
+`authorization`, or `subscription_key`) are fully replaced.
 
 ### sanitizeLogEvent
 
@@ -601,7 +622,9 @@ const BUILT_IN_CONFIG: CrontickConfig;
 const SURFACE_CAPABILITIES: readonly SurfaceCapability[];
 ```
 
-37-element array mapping every capability to its client method, CLI command path, and MCP tool name.
+37-element array mapping every capability to its client method, CLI command path, and
+MCP tool name. The existing `create-job` capability row also records its parity-coupled
+`force` option via `optionNames: ['force']`.
 
 ### ORPHAN_RUN_ERROR_CODE
 

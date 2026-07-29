@@ -2,7 +2,7 @@
 
 - Status: Active
 - Owner: crontick maintainers
-- Last reviewed: 2026-07-25
+- Last reviewed: 2026-07-28
 
 ## Summary
 
@@ -38,8 +38,8 @@ daemon to validate and persist jobs without surface-specific logic.
 - **R-001-5**: The `overlap` field MUST default to `"skip"` when omitted. Valid values are `skip`, `queue`, `cancel-previous`.
 - **R-001-6**: The `retry.max` field MUST default to `0`; `retry.backoffSec` MUST default to `30`.
 - **R-001-7**: The `description` field MAY be omitted; it has no behavioral effect.
-- **R-001-8**: Creating a job with an existing ID MUST upsert (overwrite) the previous definition.
-- **R-001-9**: Updating a job MUST merge the patch onto the existing definition and re-validate the merged result against `JobSchema`.
+- **R-001-8**: Creating a job with an existing ID MUST fail with `JOB_ALREADY_EXISTS` and MUST leave the existing definition unchanged, unless the caller explicitly requests overwrite intent (`--force` on the CLI, `force: true` on library/MCP, or `force=1|true` on the HTTP route). This is a breaking change from the earlier silent-upsert create behavior; see ADR 0021.
+- **R-001-9**: Updating a job MUST merge the patch onto the existing definition, re-validate the merged result against `JobSchema`, and complete schedule validation before any persistence. If validation fails, the previously stored job MUST remain unchanged.
 - **R-001-10**: Deleting a job MUST remove both the JSON file and the SQLite row; the scheduler MUST unschedule the job.
 - **R-001-11**: A `script` action MUST have a non-empty `script` string. The `shell` field MUST default to `"auto"`.
 - **R-001-12**: An `exec` action MUST have a non-empty `command` string. The `args` field MUST default to `[]`.
@@ -55,16 +55,18 @@ daemon to validate and persist jobs without surface-specific logic.
 
 ## Behavior
 
-1. Client receives a job definition (create or update).
+1. Client receives a job definition (create or update), plus any surface-specific overwrite intent (`--force`, `force: true`, or `force=1|true`) out of band from the persisted `Job` object.
 2. Input is normalized via `normalizeJobInput` (reads `promptFile` if present, applies defaults).
 3. The normalized input is validated against `JobSchema` (Zod discriminated union).
-4. On success, the daemon API persists via `Store.upsertJob()`: writes JSON file + SQLite row + schema sidecar.
-5. The scheduler is invoked to register or update the timer for the job.
-6. On update, the existing job is fetched, merged with the patch, and re-validated as a full job.
+4. On create, if the ID already exists and overwrite intent was not supplied, the operation fails with `JOB_ALREADY_EXISTS` before any persistence.
+5. Schedule validation runs before any persistence; if it fails, no new job is written and an existing job remains unchanged.
+6. On success, the daemon API persists via `Store.upsertJob()`: writes JSON file + SQLite row + schema sidecar.
+7. The scheduler is invoked to register or update the timer for the job.
+8. On update, the existing job is fetched, merged with the patch, and re-validated as a full job before persistence.
 
 ## Inputs and outputs
 
-**Create input**: Full `JobInput` (Zod input type of `JobSchema`).
+**Create input**: Full `JobInput` (Zod input type of `JobSchema`), plus optional overwrite intent supplied by the calling surface rather than stored on the `Job` itself.
 **Update input**: Partial patch merged with existing job; result must validate as `Job`.
 **Output**: The persisted `Job` object (with defaults applied).
 
@@ -74,7 +76,8 @@ daemon to validate and persist jobs without surface-specific logic.
 - Missing required fields (`schedule`, `action`): MUST reject with `VALIDATION_ERROR`.
 - Unknown keys in action object: MUST reject (strict schemas).
 - Job ID not found on update/delete: MUST return `NOT_FOUND` error.
-- Duplicate create: silent upsert (not an error).
+- Duplicate create without explicit overwrite intent: MUST reject with `JOB_ALREADY_EXISTS`; the prior job definition remains unchanged.
+- Invalid schedule on create/update: MUST reject before persistence, so create writes nothing and update preserves the prior job.
 - `timeoutSec` <= 0: MUST reject (schema requires `.positive()`).
 - `retry.max` with fractional value: MUST reject (schema requires `.int()`).
 
@@ -83,7 +86,8 @@ daemon to validate and persist jobs without surface-specific logic.
 - [x] Kebab-case validation rejects invalid IDs (test file: `tests/job-input.test.ts`)
 - [x] Default values applied correctly for overlap, retry, enabled (test file: `tests/property.schema.test.ts`)
 - [x] Strict action schemas reject unknown keys (test file: `tests/property.schema.test.ts`)
-- [x] Upsert overwrites existing job (test file: `tests/store.test.ts`)
+- [x] Duplicate create rejects by default and explicit `force` replaces the existing job (test file: `tests/job-create-duplicate.ctd-005.test.ts`)
+- [x] Invalid schedule on create/update persists nothing / preserves the original job (test file: `tests/job-create-atomicity.ctd-004.test.ts`)
 - [x] Delete removes file and SQLite row (test file: `tests/store.test.ts`)
 - [x] Schema sidecar written on persist (test file: `tests/store.test.ts`)
 - [x] Prompt action validates reserved args (test file: `tests/job-input.test.ts`)

@@ -2,7 +2,7 @@
 
 - Status: Active
 - Owner: crontick maintainers
-- Last reviewed: 2026-07-25
+- Last reviewed: 2026-07-28
 
 ## Summary
 
@@ -30,6 +30,7 @@ both human-editability of jobs and efficient querying of run history.
 | Orphan run | A `queued` or `running` run left behind after a daemon crash or unclean shutdown; resolved on the next startup via a process-liveness check (see R-006-13). |
 | Missed run | A terminal `missed`-status run recorded at daemon startup for a scheduled fire that occurred while no daemon process was running; never executed (see spec 004 R-004-28). |
 | Schedule state | The `job_schedule_state` row for a job: its last-observed live tick, used to compute missed fires. |
+| Read-time redaction | Defensive masking applied when config values, run rows, log lines, or dashboard payloads are returned from user-facing read surfaces, including data that may already be on disk. |
 
 ## Requirements
 
@@ -49,7 +50,7 @@ both human-editability of jobs and efficient querying of run history.
 - **R-006-12**: The full schema (all tables and indexes above, plus `job_schedule_state` per R-006-24) MUST be created in one idempotent `CREATE TABLE/INDEX IF NOT EXISTS` pass on `open()`. There MUST be no migration ledger, no versioned migration list, and no runtime schema-version check; a `runs.db` produced by a crontick version before 1.0.0 is explicitly unsupported input (see ADR 0017).
 - **R-006-13**: On startup, `reconcileOrphanRuns(check)` MUST resolve every run left `queued` or `running` by a prior daemon process: `queued` runs (never spawned) MUST be canceled unconditionally; `running` runs MUST be checked against real process liveness using the recorded `pid` and `started_at` (comparing the process's actual start time within a tolerance, to detect pid reuse) -- a run whose process is confirmed alive, or whose check is inconclusive, MUST be adopted back into the runner rather than canceled; a run whose process is confirmed dead MUST be canceled with error set to `ORPHAN_RUN_ERROR_MESSAGE` (`"DAEMON_RESTART: run was canceled because the daemon restarted while it was queued or running"`, `src/errors.ts`), keyed by the structured code `ORPHAN_RUN_ERROR_CODE` (`"DAEMON_RESTART"`) rather than an ad hoc literal.
 - **R-006-14**: `listRuns()` MUST support filtering by `jobId`, `since` (epoch ms), `status`, and `limit`; results MUST be ordered by `started_at DESC`.
-- **R-006-15**: `appendLog()` MUST insert a new row into `run_logs` with the current timestamp.
+- **R-006-15**: `appendLog()` MUST insert a new row into `run_logs` with the current timestamp. Text-like output is expected to have already passed through runner redaction before persistence (see spec 003 R-003-12).
 - **R-006-16**: `getLogs()` MUST return all log entries for a run ordered by insertion order (id ASC).
 - **R-006-17**: Malformed job JSON files (parse failure or schema validation failure) MUST be silently skipped during `loadJobsFromDisk()`.
 - **R-006-18**: Config file MUST be located at `<dataDir>/config.json`.
@@ -59,6 +60,8 @@ both human-editability of jobs and efficient querying of run history.
 - **R-006-25**: `getScheduleState(jobId)` MUST return the stored `last_tick_at` for a job, or `undefined` if the job has never ticked while a daemon was running (e.g. a brand-new job, or one created since the last daemon start).
 - **R-006-26**: `recordMissedRun(jobId, firedAtMs)` MUST insert a terminal run row with `status = 'missed'`, no `pid`, `error` set to `MISSED_RUN_ERROR_MESSAGE` (`"MISSED: daemon was not running at the scheduled fire time"`, `src/daemon/store.ts`), and `started_at`/`ended_at` both set to the missed fire time. Missed runs MUST be ordinary rows subject to the same retention cap and `listRuns`/export behavior as any other terminal run.
 - **R-006-27**: `importRuns(runs)` MUST bulk-insert previously-exported run rows (from `crontick export --include-runs`) as archival data only -- no execution, no scheduler interaction. Each row MUST be validated individually against `RunImportSchema`; a row that fails validation, or whose `job_id` does not exist in this store, MUST be skipped (recorded in `skipped: Array<{ id, error }>`) without aborting the rest of the batch. Each valid row's insert MUST be wrapped independently (a single row's insert failure MUST NOT abort remaining rows). It MUST be idempotent on `id` (`INSERT OR IGNORE`: a row already present is left untouched and not counted as imported), returning `{ imported, skipped }`. After the batch, the store MUST run `pruneRunsForJob()` once per job that received at least one imported row, so an import cannot leave a job over its retention cap.
+- **R-006-28**: Read surfaces that serialize config values, run rows, run logs, or dashboard payloads MUST apply redaction defensively at read time as well, so secret-like values already on disk or introduced through config reads are masked consistently even if they predate current capture-time redaction patterns.
+- **R-006-29**: Config read helpers (`config get`, library, MCP, and equivalent HTTP-backed reads) MUST redact returned secret-like values without mutating the underlying `config.json` bytes on disk.
 
 ### Non-functional requirements
 
@@ -113,6 +116,7 @@ both human-editability of jobs and efficient querying of run history.
 - Config file has syntax errors: `CONFIG_READ_ERROR` thrown with fix instructions.
 - `importRuns()` given a run whose `job_id` no longer exists: that row is skipped and reported, the rest of the batch still imports.
 - `reconcileOrphanRuns()`'s liveness check throws or cannot determine an answer: treated as inconclusive, and the run is adopted rather than canceled (favors not silently losing in-flight work over the smaller risk of double-running).
+- Secret-like text already present in persisted logs or config: read surfaces still redact it defensively before returning it.
 
 ## Acceptance criteria
 
@@ -130,6 +134,7 @@ both human-editability of jobs and efficient querying of run history.
 - [x] `job_schedule_state`: `recordTick`/`getScheduleState` seed and advance a job's watermark (test file: `tests/store.test.ts`, "getScheduleState ..." / "recordTick ..." describe block, lines 275-294)
 - [x] `recordMissedRun` inserts a terminal `missed` run with no pid, subject to the same retention cap as any other run (test file: `tests/store.test.ts`, lines 210-238)
 - [x] `importRuns` validates each row individually, skips malformed rows or rows for missing jobs without aborting the batch, is idempotent on `id`, and prunes affected jobs back to their retention cap afterward (test file: `tests/store.test.ts`, `describe('Store.importRuns', ...)`; exercised end-to-end via `tests/cli.test.ts`, line ~760; `tests/mcp.test.ts`, line ~709)
+- [x] Read-time redaction applies consistently to config, run, log, and dashboard read surfaces, including pre-existing stored values (test file: `tests/secret-redaction.ctd-003.test.ts`)
 
 ## Out of scope
 

@@ -2,7 +2,7 @@
 
 - Status: Active
 - Owner: crontick maintainers
-- Last reviewed: 2026-07-25
+- Last reviewed: 2026-07-28
 
 ## Summary
 
@@ -59,6 +59,7 @@ need for OS service registration while ensuring the daemon is available when nee
 - **R-004-29**: A job with no recorded `job_schedule_state` watermark (never observed ticking live) MUST have its watermark seeded from the current time on startup rather than have a gap computed against it, since there is no prior observation to diff against.
 - **R-004-30**: On startup, and again on `POST /api/daemon/reload`, the daemon MUST prune daily log files under `<dataDir>/logs/` beyond `retention.maxLogFiles` (default 30, range 1..3650), deleting the oldest first and keeping the newest. Pruning MUST be best-effort: a failure MUST be logged but MUST NOT block startup or reload.
 - **R-004-31**: `DELETE /api/jobs/:id` MUST cancel the job's in-flight run, if any, as part of the delete, and MUST report whether it did so via a `canceledRun: boolean` field in the response.
+- **R-004-32**: `POST /api/jobs` MUST reject a duplicate job ID with HTTP 409 / `JOB_ALREADY_EXISTS` unless the caller passes `force=1` or `force=true` on the query string. Both `POST /api/jobs` and `PUT /api/jobs/:id` MUST validate the candidate schedule before any call to `Store.upsertJob()`; on failure they MUST return `VALIDATION_ERROR` and leave persisted job state unchanged.
 
 ### Non-functional requirements
 
@@ -125,6 +126,8 @@ adopts or cancels them based on liveness.
 - EPIPE on stderr (parent detached): Swallowed silently.
 - Daemon script not found (not built): `NOT_BUILT` error with actionable message.
 - Port file contains non-integer: Treated as absent.
+- Duplicate create without `force`: API returns 409 / `JOB_ALREADY_EXISTS` and leaves the stored job unchanged.
+- Invalid schedule on create/update: API returns `VALIDATION_ERROR` before any persistence, so create writes nothing and update preserves the prior job.
 - Health response with wrong product name: Treated as unhealthy (not our daemon).
 
 ## Acceptance criteria
@@ -141,6 +144,7 @@ adopts or cancels them based on liveness.
 - [x] `POST /api/daemon/stop` reports `activeRuns` still in progress instead of silently abandoning them (test file: `tests/integration.daemon-lifecycle.test.ts`, "POST /api/daemon/stop reports runs still in progress instead of silently abandoning them (Major 4)")
 - [x] `crontick daemon stop` reports `mode: 'graceful'` when the HTTP route succeeds and exits promptly, and escalates to `SIGTERM` then `SIGKILL` (reporting `mode: 'hard-kill'`) when the route stalls or is unreachable (test file: `tests/integration.daemon-lifecycle.test.ts`, "stopDaemon escalates to SIGTERM/SIGKILL when the graceful HTTP route accepts the stop but the process never exits (Major 3)")
 - [x] `DELETE /api/jobs/:id` cancels the job's active run instead of orphaning its process, reporting `canceledRun` (test file: `tests/integration.daemon-lifecycle.test.ts`, "DELETE /api/jobs/:id cancels the job's active run instead of orphaning its process (Major 4)")
+- [x] `POST /api/jobs` rejects duplicate IDs unless `force` is explicit, and `POST`/`PUT` validate schedules before persistence (test files: `tests/job-create-duplicate.ctd-005.test.ts`, `tests/job-create-atomicity.ctd-004.test.ts`)
 - [x] Startup prunes daemon log files beyond `retention.maxLogFiles`, keeping the newest, and a reload applies a newly-lowered cap without a restart (test file: `tests/integration.daemon-lifecycle.test.ts`, "startup prunes old daemon log files beyond retention.maxLogFiles, keeping the newest"; "reload applies a newly-lowered retention.maxLogFiles without a daemon restart")
 - [x] Missed fires across a crash/restart are recorded as `missed` runs and surfaced in `daemon status`'s `missedFires` summary (test file: `tests/integration.daemon-lifecycle.test.ts`, "records missed fires across a crash/restart and surfaces them in status"; `tests/api.test.ts`, "GET /api/daemon/status includes missedFires summary")
 - [x] Reload reschedules all jobs from disk (test file: `tests/integration.daemon-lifecycle.test.ts`)

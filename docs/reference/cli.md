@@ -17,6 +17,10 @@ Complete reference for the `crontick` command-line interface.
 | `0` | Success |
 | `1` | Error (any `CrontickError`, failed `doctor`, or failed `config validate`) |
 
+Unless otherwise noted, read commands that surface config values, run errors, captured
+output, or dashboard data redact common secret shapes before printing. The same shared
+redaction contract applies on CLI, library, MCP, and HTTP read surfaces.
+
 ---
 
 ## Commands
@@ -53,6 +57,7 @@ crontick new <id> [engineArgs...]
 | `--session-id <id>` | string | — | Reuse this prompt engine session every run |
 | `--reuse-session` | boolean | `false` | Capture first successful run session id and reuse it |
 | `--file <path>` | string | — | Load job JSON from a file |
+| `--force` | boolean | `false` | Replace an existing job when the same id already exists |
 | `--shell <shell>` | string | `auto` (create only) | Shell: `auto`\|`bash`\|`pwsh`\|`cmd`\* |
 | `--env-file <path>` | string | — | Load extra environment variables from a `.env` file |
 | `--timeout <sec>` | integer | — | Timeout in seconds |
@@ -96,6 +101,13 @@ shell. Need to set `action.args` directly without going through argv parsing at 
 with an explicit `action.args` array. See [job-schema.md](job-schema.md#kind-exec) for the `exec`
 action's JSON shape.
 
+On Windows, a PowerShell-backed `--script` job (`shell: auto` resolving to `pwsh`, or an
+explicit `--shell pwsh` / `powershell`) is wrapped so uncaught terminating errors,
+non-terminating `Write-Error`, command-not-found, missing-module errors, and native
+non-zero exits all fail the run with a non-zero exit status instead of a false success.
+An explicit `exit N` still wins. Captured stdout/stderr is emitted and stored as UTF-8,
+independent of the console's OEM code page.
+
 #### Windows shells: `--arg` vs `--`
 
 `--arg` works correctly on every real entry point. `--` is a convenience that is not reliable
@@ -119,6 +131,13 @@ quotes before Node ever sees them.
 `npx crontick` instead — both forward `--arg` correctly, including embedded quotes.
 
 Exactly one schedule source (`--cron`, `--every`, `--at`) and one action source (`--script`, `--exec`, `--prompt`, `--prompt-file`) are required unless `--file` is used.
+
+Creating a job is no longer a silent upsert. If `<id>` already exists, `crontick new`
+fails with `JOB_ALREADY_EXISTS` and leaves the existing definition unchanged. Use
+`crontick update <id>` for in-place edits, or pass `--force` when you intentionally want
+create to replace the existing job. Schedule validation also happens before any
+persistence, so an invalid `--cron` / `--every` / `--at` value never leaves a broken job
+behind.
 
 ```bash
 crontick new daily-backup --cron "0 2 * * *" --script "pg_dump mydb > /backups/db.sql"
@@ -334,6 +353,10 @@ crontick config get [path]
 | Positional | Type | Description |
 |------------|------|-------------|
 | `path` | string (optional) | Dot-separated config path (e.g. `engines.copilot.command`) |
+
+Returns the effective config with secret-like values redacted. The underlying
+`config.json` file on disk is not rewritten; read it directly if you need the literal
+stored bytes.
 
 ---
 
