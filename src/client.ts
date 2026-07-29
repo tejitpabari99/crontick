@@ -8,6 +8,7 @@
  * Transport failures are converted to structured `CrontickError` instances with
  * machine-readable codes; see `src/errors.ts`.
  */
+import http from 'node:http';
 import { CrontickError } from './errors.js';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -115,6 +116,12 @@ export interface JobStats {
   failed: number;
   lastStatus: string | null;
   lastRunAt: number | null;
+}
+
+interface HttpTextResponse {
+  status: number;
+  ok: boolean;
+  text: string;
 }
 
 export class CrontickClient {
@@ -399,7 +406,7 @@ export class CrontickClient {
   ): Promise<T> {
     const ensure = options.ensure ?? true;
     const baseUrl = await this.baseUrl({ ensure });
-    let res: Response;
+    let res: HttpTextResponse;
     const startedAt = Date.now();
     this.logger.debug('HTTP request', { method, path, baseUrl, ensure });
     try {
@@ -421,7 +428,7 @@ export class CrontickClient {
         throw this.daemonRequestError(restarted.baseUrl, method, path, retryErr);
       }
     }
-    const text = await res.text();
+    const text = res.text;
     let data: unknown;
     try {
       data = text ? JSON.parse(text) : {};
@@ -483,12 +490,52 @@ export class CrontickClient {
     method: string,
     path: string,
     body: unknown,
-  ): Promise<Response> {
-    return fetch(`${baseUrl}${path}`, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(this.options.requestTimeoutMs ?? 30_000),
+  ): Promise<HttpTextResponse> {
+    return new Promise((resolve, reject) => {
+      const url = new URL(path, baseUrl);
+      const timeoutMs = this.options.requestTimeoutMs ?? 30_000;
+      const payload = body !== undefined ? JSON.stringify(body) : undefined;
+      const headers: Record<string, string> = {
+        Accept: 'application/json',
+        Connection: 'close',
+      };
+      if (payload !== undefined) {
+        headers['Content-Type'] = 'application/json';
+        headers['Content-Length'] = String(Buffer.byteLength(payload));
+      }
+
+      let settled = false;
+      const finish = <T>(action: (value: T) => void, value: T): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        action(value);
+      };
+
+      const req = http.request(url, { method, headers, agent: false }, (res) => {
+        res.setEncoding('utf8');
+        const chunks: string[] = [];
+        res.on('data', (chunk) => chunks.push(chunk));
+        res.on('end', () => {
+          const status = res.statusCode ?? 0;
+          finish(resolve, {
+            status,
+            ok: status >= 200 && status < 300,
+            text: chunks.join(''),
+          });
+        });
+        res.on('aborted', () => finish(reject, new Error('Response aborted before completion')));
+        res.on('error', (err) => finish(reject, err));
+      });
+
+      const timeout = setTimeout(() => {
+        req.destroy(new Error(`Request timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      timeout.unref?.();
+
+      req.on('error', (err) => finish(reject, err));
+      if (payload !== undefined) req.write(payload);
+      req.end();
     });
   }
 

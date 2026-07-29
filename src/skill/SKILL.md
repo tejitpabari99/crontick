@@ -193,7 +193,7 @@ Common creation flags:
 - Session: `--session-id <id>` wins; `--reuse-session` without a session id captures one after the first successful run.
 - Prompt file: `--prompt-file <path.txt>` must point to a UTF-8 `.txt` file and is not persisted as a path.
 - Engine passthrough: arguments after `--` are stored exactly as `action.args`.
-- Shared fields: `--env-file <path>`, `--timeout <sec>`, `--overlap <skip|queue|cancel-previous>`, `--retry <max>`, `--desc <description>`.
+- Shared fields: `--job-env-file <path>`, `--timeout <sec>`, `--overlap <skip|queue|cancel-previous>`, `--retry <max>`, `--desc <description>`.
 - JSON input: `--file <path>` loads a full job; it is mutually exclusive with schedule/action flags and raw engine args.
 
 Validation rules:

@@ -618,14 +618,12 @@ describe('CLI e2e with daemon', () => {
   });
 
   it('crontick update preserves shell/envFile/timeoutSec when only --script is repeated', () => {
-    // Node's own `--env-file` startup flag is scanned globally in argv, even
-    // when it's meant for our CLI's --env-file option — point at a real file
-    // so Node doesn't error out before our script even runs.
+    // Use a real env file so the stored action.envFile can be asserted end-to-end.
     const envFilePath = join(dir, 'shell-preserve.env');
     writeFileSync(envFilePath, 'FOO=bar\n', 'utf-8');
     const created = cli([
       '--json', 'new', 'shell-preserve-job', '--cron', '0 9 * * *',
-      '--script', 'echo hi', '--shell', 'cmd', '--env-file', envFilePath, '--timeout', '30',
+      '--script', 'echo hi', '--shell', 'cmd', '--job-env-file', envFilePath, '--timeout', '30',
     ], env());
     expect(created.status, created.stderr).toBe(0);
     expect(JSON.parse(created.stdout).action).toMatchObject({ shell: 'cmd', envFile: envFilePath, timeoutSec: 30 });

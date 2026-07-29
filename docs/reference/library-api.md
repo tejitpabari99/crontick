@@ -110,6 +110,11 @@ See [errors.md](errors.md) for all known codes.
 function createClient(options?: CrontickClientOptions): CrontickClient;
 ```
 
+> Exit guidance: after daemon-backed calls, prefer `process.exitCode = n` and let Node exit
+> naturally instead of calling `process.exit(n)` immediately. The client now uses a short-lived
+> `node:http` transport to avoid the historical Windows native crash, but natural exit remains the
+> recommended library-consumer pattern.
+
 ---
 
 ## Interfaces
@@ -661,3 +666,4 @@ The full stored `runs.error` value written by `reconcileOrphanRuns()`.
 | `ConfigSchema` | `z.ZodObject` | Config file schema |
 | `EngineConfigSchema` | `z.ZodObject` | Single engine config |
 | `RetentionConfigSchema` | `z.ZodObject` | `{ maxRunsPerJob: number; maxOutputBytesPerRun: number; maxLogFiles: number }`, `.strict()`, defaults `100`/`2_000_000`/`30` |
+

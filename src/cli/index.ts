@@ -185,7 +185,7 @@ function commonJobOptions(command: Command): Command {
     // from "explicitly set to the default value" on both `new` and `update`.
     // `new` still defaults to auto/skip explicitly in job-input.ts.
     .option('--shell <shell>', 'Shell: auto|bash|pwsh|cmd (default on create: auto; omit on update to leave unchanged)')
-    .option('--env-file <path>', 'Load extra environment variables from a .env file')
+    .option('--job-env-file <path>', 'Load extra environment variables from a .env file')
     .option('--timeout <sec>', 'Timeout in seconds', parseInteger)
     .option('--overlap <policy>', 'Overlap policy: skip|queue|cancel-previous (default on create: skip; omit on update to leave unchanged)')
     .option('--retry <max>', 'Retry count', parseInteger)
@@ -210,7 +210,7 @@ function collectJobOptions(id: string, engineArgs: string[], opts: Record<string
     sessionId: stringOption(opts.sessionId),
     reuseSession: booleanOption(opts.reuseSession),
     shell: stringOption(opts.shell),
-    envFile: stringOption(opts.envFile),
+    envFile: stringOption(opts.jobEnvFile),
     timeout: numberOption(opts.timeout),
     overlap: stringOption(opts.overlap),
     retry: numberOption(opts.retry),
@@ -237,7 +237,7 @@ function collectPatchOptions(engineArgs: string[], opts: Record<string, unknown>
     sessionId: stringOption(opts.sessionId),
     reuseSession: booleanOption(opts.reuseSession),
     shell: stringOption(opts.shell),
-    envFile: stringOption(opts.envFile),
+    envFile: stringOption(opts.jobEnvFile),
     timeout: numberOption(opts.timeout),
     overlap: stringOption(opts.overlap),
     retry: numberOption(opts.retry),

@@ -87,6 +87,11 @@ const jobs = await client.listJobs();
 console.log(jobs.map(j => j.id));
 ```
 
+> Library exit guidance: after daemon-backed calls, prefer `process.exitCode = n` and let Node exit
+> naturally instead of calling `process.exit(n)` immediately. crontick's client now uses a
+> short-lived `node:http` loopback transport to avoid the historical Windows native crash, but
+> natural exit remains the safest pattern for library consumers.
+
 ---
 
 ## Common use cases
@@ -247,10 +252,15 @@ follows semver strictly. On-disk state format compatibility is covered by
 [specs/006-state-and-persistence.md](specs/006-state-and-persistence.md).
 
 The pending 1.0.0 release consumes the changesets in `.changeset/`; see them for the
-behavior it introduces. One breaking change already queued there: creating a job is no
-longer a silent upsert. A duplicate id now fails with `JOB_ALREADY_EXISTS` unless you
-pass explicit overwrite intent (`--force` on the CLI, `force: true` in library/MCP);
-invalid schedules are rejected before any existing job can be replaced.
+behavior it introduces. Breaking changes already queued there include:
+
+- creating a job is no longer a silent upsert. A duplicate id now fails with
+  `JOB_ALREADY_EXISTS` unless you pass explicit overwrite intent (`--force` on the CLI,
+  `force: true` in library/MCP); invalid schedules are rejected before any existing job can
+  be replaced.
+- the CLI-only job env-file flag is now `--job-env-file`. The persisted job JSON and the
+  library/MCP/HTTP field name remain `action.envFile`; the old CLI spelling `--env-file`
+  could not be kept as an alias because Node.js intercepts it before crontick starts.
 
 ---
 
@@ -292,3 +302,4 @@ See [SECURITY.md](SECURITY.md) for the full security model.
 ## License
 
 [MIT](LICENSE) - crontick contributors
+

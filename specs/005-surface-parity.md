@@ -71,6 +71,7 @@ The drift test (`tests/surface-drift.test.ts`) performs four checks:
 
 - New client method added without surface entry: Test 2 fails naming the method.
 - New parity-coupled option added on only one surface (for example CLI-only `--force` on create): behavioral parity drifts even though the capability count stays the same; document the option on the existing capability row and update all three surfaces together.
+- Surface spellings MAY intentionally differ when a host runtime reserves a token. Example: the CLI's `--job-env-file` flag maps to the same persisted `action.envFile` field used by the library, MCP, and HTTP JSON surfaces because Node intercepts `--env-file` before crontick can safely parse it.
 - New MCP tool added without surface entry: Test 4 reports unexpected tool.
 - CLI command fails to register (typo in command name): Test 3 fails with non-zero exit.
 - MCP server fails to start (build broken): Test 4 times out or errors on connect.

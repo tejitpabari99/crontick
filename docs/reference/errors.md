@@ -129,7 +129,7 @@ class CrontickError extends Error {
 
 | | |
 |---|---|
-| **When** | `--env-file` path does not exist or cannot be read |
+| **When** | Job `action.envFile` / CLI `--job-env-file` path does not exist or cannot be read |
 | **Message shape** | Includes file path |
 | **Details** | — |
 

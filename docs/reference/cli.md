@@ -59,7 +59,7 @@ crontick new <id> [engineArgs...]
 | `--file <path>` | string | — | Load job JSON from a file |
 | `--force` | boolean | `false` | Replace an existing job when the same id already exists |
 | `--shell <shell>` | string | `auto` (create only) | Shell: `auto`\|`bash`\|`pwsh`\|`cmd`\* |
-| `--env-file <path>` | string | — | Load extra environment variables from a `.env` file |
+| `--job-env-file <path>` | string | — | Load extra environment variables from a `.env` file |
 | `--timeout <sec>` | integer | — | Timeout in seconds |
 | `--overlap <policy>` | string | `skip` (create only) | Overlap policy: `skip`\|`queue`\|`cancel-previous`\* |
 | `--retry <max>` | integer | `0` | Retry count |
@@ -138,6 +138,11 @@ fails with `JOB_ALREADY_EXISTS` and leaves the existing definition unchanged. Us
 create to replace the existing job. Schedule validation also happens before any
 persistence, so an invalid `--cron` / `--every` / `--at` value never leaves a broken job
 behind.
+
+`--job-env-file` is a CLI-only spelling. It still populates the persisted `action.envFile`
+field, and library/MCP/HTTP JSON continue to use `envFile`. The old `--env-file` CLI flag
+was removed as a breaking change because Node.js intercepts that token before Commander ever
+runs, so there is no safe alias or deprecation path inside crontick.
 
 ```bash
 crontick new daily-backup --cron "0 2 * * *" --script "pg_dump mydb > /backups/db.sql"
