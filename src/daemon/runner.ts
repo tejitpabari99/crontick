@@ -311,7 +311,23 @@ export class Runner {
           lastResult = { status: 'canceled', error: 'canceled before retry' };
           break;
         }
-        lastResult = await this.spawn(job, runId, store, ctrl.signal);
+        try {
+          lastResult = await this.spawn(job, runId, store, ctrl.signal);
+        } catch (err) {
+          lastResult = this.runResultFromError(err, ctrl.signal);
+          this.logger.error('Run attempt failed before child completion', {
+            jobId: job.id,
+            runId,
+            attempt,
+            status: lastResult.status,
+            error: lastResult.error,
+          });
+          this.appendDiagnosticLog(store, runId, 'attempt failed before child completion', {
+            attempt,
+            status: lastResult.status,
+            error: lastResult.error,
+          });
+        }
         this.logger.debug('Run attempt completed', { jobId: job.id, runId, attempt, status: lastResult.status, exitCode: lastResult.exitCode });
         this.appendDiagnosticLog(store, runId, 'attempt completed', { attempt, status: lastResult.status, exitCode: lastResult.exitCode });
         if (lastResult.status === 'success') break;
@@ -655,6 +671,14 @@ export class Runner {
         }
       }
     }
+  }
+
+
+  private runResultFromError(err: unknown, signal: AbortSignal): RunResult {
+    if ((err as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal.aborted) {
+      return { status: 'canceled', error: 'aborted' };
+    }
+    return { status: 'failed', error: errorMessage(err) };
   }
 
   private async finalizeRun(store: Store, runId: string, result: RunResult): Promise<void> {

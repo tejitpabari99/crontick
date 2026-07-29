@@ -177,8 +177,16 @@ async function handleRequest(
         const job = ctx.store.getJob(id);
         if (!job) return sendError(res, 404, 'NOT_FOUND', `Job ${id} not found`);
         const run = ctx.store.insertRun(id);
-        // Fire-and-forget: return 202 immediately while the run executes async
-        ctx.runner.run(job, run.id, ctx.store).catch(() => {});
+        // Fire-and-forget: return 202 immediately while the run executes async.
+        // Any rejection here is an invariant violation: Runner.run() should
+        // always totalize the run row itself before resolving.
+        ctx.runner.run(job, run.id, ctx.store).catch((err: unknown) => {
+          logger.error('Runner.run rejected after POST /api/jobs/:id/run returned 202', {
+            jobId: id,
+            runId: run.id,
+            error: err instanceof Error ? (err.stack ?? err.message) : String(err),
+          });
+        });
         return sendJson(res, 202, { runId: run.id });
       }
     }
