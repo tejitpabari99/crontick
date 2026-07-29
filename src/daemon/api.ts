@@ -99,6 +99,7 @@ async function handleRequest(
         return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid job', parsed.error.format());
       }
       const job = applyConfigDefaults(parsed.data);
+      if (!validateJobSchedule(res, ctx.scheduler, job.schedule)) return;
       ctx.store.upsertJob(job);
       const stored = ctx.store.getJob(job.id) ?? job;
       ctx.scheduler.schedule(stored);
@@ -129,6 +130,7 @@ async function handleRequest(
           return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid job', parsed.error.format());
         }
         const job = applyConfigDefaults(parsed.data);
+        if (!validateJobSchedule(res, ctx.scheduler, job.schedule)) return;
         ctx.store.upsertJob(job);
         const stored = ctx.store.getJob(id) ?? job;
         ctx.scheduler.schedule(stored);
@@ -412,6 +414,19 @@ async function handleRequest(
     const msg = err instanceof Error ? err.message : String(err);
     return sendError(res, 500, 'INTERNAL_ERROR', msg);
   }
+}
+
+function validateJobSchedule(
+  res: http.ServerResponse,
+  scheduler: Scheduler,
+  schedule: Parameters<Scheduler['validateSchedule']>[0],
+): boolean {
+  const result = scheduler.validateSchedule(schedule);
+  if (!result.ok) {
+    sendError(res, 400, 'VALIDATION_ERROR', 'Invalid schedule', result.error);
+    return false;
+  }
+  return true;
 }
 
 // ── SSE log streaming ─────────────────────────────────────────────────────────
