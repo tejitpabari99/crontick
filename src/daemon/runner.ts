@@ -350,6 +350,7 @@ export class Runner {
     signal: AbortSignal,
   ): Promise<RunResult> {
     const { action } = job;
+    const tempFiles: string[] = [];
     let tmpFile: string | undefined;
 
     try {
@@ -367,17 +368,28 @@ export class Runner {
         const ext = resolveShellExt(action.shell ?? 'auto');
         const tmpDir = join(tmpdir(), 'crontick');
         mkdirSync(tmpDir, { recursive: true });
-        tmpFile = join(tmpDir, `${randomUUID()}${ext}`);
-        writeFileSync(tmpFile, action.script, { encoding: 'utf-8', mode: 0o700 });
 
         const resolved = resolveShell(action.shell ?? 'auto');
         if (resolved === 'pwsh') {
+          const userScriptFile = join(tmpDir, `${randomUUID()}.user.ps1`);
+          tmpFile = join(tmpDir, `${randomUUID()}${ext}`);
+          tempFiles.push(userScriptFile, tmpFile);
+          writeFileSync(userScriptFile, action.script, { encoding: 'utf-8', mode: 0o700 });
+          // Deliberately invoke the user's script from a wrapper file so pwsh can
+          // report truthful failures while an explicit user `exit N` still wins.
+          writeFileSync(tmpFile, buildPowerShellScriptWrapper(userScriptFile), { encoding: 'utf-8', mode: 0o700 });
           cmd = 'pwsh';
           args = ['-NoProfile', '-NonInteractive', '-File', tmpFile];
         } else if (resolved === 'cmd') {
+          tmpFile = join(tmpDir, `${randomUUID()}${ext}`);
+          tempFiles.push(tmpFile);
+          writeFileSync(tmpFile, action.script, { encoding: 'utf-8', mode: 0o700 });
           cmd = 'cmd';
           args = ['/c', tmpFile];
         } else {
+          tmpFile = join(tmpDir, `${randomUUID()}${ext}`);
+          tempFiles.push(tmpFile);
+          writeFileSync(tmpFile, action.script, { encoding: 'utf-8', mode: 0o700 });
           cmd = 'bash';
           args = [tmpFile];
         }
@@ -663,9 +675,10 @@ export class Runner {
 
       return result;
     } finally {
-      if (tmpFile && existsSync(tmpFile)) {
+      for (const tempFile of tempFiles) {
+        if (!existsSync(tempFile)) continue;
         try {
-          unlinkSync(tmpFile);
+          unlinkSync(tempFile);
         } catch {
           // ignore cleanup failure
         }
@@ -739,6 +752,31 @@ function resolveShellExt(shell: string): string {
   if (resolved === 'pwsh') return '.ps1';
   if (resolved === 'cmd') return '.bat';
   return '.sh';
+}
+
+function buildPowerShellScriptWrapper(userScriptPath: string): string {
+  const escapedUserScriptPath = escapePowerShellSingleQuotedString(userScriptPath);
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    '$global:LASTEXITCODE = 0',
+    'trap {',
+    '  [Console]::Error.WriteLine($_.ToString())',
+    '  if ($global:LASTEXITCODE -is [int] -and $global:LASTEXITCODE -ne 0) {',
+    '    exit $global:LASTEXITCODE',
+    '  }',
+    '  exit 1',
+    '}',
+    `& '${escapedUserScriptPath}'`,
+    'if ($global:LASTEXITCODE -is [int] -and $global:LASTEXITCODE -ne 0) {',
+    '  exit $global:LASTEXITCODE',
+    '}',
+    'exit 0',
+    '',
+  ].join('\n');
+}
+
+function escapePowerShellSingleQuotedString(value: string): string {
+  return value.replace(/'/g, "''");
 }
 
 /**
