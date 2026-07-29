@@ -212,7 +212,7 @@ The runner does not wrap prompt jobs in a shell. It builds one of these commands
 | Prompt engine | Child command |
 |---|---|
 | `agency` | `agency cp -p <prompt> <action.args...> [--session-id <id>]` |
-| `copilot` | `copilot -p <prompt> <action.args...> [--session-id <id>]` |
+| `copilot` | `copilot --allow-all-tools -p <prompt> <action.args...> [--session-id <id>]` |
 
 Mapping details:
 
@@ -243,7 +243,7 @@ crontick new daily-copilot-check --cron "0 8 * * *" --tz America/Los_Angeles --p
 Runner command:
 
 ```text
-copilot -p "Review overnight failures." --add-dir Q:\Repos\crontick --session-id abc123
+copilot --allow-all-tools -p "Review overnight failures." --add-dir Q:\Repos\crontick --session-id abc123
 ```
 
 
@@ -296,7 +296,7 @@ copilot -p "Review overnight failures." --add-dir Q:\Repos\crontick --session-id
 
 - ❌ Do NOT use `action.kind: "llm-prompt"`; use `action.kind: "prompt"`.
 - ❌ Do NOT set `action.provider`; use `action.engine`.
-- ❌ Do NOT wrap prompt jobs in script bodies that call `copilot -p` or `agency cp -p`.
+- ❌ Do NOT wrap prompt jobs in script bodies that call `copilot --allow-all-tools -p` or `agency cp -p`.
 - ❌ Do NOT pass both `--session-id` and `--reuse-session`.
 - ❌ Do NOT call delete or disable tools without explicit confirmation.
 - ❌ Do NOT edit crontick job JSON, run databases, or daemon state files directly.
@@ -326,7 +326,7 @@ crontick new weekday-repo-summary --cron "0 9 * * mon-fri" --tz America/Los_Ange
 crontick new daily-code-health --cron "0 8 * * *" --tz America/Los_Angeles --prompt-file .\prompts\health.txt --engine copilot --reuse-session -- --add-dir Q:\Repos\crontick --allow-all-tools
 ```
 
-The `.txt` file is read before creation; the runner later calls `copilot -p <file contents> ...`.
+The `.txt` file is read before creation; the runner later calls `copilot --allow-all-tools -p <file contents> ...`.
 
 ### Example 3 — Weekly dependency cleanup script
 

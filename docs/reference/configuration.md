@@ -43,7 +43,7 @@ The data directory is resolved by (in order):
 | Field | Type | Required | Default | Constraints |
 |-------|------|----------|---------|-------------|
 | `defaultEngine` | `string` | no | `"copilot"` | Must match a key in `engines`; regex `^[A-Za-z0-9_.-]+$` |
-| `engines` | `Record<string, EngineConfig>` | no | `{ copilot: { command: "copilot", args: [], env: {} } }` | At least one engine must be defined |
+| `engines` | `Record<string, EngineConfig>` | no | `{ copilot: { command: "copilot", args: ["--allow-all-tools", "-p"], env: {} } }` | At least one engine must be defined |
 | `retention` | `RetentionConfig` | no | `{ maxRunsPerJob: 100, maxOutputBytesPerRun: 2000000, maxLogFiles: 30 }` | See below |
 
 ### RetentionConfig
@@ -91,7 +91,7 @@ Schema is `.strict()` — no extra fields allowed.
 {
   "defaultEngine": "copilot",
   "engines": {
-    "copilot": { "command": "copilot", "args": [], "env": {} }
+    "copilot": { "command": "copilot", "args": ["--allow-all-tools", "-p"], "env": {} }
   },
   "retention": {
     "maxRunsPerJob": 100,
@@ -102,6 +102,18 @@ Schema is `.strict()` — no extra fields allowed.
 ```
 
 If `config.json` does not exist, crontick uses this built-in config. The file config is deep-merged over the built-in defaults.
+
+### Prompt-engine argv ordering
+
+`buildPromptRunCommand()` always emits prompt-engine argv as `[..., ...engine.args, prompt, ...action.args]`.
+If an engine requires an explicit prompt-taking flag for non-interactive use, that flag must be
+the final entry in `engine.args` so the appended prompt text becomes its value. Put any other
+non-interactive/setup flags before it.
+
+For the built-in Copilot engine, the working default is `['--allow-all-tools', '-p']`, which
+produces `copilot --allow-all-tools -p <prompt>`. If you override `engines.copilot.args`, keep the
+prompt-taking flag last; `['-p', '--allow-all-tools']` is incorrect because `buildPromptRunCommand()`
+would pass `--allow-all-tools` as the prompt text.
 
 ### Set vs. Inherited Values
 
@@ -134,7 +146,7 @@ rewritten; read the file directly if you need the literal stored bytes.
   "engines": {
     "copilot": {
       "command": "copilot",
-      "args": ["-p"],
+      "args": ["--allow-all-tools", "-p"],
       "env": {}
     },
     "agency": {
@@ -146,7 +158,7 @@ rewritten; read the file directly if you need the literal stored bytes.
 }
 ```
 
-Custom engines (like `agency` above) are just configurable entries; only the `command` must be on PATH.
+Custom engines (like `agency` above) are just configurable entries; only the `command` must be on PATH. If a custom engine needs an explicit prompt-taking flag, keep that flag last in `args` for the same ordering reason described above.
 
 ### Config Key Path
 

@@ -49,7 +49,7 @@ describe('crontick config core', () => {
 
     expect(loadConfig({ env })).toEqual({
       defaultEngine: 'copilot',
-      engines: { copilot: { command: 'copilot', args: [], env: {} } },
+      engines: { copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {} } },
       retention: { maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 },
     });
     expect(validateConfigFile({ env })).toMatchObject({ ok: true, path, problems: [] });
@@ -65,7 +65,7 @@ describe('crontick config core', () => {
     expect(loadConfig({ env })).toMatchObject({
       defaultEngine: 'agency',
       engines: {
-        copilot: { command: 'copilot', args: [], env: {} },
+        copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {} },
         agency: { command: 'agency', args: ['cp', '--logs-dir=XYZ'], env: {} },
       },
     });
@@ -157,7 +157,7 @@ describe('crontick config core', () => {
     expect(client.getConfigValue('engines.agency.args')).toEqual(['cp', '--logs-dir=XYZ']);
     expect(client.setConfigValue('defaultEngine', 'copilot')).toMatchObject({ defaultEngine: 'copilot' });
     expect(client.removeEngine('agency')).not.toHaveProperty('engines.agency');
-    expect(client.removeConfigValue('engines.copilot.args')).toMatchObject({ engines: { copilot: { args: [] } } });
+    expect(client.removeConfigValue('engines.copilot.args')).toMatchObject({ engines: { copilot: { args: ['--allow-all-tools', '-p'] } } });
     expect(client.validateConfig()).toMatchObject({ ok: true, problems: [] });
   });
 
@@ -304,7 +304,7 @@ describe('crontick config core', () => {
 
       expect(getConfigValue(undefined, { env })).toEqual({
         defaultEngine: 'copilot',
-        engines: { copilot: { command: 'copilot', args: [], env: {} } },
+        engines: { copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {} } },
         retention: { maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 },
       });
     });

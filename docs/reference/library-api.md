@@ -618,7 +618,7 @@ const BUILT_IN_CONFIG: CrontickConfig;
 ```
 
 ```json
-{ "defaultEngine": "copilot", "engines": { "copilot": { "command": "copilot", "args": [], "env": {} } }, "retention": { "maxRunsPerJob": 100, "maxOutputBytesPerRun": 2000000, "maxLogFiles": 30 } }
+{ "defaultEngine": "copilot", "engines": { "copilot": { "command": "copilot", "args": ["--allow-all-tools", "-p"], "env": {} } }, "retention": { "maxRunsPerJob": 100, "maxOutputBytesPerRun": 2000000, "maxLogFiles": 30 } }
 ```
 
 ### SURFACE_CAPABILITIES

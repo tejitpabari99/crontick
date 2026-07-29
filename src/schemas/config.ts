@@ -57,7 +57,7 @@ export const RetentionConfigSchema = z.object({
 export const ConfigSchema = z.object({
   defaultEngine: EngineNameSchema.default('copilot'),
   engines: z.record(EngineNameSchema, EngineConfigSchema).default({
-    copilot: { command: 'copilot', args: [], env: {} },
+    copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {} },
   }),
   retention: RetentionConfigSchema.default({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 }),
 }).strict().superRefine((config, ctx) => {

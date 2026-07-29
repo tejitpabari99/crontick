@@ -132,6 +132,11 @@ crontick new healthcheck --every 30 --exec curl --arg -sf --arg http://localhost
 crontick new daily-summary --cron "0 9 * * *" --prompt "Summarize yesterday's git log" --engine copilot
 ```
 
+The built-in `copilot` engine is preconfigured for unattended prompt jobs with
+`--allow-all-tools -p`. If you override `engines.copilot.args`, keep the prompt-taking flag
+(`-p` / `--prompt`) last because crontick appends the prompt text immediately after the
+configured engine args.
+
 ### Wire into an MCP client
 
 Add to your MCP client configuration:

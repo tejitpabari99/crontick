@@ -34,7 +34,7 @@ reuse enables multi-turn conversations across runs.
 - **R-007-1**: A prompt action MUST have a non-empty `prompt` string.
 - **R-007-2**: The `engine` field MAY be omitted; when omitted, `config.defaultEngine` MUST be used.
 - **R-007-3**: Engine resolution MUST look up the engine name in `config.engines`; if not found, a `CONFIG_ENGINE_NOT_FOUND` error MUST be thrown.
-- **R-007-4**: `buildPromptRunCommand()` MUST construct the command line as: `[engine.command, ...engine.args, action.prompt, ...action.args]`. If `action.sessionId` is set, `--session-id=<id>` MUST be appended.
+- **R-007-4**: `buildPromptRunCommand()` MUST construct the command line as: `[engine.command, ...engine.args, action.prompt, ...action.args]`. Because `action.prompt` is appended immediately after `engine.args`, any engine that requires an explicit prompt-taking flag (for example `copilot -p` / `copilot --prompt`) MUST place that flag as the final configured engine arg, with any other non-interactive flags before it. If `action.sessionId` is set, `--session-id=<id>` MUST be appended.
 - **R-007-5**: The spawned process MUST use `shell: false`; the engine command is invoked directly.
 - **R-007-6**: Engine environment variables (`engine.env`) MUST be merged into the spawn env (below `action.env`, above `process.env`).
 - **R-007-7**: The `args` field MUST NOT contain reserved prompt args: `-p`, `--prompt`, `--session-id`, `-r`, `--resume`, `--continue`, `--connect`, or their `=`-prefixed variants.
@@ -47,7 +47,7 @@ reuse enables multi-turn conversations across runs.
 - **R-007-14**: If an explicit `sessionId` is already set and `reuseSession=true`, a notice MUST be logged to stderr but session capture MUST NOT occur.
 - **R-007-15**: Session capture MUST only persist if the current job action still matches the expected prompt/engine/args (compare-and-swap to prevent race conditions).
 - **R-007-16**: If engine ENOENT occurs, the error MUST name the engine and command, and suggest installing or updating the config.
-- **R-007-17**: The built-in default config MUST define engine `copilot` with `{ command: "copilot", args: [], env: {} }`.
+- **R-007-17**: The built-in default config MUST define engine `copilot` with `{ command: "copilot", args: ["--allow-all-tools", "-p"], env: {} }`.
 - **R-007-18**: Engine names MUST match `^[A-Za-z0-9_.-]+$`.
 - **R-007-19**: The built-in `copilot` engine MUST NOT be removable via `removeEngine`.
 - **R-007-20**: `addEngine` MUST reject if the engine name already exists; `updateEngine` MUST reject if it does not exist.
@@ -64,7 +64,7 @@ reuse enables multi-turn conversations across runs.
 1. Load config (from file or built-in default).
 2. Determine engine name: `action.engine ?? config.defaultEngine`.
 3. Look up `config.engines[engineName]`.
-4. Construct argv: `[engine.command, ...engine.args, prompt, ...action.args, --session-id=X?]`.
+4. Construct argv: `[engine.command, ...engine.args, prompt, ...action.args, --session-id=X?]`. For engines with an explicit prompt flag, the final `engine.args` entry is that flag so the appended `prompt` token becomes its value.
 
 **Session capture flow**:
 1. On run start, if `reuseSession=true` and no `sessionId`: enable capture mode.
@@ -99,7 +99,7 @@ reuse enables multi-turn conversations across runs.
 
 ## Acceptance criteria
 
-- [x] buildPromptRunCommand constructs correct argv (test file: `tests/config.test.ts`)
+- [x] buildPromptRunCommand constructs correct argv (test files: `tests/config.test.ts`, `tests/default-engine-config.ctd-016.test.ts`)
 - [x] Reserved args rejected by schema (test file: `tests/job-input.test.ts`)
 - [x] Windows command-line limit validated (test file: `tests/job-input.test.ts`)
 - [x] Session ID extraction from engine output (test file: `tests/prompt-session.test.ts`)

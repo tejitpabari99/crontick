@@ -397,6 +397,8 @@ describe('Runner', () => {
     expect(fake.calls[0]).toMatchObject({
       cmd: 'copilot',
       args: [
+        '--allow-all-tools',
+        '-p',
         'hello $(echo INJECTED)',
         '--silent',
         '--add-dir',
@@ -418,7 +420,7 @@ describe('Runner', () => {
 
     await runner.run(job, run.id, store);
 
-    expect(fake.calls[0].args[0]).toBe('- summarize this');
+    expect(fake.calls[0].args[2]).toBe('- summarize this');
     expect(store.getRun(run.id)?.status).toBe('success');
   });
 
@@ -498,8 +500,8 @@ describe('Runner', () => {
     await runner.run(job, store.insertRun(job.id).id, store);
 
     expect(fake.calls).toHaveLength(2);
-    expect(fake.calls[0].args).toEqual(['hello', '--silent', '--session-id=sess-12345678']);
-    expect(fake.calls[1].args).toEqual(['hello', '--silent', '--session-id=sess-12345678']);
+    expect(fake.calls[0].args).toEqual(['--allow-all-tools', '-p', 'hello', '--silent', '--session-id=sess-12345678']);
+    expect(fake.calls[1].args).toEqual(['--allow-all-tools', '-p', 'hello', '--silent', '--session-id=sess-12345678']);
   });
 
   it('prompt: explicit session id wins over reuseSession and logs a notice', async () => {
@@ -514,7 +516,7 @@ describe('Runner', () => {
 
     await runner.run(job, run.id, store);
 
-    expect(fake.calls[0].args).toEqual(['hello', '--session-id=sess-12345678']);
+    expect(fake.calls[0].args).toEqual(['--allow-all-tools', '-p', 'hello', '--session-id=sess-12345678']);
     expect(store.getJob(job.id)?.action).toMatchObject({
       kind: 'prompt',
       sessionId: 'sess-12345678',
@@ -639,7 +641,7 @@ describe('Runner', () => {
 
     await runner.run(job, run.id, store);
 
-    expect(fake.calls[0].args).toEqual(['hello', '--session-id=sess-abcdefgh']);
+    expect(fake.calls[0].args).toEqual(['--allow-all-tools', '-p', 'hello', '--session-id=sess-abcdefgh']);
     expect(store.getRun(run.id)?.status).toBe('success');
   });
 
