@@ -345,6 +345,10 @@ Show aggregate statistics.
 crontick stats summary
 ```
 
+Only runs whose parent job still exists are counted. Deleting a job keeps its historical runs
+archived for direct `crontick runs get <runId>` / `crontick logs <runId>` access, but those
+archived rows are excluded from live aggregate totals.
+
 ---
 
 ### crontick stats job
@@ -579,9 +583,11 @@ Show daemon status.
 crontick daemon status
 ```
 
-Includes a `missedFires` summary: `{ jobsWithMissedFires, missedRunsRecorded, jobsCapped,
-capPerJob }`, describing fires the schedule would have produced while the daemon was not running,
-recorded on the most recent daemon start (`capPerJob` is 500). See
+The result includes the daemon's loopback discovery fields (`port`, `baseUrl`) plus a
+`missedFires` summary: `{ jobsWithMissedFires, missedRunsRecorded, jobsCapped, capPerJob }`,
+describing fires the schedule would have produced while the daemon was not running, recorded on
+the most recent daemon start (`capPerJob` is 500). In text mode these fields print as `key: value`
+lines; with `--json` they are part of the structured status object. See
 [daemon-lifecycle.md](../concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down).
 
 ---
@@ -645,6 +651,10 @@ crontick dashboard data
 |------|------|---------|-------------|
 | `--job <id>` | string | — | Filter runs by job ID |
 | `--runs-limit <n>` | integer | — | Maximum recent runs to return |
+
+Aggregate run counts and the recent-runs list include only runs whose parent job still exists.
+Deleting a job keeps its historical runs directly queryable by run id, but removes them from
+these live dashboard views.
 
 ---
 

@@ -3,7 +3,7 @@
 // See docs/internals/executors.md
 import { spawn } from 'node:child_process';
 import { writeFileSync, unlinkSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
-import { tmpdir, platform } from 'node:os';
+import { platform } from 'node:os';
 import { join, isAbsolute, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Job, PromptAction } from '../schemas/job.js';
@@ -12,6 +12,7 @@ import { CrontickError } from '../errors.js';
 import { extractSessionId } from './prompt-session.js';
 import { buildPromptRunCommand, loadConfig } from '../config.js';
 import { nullLogger, redactText, type Logger } from '../logger.js';
+import { tempScriptsDir } from '../paths.js';
 import { isProcessAlive, isSameRunProcess } from '../process-liveness.js';
 
 // ── Output cap (L5) ───────────────────────────────────────────────────────────
@@ -419,10 +420,12 @@ export class Runner {
       let bufferPowerShellUtf8 = false;
 
       if (action.kind === 'script') {
-        // Write script to temp file
+        // Write transient script wrappers under the managed data root so
+        // crontick owns their full lifecycle instead of relying on the OS temp
+        // directory's cleanup policy.
         const ext = resolveShellExt(action.shell ?? 'auto');
-        const tmpDir = join(tmpdir(), 'crontick');
-        mkdirSync(tmpDir, { recursive: true });
+        const tmpDir = tempScriptsDir();
+        mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
 
         const resolved = resolveShell(action.shell ?? 'auto');
         if (resolved === 'pwsh') {

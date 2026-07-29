@@ -1,6 +1,6 @@
 /**
- * Data directory path resolution. All crontick state (jobs, runs, config, logs)
- * lives under a single root directory.
+ * Data directory path resolution. All crontick state (jobs, runs, config, logs,
+ * transient script wrappers) lives under a single root directory.
  *
  * Precedence: CRONTICK_HOME env var > platform default via env-paths.
  * Platform defaults: Windows %LOCALAPPDATA%\crontick, macOS ~/Library/Application Support/crontick,
@@ -32,6 +32,14 @@ export function logsDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(root(env), 'logs');
 }
 
+export function tempDir(env: NodeJS.ProcessEnv = process.env): string {
+  return join(root(env), 'tmp');
+}
+
+export function tempScriptsDir(env: NodeJS.ProcessEnv = process.env): string {
+  return join(tempDir(env), 'scripts');
+}
+
 export function configPath(env: NodeJS.ProcessEnv = process.env): string {
   return join(root(env), 'config.json');
 }
@@ -52,7 +60,7 @@ export function portFilePath(env: NodeJS.ProcessEnv = process.env): string {
 const PRIVATE_DIR_MODE = 0o700;
 
 export function ensureDirs(env: NodeJS.ProcessEnv = process.env): void {
-  for (const dir of [dataDir(env), jobsDir(env), logsDir(env)]) {
+  for (const dir of [dataDir(env), jobsDir(env), logsDir(env), tempScriptsDir(env)]) {
     mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
   }
 }

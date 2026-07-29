@@ -2,7 +2,7 @@
 
 - Status: Active
 - Owner: crontick maintainers
-- Last reviewed: 2026-07-28
+- Last reviewed: 2026-07-29
 
 ## Summary
 
@@ -35,7 +35,7 @@ preserving observability through captured logs and structured run records.
 - **R-003-3**: `overlap=skip`: If a run for the same job is already active, the new run MUST be immediately finalized as `canceled` with the error `"overlap=skip: another run is already active"`.
 - **R-003-4**: `overlap=cancel-previous`: If a run for the same job is active, the runner MUST abort it (via `AbortController`) before starting the new run.
 - **R-003-5**: `overlap=queue`: Runs MUST be serialized in FIFO order per job; the queue drains sequentially.
-- **R-003-6**: For `script` actions, the runner MUST write the script to a temp file, resolve the shell (`auto` -> pwsh on Windows, bash elsewhere), and spawn the shell with the temp file as argument. When the resolved shell is PowerShell (`pwsh`/`powershell`), the runner MUST invoke a wrapper script that preserves an explicit user `exit N`, promotes PowerShell/native failures to a truthful non-zero exit status, and sets UTF-8 output encoding before the user script runs.
+- **R-003-6**: For `script` actions, the runner MUST write the script to a temp file under the managed data root (`<dataDir>/tmp/scripts/`), resolve the shell (`auto` -> pwsh on Windows, bash elsewhere), and spawn the shell with the temp file as argument. When the resolved shell is PowerShell (`pwsh`/`powershell`), the runner MUST invoke a wrapper script (also under `<dataDir>/tmp/scripts/`) that preserves an explicit user `exit N`, promotes PowerShell/native failures to a truthful non-zero exit status, and sets UTF-8 output encoding before the user script runs.
 - **R-003-7**: For `exec` actions, the runner MUST spawn `command` with `args` directly and verbatim (shell=false): no shell interpretation, no whitespace splitting, no re-quoting. `args` is the array produced by the CLI's repeatable `--arg <value>` flag (the primary, shim-independent mechanism) or its `--` convenience form (or the library API's `args` field), so an argument containing a space or shell metacharacter MUST pass through to the child exactly as given.
 - **R-003-8**: For `prompt` actions, the runner MUST resolve the engine command via `buildPromptRunCommand()` and spawn it with shell=false.
 - **R-003-9**: All spawned processes MUST inherit `process.env` merged with `action.env` (action.env wins). If `envFile` is specified, its variables are merged below `action.env` but above `process.env`.
@@ -50,7 +50,7 @@ preserving observability through captured logs and structured run records.
 - **R-003-18**: Retry MUST re-attempt up to `retry.max` times; on each retry, the runner MUST wait `retry.backoffSec` seconds. Retry MUST NOT occur on `canceled` or `timeout` status.
 - **R-003-19**: After all attempts complete (or on final success/cancel/timeout), the runner MUST finalize the run with `endedAt`, `durationMs`, final `status`, `exitCode`, and `error`.
 - **R-003-20**: `safeRedact` MUST only redact text-like chunks; binary data (containing NUL bytes or failing UTF-8 round-trip) MUST be stored as-is.
-- **R-003-21**: For `script` actions, the temp file MUST be deleted after the process exits (best-effort).
+- **R-003-21**: For `script` actions, every temp wrapper/user-script file MUST be deleted after the process exits (best-effort), regardless of whether the run succeeded, failed, timed out, or was canceled.
 - **R-003-22**: `cancelRun(runId)` MUST abort the active run by its run ID and return true; if no such active run exists, it MUST return false.
 - **R-003-25**: Every spawn (script, exec, and prompt actions alike) MUST pass `windowsHide: true` and `detached: true` to the child process, with exactly one exception: a `script` action on Windows whose resolved shell is `pwsh`/`powershell.exe` MUST be spawned with `detached: false`, because a detached PowerShell host on Windows receives no console and writes nothing to its (even redirected) stdio. A daemon restart or graceful stop MUST NOT kill in-flight work as a side effect for any other combination of platform/action/shell; the pwsh-on-Windows exception trades that survival guarantee for non-empty output capture (see `../docs/decisions/0020-no-detach-powershell-script-jobs-windows.md`).
 - **R-003-26**: The child process's `pid` MUST be persisted to the run record (`Store.updateRun()`) as soon as the process spawns, before any output arrives; `missed` runs (spec 004 R-004-28) never spawn a process and so never get a `pid`.
@@ -67,7 +67,7 @@ preserving observability through captured logs and structured run records.
 1. Tick arrives -> daemon calls `store.insertRun(jobId, plannedAt)` -> status=`queued`.
 2. `runner.run(job, runId, store)` evaluates overlap policy.
 3. If allowed to proceed, run transitions to `running`.
-4. Runner resolves command/args per action kind; a PowerShell script job emits a wrapper + user script pair so exit semantics and UTF-8 output are normalized before spawn.
+4. Runner resolves command/args per action kind; script jobs materialize transient wrapper files under `<dataDir>/tmp/scripts/`, and a PowerShell script job emits a wrapper + user script pair there so exit semantics and UTF-8 output are normalized before spawn.
 5. stdout/stderr `data` events -> per-stream UTF-8 buffering (when needed) -> `safeRedact` -> `store.appendLog`.
 6. Child `close` event determines status from exit code/signal.
 7. If failed and retries remain, waits backoff then re-spawns (step 4).
@@ -116,6 +116,7 @@ preserving observability through captured logs and structured run records.
 - [x] `adoptRun` re-attaches overlap tracking for `skip` and `cancel-previous` across a restart (test file: `tests/runner.test.ts`, `adoptRun` describe block)
 - [x] PowerShell script jobs fail truthfully for implicit PowerShell/native failures while preserving explicit `exit N` (test file: `tests/powershell-exit.ctd-002.test.ts`)
 - [x] PowerShell script jobs preserve exact UTF-8 bytes across Windows code pages and chunk boundaries (test file: `tests/powershell-utf8.ctd-008.test.ts`)
+- [x] Script temp wrappers live under CRONTICK_HOME-managed state, are removed after the run, and daemon startup sweeps legacy `os.tmpdir()/crontick` leftovers best-effort (test file: `tests/temp-script-cleanup.ctd-017.test.ts`)
 - [x] Repeatable `--arg <value>` round-trips spaces, embedded quotes, and a leading dash, and is mutually exclusive with `--` (test file: `tests/cli.test.ts`, "crontick new --arg round-trips a value with spaces, embedded double quotes, and a leading dash"; "crontick new rejects combining --arg with -- positional args (ambiguous args source)")
 - [x] `--exec` takes its command and args verbatim, with no whitespace splitting (test file: `tests/job-input.test.ts`, "buildJobFromCreateOptions -- --exec verbatim + rawArgs"; `tests/cli.test.ts`, "new --help describes --exec's real verbatim-command + --arg/-- args behavior")
 

@@ -276,7 +276,7 @@ async function handleRequest(
     // ── Stats ─────────────────────────────────────────────────────────────────
     if (method === 'GET' && path === '/api/stats/summary') {
       const jobs = ctx.store.listJobs();
-      const runs = ctx.store.listRuns({ limit: 1000 });
+      const runs = ctx.store.listRunsForExistingJobs({ limit: 1000 });
       return sendJson(res, 200, buildDashboardStats(jobs, runs));
     }
 
@@ -301,6 +301,8 @@ async function handleRequest(
       return sendJson(res, 200, {
         pid: process.pid,
         version: VERSION,
+        port: ctx.port,
+        baseUrl: `http://127.0.0.1:${ctx.port}`,
         uptimeSec: Math.floor((Date.now() - ctx.startedAt.getTime()) / 1000),
         jobs: ctx.store.listJobs().length,
         // L2: report-only missed-fire summary computed once at startup.

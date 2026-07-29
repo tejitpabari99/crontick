@@ -122,17 +122,17 @@ const MIME_TYPES: Record<string, string> = {
 export function buildDashboardData(ctx: DashboardContext, options: DashboardOptions = {}): DashboardData {
   const runsLimit = normalizeLimit(options.runsLimit, 100);
   const jobs = ctx.store.listJobs();
-  const runs = ctx.store.listRuns({ jobId: options.jobId, limit: runsLimit });
-  const allRuns = ctx.store.listRuns({ limit: 1000 });
+  const recentRuns = ctx.store.listRunsForExistingJobs({ jobId: options.jobId, limit: runsLimit });
+  const allRuns = ctx.store.listRunsForExistingJobs({ limit: 1000 });
   const since24h = Date.now() - 24 * 60 * 60 * 1000;
-  const runs24h = ctx.store.listRuns({ since: since24h });
+  const runs24h = ctx.store.listRunsForExistingJobs({ since: since24h });
 
   return {
     generatedAt: Date.now(),
     health: buildDashboardHealth(ctx, jobs, runs24h),
     stats: buildDashboardStats(jobs, allRuns),
     jobs: jobs.map((job) => buildDashboardJob(ctx, job)),
-    runs: runs.map(toDashboardRun),
+    runs: recentRuns.map(toDashboardRun),
   };
 }
 

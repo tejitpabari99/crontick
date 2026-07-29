@@ -368,7 +368,9 @@ describe('CTD-003 shared secret redaction', () => {
         const dashboardJob = jobWithEnv(`ctd003-dashboard-${index}`, { EXPOSED_VALUE: entry.configValue });
         fixture.store.upsertJob(dashboardJob);
 
-        const readRun = fixture.store.insertRun(`ctd003-read-${index}`);
+        const readJob = jobWithEnv(`ctd003-read-${index}`, {});
+        fixture.store.upsertJob(readJob);
+        const readRun = fixture.store.insertRun(readJob.id);
         fixture.store.updateRun(readRun.id, {
           status: 'failed',
           endedAt: Date.now(),
@@ -471,7 +473,9 @@ describe('CTD-003 shared secret redaction', () => {
       const dashboardJob = jobWithEnv('ctd003-plain-dashboard', { EXPOSED_VALUE: PLAIN_VALUE });
       fixture.store.upsertJob(dashboardJob);
 
-      const readRun = fixture.store.insertRun('ctd003-plain-read');
+      const readJob = jobWithEnv('ctd003-plain-read', {});
+      fixture.store.upsertJob(readJob);
+      const readRun = fixture.store.insertRun(readJob.id);
       fixture.store.updateRun(readRun.id, {
         status: 'failed',
         endedAt: Date.now(),
@@ -505,3 +509,5 @@ describe('CTD-003 shared secret redaction', () => {
     }
   });
 });
+
+

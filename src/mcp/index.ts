@@ -380,7 +380,7 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     'crontick_daemon_status',
     {
       description:
-        'Get the daemon process status: PID, version, uptime, job counts, and a missedFires summary (jobs whose schedule missed fires while the daemon was down since the last start — report-only, never auto-executed; see crontick_run_list with status "missed").',
+        'Get the daemon process status: PID, version, loopback baseUrl/port, uptime, job counts, and a missedFires summary (jobs whose schedule missed fires while the daemon was down since the last start — report-only, never auto-executed; see crontick_run_list with status "missed").',
       inputSchema: withVerbose({}),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },

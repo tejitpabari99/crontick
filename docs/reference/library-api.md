@@ -58,7 +58,7 @@ class CrontickClient {
 | `daemonStop` | `(): Promise<DaemonStopResult>` | Stop result — see [DaemonStopResult](#daemonstopresult) | `CrontickError` |
 | `daemonRestart` | `(): Promise<DaemonRestartResult>` | `{ ok: true, baseUrl, port?, pid?, started, stopped, previousPid? }` — the stop phase escalates internally the same way as `daemonStop`, but only `stopped`/`previousPid` are surfaced (no `mode`/`activeRuns`) | `CrontickError` |
 | `daemonReload` | `(): Promise<{ ok: true }>` | `{ ok: true }` | `CrontickError` |
-| `daemonStatus` | `(): Promise<unknown>` | Status object | `CrontickError` |
+| `daemonStatus` | `(): Promise<DaemonStatus>` | `DaemonStatus` | `CrontickError` |
 | `doctor` | `(options?: DoctorOptions): Promise<DoctorResult>` | `DoctorResult` | `CrontickError` |
 | `dashboardStart` | `(): Promise<DashboardStartResult>` | `DashboardStartResult` | `CrontickError` |
 | `dashboardStop` | `(): Promise<DashboardStopResult>` | Stop result | `CrontickError` |
@@ -179,7 +179,9 @@ interface StatsSummary {
 `avgDurationMs` averages `durationMs` over runs that actually finished executing --
 `success`/`failed`/`timeout` -- and excludes `missed`, `queued`, `running`, and `canceled` runs,
 since those either never ran to completion or never ran at all. `null` when there are no
-qualifying runs. Same computation backs [`DashboardStats`](#dashboardstats) (`GET
+qualifying runs. These summary counts include only runs whose parent job still exists: deleting a
+job keeps its historical runs directly queryable by run id/logs, but removes those archived rows
+from live aggregate totals. Same computation backs [`DashboardStats`](#dashboardstats) (`GET
 /api/stats/summary` and the dashboard both call `buildDashboardStats()`).
 
 ### JobStats
@@ -293,6 +295,30 @@ same graceful-then-escalate sequence as [`DaemonStopResult`](#daemonstopresult),
 `stopped` (whether the previous daemon actually exited) and `previousPid` are surfaced here —
 `mode` and `activeRuns` are not part of this result.
 
+### DaemonStatus
+
+```ts
+interface DaemonStatus {
+  pid: number;
+  version: string;
+  port: number;
+  baseUrl: string;
+  uptimeSec: number;
+  jobs: number;
+  missedFires: {
+    jobsWithMissedFires: number;
+    missedRunsRecorded: number;
+    jobsCapped: number;
+    capPerJob: number;
+  };
+}
+```
+
+Returned by `daemonStatus` (`CrontickClient`), `crontick daemon status`, and
+`crontick_daemon_status`. `baseUrl` is always the daemon's loopback listener URL
+(`http://127.0.0.1:<port>`), so scripts can discover the daemon endpoint without reading internal
+state files.
+
 ### DashboardOptions
 
 ```ts
@@ -345,7 +371,9 @@ interface DashboardStats {
 ```
 
 Same shape and computation as [`StatsSummary`](#statssummary) -- see there for how
-`avgDurationMs` is averaged.
+`avgDurationMs` is averaged and how deleted-job history is excluded from live aggregates.
+`DashboardData.runs` likewise lists only runs whose parent job still exists, even though deleted
+job runs remain directly queryable by run id.
 
 ### DashboardJob
 

@@ -8,10 +8,12 @@ import {
   existsSync,
   openSync,
   readFileSync,
+  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CrontickError } from '../errors.js';
@@ -45,6 +47,32 @@ const POLL_MS = 100;
 const STDERR_LIMIT = 4096;
 /** Health probe rejects responses whose product field doesn't match. */
 const HEALTH_PRODUCT = 'crontick';
+
+function resolveSystemTempDir(env: NodeJS.ProcessEnv): string {
+  for (const key of ['TEMP', 'TMP', 'TMPDIR'] as const) {
+    const value = env[key];
+    if (value) return value;
+  }
+  return tmpdir();
+}
+
+export function legacyScriptTempDir(env: NodeJS.ProcessEnv = process.env): string {
+  return join(resolveSystemTempDir(env), 'crontick');
+}
+
+export function sweepLegacyScriptTempDir(logger: Logger = nullLogger, env: NodeJS.ProcessEnv = process.env): void {
+  const dir = legacyScriptTempDir(env);
+  if (!existsSync(dir)) return;
+  try {
+    rmSync(dir, { recursive: true, force: true });
+    logger.info('Removed legacy script temp directory during startup sweep', { dir });
+  } catch (err) {
+    logger.warn('Failed to remove legacy script temp directory during startup sweep; continuing', {
+      dir,
+      error: errorMessage(err),
+    });
+  }
+}
 
 /** Resolve the daemon base URL without starting a new daemon. Throws DAEMON_NOT_RUNNING if unresolvable. */
 export async function resolveDaemonBaseUrl(options: { daemonUrl?: string; env?: NodeJS.ProcessEnv; logger?: Logger } = {}): Promise<string> {

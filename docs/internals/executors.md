@@ -92,14 +92,16 @@ Before any child process is spawned, the runner pre-validates `action.cwd` for *
 
 1. Resolve shell: `resolveShell(action.shell ?? 'auto')` -> `'pwsh'` on Windows,
    `'bash'` elsewhere, or explicit `'cmd'`.
-2. Write script to a temp file in `os.tmpdir()/crontick/<uuid><ext>`:
+2. Write script to a managed temp file in `<dataDir>/tmp/scripts/<uuid><ext>` (`CRONTICK_HOME`-scoped):
    - `.ps1` for pwsh, `.bat` for cmd, `.sh` for bash.
+   - PowerShell also writes a sibling `<uuid>.user.ps1` file there, then runs a wrapper `.ps1`.
    - Mode `0o700`.
 3. Build command:
    - pwsh: `pwsh -NoProfile -NonInteractive -File <tmpFile>`
    - cmd: `cmd /c <tmpFile>`
    - bash: `bash <tmpFile>`
-4. Temp file is deleted in `finally` block.
+4. Every wrapper/user-script file is deleted in the runner's `finally` block (best-effort, regardless of run outcome).
+5. Daemon startup also performs a best-effort sweep of the legacy `os.tmpdir()/crontick` location left by older builds; failures are logged and do not block startup.
 
 ### Exec actions (`action.kind === 'exec'`)
 

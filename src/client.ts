@@ -118,6 +118,23 @@ export interface JobStats {
   lastRunAt: number | null;
 }
 
+interface DaemonMissedFiresSummary {
+  jobsWithMissedFires: number;
+  missedRunsRecorded: number;
+  jobsCapped: number;
+  capPerJob: number;
+}
+
+interface DaemonStatus {
+  pid: number;
+  version: string;
+  port: number;
+  baseUrl: string;
+  uptimeSec: number;
+  jobs: number;
+  missedFires: DaemonMissedFiresSummary;
+}
+
 interface HttpTextResponse {
   status: number;
   ok: boolean;
@@ -290,8 +307,8 @@ export class CrontickClient {
     return this.request<{ ok: true }>('POST', '/api/daemon/reload');
   }
 
-  async daemonStatus(): Promise<unknown> {
-    return this.request('GET', '/api/daemon/status', undefined, { ensure: false });
+  async daemonStatus(): Promise<DaemonStatus> {
+    return this.request<DaemonStatus>('GET', '/api/daemon/status', undefined, { ensure: false });
   }
 
   async doctor(options: DoctorOptions = {}): Promise<DoctorResult> {

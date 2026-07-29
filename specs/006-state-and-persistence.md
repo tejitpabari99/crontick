@@ -2,14 +2,15 @@
 
 - Status: Active
 - Owner: crontick maintainers
-- Last reviewed: 2026-07-28
+- Last reviewed: 2026-07-29
 
 ## Summary
 
 Crontick persists job definitions as individual JSON files (source of truth) and run
-history in a SQLite database with WAL journaling. This spec defines the durability
-guarantees, on-disk layout, schema shape, retention policies, and missed-fire/orphan
-recovery behavior.
+history in a SQLite database with WAL journaling. It also keeps transient script-wrapper
+files under the managed data root instead of the OS temp directory. This spec defines the
+durability guarantees, on-disk layout, schema shape, retention policies, and
+missed-fire/orphan recovery behavior.
 
 ## Motivation
 
@@ -38,11 +39,11 @@ both human-editability of jobs and efficient querying of run history.
 
 - **R-006-1**: The data directory MUST be resolved from `CRONTICK_HOME` env var if set, otherwise from `env-paths('crontick', { suffix: '' }).data`.
 - **R-006-2**: On Windows the default data directory MUST be `%LOCALAPPDATA%\crontick`.
-- **R-006-3**: The `ensureDirs` function MUST create `<dataDir>/jobs/` and `<dataDir>/logs/` if they do not exist.
+- **R-006-3**: The `ensureDirs` function MUST create `<dataDir>/jobs/`, `<dataDir>/logs/`, and `<dataDir>/tmp/scripts/` if they do not exist.
 - **R-006-4**: Job JSON files MUST be the source of truth; on daemon start, `loadJobsFromDisk()` MUST reload all `.json` files (excluding `.schema.json`) from the jobs directory into the SQLite `jobs` table.
 - **R-006-5**: `upsertJob()` MUST write both the SQLite row and the JSON file atomically (write file, then upsert row).
 - **R-006-6**: `upsertJob()` MUST write a JSON Schema sidecar alongside the job file.
-- **R-006-7**: `deleteJob()` MUST remove the SQLite row, the JSON file, and the schema sidecar.
+- **R-006-7**: `deleteJob()` MUST remove the SQLite job row, the JSON file, and the schema sidecar. It MUST NOT cascade-delete `runs` or `run_logs`: deleted-job run history remains archived and directly queryable by run id/log id, but current-job aggregate views (for example `stats summary` and dashboard aggregate/recent-run views) MUST exclude runs whose parent job row no longer exists.
 - **R-006-8**: SQLite MUST use WAL journal mode and foreign keys enabled.
 - **R-006-9**: The `runs` table MUST store: `id` (UUID PK), `job_id`, `started_at` (epoch ms), `ended_at`, `status`, `exit_code`, `error`, `duration_ms`, `pid` (nullable; the spawned child's process id, absent for `missed` runs), `output_truncated` (NOT NULL, default 0; set when captured output hits `retention.maxOutputBytesPerRun` -- see spec 003 R-003-27).
 - **R-006-10**: The `run_logs` table MUST store: `id` (autoincrement PK), `run_id`, `stream` (stdout/stderr), `ts` (epoch ms), `chunk` (BLOB).
@@ -62,6 +63,7 @@ both human-editability of jobs and efficient querying of run history.
 - **R-006-27**: `importRuns(runs)` MUST bulk-insert previously-exported run rows (from `crontick export --include-runs`) as archival data only -- no execution, no scheduler interaction. Each row MUST be validated individually against `RunImportSchema`; a row that fails validation, or whose `job_id` does not exist in this store, MUST be skipped (recorded in `skipped: Array<{ id, error }>`) without aborting the rest of the batch. Each valid row's insert MUST be wrapped independently (a single row's insert failure MUST NOT abort remaining rows). It MUST be idempotent on `id` (`INSERT OR IGNORE`: a row already present is left untouched and not counted as imported), returning `{ imported, skipped }`. After the batch, the store MUST run `pruneRunsForJob()` once per job that received at least one imported row, so an import cannot leave a job over its retention cap.
 - **R-006-28**: Read surfaces that serialize config values, run rows, run logs, or dashboard payloads MUST apply redaction defensively at read time as well, so secret-like values already on disk or introduced through config reads are masked consistently even if they predate current capture-time redaction patterns.
 - **R-006-29**: Config read helpers (`config get`, library, MCP, and equivalent HTTP-backed reads) MUST redact returned secret-like values without mutating the underlying `config.json` bytes on disk.
+- **R-006-30**: On daemon startup, crontick MUST best-effort delete the legacy script-wrapper directory from older builds (`os.tmpdir()/crontick`, typically `%TEMP%\crontick` on Windows). A cleanup failure MUST be logged but MUST NOT block startup.
 
 ### Non-functional requirements
 
@@ -81,6 +83,10 @@ both human-editability of jobs and efficient querying of run history.
   jobs/
     <job-id>.json
     <job-id>.schema.json
+  tmp/
+    scripts/
+      <uuid>.bat|.sh|.ps1
+      <uuid>.user.ps1
   runs.db
   runs.db-wal
   runs.db-shm
@@ -112,11 +118,13 @@ both human-editability of jobs and efficient querying of run history.
 - Job JSON file is empty or invalid JSON: Silently skipped on load.
 - Job JSON validates structurally but has unknown keys: Zod strict mode rejects; file skipped.
 - Concurrent writes to runs.db: WAL mode allows single-writer; only one daemon runs.
+- Deleting a job with historical runs: direct `getRun` / `getLogs` by run id still works, but current-job aggregate views exclude those archived rows.
 - Disk full on job write: Write throws; operation fails at API level.
 - Config file has syntax errors: `CONFIG_READ_ERROR` thrown with fix instructions.
 - `importRuns()` given a run whose `job_id` no longer exists: that row is skipped and reported, the rest of the batch still imports.
 - `reconcileOrphanRuns()`'s liveness check throws or cannot determine an answer: treated as inconclusive, and the run is adopted rather than canceled (favors not silently losing in-flight work over the smaller risk of double-running).
 - Secret-like text already present in persisted logs or config: read surfaces still redact it defensively before returning it.
+- Legacy `%TEMP%\crontick` cleanup fails on startup (for example, locked file or permissions): the daemon logs the failure and continues starting; new script wrappers still live under `<dataDir>/tmp/scripts/`.
 
 ## Acceptance criteria
 
@@ -124,7 +132,7 @@ both human-editability of jobs and efficient querying of run history.
 - [x] Malformed job files skipped (test file: `tests/store.test.ts`)
 - [x] Orphan runs reconciled with liveness-checked adopt/cancel, not unconditional cancellation (test file: `tests/store.test.ts`, "reconcileOrphanRuns ..." describe block, lines 295-352; `tests/integration.persistence.test.ts`)
 - [x] upsertJob writes both JSON file and SQLite (test file: `tests/store.test.ts`)
-- [x] deleteJob removes file and row (test file: `tests/store.test.ts`)
+- [x] deleteJob removes the job file/row while preserving deleted-job run history for direct run-id reads and excluding that archived history from current-job aggregate views (test files: `tests/store.test.ts`, `tests/stats-excludes-deleted-job-runs.ctd-014.test.ts`)
 - [x] Schema sidecar written (test file: `tests/store.test.ts`)
 - [x] Schema created in one idempotent pass; re-opening the store does not error or duplicate schema objects (test file: `tests/store.test.ts`, "open() is idempotent...")
 - [x] listRuns filters by jobId, since, status, and orders correctly (test file: `tests/store.test.ts`, "listRuns filters by status, surfacing missed runs distinctly..."; `tests/cli.test.ts`, "crontick runs list --status filters to the requested run status")
@@ -135,6 +143,7 @@ both human-editability of jobs and efficient querying of run history.
 - [x] `recordMissedRun` inserts a terminal `missed` run with no pid, subject to the same retention cap as any other run (test file: `tests/store.test.ts`, lines 210-238)
 - [x] `importRuns` validates each row individually, skips malformed rows or rows for missing jobs without aborting the batch, is idempotent on `id`, and prunes affected jobs back to their retention cap afterward (test file: `tests/store.test.ts`, `describe('Store.importRuns', ...)`; exercised end-to-end via `tests/cli.test.ts`, line ~760; `tests/mcp.test.ts`, line ~709)
 - [x] Read-time redaction applies consistently to config, run, log, and dashboard read surfaces, including pre-existing stored values (test file: `tests/secret-redaction.ctd-003.test.ts`)
+- [x] Managed temp-script storage lives under CRONTICK_HOME and startup sweeps legacy OS-temp leftovers best-effort (test file: `tests/temp-script-cleanup.ctd-017.test.ts`)
 
 ## Out of scope
 

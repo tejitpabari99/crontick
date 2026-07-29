@@ -297,7 +297,8 @@ Get aggregate summary of all jobs.
 
 **Result:** `{ totalJobs, enabledJobs, totalRuns, succeeded, failed, avgDurationMs }` --
 `avgDurationMs` excludes `missed`/`queued`/`running`/`canceled` runs, averaging only runs that
-actually finished executing (see [library-api.md](./library-api.md#statssummary)).
+actually finished executing, and all summary counts exclude archived runs whose parent job was
+deleted (see [library-api.md](./library-api.md#statssummary)).
 
 ---
 
@@ -345,15 +346,15 @@ runs still in progress that the stop did not cancel. See
 
 ### crontick_daemon_status
 
-Get daemon process status: PID, version, uptime, job counts, and a `missedFires` summary.
+Get daemon process status: PID, version, loopback `port`/`baseUrl`, uptime, job counts, and a `missedFires` summary.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Health object (including `missedFires: { jobsWithMissedFires, missedRunsRecorded,
-jobsCapped, capPerJob }`, report-only — see `crontick_run_list` with `status: "missed"`) or
-`{ running: false, error: string }` if not running.
+**Result:** Health object including `port`, `baseUrl`, and `missedFires: { jobsWithMissedFires,
+missedRunsRecorded, jobsCapped, capPerJob }` (report-only — see `crontick_run_list` with
+`status: "missed"`) or `{ running: false, error: string }` if not running.
 
 ---
 
@@ -449,7 +450,8 @@ Return the core dashboard data model.
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `DashboardData` object (health, stats, jobs, runs), with secret-like text
-fields redacted.
+fields redacted. Aggregate counts and the recent-runs list exclude archived runs whose parent job
+was deleted, even though those runs remain directly queryable by run id.
 
 ---
 
