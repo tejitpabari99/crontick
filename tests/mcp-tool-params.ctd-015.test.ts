@@ -53,7 +53,17 @@ const EXPECTED_TOOL_PARAMS = {
 } as const;
 
 type ToolCallJson = { error?: string; [key: string]: unknown };
-type ListedTool = { name: string; description?: string; inputSchema?: { properties?: Record<string, unknown> } };
+type ListedTool = {
+  name: string;
+  description?: string;
+  inputSchema?: {
+    properties?: Record<string, unknown>;
+    anyOf?: Array<{
+      properties?: Record<string, unknown>;
+      required?: string[];
+    }>;
+  };
+};
 
 let server: http.Server;
 let mcpClient: Client;
@@ -68,14 +78,33 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<{ 
   const raw = await mcpClient.callTool({ name, arguments: args });
   const result = raw as { content: Array<{ text?: string }>; isError?: boolean };
   const text = result.content[0]?.text ?? '{}';
+  let json: ToolCallJson;
+  try {
+    json = JSON.parse(text) as ToolCallJson;
+  } catch {
+    json = { error: text };
+  }
   return {
-    json: JSON.parse(text) as ToolCallJson,
+    json,
     isError: result.isError === true,
   };
 }
 
 function topLevelParams(tool: ListedTool): string[] {
-  return Object.keys(tool.inputSchema?.properties ?? {}).filter((name) => name !== 'verbose');
+  const direct = Object.keys(tool.inputSchema?.properties ?? {}).filter((name) => name !== 'verbose');
+  if (direct.length > 0) return direct;
+
+  const merged = new Set<string>();
+  for (const variant of tool.inputSchema?.anyOf ?? []) {
+    for (const name of Object.keys(variant.properties ?? {})) {
+      if (name !== 'verbose') merged.add(name);
+    }
+  }
+  return [...merged];
+}
+
+function requiredAlternatives(tool: ListedTool): string[][] {
+  return (tool.inputSchema?.anyOf ?? []).map((variant) => (variant.required ?? []).filter((name) => name !== 'verbose'));
 }
 
 beforeAll(async () => {
@@ -125,7 +154,7 @@ afterAll(async () => {
 });
 
 describe('CTD-015 MCP parameter naming', () => {
-  it('keeps tool names stable and matches the full audited parameter inventory', async () => {
+  it('keeps tool names stable, exposes the full parameter inventory, and advertises single-run requiredness', async () => {
     const listed = await mcpClient.listTools();
     const tools = listed.tools.filter((tool) => tool.name.startsWith('crontick_')) as ListedTool[];
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
@@ -140,10 +169,13 @@ describe('CTD-015 MCP parameter naming', () => {
     }
 
     for (const name of ['crontick_job_cancel_run', 'crontick_run_get', 'crontick_run_logs_tail']) {
-      const params = topLevelParams(byName.get(name)!);
+      const tool = byName.get(name)!;
+      const params = topLevelParams(tool);
       expect(params.indexOf('id'), `${name} should expose id`).toBeGreaterThanOrEqual(0);
       expect(params.indexOf('runId'), `${name} should retain runId alias`).toBeGreaterThan(params.indexOf('id'));
-      expect(byName.get(name)?.description ?? '', `${name} should document the deprecation`).toMatch(/deprecated alias/i);
+      expect(tool.description ?? '', `${name} should document the deprecation`).toMatch(/deprecated alias/i);
+      expect(requiredAlternatives(tool), `${name} should advertise id/runId requiredness`).toContainEqual(['id']);
+      expect(requiredAlternatives(tool), `${name} should advertise id/runId requiredness`).toContainEqual(['runId']);
     }
   });
 
@@ -183,7 +215,7 @@ describe('CTD-015 MCP parameter naming', () => {
     }
   });
 
-  it('rejects missing identifiers with clear guidance', async () => {
+  it('rejects missing identifiers at schema validation with clear guidance', async () => {
     const cases = [
       { name: 'crontick_run_get', args: {} },
       { name: 'crontick_run_logs_tail', args: { lines: 1 } },

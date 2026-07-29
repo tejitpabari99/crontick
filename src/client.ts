@@ -125,7 +125,7 @@ interface DaemonMissedFiresSummary {
   capPerJob: number;
 }
 
-interface DaemonStatus {
+export interface DaemonStatus {
   pid: number;
   version: string;
   port: number;
@@ -577,7 +577,7 @@ async function boundedBackoff(): Promise<void> {
 }
 
 function reconstructLogicalLogLines(entries: LogEntry[]): LogEntry[] {
-  const lines: LogEntry[] = [];
+  const linesByEntry: LogEntry[][] = entries.map(() => []);
   const remainders = new Map<string, {
     data: string;
     runId?: string;
@@ -593,7 +593,7 @@ function reconstructLogicalLogLines(entries: LogEntry[]): LogEntry[] {
     while (cursor < buffer.length) {
       const newlineIndex = buffer.indexOf('\n', cursor);
       if (newlineIndex === -1) break;
-      lines.push({
+      linesByEntry[index]!.push({
         runId: entry.runId ?? previous?.runId,
         stream: entry.stream,
         ts: entry.ts,
@@ -615,18 +615,16 @@ function reconstructLogicalLogLines(entries: LogEntry[]): LogEntry[] {
     }
   });
 
-  [...remainders.entries()]
-    .sort(([, left], [, right]) => left.lastIndex - right.lastIndex)
-    .forEach(([stream, remainder]) => {
-      lines.push({
-        runId: remainder.runId,
-        stream,
-        ts: remainder.lastTs,
-        data: remainder.data,
-      });
+  for (const [stream, remainder] of remainders) {
+    linesByEntry[remainder.lastIndex]!.push({
+      runId: remainder.runId,
+      stream,
+      ts: remainder.lastTs,
+      data: remainder.data,
     });
+  }
 
-  return lines;
+  return linesByEntry.flat();
 }
 
 function errorMessage(err: unknown): string {

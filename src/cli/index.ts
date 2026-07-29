@@ -507,7 +507,7 @@ program.command('disable <id>').description('Disable a job').action(async (id: s
   try { print(await client().disableJob(id)); } catch (err) { handleError(err); }
 });
 
-program.command('delete <id>').description('Delete a job').action(async (id: string) => {
+program.command('delete <id>').description('Delete a job definition; archived runs remain queryable by run ID').action(async (id: string) => {
   try { print(await client().deleteJob(id)); } catch (err) { handleError(err); }
 });
 

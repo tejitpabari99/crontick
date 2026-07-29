@@ -1,17 +1,25 @@
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 
 const CLI = resolve('dist', 'cli', 'index.js');
-const HOME = String.raw`Q:\Rough\crontick-qa\state\devfix2\cli-daemon-json-ctd-013`;
-const PID_FILE = join(HOME, 'daemon.pid');
-const PORT_FILE = join(HOME, 'daemon.port');
+const SCRATCH_ROOT = resolve('.crontick', 'cli-daemon-json-ctd-013');
+let home = '';
+
+function pidFile(): string {
+  return join(home, 'daemon.pid');
+}
+
+function portFile(): string {
+  return join(home, 'daemon.port');
+}
 
 function cli(args: string[]) {
   return spawnSync(process.execPath, [CLI, ...args], {
     encoding: 'utf8',
-    env: { ...process.env, CRONTICK_HOME: HOME },
+    env: { ...process.env, CRONTICK_HOME: home },
   });
 }
 
@@ -20,8 +28,8 @@ function sleep(ms: number): void {
 }
 
 function readPid(): number | undefined {
-  if (!existsSync(PID_FILE)) return undefined;
-  const pid = Number.parseInt(readFileSync(PID_FILE, 'utf8').trim(), 10);
+  if (!existsSync(pidFile())) return undefined;
+  const pid = Number.parseInt(readFileSync(pidFile(), 'utf8').trim(), 10);
   return Number.isInteger(pid) && pid > 0 ? pid : undefined;
 }
 
@@ -46,18 +54,27 @@ function stopDaemon(): void {
 }
 
 function resetHome(): void {
+  if (!home) return;
   stopDaemon();
-  rmSync(HOME, { recursive: true, force: true });
-  mkdirSync(join(HOME, 'jobs'), { recursive: true });
-  mkdirSync(join(HOME, 'logs'), { recursive: true });
+  rmSync(home, { recursive: true, force: true });
+  mkdirSync(join(home, 'jobs'), { recursive: true });
+  mkdirSync(join(home, 'logs'), { recursive: true });
+}
+
+function removeHome(): void {
+  if (!home) return;
+  stopDaemon();
+  rmSync(home, { recursive: true, force: true });
 }
 
 beforeEach(() => {
+  home = join(SCRATCH_ROOT, randomUUID());
   resetHome();
 });
 
 afterEach(() => {
-  resetHome();
+  removeHome();
+  home = '';
 });
 
 describe('CTD-013 daemon lifecycle CLI JSON output', () => {
@@ -80,7 +97,7 @@ describe('CTD-013 daemon lifecycle CLI JSON output', () => {
     expect(payload.port).toBeGreaterThan(0);
     expect(payload.baseUrl).toBe(`http://127.0.0.1:${String(payload.port)}`);
     expect(readPid()).toBe(payload.pid);
-    expect(existsSync(PORT_FILE)).toBe(true);
+    expect(existsSync(portFile())).toBe(true);
   }, 15_000);
 
   it('daemon restart --json emits one parseable structured result', () => {
@@ -122,7 +139,7 @@ describe('CTD-013 daemon lifecycle CLI JSON output', () => {
     expect(payload.message).toContain('--foreground');
     expect(payload.message).toContain('--json');
     expect(payload.message).toContain('single JSON object');
-    expect(existsSync(PID_FILE)).toBe(false);
-    expect(existsSync(PORT_FILE)).toBe(false);
+    expect(existsSync(pidFile())).toBe(false);
+    expect(existsSync(portFile())).toBe(false);
   });
 });

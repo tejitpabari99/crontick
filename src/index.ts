@@ -15,6 +15,7 @@ export { CrontickClient, createClient } from './client.js';
 export type {
   CreateJobOptions,
   CrontickClientOptions,
+  DaemonStatus,
   JobStats,
   LogEntry,
   LogsResult,

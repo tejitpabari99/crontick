@@ -127,6 +127,27 @@ type SingleRunIdArgs = RawArgs & { id?: string; runId?: string };
 
 const DEPRECATED_RUN_ID_DESCRIPTION = 'Deprecated alias for id. If both are provided, id wins.';
 
+function singleRunIdInputSchema<T extends Record<string, z.ZodTypeAny>>(extraShape: T = {} as T) {
+  return z.object(withVerbose({
+    id: z.string().optional(),
+    runId: z.string().optional().describe(DEPRECATED_RUN_ID_DESCRIPTION),
+    ...extraShape,
+  })).superRefine((args, ctx) => {
+    const ids = args as SingleRunIdArgs;
+    if (typeof ids.id === 'string' && ids.id.length > 0) return;
+    if (typeof ids.runId === 'string' && ids.runId.length > 0) return;
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Missing required identifier: provide id (preferred) or deprecated runId.',
+    });
+  }).meta({
+    anyOf: [
+      { required: ['id'] },
+      { required: ['runId'] },
+    ],
+  });
+}
+
 function normalizeSingleRunId(args: SingleRunIdArgs): string {
   if (typeof args.id === 'string' && args.id.length > 0) return args.id;
   if (typeof args.runId === 'string' && args.runId.length > 0) return args.runId;
@@ -203,7 +224,7 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     'crontick_job_delete',
     {
       description:
-        'Permanently delete a job and all its run history. This cannot be undone — confirm with the user first.',
+        'Permanently delete a job definition. Archived runs and logs remain directly queryable by run ID, but live aggregates exclude them. This may cancel an in-flight run and cannot be undone -- confirm with the user first.',
       inputSchema: withVerbose({ id: z.string() }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
@@ -245,10 +266,7 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     'crontick_job_cancel_run',
     {
       description: 'Cancel an in-progress run by its run ID. Prefer `id`; deprecated alias: `runId`.',
-      inputSchema: withVerbose({
-        id: z.string().optional(),
-        runId: z.string().optional().describe(DEPRECATED_RUN_ID_DESCRIPTION),
-      }),
+      inputSchema: singleRunIdInputSchema(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => toolWrap(args, (client) => client.cancelRun(normalizeSingleRunId(args))),
@@ -275,10 +293,7 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     'crontick_run_get',
     {
       description: 'Get the details and current status of a specific run. Prefer `id`; deprecated alias: `runId`. Includes the run pid (if it was spawned) and whether its output was truncated by the retention output cap.',
-      inputSchema: withVerbose({
-        id: z.string().optional(),
-        runId: z.string().optional().describe(DEPRECATED_RUN_ID_DESCRIPTION),
-      }),
+      inputSchema: singleRunIdInputSchema(),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (args) => toolWrap(args, (client) => client.getRun(normalizeSingleRunId(args))),
@@ -289,9 +304,7 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     {
       description:
         'Get the last N lines of output for a run. Prefer `id`; deprecated alias: `runId`. Useful for diagnosing failures.',
-      inputSchema: withVerbose({
-        id: z.string().optional(),
-        runId: z.string().optional().describe(DEPRECATED_RUN_ID_DESCRIPTION),
+      inputSchema: singleRunIdInputSchema({
         lines: z.number().int().positive().default(50),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },

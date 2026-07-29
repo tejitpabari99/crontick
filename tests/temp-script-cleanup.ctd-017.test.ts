@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createClient } from '../src/index.js';
@@ -6,17 +7,11 @@ import { legacyScriptTempDir } from '../src/daemon/ensure.js';
 import { tempScriptsDir } from '../src/paths.js';
 
 const DAEMON_SCRIPT = resolve('dist', 'daemon', 'index.js');
-const HOME = String.raw`Q:\Rough\crontick-qa\state\devfix2\temp-script-cleanup-ctd-017`;
-const TEMP_ROOT = join(HOME, 'legacy-os-temp');
-const env = {
-  ...process.env,
-  CRONTICK_HOME: HOME,
-  TEMP: TEMP_ROOT,
-  TMP: TEMP_ROOT,
-};
-const MANAGED_SCRIPTS_DIR = tempScriptsDir(env);
-const LEGACY_SCRIPTS_DIR = legacyScriptTempDir(env);
-const client = createClient({ env, daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 15_000 });
+const SCRATCH_ROOT = resolve('.crontick', 'temp-script-cleanup-ctd-017');
+let home = '';
+let tempRoot = '';
+let env: NodeJS.ProcessEnv;
+let client: ReturnType<typeof createClient> | undefined;
 
 type RunRecord = {
   id: string;
@@ -28,11 +23,19 @@ type RunLogsPayload = {
   lines: Array<{ data: string }>;
 };
 
+function managedScriptsDir(): string {
+  return tempScriptsDir(env);
+}
+
+function legacyScriptsDir(): string {
+  return legacyScriptTempDir(env);
+}
+
 function resetHome(): void {
-  rmSync(HOME, { recursive: true, force: true });
-  mkdirSync(join(HOME, 'jobs'), { recursive: true });
-  mkdirSync(join(HOME, 'logs'), { recursive: true });
-  mkdirSync(TEMP_ROOT, { recursive: true });
+  rmSync(home, { recursive: true, force: true });
+  mkdirSync(join(home, 'jobs'), { recursive: true });
+  mkdirSync(join(home, 'logs'), { recursive: true });
+  mkdirSync(tempRoot, { recursive: true });
 }
 
 function readEntries(dir: string): string[] {
@@ -55,33 +58,45 @@ async function waitFor<T>(probe: () => Promise<T | undefined> | T | undefined, m
 
 async function waitForTerminalRun(runId: string, maxMs = 15_000): Promise<RunRecord> {
   return waitFor(async () => {
-    const run = await client.getRun(runId) as RunRecord;
+    const run = await client!.getRun(runId) as RunRecord;
     if (run.status === 'queued' || run.status === 'running') return undefined;
     return run;
   }, `terminal run ${runId}`, maxMs);
 }
 
 beforeEach(() => {
+  home = join(SCRATCH_ROOT, randomUUID());
+  tempRoot = join(home, 'legacy-os-temp');
+  env = {
+    ...process.env,
+    CRONTICK_HOME: home,
+    TEMP: tempRoot,
+    TMP: tempRoot,
+  };
+  client = createClient({ env, daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 15_000 });
   resetHome();
 });
 
 afterEach(async () => {
-  try { await client.daemonStop(); } catch { /* ignore */ }
-  rmSync(HOME, { recursive: true, force: true });
+  try { await client?.daemonStop(); } catch { /* ignore */ }
+  rmSync(home, { recursive: true, force: true });
+  home = '';
+  tempRoot = '';
+  client = undefined;
 });
 
 describe('CTD-017 temp script cleanup', () => {
   it('uses CRONTICK_HOME-managed temp scripts and sweeps legacy OS-temp leftovers on daemon startup', async () => {
-    const legacySeedFile = join(LEGACY_SCRIPTS_DIR, 'legacy-leftover.cmd');
-    mkdirSync(LEGACY_SCRIPTS_DIR, { recursive: true });
+    const legacySeedFile = join(legacyScriptsDir(), 'legacy-leftover.cmd');
+    mkdirSync(legacyScriptsDir(), { recursive: true });
     writeFileSync(legacySeedFile, '@echo off\r\necho legacy leftover\r\n', 'utf8');
 
-    const daemon = await client.ensure();
+    const daemon = await client!.ensure();
     expect(daemon.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     await waitFor(() => existsSync(legacySeedFile) ? undefined : true, 'legacy startup sweep');
-    expect(readEntries(LEGACY_SCRIPTS_DIR)).toEqual([]);
+    expect(readEntries(legacyScriptsDir())).toEqual([]);
 
-    await client.createJob({
+    await client!.createJob({
       id: 'ctd-017-script-job',
       schedule: { kind: 'interval', everySec: 3600 },
       action: {
@@ -93,23 +108,23 @@ describe('CTD-017 temp script cleanup', () => {
       retry: { max: 0, backoffSec: 1 },
     });
 
-    const runId = (await client.runNow('ctd-017-script-job') as { runId: string }).runId;
+    const runId = (await client!.runNow('ctd-017-script-job') as { runId: string }).runId;
     const activeManagedFiles = await waitFor(async () => {
-      const run = await client.getRun(runId) as RunRecord;
+      const run = await client!.getRun(runId) as RunRecord;
       if (run.status !== 'running') return undefined;
-      const files = readEntries(MANAGED_SCRIPTS_DIR);
+      const files = readEntries(managedScriptsDir());
       return files.length > 0 ? files : undefined;
     }, 'managed temp script files');
 
     expect(activeManagedFiles.every((name) => name.endsWith('.bat'))).toBe(true);
-    expect(readEntries(LEGACY_SCRIPTS_DIR)).toEqual([]);
+    expect(readEntries(legacyScriptsDir())).toEqual([]);
 
     const run = await waitForTerminalRun(runId);
     expect(run).toMatchObject({ status: 'success', exitCode: 0 });
-    await waitFor(() => readEntries(MANAGED_SCRIPTS_DIR).length === 0 ? true : undefined, 'managed temp script cleanup');
-    expect(readEntries(LEGACY_SCRIPTS_DIR)).toEqual([]);
+    await waitFor(() => readEntries(managedScriptsDir()).length === 0 ? true : undefined, 'managed temp script cleanup');
+    expect(readEntries(legacyScriptsDir())).toEqual([]);
 
-    const logs = await client.getLogs(runId) as RunLogsPayload;
+    const logs = await client!.getLogs(runId) as RunLogsPayload;
     expect(logs.lines.some((line) => line.data.includes('ctd-017 managed temp cleanup'))).toBe(true);
   }, 20_000);
 });

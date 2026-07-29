@@ -233,8 +233,10 @@ Delete a job.
 crontick delete <id>
 ```
 
-Cancels the job's in-flight run, if any, before removing the job — a deleted job never leaves an
-orphaned process running against a definition that no longer exists. See
+Cancels the job's in-flight run, if any, before removing the job -- a deleted job never leaves an
+orphaned process running against a definition that no longer exists. Deleting a job removes only the
+job definition; archived run and log history remain available via `crontick runs get <runId>` and
+`crontick logs <runId>`, but those archived rows are excluded from live aggregates. See
 [jobs.md](../concepts/jobs.md#lifecycle-create-update-remove).
 
 ---

@@ -52,7 +52,7 @@ Single-run MCP tools now standardize on `id` for their primary identifier. The f
 - `crontick_run_get`: `runId` (deprecated; use `id`)
 - `crontick_run_logs_tail`: `runId` (deprecated; use `id`)
 
-If both `id` and `runId` are supplied, `id` wins.
+For each of these tools, provide `id` or deprecated `runId`. If both are supplied, `id` wins.
 
 ## Result Shape
 
@@ -145,14 +145,14 @@ Update an existing job (partial update merged with existing definition).
 
 ### crontick_job_delete
 
-Permanently delete a job and all its run history.
+Permanently delete a job definition. Archived runs and logs remain directly queryable by run ID, but live aggregates exclude them.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Job ID |
+| `id` | `string` | yes | - | Job ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ ok: true, canceledRun: boolean }` — `canceledRun` is `true` when the job had an
+**Result:** `{ ok: true, canceledRun: boolean }` - `canceledRun` is `true` when the job had an
 in-flight run that was canceled as part of the delete (see
 [jobs.md](../concepts/jobs.md#lifecycle-create-update-remove)).
 
@@ -164,7 +164,7 @@ Enable a disabled job.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Job ID |
+| `id` | `string` | yes | - | Job ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Updated `Job` object.
@@ -177,7 +177,7 @@ Disable a job.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Job ID |
+| `id` | `string` | yes | - | Job ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Updated `Job` object.
@@ -190,7 +190,7 @@ Trigger an immediate run of a job, bypassing its schedule.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Job ID |
+| `id` | `string` | yes | - | Job ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `{ runId: string }`
@@ -203,11 +203,13 @@ Cancel an in-progress run by its run ID.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Run ID |
-| `runId` | `string` | no | — | Deprecated alias for `id` |
+| `id` | `string` | yes* | - | Preferred run ID |
+| `runId` | `string` | no | - | Deprecated alias for `id` |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `{ ok: true, canceled: boolean }`
+
+Provide `id` or deprecated `runId`; if both are supplied, `id` wins.
 
 ---
 
@@ -217,10 +219,10 @@ List recent runs, optionally filtered by job ID.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `jobId` | `string` | no | — | Filter by job ID |
-| `status` | `enum` | no | — | Filter by run status: `queued`, `running`, `success`, `failed`, `canceled`, `timeout`, `missed` |
-| `limit` | `integer` (positive) | no | — | Maximum runs to return |
-| `since` | `integer` | no | — | Only runs since epoch ms |
+| `jobId` | `string` | no | - | Filter by job ID |
+| `status` | `enum` | no | - | Filter by run status: `queued`, `running`, `success`, `failed`, `canceled`, `timeout`, `missed` |
+| `limit` | `integer` (positive) | no | - | Maximum runs to return |
+| `since` | `integer` | no | - | Only runs since epoch ms |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Array of run objects.
@@ -234,12 +236,14 @@ and whether its captured output was truncated by the retention output cap.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Run ID |
-| `runId` | `string` | no | — | Deprecated alias for `id` |
+| `id` | `string` | yes* | - | Preferred run ID |
+| `runId` | `string` | no | - | Deprecated alias for `id` |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Run object, including `pid` (number, absent for `missed` runs) and `outputTruncated`
 (boolean). Secret-like text fields are redacted before serialization.
+
+Provide `id` or deprecated `runId`; if both are supplied, `id` wins.
 
 ---
 
@@ -249,16 +253,19 @@ Get the last N lines of output for a run.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Run ID |
-| `runId` | `string` | no | — | Deprecated alias for `id` |
+| `id` | `string` | yes* | - | Preferred run ID |
+| `runId` | `string` | no | - | Deprecated alias for `id` |
 | `lines` | `integer` (positive) | no | `50` | Number of text lines to return after reconstructing newline-delimited output from stored log chunks |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `{ runId: string, lines: LogEntry[] }` with log text redacted for common
 secret shapes.
 
+Provide `id` or deprecated `runId`; if both are supplied, `id` wins.
+
 ---
 
+### crontick_schedule_validate
 ### crontick_schedule_validate
 
 Validate a schedule definition.

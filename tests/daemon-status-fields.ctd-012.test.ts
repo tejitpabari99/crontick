@@ -1,16 +1,15 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { createClient } from '../src/client.js';
 
 const CLI = resolve('dist', 'cli', 'index.js');
 const MCP = resolve('dist', 'mcp', 'index.js');
-const HOME = String.raw`Q:\Rough\crontick-qa\state\devfix2\daemon-status-fields-ctd-012`;
-const PID_FILE = join(HOME, 'daemon.pid');
-const PORT_FILE = join(HOME, 'daemon.port');
+const SCRATCH_ROOT = resolve('.crontick', 'daemon-status-fields-ctd-012');
 
 type StatusPayload = {
   pid: number;
@@ -29,15 +28,24 @@ type StatusPayload = {
 
 type ToolCallJson = { error?: string; [key: string]: unknown };
 
+let home = '';
 let baseUrl = '';
 let port = 0;
 let mcpClient: Client;
 let mcpTransport: StdioClientTransport;
 
+function pidFile(): string {
+  return join(home, 'daemon.pid');
+}
+
+function portFile(): string {
+  return join(home, 'daemon.port');
+}
+
 function cli(args: string[], env: NodeJS.ProcessEnv = {}): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync(process.execPath, [CLI, ...args], {
     encoding: 'utf8',
-    env: { ...process.env, CRONTICK_HOME: HOME, ...env },
+    env: { ...process.env, CRONTICK_HOME: home, ...env },
   });
   return {
     status: result.status,
@@ -59,7 +67,7 @@ function readNumber(path: string): number | undefined {
 function waitForPort(maxMs = 15_000): number {
   const deadline = Date.now() + maxMs;
   while (Date.now() < deadline) {
-    const value = readNumber(PORT_FILE);
+    const value = readNumber(portFile());
     if (value !== undefined) return value;
     sleep(50);
   }
@@ -80,22 +88,24 @@ function waitForPidExit(pid: number, maxMs = 5_000): void {
 
 function stopDaemon(): void {
   try { cli(['--json', 'daemon', 'stop'], baseUrl ? { CRONTICK_DAEMON_URL: baseUrl } : {}); } catch { /* ignore */ }
-  const pid = readNumber(PID_FILE);
+  const pid = readNumber(pidFile());
   if (pid === undefined) return;
   try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
   waitForPidExit(pid);
 }
 
 function resetHome(): void {
+  if (!home) return;
   stopDaemon();
-  rmSync(HOME, { recursive: true, force: true });
-  mkdirSync(join(HOME, 'jobs'), { recursive: true });
-  mkdirSync(join(HOME, 'logs'), { recursive: true });
+  rmSync(home, { recursive: true, force: true });
+  mkdirSync(join(home, 'jobs'), { recursive: true });
+  mkdirSync(join(home, 'logs'), { recursive: true });
 }
 
 function removeHome(): void {
+  if (!home) return;
   stopDaemon();
-  rmSync(HOME, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
 }
 
 async function callTool(name: string, args: Record<string, unknown>): Promise<{ json: ToolCallJson; isError: boolean }> {
@@ -108,7 +118,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<{ 
   };
 }
 
-beforeAll(async () => {
+beforeEach(async () => {
+  home = join(SCRATCH_ROOT, randomUUID());
   resetHome();
   const started = cli(['--json', 'daemon', 'start']);
   if (started.status !== 0) {
@@ -124,7 +135,7 @@ beforeAll(async () => {
     args: [MCP],
     env: {
       ...process.env,
-      CRONTICK_HOME: HOME,
+      CRONTICK_HOME: home,
       CRONTICK_DAEMON_URL: baseUrl,
       CRONTICK_MCP_START_DAEMON: '0',
     },
@@ -134,10 +145,13 @@ beforeAll(async () => {
   await mcpClient.connect(mcpTransport);
 }, 20_000);
 
-afterAll(async () => {
+afterEach(async () => {
   try { await mcpClient?.close(); } catch { /* ignore */ }
   try { await mcpTransport?.close(); } catch { /* ignore */ }
   removeHome();
+  home = '';
+  baseUrl = '';
+  port = 0;
 });
 
 describe('CTD-012 daemon status discovery fields', () => {
