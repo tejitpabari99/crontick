@@ -100,6 +100,49 @@ function display(value: unknown): string {
   return value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value ?? '');
 }
 
+function errorPayload(err: unknown): { code?: string; message: string; details?: unknown } {
+  if (err instanceof CrontickError) return err.toJSON();
+  if (err instanceof Error) {
+    const payload: { code?: string; message: string; details?: unknown } = { message: err.message };
+    if ('code' in err && typeof err.code === 'string') payload.code = err.code;
+    if ('details' in err) payload.details = err.details;
+    return payload;
+  }
+  if (err && typeof err === 'object') {
+    const record = err as { code?: unknown; message?: unknown; details?: unknown };
+    return {
+      code: typeof record.code === 'string' ? record.code : undefined,
+      message: typeof record.message === 'string' ? record.message : String(err),
+      details: record.details,
+    };
+  }
+  return { message: String(err) };
+}
+
+function formatErrorDetails(details: unknown, path: string[] = []): string[] {
+  if (details === undefined || details === null) return [];
+  if (Array.isArray(details)) {
+    const rendered = details.flatMap((value) => formatErrorDetails(value, path));
+    return rendered.length > 0 ? rendered : [path.length > 0 ? `${path.join('.')}: ${JSON.stringify(details)}` : JSON.stringify(details)];
+  }
+  if (typeof details === 'object') {
+    const record = details as Record<string, unknown>;
+    const messages = Array.isArray(record._errors)
+      ? record._errors.filter((value): value is string => typeof value === 'string' && value.length > 0)
+      : [];
+    const lines = path.length > 0
+      ? messages.map((message) => `${path.join('.')}: ${message}`)
+      : [...messages];
+    for (const [key, value] of Object.entries(record)) {
+      if (key === '_errors') continue;
+      lines.push(...formatErrorDetails(value, [...path, key]));
+    }
+    if (lines.length > 0) return lines;
+    return [path.length > 0 ? `${path.join('.')}: ${JSON.stringify(details)}` : JSON.stringify(details)];
+  }
+  return [path.length > 0 ? `${path.join('.')}: ${String(details)}` : String(details)];
+}
+
 function openDashboardUrl(url: string): void {
   if (process.platform === 'win32') {
     spawn('cmd', ['/c', 'start', url], { detached: true, stdio: 'ignore' }).unref();
@@ -152,14 +195,34 @@ function printDashboardData(data: unknown): void {
  * (finishing that teardown) before exiting on its own with the same code.
  */
 function handleError(err: unknown): void {
-  if (err instanceof CrontickError) {
-    stderr(`Error [${err.code}]: ${err.message}`);
-  } else if (err instanceof Error) {
-    stderr(`Error: ${err.message}`);
-  } else {
-    stderr(`Error: ${String(err)}`);
+  const payload = errorPayload(err);
+  if (useJson()) {
+    stderr(JSON.stringify(payload, null, 2));
+    process.exitCode = 1;
+    return;
   }
+
+  if (payload.code) {
+    stderr(`Error [${payload.code}]: ${payload.message}`);
+  } else {
+    stderr(`Error: ${payload.message}`);
+  }
+
+  const detailLines = formatErrorDetails(payload.details);
+  if (detailLines.length > 0) {
+    stderr('Details:');
+    for (const line of detailLines) stderr(`- ${line}`);
+  }
+
   process.exitCode = 1;
+}
+
+function assertDaemonStartJsonMode(foreground: boolean): void {
+  if (!foreground || !useJson()) return;
+  throw new CrontickError(
+    'VALIDATION_ERROR',
+    'Cannot combine --foreground with --json for `crontick daemon start`: foreground mode streams daemon logs to stdout and cannot emit a single JSON object.',
+  );
 }
 
 function commonJobOptions(command: Command): Command {
@@ -607,9 +670,12 @@ daemon.command('start')
   .option('--foreground', 'Run in foreground (blocking)')
   .action(async (opts) => {
     try {
-      const result = await client().daemonStart({ foreground: opts.foreground as boolean | undefined });
-      if (opts.foreground) process.exit(result.foregroundExitCode ?? 0);
-      stdout(result.started ? `Daemon started on port ${String(result.port ?? '')}` : `Daemon already running on port ${String(result.port ?? '')}`);
+      const foreground = opts.foreground === true;
+      assertDaemonStartJsonMode(foreground);
+      const result = await client().daemonStart({ foreground });
+      if (foreground) process.exit(result.foregroundExitCode ?? 0);
+      if (useJson()) print(result);
+      else stdout(result.started ? `Daemon started on port ${String(result.port ?? '')}` : `Daemon already running on port ${String(result.port ?? '')}`);
     } catch (err) { handleError(err); }
   });
 daemon.command('stop').description('Stop the daemon').action(async () => {
@@ -628,7 +694,8 @@ daemon.command('reload').description('Reload jobs from disk').action(async () =>
 daemon.command('restart').description('Restart the daemon').action(async () => {
   try {
     const result = await client().daemonRestart();
-    stdout(`Daemon restarted on port ${String(result.port ?? '')}`);
+    if (useJson()) print(result);
+    else stdout(`Daemon restarted on port ${String(result.port ?? '')}`);
   } catch (err) { handleError(err); }
 });
 

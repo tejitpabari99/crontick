@@ -2,7 +2,7 @@
 // retry with backoff, timeout, and stream capture with secret redaction.
 // See docs/internals/executors.md
 import { spawn } from 'node:child_process';
-import { writeFileSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { writeFileSync, unlinkSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir, platform } from 'node:os';
 import { join, isAbsolute, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -151,6 +151,39 @@ export function parseEnvFile(contents: string): Record<string, string> {
     if (key) result[key] = value;
   }
   return result;
+}
+
+const ACTION_CWD_INVALID_ERROR_CODE = 'ACTION_CWD_INVALID';
+
+function buildActionCwdError(
+  actionKind: Job['action']['kind'],
+  cwd: string,
+  reason: 'missing' | 'not-directory',
+): CrontickError {
+  const detail = reason === 'missing' ? 'does not exist' : 'is not a directory';
+  return new CrontickError(
+    ACTION_CWD_INVALID_ERROR_CODE,
+    `${ACTION_CWD_INVALID_ERROR_CODE}: ${actionKind} action cwd ${detail}: "${cwd}". Update action.cwd to an existing directory before the next run.`,
+  );
+}
+
+function validateActionCwd(action: Job['action']): void {
+  const cwd = action.cwd;
+  if (!cwd) return;
+
+  let cwdStats;
+  try {
+    cwdStats = statSync(cwd);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw buildActionCwdError(action.kind, cwd, 'missing');
+    }
+    throw err;
+  }
+
+  if (!cwdStats.isDirectory()) {
+    throw buildActionCwdError(action.kind, cwd, 'not-directory');
+  }
 }
 
 // ── Runner ────────────────────────────────────────────────────────────────────
@@ -370,6 +403,7 @@ export class Runner {
     signal: AbortSignal,
   ): Promise<RunResult> {
     const { action } = job;
+    validateActionCwd(action);
     const tempFiles: string[] = [];
     let tmpFile: string | undefined;
 

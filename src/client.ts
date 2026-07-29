@@ -235,7 +235,8 @@ export class CrontickClient {
 
   async getLogs(runId: string, options: { lines?: number } = {}): Promise<LogsResult> {
     const logs = await this.request<LogEntry[]>('GET', `/api/runs/${encodeURIComponent(runId)}/logs`);
-    const lines = options.lines !== undefined ? logs.slice(-options.lines) : logs;
+    const logicalLines = reconstructLogicalLogLines(logs);
+    const lines = options.lines !== undefined ? logicalLines.slice(-options.lines) : logicalLines;
     return { runId, lines };
   }
 
@@ -556,6 +557,59 @@ export function createClient(options?: CrontickClientOptions): CrontickClient {
 /** Fixed 100 ms backoff between demand-start and first retry — enough for port file flush. */
 async function boundedBackoff(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 100));
+}
+
+function reconstructLogicalLogLines(entries: LogEntry[]): LogEntry[] {
+  const lines: LogEntry[] = [];
+  const remainders = new Map<string, {
+    data: string;
+    runId?: string;
+    lastTs: number;
+    lastIndex: number;
+  }>();
+
+  entries.forEach((entry, index) => {
+    const previous = remainders.get(entry.stream);
+    const buffer = `${previous?.data ?? ''}${entry.data}`;
+    let cursor = 0;
+
+    while (cursor < buffer.length) {
+      const newlineIndex = buffer.indexOf('\n', cursor);
+      if (newlineIndex === -1) break;
+      lines.push({
+        runId: entry.runId ?? previous?.runId,
+        stream: entry.stream,
+        ts: entry.ts,
+        data: buffer.slice(cursor, newlineIndex + 1),
+      });
+      cursor = newlineIndex + 1;
+    }
+
+    const remainder = buffer.slice(cursor);
+    if (remainder) {
+      remainders.set(entry.stream, {
+        data: remainder,
+        runId: entry.runId ?? previous?.runId,
+        lastTs: entry.ts,
+        lastIndex: index,
+      });
+    } else {
+      remainders.delete(entry.stream);
+    }
+  });
+
+  [...remainders.entries()]
+    .sort(([, left], [, right]) => left.lastIndex - right.lastIndex)
+    .forEach(([stream, remainder]) => {
+      lines.push({
+        runId: remainder.runId,
+        stream,
+        ts: remainder.lastTs,
+        data: remainder.data,
+      });
+    });
+
+  return lines;
 }
 
 function errorMessage(err: unknown): string {

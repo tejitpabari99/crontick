@@ -39,7 +39,7 @@ preserving observability through captured logs and structured run records.
 - **R-003-7**: For `exec` actions, the runner MUST spawn `command` with `args` directly and verbatim (shell=false): no shell interpretation, no whitespace splitting, no re-quoting. `args` is the array produced by the CLI's repeatable `--arg <value>` flag (the primary, shim-independent mechanism) or its `--` convenience form (or the library API's `args` field), so an argument containing a space or shell metacharacter MUST pass through to the child exactly as given.
 - **R-003-8**: For `prompt` actions, the runner MUST resolve the engine command via `buildPromptRunCommand()` and spawn it with shell=false.
 - **R-003-9**: All spawned processes MUST inherit `process.env` merged with `action.env` (action.env wins). If `envFile` is specified, its variables are merged below `action.env` but above `process.env`.
-- **R-003-10**: `action.cwd` MUST be used as the working directory; if omitted, `process.cwd()` MUST be used.
+- **R-003-10**: `action.cwd` MUST be used as the working directory; if omitted, `process.cwd()` MUST be used. If `action.cwd` is provided but does not exist or is not a directory, the runner MUST fail the run before spawn with `ACTION_CWD_INVALID: <kind> action cwd ...` naming both the action kind and the rejected path.
 - **R-003-11**: If `action.timeoutSec` is set, the runner MUST start its own timer for `timeoutSec * 1000` ms (not the spawn-level `timeout` option, which cannot be distinguished from a user cancellation -- see R-003-15) and, on expiry, send `SIGTERM` to the child itself.
 - **R-003-12**: stdout and stderr MUST be captured, redacted via `safeRedact()`, and stored via `Store.appendLog()`. For PowerShell script jobs, capture MUST preserve UTF-8 byte sequences exactly across chunk boundaries instead of splitting a multibyte character.
 - **R-003-13**: On exit code 0, run status MUST be `success`. On non-zero exit, status MUST be `failed`. For PowerShell script jobs this includes non-terminating errors, uncaught terminating errors, command-not-found, missing-module failures, and native non-zero exits that occur without an explicit `exit N`; an explicit `exit N` remains authoritative.
@@ -83,7 +83,8 @@ preserving observability through captured logs and structured run records.
 
 ## Edge cases and failure modes
 
-- Command not found (`ENOENT`): Run finalized as `failed` with descriptive error.
+- Missing or non-directory `action.cwd`: Run finalized as `failed` before spawn with an `ACTION_CWD_INVALID` message naming the action kind and path.
+- Command not found (`ENOENT`): Run finalized as `failed` with descriptive error. When the missing binary is a prompt engine command, the error remains the existing PATH-focused guidance rather than the cwd-preflight message.
 - envFile not found/unreadable: Run fails with `ENV_FILE_ERROR` before spawn.
 - PowerShell non-terminating or uncaught terminating error without explicit `exit N`: the wrapper exits non-zero and the run finalizes `failed` instead of `success/0`.
 - PowerShell UTF-8 output split across chunk boundaries: buffered per stream and reconstructed exactly before persistence.
@@ -108,7 +109,7 @@ preserving observability through captured logs and structured run records.
 - [x] envFile is loaded and merged (test file: `tests/env-file.test.ts`)
 - [x] safeRedact skips binary data (test file: `tests/redact.test.ts`)
 - [x] cancelRun aborts active run (test file: `tests/runner.test.ts`)
-- [x] ENOENT for prompt engine produces actionable error (test file: `tests/runner.test.ts`)
+- [x] ENOENT for prompt engine produces actionable error, while a missing `action.cwd` fails earlier with a consistent explicit cwd message across script/exec/prompt actions (test files: `tests/runner.test.ts`, `tests/spawn-enoent-cwd.ctd-011.test.ts`)
 - [x] Spawn sets `detached: true` and `windowsHide: true` for every action kind except a Windows pwsh/powershell.exe script job, which is spawned attached so it can produce output (test file: `tests/runner.test.ts`, "script: shell=\"auto\" (the default job kind) captures non-empty output on every platform (BLOCKER 1 regression)")
 - [x] Child `pid` is persisted on the run row as soon as the process spawns (test file: `tests/runner.test.ts`, "spawn: persists the child pid on the run row...")
 - [x] Output byte cap truncates capture at a UTF-8 character boundary, sets `outputTruncated`, and never affects the child process (test file: `tests/runner.test.ts`, "truncateToUtf8Boundary: ..." and "captureChunk: truncation at the byte cap does not split a multi-byte character (MINOR 7 regression)")

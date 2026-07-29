@@ -619,7 +619,7 @@ describe('MCP server — full contract', () => {
     expect(runs.length).toBeGreaterThanOrEqual(1);
     const runId = runs[0].id;
 
-    const { json: runJson, isError: runErr } = await callTool(client, 'crontick_run_get', { runId });
+    const { json: runJson, isError: runErr } = await callTool(client, 'crontick_run_get', { id: runId });
     expect(runErr).toBe(false);
     const run = runJson as { id: string; pid?: number; outputTruncated: boolean };
     expect(run.id).toBe(runId);
@@ -627,7 +627,7 @@ describe('MCP server — full contract', () => {
     expect(run.pid === undefined || typeof run.pid === 'number').toBe(true);
     expect(typeof run.outputTruncated).toBe('boolean');
 
-    const { json: logsJson, isError: logsErr } = await callTool(client, 'crontick_run_logs_tail', { runId, lines: 10 });
+    const { json: logsJson, isError: logsErr } = await callTool(client, 'crontick_run_logs_tail', { id: runId, lines: 10 });
     expect(logsErr).toBe(false);
     const logsData = logsJson as { runId: string; lines: unknown[] };
     expect(logsData.runId).toBe(runId);

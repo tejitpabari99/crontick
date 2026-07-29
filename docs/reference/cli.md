@@ -21,6 +21,16 @@ Unless otherwise noted, read commands that surface config values, run errors, ca
 output, or dashboard data redact common secret shapes before printing. The same shared
 redaction contract applies on CLI, library, MCP, and HTTP read surfaces.
 
+## Error Output
+
+In text mode, command failures print `Error [CODE]: message` (or `Error: message` for non-
+`CrontickError` exceptions). When an error includes structured `details` data, the CLI now prints
+an additional `Details:` block with readable field-level lines such as `id: ...` or
+`schedule.everySec: ...`.
+
+In `--json` mode, failures still exit with code `1`, but stderr contains the full structured error
+payload as JSON, including `code`, `message`, and `details` when present.
+
 ---
 
 ## Commands
@@ -286,7 +296,7 @@ crontick logs <runId>
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--tail <n>` | integer | — | Show last N lines |
+| `--tail <n>` | integer | — | Show the last N text lines after reconstructing newline-delimited output from stored log chunks |
 
 ---
 
@@ -534,6 +544,10 @@ crontick daemon start
 |------|------|---------|-------------|
 | `--foreground` | boolean | `false` | Run in foreground (blocking) |
 
+In `--json` mode, background starts print the structured daemon-start result (`ok`, `started`,
+`pid`, `port`, `baseUrl`). `--foreground --json` is rejected up front because foreground mode
+streams daemon logs to stdout instead of producing a single JSON object.
+
 ---
 
 ### crontick daemon stop
@@ -589,6 +603,9 @@ Restart the daemon.
 ```bash
 crontick daemon restart
 ```
+
+In `--json` mode, restart prints the structured daemon-restart result (`ok`, `started`, `stopped`,
+`previousPid`, `pid`, `port`, `baseUrl`) instead of only human text.
 
 ---
 

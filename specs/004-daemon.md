@@ -60,6 +60,7 @@ need for OS service registration while ensuring the daemon is available when nee
 - **R-004-30**: On startup, and again on `POST /api/daemon/reload`, the daemon MUST prune daily log files under `<dataDir>/logs/` beyond `retention.maxLogFiles` (default 30, range 1..3650), deleting the oldest first and keeping the newest. Pruning MUST be best-effort: a failure MUST be logged but MUST NOT block startup or reload.
 - **R-004-31**: `DELETE /api/jobs/:id` MUST cancel the job's in-flight run, if any, as part of the delete, and MUST report whether it did so via a `canceledRun: boolean` field in the response.
 - **R-004-32**: `POST /api/jobs` MUST reject a duplicate job ID with HTTP 409 / `JOB_ALREADY_EXISTS` unless the caller passes `force=1` or `force=true` on the query string. Both `POST /api/jobs` and `PUT /api/jobs/:id` MUST validate the candidate schedule before any call to `Store.upsertJob()`; on failure they MUST return `VALIDATION_ERROR` and leave persisted job state unchanged.
+- **R-004-33**: The CLI `crontick daemon start` and `crontick daemon restart` commands MUST honor the global `--json` flag the same way the other daemon lifecycle commands do, emitting exactly one structured JSON object on stdout for successful background operations. `crontick daemon start --foreground --json` MUST be rejected with `VALIDATION_ERROR` before launch because foreground mode streams daemon logs to stdout rather than producing one finite JSON object.
 
 ### Non-functional requirements
 
@@ -148,6 +149,7 @@ adopts or cancels them based on liveness.
 - [x] Startup prunes daemon log files beyond `retention.maxLogFiles`, keeping the newest, and a reload applies a newly-lowered cap without a restart (test file: `tests/integration.daemon-lifecycle.test.ts`, "startup prunes old daemon log files beyond retention.maxLogFiles, keeping the newest"; "reload applies a newly-lowered retention.maxLogFiles without a daemon restart")
 - [x] Missed fires across a crash/restart are recorded as `missed` runs and surfaced in `daemon status`'s `missedFires` summary (test file: `tests/integration.daemon-lifecycle.test.ts`, "records missed fires across a crash/restart and surfaces them in status"; `tests/api.test.ts`, "GET /api/daemon/status includes missedFires summary")
 - [x] Reload reschedules all jobs from disk (test file: `tests/integration.daemon-lifecycle.test.ts`)
+- [x] `crontick daemon start --json` / `crontick daemon restart --json` emit structured lifecycle JSON, and `crontick daemon start --foreground --json` is rejected before launch (test file: `tests/cli-daemon-json.ctd-013.test.ts`)
 
 ## Out of scope
 

@@ -123,6 +123,16 @@ function withoutVerbose<T extends RawArgs>(args: T): Omit<T, 'verbose'> {
   return rest;
 }
 
+type SingleRunIdArgs = RawArgs & { id?: string; runId?: string };
+
+const DEPRECATED_RUN_ID_DESCRIPTION = 'Deprecated alias for id. If both are provided, id wins.';
+
+function normalizeSingleRunId(args: SingleRunIdArgs): string {
+  if (typeof args.id === 'string' && args.id.length > 0) return args.id;
+  if (typeof args.runId === 'string' && args.runId.length > 0) return args.runId;
+  throw new Error('Missing required identifier: provide id (preferred) or deprecated runId.');
+}
+
 // ── MCP server setup ──────────────────────────────────────────────────────────
 
 /** Build and return the McpServer with all tools registered. Separated from main() for testing. */
@@ -234,11 +244,14 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
   server.registerTool(
     'crontick_job_cancel_run',
     {
-      description: 'Cancel an in-progress run by its run ID.',
-      inputSchema: withVerbose({ runId: z.string() }),
+      description: 'Cancel an in-progress run by its run ID. Prefer `id`; deprecated alias: `runId`.',
+      inputSchema: withVerbose({
+        id: z.string().optional(),
+        runId: z.string().optional().describe(DEPRECATED_RUN_ID_DESCRIPTION),
+      }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.cancelRun(args.runId)),
+    async (args) => toolWrap(args, (client) => client.cancelRun(normalizeSingleRunId(args))),
   );
 
   // ── Runs ───────────────────────────────────────────────────────────────────
@@ -261,25 +274,29 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
   server.registerTool(
     'crontick_run_get',
     {
-      description: 'Get the details and current status of a specific run by run ID, including its pid (if it was spawned) and whether its output was truncated by the retention output cap.',
-      inputSchema: withVerbose({ runId: z.string() }),
+      description: 'Get the details and current status of a specific run. Prefer `id`; deprecated alias: `runId`. Includes the run pid (if it was spawned) and whether its output was truncated by the retention output cap.',
+      inputSchema: withVerbose({
+        id: z.string().optional(),
+        runId: z.string().optional().describe(DEPRECATED_RUN_ID_DESCRIPTION),
+      }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.getRun(args.runId)),
+    async (args) => toolWrap(args, (client) => client.getRun(normalizeSingleRunId(args))),
   );
 
   server.registerTool(
     'crontick_run_logs_tail',
     {
       description:
-        'Get the last N lines of output for a run. Useful for diagnosing failures.',
+        'Get the last N lines of output for a run. Prefer `id`; deprecated alias: `runId`. Useful for diagnosing failures.',
       inputSchema: withVerbose({
-        runId: z.string(),
+        id: z.string().optional(),
+        runId: z.string().optional().describe(DEPRECATED_RUN_ID_DESCRIPTION),
         lines: z.number().int().positive().default(50),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.getLogs(args.runId, { lines: args.lines })),
+    async (args) => toolWrap(args, (client) => client.getLogs(normalizeSingleRunId(args), { lines: args.lines })),
   );
 
   // ── Schedules ─────────────────────────────────────────────────────────────

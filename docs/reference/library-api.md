@@ -85,6 +85,10 @@ Read methods that surface config values or captured text (`getConfigValue`, `get
 strings or structured text fields. The same contract applies on CLI, MCP, and HTTP read
 surfaces.
 
+`getLogs({ lines: N })` reconstructs newline-delimited text lines from the ordered
+stdout/stderr chunk rows returned by the daemon before applying the last-`N` slice, so
+chunk boundaries do not change the visible tail result.
+
 ---
 
 ### CrontickError
