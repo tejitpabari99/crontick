@@ -107,6 +107,26 @@ export function truncateToUtf8Boundary(buf: Buffer): Buffer {
   return buf;
 }
 
+const EMPTY_BUFFER = Buffer.alloc(0);
+
+interface BufferedUtf8Chunk {
+  complete: Buffer;
+  pending: Buffer;
+}
+
+function splitBufferedUtf8Chunk(chunk: Buffer): BufferedUtf8Chunk {
+  const complete = truncateToUtf8Boundary(chunk);
+  if (complete.length === chunk.length) return { complete, pending: EMPTY_BUFFER };
+  return {
+    complete,
+    pending: Buffer.from(chunk.subarray(complete.length)),
+  };
+}
+
+function appendBufferedUtf8Chunk(pending: Buffer, chunk: Buffer): BufferedUtf8Chunk {
+  return splitBufferedUtf8Chunk(pending.length === 0 ? chunk : Buffer.concat([pending, chunk]));
+}
+
 // ── Env-file loader ───────────────────────────────────────────────────────────
 
 /**
@@ -362,6 +382,7 @@ export class Runner {
       let promptSessionJob = job;
       let promptEngineBinary: string | undefined;
       let promptEnv: Record<string, string> = {};
+      let bufferPowerShellUtf8 = false;
 
       if (action.kind === 'script') {
         // Write script to temp file
@@ -374,6 +395,7 @@ export class Runner {
           const userScriptFile = join(tmpDir, `${randomUUID()}.user.ps1`);
           tmpFile = join(tmpDir, `${randomUUID()}${ext}`);
           tempFiles.push(userScriptFile, tmpFile);
+          bufferPowerShellUtf8 = true;
           writeFileSync(userScriptFile, action.script, { encoding: 'utf-8', mode: 0o700 });
           // Deliberately invoke the user's script from a wrapper file so pwsh can
           // report truthful failures while an explicit user `exit N` still wins.
@@ -510,6 +532,10 @@ export class Runner {
       const maxOutputBytes = this.maxOutputBytesPerRunOverride ?? resolveMaxOutputBytesPerRun();
       let capturedBytes = 0;
       let outputTruncated = false;
+      const bufferedChunks: Record<'stdout' | 'stderr', Buffer> = {
+        stdout: EMPTY_BUFFER,
+        stderr: EMPTY_BUFFER,
+      };
       const captureChunk = (stream: 'stdout' | 'stderr', chunk: Buffer): void => {
         if (outputTruncated) return; // marker already emitted; drop silently, child keeps running
         if (capturedBytes + chunk.length > maxOutputBytes) {
@@ -529,6 +555,22 @@ export class Runner {
         }
         capturedBytes += chunk.length;
         store.appendLog(runId, stream, safeRedact(chunk));
+      };
+      const captureBufferedChunk = (stream: 'stdout' | 'stderr', chunk: Buffer): void => {
+        if (!bufferPowerShellUtf8) {
+          captureChunk(stream, chunk);
+          return;
+        }
+        const { complete, pending } = appendBufferedUtf8Chunk(bufferedChunks[stream], chunk);
+        bufferedChunks[stream] = pending;
+        if (complete.length > 0) captureChunk(stream, complete);
+      };
+      const flushBufferedChunk = (stream: 'stdout' | 'stderr'): void => {
+        if (!bufferPowerShellUtf8) return;
+        const pending = bufferedChunks[stream];
+        if (pending.length === 0) return;
+        bufferedChunks[stream] = EMPTY_BUFFER;
+        captureChunk(stream, pending);
       };
 
       const result = await new Promise<RunResult>((resolve) => {
@@ -579,7 +621,7 @@ export class Runner {
         child.stdout?.on('data', (chunk: Buffer) => {
           try {
             appendTranscript(chunk);
-            captureChunk('stdout', chunk);
+            captureBufferedChunk('stdout', chunk);
           } catch (err) {
             failFromCallback(err);
           }
@@ -588,13 +630,20 @@ export class Runner {
         child.stderr?.on('data', (chunk: Buffer) => {
           try {
             appendTranscript(chunk);
-            captureChunk('stderr', chunk);
+            captureBufferedChunk('stderr', chunk);
           } catch (err) {
             failFromCallback(err);
           }
         });
 
         child.on('close', (code, sig) => {
+          try {
+            flushBufferedChunk('stdout');
+            flushBufferedChunk('stderr');
+          } catch (err) {
+            finish({ status: 'failed', error: `RUNNER_CALLBACK_FAILED: ${errorMessage(err)}` });
+            return;
+          }
           const durationMs = Date.now() - startedAt;
           this.logger.debug('Child process closed', { jobId: job.id, runId, code, signal: sig, durationMs });
           this.appendDiagnosticLog(store, runId, 'child closed', { code, signal: sig, durationMs });
@@ -758,6 +807,12 @@ function buildPowerShellScriptWrapper(userScriptPath: string): string {
   const escapedUserScriptPath = escapePowerShellSingleQuotedString(userScriptPath);
   return [
     "$ErrorActionPreference = 'Stop'",
+    '$utf8NoBom = [System.Text.UTF8Encoding]::new($false)',
+    '[Console]::OutputEncoding = $utf8NoBom',
+    '$OutputEncoding = $utf8NoBom',
+    'if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {',
+    '  $PSNativeCommandUseErrorActionPreference = $true',
+    '}',
     '$global:LASTEXITCODE = 0',
     'trap {',
     '  [Console]::Error.WriteLine($_.ToString())',
@@ -798,3 +853,4 @@ function sleep(ms: number): Promise<void> {
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
+
