@@ -17,7 +17,7 @@ import {
   dashboardStatusFromDaemon,
   resolveDashboardAsset,
 } from '../dashboard.js';
-import { nullLogger, type Logger } from '../logger.js';
+import { nullLogger, redactValue, type Logger } from '../logger.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -201,7 +201,7 @@ async function handleRequest(
         ? parseInt(url.searchParams.get('since')!, 10)
         : undefined;
       const status = (url.searchParams.get('status') ?? undefined) as RunStatus | undefined;
-      return sendJson(res, 200, ctx.store.listRuns({ jobId, limit, since, status }));
+      return sendJson(res, 200, redactValue(ctx.store.listRuns({ jobId, limit, since, status })));
     }
 
     // /api/runs/:id/*
@@ -213,7 +213,7 @@ async function handleRequest(
       if (method === 'GET' && sub === '') {
         const run = ctx.store.getRun(id);
         if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
-        return sendJson(res, 200, run);
+        return sendJson(res, 200, redactValue(run));
       }
 
       if (method === 'POST' && sub === '/cancel') {
@@ -227,12 +227,12 @@ async function handleRequest(
         const run = ctx.store.getRun(id);
         if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
         const logs = ctx.store.getLogs(id);
-        return sendJson(res, 200, logs.map((l) => ({
+        return sendJson(res, 200, redactValue(logs.map((l) => ({
           runId: l.runId,
           stream: l.stream,
           ts: l.ts,
           data: l.chunk.toString('utf-8'),
-        })));
+        }))));
       }
 
       if (method === 'GET' && sub === '/logs/stream') {
@@ -435,7 +435,7 @@ function streamLogs(
   // Send existing logs first
   const existing = ctx.store.getLogs(runId);
   for (const log of existing) {
-    sseEvent(res, { stream: log.stream, ts: log.ts, data: log.chunk.toString('utf-8') });
+    sseEvent(res, redactValue({ stream: log.stream, ts: log.ts, data: log.chunk.toString('utf-8') }));
     if (log.ts > lastTs) lastTs = log.ts;
   }
 
@@ -444,7 +444,7 @@ function streamLogs(
     const run = ctx.store.getRun(runId);
     const newLogs = ctx.store.tailLogs(runId, lastTs);
     for (const log of newLogs) {
-      sseEvent(res, { stream: log.stream, ts: log.ts, data: log.chunk.toString('utf-8') });
+      sseEvent(res, redactValue({ stream: log.stream, ts: log.ts, data: log.chunk.toString('utf-8') }));
       if (log.ts > lastTs) lastTs = log.ts;
     }
 

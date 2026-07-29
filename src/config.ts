@@ -23,7 +23,7 @@ import {
   type RetentionConfig,
 } from './schemas/config.js';
 import type { PromptAction } from './schemas/job.js';
-import { nullLogger, type Logger } from './logger.js';
+import { nullLogger, redactValue, type Logger } from './logger.js';
 
 export { ConfigSchema, EngineConfigSchema, RetentionConfigSchema, type CrontickConfig, type EngineConfig, type RetentionConfig };
 
@@ -135,8 +135,10 @@ export function validateConfigFile(options: ConfigOptions = {}): ConfigValidatio
 
 export function getConfigValue(path: string | undefined, options: ConfigOptions = {}): unknown {
   const config = loadConfig(options);
-  if (!path) return config;
-  return readPath(config, parseKeyPath(path));
+  const keyPath = path ? parseKeyPath(path) : undefined;
+  const value = keyPath ? readPath(config, keyPath) : config;
+  const lastSegment = keyPath?.[keyPath.length - 1];
+  return redactValue(value, typeof lastSegment === 'string' ? lastSegment : undefined);
 }
 
 export function setConfigValue(path: string, value: unknown, options: ConfigOptions = {}): CrontickConfig {

@@ -7,6 +7,7 @@ import { existsSync, statSync } from 'node:fs';
 import { extname, join as pathJoin, normalize, resolve as pathResolve, sep as pathSep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CrontickError } from './errors.js';
+import { redactValue } from './logger.js';
 import { VERSION } from './version.js';
 import type { Job, Schedule } from './schemas/job.js';
 import type { Store, Run } from './daemon/store.js';
@@ -267,14 +268,14 @@ function buildDashboardJob(ctx: DashboardContext, job: Job): DashboardJob {
   const lastRun = ctx.store.listRuns({ jobId: job.id, limit: 1 })[0];
   return {
     id: job.id,
-    description: job.description ?? null,
+    description: redactValue(job.description ?? null) as string | null,
     enabled: job.enabled,
     scheduleLabel: scheduleLabel(job.schedule),
     actionKind: job.action.kind,
     lastStatus: lastRun?.status ?? null,
     lastRunAt: lastRun?.startedAt ?? null,
     nextRunAt: job.enabled ? (ctx.scheduler.previewNext(job.schedule, { n: 1 })[0] ?? null) : null,
-    job,
+    job: redactValue(job) as Job,
   };
 }
 
@@ -287,7 +288,7 @@ function toDashboardRun(run: Run): DashboardRun {
     endedAt: run.endedAt ?? null,
     durationMs: run.durationMs ?? null,
     exitCode: run.exitCode ?? null,
-    error: run.error ?? null,
+    error: redactValue(run.error ?? null) as string | null,
   };
 }
 

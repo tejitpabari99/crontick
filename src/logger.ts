@@ -42,15 +42,45 @@ const LEVELS: Record<LogLevel, number> = {
   debug: 3,
 };
 
+type SecretPattern = {
+  pattern: RegExp;
+  replacement: string;
+};
+
 /** Matches env-var-style secret keys for value-level redaction. */
-const SECRET_KEY = /(?:token|secret|password|credential|apikey|api_key|authorization|cookie)/i;
+const SECRET_KEY = /(?:token|secret|password|passwd|credential|apikey|api_key|client[_-]?secret|access[_-]?token|refresh[_-]?token|private[_-]?key|authorization|cookie|subscription[_-]?key)/i;
 /** Patterns applied to log text to strip tokens/keys before they reach the sink. */
-const SECRET_PATTERNS = [
-  /(?:AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|GITHUB_TOKEN|GH_TOKEN|GCLOUD_SERVICE_KEY|GOOGLE_CREDENTIALS|API_KEY|PASSWORD|TOKEN|SECRET)=[^\s]*/gi,
-  /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi,
-  /ghp_[A-Za-z0-9]{36}/g,
-  /github_pat_[A-Za-z0-9_]{20,}/g,
-  /AKIA[0-9A-Z]{16}/g,
+const SECRET_PATTERNS: SecretPattern[] = [
+  {
+    pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
+    replacement: '[REDACTED]',
+  },
+  {
+    pattern: /(Authorization\s*:\s*Bearer\s+)[A-Za-z0-9\-._~+/]+=*/gi,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    pattern: /(mongodb(?:\+srv)?):\/\/([^:\s/@]+):([^@\s]+)@/gi,
+    replacement: '$1://$2:[REDACTED]@',
+  },
+  {
+    pattern: /(postgres(?:ql)?):\/\/([^:\s/@]+):([^@\s]+)@/gi,
+    replacement: '$1://$2:[REDACTED]@',
+  },
+  { pattern: /github_pat_[A-Za-z0-9_]{20,}/g, replacement: '[REDACTED]' },
+  { pattern: /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, replacement: '[REDACTED]' },
+  { pattern: /\bsk-proj-[A-Za-z0-9_-]{20,}\b/g, replacement: '[REDACTED]' },
+  { pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/g, replacement: '[REDACTED]' },
+  { pattern: /\bsk-[A-Za-z0-9_-]{20,}\b/g, replacement: '[REDACTED]' },
+  { pattern: /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{12,}\b/g, replacement: '[REDACTED]' },
+  { pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, replacement: '[REDACTED]' },
+  { pattern: /\bAIza[0-9A-Za-z\-_]{35}\b/g, replacement: '[REDACTED]' },
+  { pattern: /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b/g, replacement: '[REDACTED]' },
+  { pattern: /\bAKIA[0-9A-Z]{16}\b/g, replacement: '[REDACTED]' },
+  {
+    pattern: /(\b[\w.-]*?(?:token|secret|password|passwd|api(?:[_-]?key)?|credential|private[_-]?key|cookie|subscription[_-]?key)[\w.-]*\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi,
+    replacement: '$1[REDACTED]',
+  },
 ];
 
 export function createLogger(options: LoggerOptions = {}): Logger {
@@ -70,8 +100,8 @@ export function isVerboseEnv(env: NodeJS.ProcessEnv = process.env): boolean {
 
 export function redactText(text: string): string {
   let output = text;
-  for (const pattern of SECRET_PATTERNS) {
-    output = output.replace(pattern, '[REDACTED]');
+  for (const { pattern, replacement } of SECRET_PATTERNS) {
+    output = output.replace(pattern, replacement);
   }
   return output;
 }
