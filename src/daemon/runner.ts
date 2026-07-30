@@ -2,9 +2,9 @@
 // retry with backoff, timeout, and stream capture with secret redaction.
 // See docs/internals/executors.md
 import { spawn } from 'node:child_process';
-import { writeFileSync, unlinkSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { writeFileSync, unlinkSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { platform } from 'node:os';
-import { join, isAbsolute, basename } from 'node:path';
+import { join, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Job, PromptAction } from '../schemas/job.js';
 import type { Store, RunStatus } from './store.js';
@@ -14,6 +14,7 @@ import { buildPromptRunCommand, loadConfig } from '../config.js';
 import { createStreamingTextRedactor, nullLogger, redactText, type Logger, type StreamingTextRedactor } from '../logger.js';
 import { tempScriptsDir } from '../paths.js';
 import { isProcessAlive, isSameRunProcess } from '../process-liveness.js';
+import { readEnvFileForAction } from './env-file.js';
 
 // ── Output cap (L5) ───────────────────────────────────────────────────────────
 
@@ -136,32 +137,6 @@ function splitBufferedUtf8Chunk(chunk: Buffer): BufferedUtf8Chunk {
 
 function appendBufferedUtf8Chunk(pending: Buffer, chunk: Buffer): BufferedUtf8Chunk {
   return splitBufferedUtf8Chunk(pending.length === 0 ? chunk : Buffer.concat([pending, chunk]));
-}
-
-// ── Env-file loader ───────────────────────────────────────────────────────────
-
-/**
- * Parse a .env-style file (KEY=VALUE, # comments, quoted values).
- * Returns a record of KEY → VALUE.
- */
-export function parseEnvFile(contents: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const raw of contents.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith('#')) continue;
-    const eq = line.indexOf('=');
-    if (eq === -1) continue;
-    const key = line.slice(0, eq).trim();
-    let value = line.slice(eq + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"'))
-      || (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    if (key) result[key] = value;
-  }
-  return result;
 }
 
 const ACTION_CWD_INVALID_ERROR_CODE = 'ACTION_CWD_INVALID';
@@ -529,23 +504,15 @@ export class Runner {
       }
 
       // Merge envFile variables (lower priority than action.env, higher than process.env).
-      if (action.envFile) {
-        const envFilePath = isAbsolute(action.envFile)
-          ? action.envFile
-          : join(action.cwd ?? process.cwd(), action.envFile);
-        try {
-          const fileContents = readFileSync(envFilePath, 'utf-8');
-          const envFileVars = parseEnvFile(fileContents);
-          spawnOpts.env = {
-            ...process.env,
-            ...promptEnv,
-            ...envFileVars,
-            ...(action.env ?? {}),
-          } as NodeJS.ProcessEnv;
-          this.logger.debug('Loaded env file for run', { jobId: job.id, runId, envFile: envFilePath, envKeys: Object.keys(envFileVars) });
-        } catch (err) {
-          throw new CrontickError('ENV_FILE_ERROR', `Failed to load envFile: ${String(err)}`);
-        }
+      const envFile = readEnvFileForAction(action);
+      if (envFile) {
+        spawnOpts.env = {
+          ...process.env,
+          ...promptEnv,
+          ...envFile.vars,
+          ...(action.env ?? {}),
+        } as NodeJS.ProcessEnv;
+        this.logger.debug('Loaded env file for run', { jobId: job.id, runId, envFile: envFile.path, envKeys: Object.keys(envFile.vars) });
       }
 
       // Timeout enforcement (L-timeout): tracked manually rather than via spawn()'s

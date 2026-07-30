@@ -98,6 +98,7 @@ function errResult(err: unknown, diagnostics: LogEvent[] = [], verbose = false):
 
 function redactedErrorMessage(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
+  if (err instanceof Error && 'code' in err && err.code === 'ENV_FILE_ERROR') return msg;
   return redactForLlm(msg);
 }
 

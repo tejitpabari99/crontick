@@ -289,6 +289,28 @@ process.stdout.write(JSON.stringify({ id: created.id }));
     await expect(client.importJobs([{ ...testJob, id: 'also invalid' }])).rejects.toBeInstanceOf(Error);
   });
 
+  it('surfaces ENV_FILE_ERROR from createJob without persisting a broken job', async () => {
+    const home = makeHome();
+    const client = createClient({ daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 15_000 });
+    const missingEnvFile = join(home, 'missing-client.env');
+
+    await expect(client.createJob({
+      id: 'client-missing-env-job',
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: {
+        kind: 'exec',
+        command: process.execPath,
+        args: ['-e', 'process.exit(0)'],
+        cwd: home,
+        envFile: 'missing-client.env',
+      },
+    })).rejects.toMatchObject({
+      code: 'ENV_FILE_ERROR',
+      message: expect.stringContaining(missingEnvFile),
+    });
+    await expect(client.listJobs()).resolves.toEqual([]);
+  }, 15_000);
+
   it('supports common CRUD and helper methods through the HTTP API', async () => {
     const home = makeHome();
     const client = createClient({ daemonScript: writeFakeApiDaemon(home), startupTimeoutMs: 5_000 });

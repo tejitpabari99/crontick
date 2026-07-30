@@ -302,6 +302,24 @@ describe('MCP server — full contract', () => {
     expect((json as { action: unknown }).action).toMatchObject({ kind: 'exec', command: 'echo', args: [tricky] });
   });
 
+  it('crontick_job_create preserves env-file error paths in MCP responses', async () => {
+    const missingEnvFile = join(dir, 'missing-mcp.env');
+    const result = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-missing-env-job',
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: {
+        kind: 'exec',
+        command: process.execPath,
+        args: ['-e', 'process.exit(0)'],
+        cwd: dir,
+        envFile: 'missing-mcp.env',
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect((result.json as { error: string }).error).toContain('Failed to load envFile');
+    expect((result.json as { error: string }).error).toContain(missingEnvFile);
+  });
+
   it('crontick_job_update merges a partial patch onto the existing definition rather than replacing it', async () => {
     const created = await callTool(client, 'crontick_job_create', {
       id: 'mcp-merge-job',

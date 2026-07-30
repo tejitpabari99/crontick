@@ -18,6 +18,7 @@ import {
   resolveDashboardAsset,
 } from '../dashboard.js';
 import { nullLogger, redactValue, type Logger } from '../logger.js';
+import { readEnvFileForAction } from './env-file.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -104,6 +105,7 @@ async function handleRequest(
         return sendDuplicateCreateError(res, job.id);
       }
       if (!validateJobSchedule(res, ctx.scheduler, job.schedule)) return;
+      readEnvFileForAction(job.action);
       ctx.store.upsertJob(job);
       const stored = ctx.store.getJob(job.id) ?? job;
       ctx.scheduler.schedule(stored);
@@ -135,6 +137,7 @@ async function handleRequest(
         }
         const job = applyConfigDefaults(parsed.data);
         if (!validateJobSchedule(res, ctx.scheduler, job.schedule)) return;
+        readEnvFileForAction(job.action);
         ctx.store.upsertJob(job);
         const stored = ctx.store.getJob(id) ?? job;
         ctx.scheduler.schedule(stored);

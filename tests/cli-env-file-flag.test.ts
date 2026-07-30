@@ -29,19 +29,6 @@ function stopDaemonInHome(home: string): void {
   }
 }
 
-function waitForTerminalRun(home: string, runId: string, maxMs = 8_000): { status: string; error?: string | null } {
-  const deadline = Date.now() + maxMs;
-  while (Date.now() < deadline) {
-    const result = cli(['--json', 'runs', 'get', runId], { CRONTICK_HOME: home });
-    if (result.status === 0) {
-      const run = JSON.parse(result.stdout) as { status: string; error?: string | null };
-      if (run.status !== 'queued' && run.status !== 'running') return run;
-    }
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
-  }
-  throw new Error(`Timed out waiting for run ${runId} to finish`);
-}
-
 describe('CLI job env-file flag regression (CTD-010)', () => {
   it('new --help exposes --job-env-file and omits the colliding --env-file flag', () => {
     const result = cli(['new', '--help']);
@@ -50,7 +37,7 @@ describe('CLI job env-file flag regression (CTD-010)', () => {
     expect(result.stdout).not.toContain('--env-file <path>');
   });
 
-  it('a missing --job-env-file path reaches crontick handling instead of a raw Node abort', () => {
+  it('a missing --job-env-file path fails create before persistence and avoids a raw Node abort', () => {
     const home = makeTmpDir();
     try {
       const missingEnvFile = join(home, 'does-not-exist.env');
@@ -58,18 +45,16 @@ describe('CLI job env-file flag regression (CTD-010)', () => {
         '--json', 'new', 'missing-env-file-job', '--cron', '0 9 * * *',
         '--script', 'echo hi', '--job-env-file', missingEnvFile,
       ], { CRONTICK_HOME: home });
-      expect(created.status, created.stderr).toBe(0);
+      expect(created.status, created.stderr).toBe(1);
       expect(created.status).not.toBe(9);
       expect(created.stderr).not.toContain('node.exe:');
-      expect(JSON.parse(created.stdout).action).toMatchObject({ envFile: missingEnvFile });
+      const payload = JSON.parse(created.stderr) as { code: string; message: string };
+      expect(payload.code).toBe('ENV_FILE_ERROR');
+      expect(payload.message).toContain(missingEnvFile);
 
-      const started = cli(['--json', 'run-now', 'missing-env-file-job'], { CRONTICK_HOME: home });
-      expect(started.status, started.stderr).toBe(0);
-      const { runId } = JSON.parse(started.stdout) as { runId: string };
-
-      const run = waitForTerminalRun(home, runId);
-      expect(run.status).toBe('failed');
-      expect(run.error).toContain('Failed to load envFile');
+      const listed = cli(['--json', 'list'], { CRONTICK_HOME: home });
+      expect(listed.status, listed.stderr).toBe(0);
+      expect(JSON.parse(listed.stdout)).toEqual([]);
     } finally {
       stopDaemonInHome(home);
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);

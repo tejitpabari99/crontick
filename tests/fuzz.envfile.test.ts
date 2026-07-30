@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
-import { parseEnvFile } from '../src/daemon/runner.js';
+import { parseEnvFile } from '../src/daemon/env-file.js';
 
 describe('fuzz: parseEnvFile', () => {
   it('never throws on arbitrary string input', () => {

@@ -154,4 +154,82 @@ describe('CTD-004 create/update schedule atomicity', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('rejects creates with a missing envFile before persisting the job', async () => {
+    const dir = makeHome('create-missing-env');
+    const store = makeStore(dir);
+    const { server, port } = await startServer(store);
+    const missingEnvFile = join(dir, 'missing-create.env');
+
+    try {
+      const result = await apiCall(port, 'POST', '/api/jobs', {
+        id: 'missing-env-create',
+        schedule: { kind: 'cron', cron: '0 0 * * *' },
+        action: {
+          kind: 'exec',
+          command: process.execPath,
+          args: ['-e', 'process.exit(0)'],
+          cwd: dir,
+          envFile: 'missing-create.env',
+        },
+      });
+
+      expect(result.status).toBe(400);
+      expect(result.data).toMatchObject({
+        error: {
+          code: 'ENV_FILE_ERROR',
+          message: expect.stringContaining(missingEnvFile),
+        },
+      });
+      expect(store.getJob('missing-env-create')).toBeUndefined();
+      expect(store.listJobs()).toEqual([]);
+
+      const listed = await apiCall(port, 'GET', '/api/jobs');
+      expect(listed.status).toBe(200);
+      expect(listed.data).toEqual([]);
+    } finally {
+      await stopServer(server);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects updates with a missing envFile and preserves the prior job definition', async () => {
+    const dir = makeHome('update-missing-env');
+    const store = makeStore(dir);
+    const original = baseJob('missing-env-update-job');
+    store.upsertJob(original);
+    const { server, port } = await startServer(store);
+    const missingEnvFile = join(dir, 'missing-update.env');
+
+    try {
+      const result = await apiCall(port, 'PUT', '/api/jobs/missing-env-update-job', {
+        action: {
+          kind: 'exec',
+          command: process.execPath,
+          args: ['-e', 'process.exit(0)'],
+          cwd: dir,
+          envFile: 'missing-update.env',
+        },
+      });
+
+      expect(result.status).toBe(400);
+      expect(result.data).toMatchObject({
+        error: {
+          code: 'ENV_FILE_ERROR',
+          message: expect.stringContaining(missingEnvFile),
+        },
+      });
+      expect(store.getJob('missing-env-update-job')).toEqual(original);
+      expect(store.listJobs()).toEqual([original]);
+
+      const fetched = await apiCall(port, 'GET', '/api/jobs/missing-env-update-job');
+      expect(fetched.status).toBe(200);
+      expect(fetched.data).toEqual(original);
+    } finally {
+      await stopServer(server);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
