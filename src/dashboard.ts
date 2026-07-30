@@ -127,13 +127,13 @@ export function buildDashboardData(ctx: DashboardContext, options: DashboardOpti
   const since24h = Date.now() - 24 * 60 * 60 * 1000;
   const runs24h = ctx.store.listRunsForExistingJobs({ since: since24h });
 
-  return {
+  return redactValue({
     generatedAt: Date.now(),
     health: buildDashboardHealth(ctx, jobs, runs24h),
     stats: buildDashboardStats(jobs, allRuns),
     jobs: jobs.map((job) => buildDashboardJob(ctx, job)),
     runs: recentRuns.map(toDashboardRun),
-  };
+  }) as DashboardData;
 }
 
 export function buildDashboardHealth(ctx: DashboardContext, jobs: Job[], runs24h: Run[]): DashboardHealth {
@@ -268,14 +268,14 @@ function buildDashboardJob(ctx: DashboardContext, job: Job): DashboardJob {
   const lastRun = ctx.store.listRuns({ jobId: job.id, limit: 1 })[0];
   return {
     id: job.id,
-    description: redactValue(job.description ?? null) as string | null,
+    description: job.description ?? null,
     enabled: job.enabled,
     scheduleLabel: scheduleLabel(job.schedule),
     actionKind: job.action.kind,
     lastStatus: lastRun?.status ?? null,
     lastRunAt: lastRun?.startedAt ?? null,
     nextRunAt: job.enabled ? (ctx.scheduler.previewNext(job.schedule, { n: 1 })[0] ?? null) : null,
-    job: redactValue(job) as Job,
+    job,
   };
 }
 
@@ -288,7 +288,7 @@ function toDashboardRun(run: Run): DashboardRun {
     endedAt: run.endedAt ?? null,
     durationMs: run.durationMs ?? null,
     exitCode: run.exitCode ?? null,
-    error: redactValue(run.error ?? null) as string | null,
+    error: run.error ?? null,
   };
 }
 

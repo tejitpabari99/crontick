@@ -11,7 +11,7 @@ import { describe, it, expect } from 'vitest';
 import { createClient } from '../src/client.js';
 import { createApiServer } from '../src/daemon/api.js';
 import { Runner } from '../src/daemon/runner.js';
-import { redactText } from '../src/logger.js';
+import { createLogger, redactText } from '../src/logger.js';
 import { Scheduler } from '../src/daemon/scheduler.js';
 import { Store } from '../src/daemon/store.js';
 import type { Job } from '../src/schemas/job.js';
@@ -57,7 +57,41 @@ const BEARER_HEADER = `Authorization: Bearer ${JWT}`;
 const POSTGRES_URL = 'postgres://dbuser:DbPass123!@db.example.local/app';
 const MONGODB_URL = 'mongodb://mongo:MongoPass456!@cluster.example.local/test';
 const CONNECTION_STRINGS = `${POSTGRES_URL} ${MONGODB_URL}`;
-const PLAIN_VALUE = 'project-alpha-2026';
+const BENIGN_WINDOWS_PATH = String.raw`C:\Users\Example\project-alpha`;
+const BENIGN_URL = 'https://example.test/maps?mode=public';
+const BENIGN_40_CHAR = 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn';
+const BENIGN_BASE64 = 'QWxhZGRpbjpvcGVuIHNlc2FtZQ==';
+const BENIGN_PUBLIC_KEY = [
+  '-----BEGIN PUBLIC KEY-----',
+  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArandompublickey',
+  '-----END PUBLIC KEY-----',
+].join('\n');
+const BENIGN_CERTIFICATE = [
+  '-----BEGIN CERTIFICATE-----',
+  'MIICdzCCAl+gAwIBAgIURandomCertificatePayload',
+  '-----END CERTIFICATE-----',
+].join('\n');
+const BENIGN_LITERAL_VALUES = [
+  BENIGN_WINDOWS_PATH,
+  BENIGN_URL,
+  'secretary',
+  'monkey',
+  BENIGN_40_CHAR,
+  BENIGN_BASE64,
+  BENIGN_PUBLIC_KEY,
+  BENIGN_CERTIFICATE,
+] as const;
+const BENIGN_RUNTIME_TEXT = BENIGN_LITERAL_VALUES.join('\n');
+const BENIGN_CONFIG_ENV = {
+  NON_SECRET: BENIGN_WINDOWS_PATH,
+  NOT_TOKEN: BENIGN_URL,
+  NO_PASSWORD: BENIGN_40_CHAR,
+  PUBLIC_KEY: BENIGN_PUBLIC_KEY,
+  CERTIFICATE_DATA: BENIGN_CERTIFICATE,
+  SECRETARY: 'secretary',
+  MONKEY: 'monkey',
+  BASE64_VALUE: BENIGN_BASE64,
+} as const;
 
 interface SecretCase {
   name: string;
@@ -360,6 +394,10 @@ function expectRedacted(text: string, rawSecrets: string[], expected: string, su
   expect(text, `${surface} missing redaction marker`).toContain(expected);
 }
 
+function expectNoRedactionMarker(text: string, surface: string): void {
+  expect(text, `${surface} should preserve benign values`).not.toContain('[REDACTED]');
+}
+
 describe('CTD-003 shared secret redaction', () => {
   it('redacts each secret shape across persisted logs, run reads, config reads, dashboard data, and exports', async () => {
     const fixture = await createFixture('matrix');
@@ -485,6 +523,38 @@ describe('CTD-003 shared secret redaction', () => {
     }
   });
 
+  it('redacts daemon operational logs with the shared logger contract while preserving benign fields', () => {
+    const events: Array<{ message: string; data?: { env?: Record<string, string> } }> = [];
+    const logger = createLogger({
+      verbose: true,
+      component: 'daemon',
+      sink: (event) => events.push(event as { message: string; data?: { env?: Record<string, string> } }),
+    });
+
+    logger.info(
+      `runtime AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} ${PRIVATE_KEY_LINES[0]}`,
+      {
+        env: {
+          AWS_SECRET_ACCESS_KEY,
+          PRIVATE_KEY,
+          ...BENIGN_CONFIG_ENV,
+        },
+      },
+    );
+
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.message).toContain('AWS_SECRET_ACCESS_KEY=[REDACTED]');
+    expect(event?.message).toContain('[REDACTED]');
+    expect(event?.message).not.toContain(AWS_SECRET_ACCESS_KEY);
+    expect(event?.message).not.toContain(PRIVATE_KEY_LINES[0]);
+    expect(event?.data?.env?.AWS_SECRET_ACCESS_KEY).toBe('[REDACTED]');
+    expect(event?.data?.env?.PRIVATE_KEY).toBe('[REDACTED]');
+    for (const [key, value] of Object.entries(BENIGN_CONFIG_ENV)) {
+      expect(event?.data?.env?.[key]).toBe(value);
+    }
+  });
+
   it('redacts generic assignment lookalikes in linear time on large non-matching input', () => {
     const adversarial = 'tokentoken.'.repeat(5_000);
     redactText('token=warmup');
@@ -497,21 +567,23 @@ describe('CTD-003 shared secret redaction', () => {
     expect(elapsedMs).toBeLessThan(200);
   });
 
-  it('does not redact a clearly non-secret ordinary value on any shared surface', async () => {
+  it('does not redact the benign runtime and config corpora on shared read surfaces', async () => {
     const fixture = await createFixture('false-positive');
     try {
-      writeConfig(fixture.dir, { PLAIN_VALUE });
+      writeConfig(fixture.dir, { ...BENIGN_CONFIG_ENV });
 
-      const captureRunner = new Runner(fakeSpawnWithOutput(PLAIN_VALUE));
-      const captureJob = jobWithEnv('ctd003-plain-capture', {});
+      const captureRunner = new Runner(fakeSpawnWithOutput(BENIGN_RUNTIME_TEXT));
+      const captureJob = jobWithEnv('ctd003-benign-capture', {});
       const captureRun = fixture.store.insertRun(captureJob.id);
       await captureRunner.run(captureJob, captureRun.id, fixture.store);
-      expect(logText(fixture.store, captureRun.id)).toBe(PLAIN_VALUE);
+      expect(logText(fixture.store, captureRun.id)).toBe(BENIGN_RUNTIME_TEXT);
+      expectNoRedactionMarker(logText(fixture.store, captureRun.id), 'benign persisted log text');
+      expectRawSecretBytesAbsent(Buffer.from(logText(fixture.store, captureRun.id), 'utf-8'), ['[REDACTED]'], 'benign persisted log text');
 
-      const dashboardJob = jobWithEnv('ctd003-plain-dashboard', { EXPOSED_VALUE: PLAIN_VALUE });
+      const dashboardJob = jobWithEnv('ctd003-benign-dashboard', { ...BENIGN_CONFIG_ENV });
       fixture.store.upsertJob(dashboardJob);
 
-      const readJob = jobWithEnv('ctd003-plain-read', {});
+      const readJob = jobWithEnv('ctd003-benign-read', {});
       fixture.store.upsertJob(readJob);
       const readRun = fixture.store.insertRun(readJob.id);
       fixture.store.updateRun(readRun.id, {
@@ -519,29 +591,49 @@ describe('CTD-003 shared secret redaction', () => {
         endedAt: Date.now(),
         durationMs: 1,
         exitCode: 1,
-        error: `failure ${PLAIN_VALUE}`,
+        error: `failure ${BENIGN_RUNTIME_TEXT}`,
       });
-      fixture.store.appendLog(readRun.id, 'stderr', Buffer.from(PLAIN_VALUE, 'utf-8'));
+      fixture.store.appendLog(readRun.id, 'stderr', Buffer.from(BENIGN_RUNTIME_TEXT, 'utf-8'));
 
       const run = await fixture.client.getRun(readRun.id) as { error?: string };
-      expect(run.error).toBe(`failure ${PLAIN_VALUE}`);
-      expect(JSON.stringify(run)).not.toContain('[REDACTED]');
+      expect(run.error).toBe(`failure ${BENIGN_RUNTIME_TEXT}`);
+      expectNoRedactionMarker(JSON.stringify(run), 'benign run get');
 
       const logs = await fixture.client.getLogs(readRun.id);
-      expect(logs.lines.map((line) => line.data).join('')).toBe(PLAIN_VALUE);
+      expect(logs.lines.map((line) => line.data).join('')).toBe(BENIGN_RUNTIME_TEXT);
+      expectNoRedactionMarker(JSON.stringify(logs), 'benign logs tail');
 
-      const configValue = fixture.client.getConfigValue('engines.copilot.env.PLAIN_VALUE');
-      expect(configValue).toBe(PLAIN_VALUE);
+      for (const [key, value] of Object.entries(BENIGN_CONFIG_ENV)) {
+        expect(fixture.client.getConfigValue(`engines.copilot.env.${key}`)).toBe(value);
+      }
+
+      const engines = fixture.client.listEngines();
+      expect(engines.copilot?.env).toEqual(BENIGN_CONFIG_ENV);
+      expectNoRedactionMarker(JSON.stringify(engines), 'benign config engines');
+
+      const validation = fixture.client.validateConfig();
+      expect(validation.config?.engines.copilot?.env).toEqual(BENIGN_CONFIG_ENV);
+      expectNoRedactionMarker(JSON.stringify(validation), 'benign config validate');
 
       const dashboard = await fixture.client.dashboardData({ runsLimit: 10 }) as {
         jobs: Array<{ id: string; job: { action: { env?: Record<string, string> } } }>;
         runs: Array<{ id: string; error: string | null }>;
       };
-      expect(dashboard.jobs.find((job) => job.id === 'ctd003-plain-dashboard')?.job.action.env?.['EXPOSED_VALUE']).toBe(PLAIN_VALUE);
-      expect(dashboard.runs.find((run) => run.id === readRun.id)?.error).toBe(`failure ${PLAIN_VALUE}`);
-      expect(JSON.stringify(dashboard)).not.toContain('[REDACTED]');
+      expect(dashboard.jobs.find((job) => job.id === 'ctd003-benign-dashboard')?.job.action.env).toEqual(BENIGN_CONFIG_ENV);
+      expect(dashboard.runs.find((run) => run.id === readRun.id)?.error).toBe(`failure ${BENIGN_RUNTIME_TEXT}`);
+      expectNoRedactionMarker(JSON.stringify(dashboard), 'benign dashboard data');
 
-      expect(JSON.stringify(fixture.client.getConfigValue())).toContain(PLAIN_VALUE);
+      const fullConfig = fixture.client.getConfig();
+      expect(fullConfig.engines.copilot.env).toEqual(BENIGN_CONFIG_ENV);
+      expectNoRedactionMarker(JSON.stringify(fullConfig), 'benign getConfig');
+
+      const exported = await fixture.client.exportJobs({ includeRuns: true }) as {
+        jobs: Array<{ id: string; action: { env?: Record<string, string> } }>;
+        runs?: Array<{ id: string; error?: string | null }>;
+      };
+      expect(exported.jobs.find((job) => job.id === 'ctd003-benign-dashboard')?.action.env).toEqual(BENIGN_CONFIG_ENV);
+      expect(exported.runs?.find((run) => run.id === readRun.id)?.error).toBe(`failure ${BENIGN_RUNTIME_TEXT}`);
+      expectNoRedactionMarker(JSON.stringify(exported), 'benign export payload');
     } finally {
       await fixture.close();
     }
