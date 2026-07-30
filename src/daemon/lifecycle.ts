@@ -237,7 +237,7 @@ export async function restartDaemon(options: EnsureDaemonOptions = {}): Promise<
 }
 
 /** Read the PID file and verify the process is alive. Returns undefined if stale or absent. */
-export function readLiveDaemonPid(env: NodeJS.ProcessEnv = process.env): number | undefined {
+function readLiveDaemonPid(env: NodeJS.ProcessEnv = process.env): number | undefined {
   if (!existsSync(pidFilePath(env))) return undefined;
   const pid = Number.parseInt(readFileSync(pidFilePath(env), 'utf-8').trim(), 10);
   if (!Number.isInteger(pid) || pid <= 0) return undefined;

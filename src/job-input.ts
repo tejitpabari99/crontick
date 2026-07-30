@@ -29,12 +29,12 @@ import { promptRuntimeValidationMessage } from './prompt-runtime.js';
  * Input schema extends prompt action to accept `promptFile` as an alternative
  * to `prompt`. During normalization, the file is read and inlined.
  */
-export const PromptActionInputSchema = PromptActionBaseSchema.omit({ prompt: true }).extend({
+const PromptActionInputSchema = PromptActionBaseSchema.omit({ prompt: true }).extend({
   prompt: z.string().min(1).optional(),
   promptFile: z.string().min(1).optional(),
 }).strict();
 
-export const ActionInputSchema = z.discriminatedUnion('kind', [
+const ActionInputSchema = z.discriminatedUnion('kind', [
   ScriptActionSchema,
   ExecActionSchema,
   PromptActionInputSchema,
@@ -49,7 +49,7 @@ export const ActionInputSchema = z.discriminatedUnion('kind', [
  * silently resetting a customized shell. Leaving it optional/undefined here
  * lets normalizeJobPatch merge it in from the existing action instead.
  */
-export const ScriptActionPatchSchema = ScriptActionSchema.extend({
+const ScriptActionPatchSchema = ScriptActionSchema.extend({
   shell: z.enum(['auto', 'bash', 'pwsh', 'cmd']).optional(),
 });
 
@@ -60,7 +60,7 @@ export const ScriptActionPatchSchema = ScriptActionSchema.extend({
  * changes e.g. `envFile` would zod-fill `args` to `[]` and silently wipe out
  * existing exec arguments.
  */
-export const ExecActionPatchSchema = ExecActionSchema.extend({
+const ExecActionPatchSchema = ExecActionSchema.extend({
   args: z.array(z.string()).optional(),
 });
 
@@ -71,12 +71,12 @@ export const ExecActionPatchSchema = ExecActionSchema.extend({
  * `prompt` would otherwise zod-fill `args` to `[]` and `reuseSession` to
  * `false`, silently resetting both on every unrelated prompt update.
  */
-export const PromptActionPatchSchema = PromptActionInputSchema.extend({
+const PromptActionPatchSchema = PromptActionInputSchema.extend({
   args: z.array(z.string()).optional(),
   reuseSession: z.boolean().optional(),
 });
 
-export const ActionPatchInputSchema = z.discriminatedUnion('kind', [
+const ActionPatchInputSchema = z.discriminatedUnion('kind', [
   ScriptActionPatchSchema,
   ExecActionPatchSchema,
   PromptActionPatchSchema,
@@ -93,7 +93,7 @@ export const JobCreateInputSchema = JobSchema.omit({ action: true }).extend({
  * a customized backoff. normalizeJobPatch merges this onto the existing
  * retry value field-by-field, the same way it merges action patches.
  */
-export const RetryPatchSchema = z.object({
+const RetryPatchSchema = z.object({
   max: z.number().int().min(0).optional(),
   backoffSec: z.number().positive().optional(),
 });

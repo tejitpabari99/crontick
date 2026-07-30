@@ -36,7 +36,7 @@ const DAEMON_LOG_FILE_PATTERN = /^daemon-\d{4}-\d{2}-\d{2}\.log$/;
  * chronological). Best-effort: a failure to list/delete is logged but must
  * never prevent the daemon from starting or reloading.
  */
-export function pruneOldDaemonLogs(dir: string, maxLogFiles: number, logger: Logger): number {
+function pruneOldDaemonLogs(dir: string, maxLogFiles: number, logger: Logger): number {
   let entries: string[];
   try {
     entries = readdirSync(dir);

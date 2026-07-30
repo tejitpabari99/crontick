@@ -32,7 +32,7 @@ export function logsDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(root(env), 'logs');
 }
 
-export function tempDir(env: NodeJS.ProcessEnv = process.env): string {
+function tempDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(root(env), 'tmp');
 }
 

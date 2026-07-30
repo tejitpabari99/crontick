@@ -192,7 +192,7 @@ export function dashboardStatusFromDaemon(ctx: DashboardContext, baseUrl: string
   };
 }
 
-export function dashboardUrl(baseUrl: string): string {
+function dashboardUrl(baseUrl: string): string {
   return `${baseUrl.replace(/\/+$/, '')}/dashboard`;
 }
 
