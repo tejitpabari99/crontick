@@ -35,6 +35,11 @@ export interface Logger {
   debug(message: string, data?: unknown): void;
 }
 
+export interface StreamingTextRedactor {
+  write(chunk: string): string;
+  flush(): string;
+}
+
 const LEVELS: Record<LogLevel, number> = {
   error: 0,
   warn: 1,
@@ -47,7 +52,21 @@ type SecretPattern = {
   replacement: string;
 };
 
+type TextMatch = {
+  index: number;
+  end: number;
+};
+
 const REDACTED = '[REDACTED]';
+const PRIVATE_KEY_BLOCK_PATTERN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g;
+const PRIVATE_KEY_BEGIN_MARKER_PATTERN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/g;
+const PRIVATE_KEY_END_MARKER_PATTERN = /-----END [A-Z0-9 ]*PRIVATE KEY-----/g;
+const PRIVATE_KEY_ANY_MARKER_PATTERN = /-----(?:BEGIN|END) [A-Z0-9 ]*PRIVATE KEY-----/g;
+const EXACT_PRIVATE_KEY_BEGIN_MARKER = /^-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----$/;
+const EXACT_PRIVATE_KEY_END_MARKER = /^-----END [A-Z0-9 ]*PRIVATE KEY-----$/;
+const PRIVATE_KEY_BEGIN_PREFIX = '-----BEGIN ';
+const PRIVATE_KEY_END_PREFIX = '-----END ';
+const PRIVATE_KEY_MARKER_SUFFIX = 'PRIVATE KEY-----';
 
 const SENSITIVE_KEY_SUFFIXES: ReadonlyArray<ReadonlyArray<string>> = [
   ['token'],
@@ -73,10 +92,8 @@ const STANDALONE_AWS_SECRET_CANDIDATE = /(^|[^A-Za-z0-9/+=])([A-Za-z0-9/+=]{40})
 
 /** Patterns applied to log text to strip tokens/keys before they reach the sink. */
 const SECRET_PATTERNS: SecretPattern[] = [
-  {
-    pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
-    replacement: REDACTED,
-  },
+  { pattern: PRIVATE_KEY_BLOCK_PATTERN, replacement: REDACTED },
+  { pattern: PRIVATE_KEY_ANY_MARKER_PATTERN, replacement: REDACTED },
   {
     pattern: /(Authorization\s*:\s*Bearer\s+)[A-Za-z0-9\-._~+/]+=*/gi,
     replacement: `$1${REDACTED}`,
@@ -154,6 +171,12 @@ function isQuotedSecretAssignmentKeyChar(char: string | undefined): boolean {
   return char === ' ' || isSecretAssignmentKeyChar(char);
 }
 
+function isPrivateKeyMarkerLabelChar(char: string | undefined): boolean {
+  if (!char) return false;
+  const code = char.charCodeAt(0);
+  return char === ' ' || (code >= 48 && code <= 57) || (code >= 65 && code <= 90);
+}
+
 function isAsciiWhitespace(char: string | undefined): boolean {
   if (!char) return false;
   const code = char.charCodeAt(0);
@@ -202,6 +225,104 @@ function scanSecretAssignmentKey(text: string, start: number): { key: string; en
   let end = start + 1;
   while (end < text.length && isSecretAssignmentKeyChar(text[end])) end++;
   return { key: text.slice(start, end), end };
+}
+
+function matchesPrivateKeyMarker(text: string, kind: 'begin' | 'end'): boolean {
+  return (kind === 'begin' ? EXACT_PRIVATE_KEY_BEGIN_MARKER : EXACT_PRIVATE_KEY_END_MARKER).test(text);
+}
+
+function isPossiblePrivateKeyMarkerBodyPrefix(text: string): boolean {
+  for (let split = 0; split <= text.length; split++) {
+    const label = text.slice(0, split);
+    const suffix = text.slice(split);
+    if ([...label].every((char) => isPrivateKeyMarkerLabelChar(char)) && PRIVATE_KEY_MARKER_SUFFIX.startsWith(suffix)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isPossiblePrivateKeyMarkerPrefix(text: string, kind: 'begin' | 'end'): boolean {
+  if (!text || matchesPrivateKeyMarker(text, kind)) return false;
+  const prefix = kind === 'begin' ? PRIVATE_KEY_BEGIN_PREFIX : PRIVATE_KEY_END_PREFIX;
+  if (prefix.startsWith(text)) return true;
+  if (!text.startsWith(prefix)) return false;
+  return isPossiblePrivateKeyMarkerBodyPrefix(text.slice(prefix.length));
+}
+
+function findPrivateKeyMarkerCarry(text: string, allowBegin: boolean, allowEnd: boolean): string {
+  let start = text.lastIndexOf('-');
+  while (start >= 0) {
+    const suffix = text.slice(start);
+    if ((allowBegin && isPossiblePrivateKeyMarkerPrefix(suffix, 'begin'))
+      || (allowEnd && isPossiblePrivateKeyMarkerPrefix(suffix, 'end'))) {
+      return suffix;
+    }
+    start = text.lastIndexOf('-', start - 1);
+  }
+  return '';
+}
+
+function findNextMatch(pattern: RegExp, text: string, start = 0): TextMatch | undefined {
+  pattern.lastIndex = start;
+  const match = pattern.exec(text);
+  if (!match) return undefined;
+  return {
+    index: match.index,
+    end: match.index + match[0].length,
+  };
+}
+
+class PrivateKeyStreamingTextRedactor implements StreamingTextRedactor {
+  private carry = '';
+  private insidePrivateKeyBlock = false;
+
+  write(chunk: string): string {
+    if (chunk.length === 0) return '';
+    return this.process(`${this.carry}${chunk}`, false);
+  }
+
+  flush(): string {
+    const output = this.process(this.carry, true);
+    this.carry = '';
+    this.insidePrivateKeyBlock = false;
+    return output;
+  }
+
+  private process(text: string, flush: boolean): string {
+    let output = '';
+    let cursor = 0;
+
+    while (cursor < text.length) {
+      if (this.insidePrivateKeyBlock) {
+        const endMatch = findNextMatch(PRIVATE_KEY_END_MARKER_PATTERN, text, cursor);
+        if (!endMatch) {
+          this.carry = flush ? '' : findPrivateKeyMarkerCarry(text.slice(cursor), false, true);
+          return output;
+        }
+        this.insidePrivateKeyBlock = false;
+        cursor = endMatch.end;
+        continue;
+      }
+
+      const beginMatch = findNextMatch(PRIVATE_KEY_BEGIN_MARKER_PATTERN, text, cursor);
+      if (!beginMatch) {
+        const remaining = text.slice(cursor);
+        const carry = flush ? '' : findPrivateKeyMarkerCarry(remaining, true, true);
+        output += redactText(remaining.slice(0, remaining.length - carry.length));
+        this.carry = carry;
+        return output;
+      }
+
+      output += redactText(text.slice(cursor, beginMatch.index));
+      output += REDACTED;
+      this.insidePrivateKeyBlock = true;
+      cursor = beginMatch.end;
+    }
+
+    this.carry = '';
+    return output;
+  }
 }
 
 function redactSecretAssignments(text: string): string {
@@ -254,6 +375,9 @@ export function createLogger(options: LoggerOptions = {}): Logger {
   );
 }
 
+export function createStreamingTextRedactor(): StreamingTextRedactor {
+  return new PrivateKeyStreamingTextRedactor();
+}
 
 /** Reads CRONTICK_VERBOSE; accepts 1|true|yes|on|debug (case-insensitive). */
 export function isVerboseEnv(env: NodeJS.ProcessEnv = process.env): boolean {

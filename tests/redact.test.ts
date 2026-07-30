@@ -1,10 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { redactText, redactValue, isSensitiveKeyHint } from '../src/logger.js';
+import { createStreamingTextRedactor, isSensitiveKeyHint, redactText, redactValue } from '../src/logger.js';
 import { redactForLlm } from '../src/mcp/index.js';
 
 const AWS_SECRET_ACCESS_KEY = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
 const HEX_LOOKALIKE = '0123456789abcdef0123456789abcdef01234567';
 const BASE62_LOOKALIKE = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789ABCD';
+const PRIVATE_KEY_BLOCK = [
+  '-----BEGIN PRIVATE KEY-----',
+  'line-one',
+  'line-two',
+  '-----END PRIVATE KEY-----',
+].join('\n');
+const CERTIFICATE_PEM = [
+  '-----BEGIN CERTIFICATE-----',
+  'cert-body',
+  '-----END CERTIFICATE-----',
+].join('\n');
+const PUBLIC_KEY_PEM = [
+  '-----BEGIN PUBLIC KEY-----',
+  'public-body',
+  '-----END PUBLIC KEY-----',
+].join('\n');
 
 describe('redactForLlm', () => {
   it('replaces loopback address', () => {
@@ -94,5 +110,62 @@ describe('logger secret classifier', () => {
     expect(result).toContain('standalone [REDACTED]');
     expect(result).toContain(HEX_LOOKALIKE);
     expect(result).toContain(BASE62_LOOKALIKE);
+  });
+});
+
+describe('logger private-key redaction', () => {
+  it('redacts full PEM private-key blocks in stateless text', () => {
+    expect(redactText(`before\n${PRIVATE_KEY_BLOCK}\nafter`)).toBe('before\n[REDACTED]\nafter');
+  });
+
+  it('redacts lone PEM private-key markers without touching other PEM types', () => {
+    expect(redactText('value=-----BEGIN PRIVATE KEY-----')).toBe('value=[REDACTED]');
+    expect(redactText('value=-----END RSA PRIVATE KEY-----')).toBe('value=[REDACTED]');
+    expect(redactText('value=-----BEGIN CERTIFICATE-----')).toBe('value=-----BEGIN CERTIFICATE-----');
+    expect(redactText('value=-----BEGIN PUBLIC KEY-----')).toBe('value=-----BEGIN PUBLIC KEY-----');
+  });
+
+  it('redacts PEM content split across two write chunks', () => {
+    const redactor = createStreamingTextRedactor();
+    const output = redactor.write('prefix -----BEGIN PRIVATE KEY-----\nline-one\n')
+      + redactor.write('line-two\n-----END PRIVATE KEY----- suffix')
+      + redactor.flush();
+
+    expect(output).toBe('prefix [REDACTED] suffix');
+    expect(output).not.toContain('line-one');
+    expect(output).not.toContain('line-two');
+    expect(output).not.toContain('PRIVATE KEY');
+  });
+
+  it('redacts PEM markers split mid-line across chunk boundaries', () => {
+    const redactor = createStreamingTextRedactor();
+    const output = redactor.write('prefix -----BEG')
+      + redactor.write('IN RSA PRIVATE KEY-----\nsecret\n-----END RSA PRIVATE KEY----- suffix')
+      + redactor.flush();
+
+    expect(output).toBe('prefix [REDACTED] suffix');
+    expect(output).not.toContain('secret');
+    expect(output).not.toContain('PRIVATE KEY');
+  });
+
+  it('does not leak buffered private-key fragments on flush at EOF', () => {
+    const redactor = createStreamingTextRedactor();
+    const output = redactor.write('prefix -----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIV') + redactor.flush();
+
+    expect(output).toBe('prefix [REDACTED]');
+    expect(output).not.toContain('secret');
+    expect(output).not.toContain('BEGIN PRIVATE KEY');
+    expect(output).not.toContain('END PRIV');
+  });
+
+  it('leaves certificate and public-key PEM text visible', () => {
+    expect(redactText(CERTIFICATE_PEM)).toBe(CERTIFICATE_PEM);
+    expect(redactText(PUBLIC_KEY_PEM)).toBe(PUBLIC_KEY_PEM);
+
+    const redactor = createStreamingTextRedactor();
+    const output = redactor.write(`cert=${CERTIFICATE_PEM}\npub=${PUBLIC_KEY_PEM}`) + redactor.flush();
+
+    expect(output).toBe(`cert=${CERTIFICATE_PEM}\npub=${PUBLIC_KEY_PEM}`);
+    expect(output).not.toContain('[REDACTED]');
   });
 });
