@@ -47,37 +47,97 @@ type SecretPattern = {
   replacement: string;
 };
 
-/** Matches env-var-style secret keys for value-level redaction. */
-const SECRET_KEY = /(?:token|secret|password|passwd|credential|apikey|api_key|client[_-]?secret|access[_-]?token|refresh[_-]?token|private[_-]?key|authorization|cookie|subscription[_-]?key)/i;
+const REDACTED = '[REDACTED]';
+
+const SENSITIVE_KEY_SUFFIXES: ReadonlyArray<ReadonlyArray<string>> = [
+  ['token'],
+  ['secret'],
+  ['password'],
+  ['passwd'],
+  ['credential'],
+  ['credentials'],
+  ['authorization'],
+  ['cookie'],
+  ['api', 'key'],
+  ['client', 'secret'],
+  ['access', 'token'],
+  ['refresh', 'token'],
+  ['private', 'key'],
+  ['secret', 'key'],
+  ['secret', 'access', 'key'],
+  ['subscription', 'key'],
+];
+
+const NEGATED_SENSITIVE_PREFIXES = new Set(['no', 'non', 'not']);
+const STANDALONE_AWS_SECRET_CANDIDATE = /(^|[^A-Za-z0-9/+=])([A-Za-z0-9/+=]{40})(?=$|[^A-Za-z0-9/+=])/g;
+
 /** Patterns applied to log text to strip tokens/keys before they reach the sink. */
 const SECRET_PATTERNS: SecretPattern[] = [
   {
     pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
-    replacement: '[REDACTED]',
+    replacement: REDACTED,
   },
   {
     pattern: /(Authorization\s*:\s*Bearer\s+)[A-Za-z0-9\-._~+/]+=*/gi,
-    replacement: '$1[REDACTED]',
+    replacement: `$1${REDACTED}`,
   },
   {
     pattern: /(mongodb(?:\+srv)?):\/\/([^:\s/@]+):([^@\s]+)@/gi,
-    replacement: '$1://$2:[REDACTED]@',
+    replacement: `$1://$2:${REDACTED}@`,
   },
   {
     pattern: /(postgres(?:ql)?):\/\/([^:\s/@]+):([^@\s]+)@/gi,
-    replacement: '$1://$2:[REDACTED]@',
+    replacement: `$1://$2:${REDACTED}@`,
   },
-  { pattern: /github_pat_[A-Za-z0-9_]{20,}/g, replacement: '[REDACTED]' },
-  { pattern: /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, replacement: '[REDACTED]' },
-  { pattern: /\bsk-proj-[A-Za-z0-9_-]{20,}\b/g, replacement: '[REDACTED]' },
-  { pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/g, replacement: '[REDACTED]' },
-  { pattern: /\bsk-[A-Za-z0-9_-]{20,}\b/g, replacement: '[REDACTED]' },
-  { pattern: /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{12,}\b/g, replacement: '[REDACTED]' },
-  { pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, replacement: '[REDACTED]' },
-  { pattern: /\bAIza[0-9A-Za-z\-_]{35}\b/g, replacement: '[REDACTED]' },
-  { pattern: /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b/g, replacement: '[REDACTED]' },
-  { pattern: /\bAKIA[0-9A-Z]{16}\b/g, replacement: '[REDACTED]' },
+  { pattern: /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, replacement: REDACTED },
+  { pattern: /github_pat_[A-Za-z0-9_]{20,}/g, replacement: REDACTED },
+  { pattern: /\bsk-proj-[A-Za-z0-9_-]{20,}\b/g, replacement: REDACTED },
+  { pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/g, replacement: REDACTED },
+  { pattern: /\bsk-[A-Za-z0-9_-]{20,}\b/g, replacement: REDACTED },
+  { pattern: /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{12,}\b/g, replacement: REDACTED },
+  { pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, replacement: REDACTED },
+  { pattern: /\bAIza[0-9A-Za-z\-_]{35}\b/g, replacement: REDACTED },
+  { pattern: /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b/g, replacement: REDACTED },
+  { pattern: /\bAKIA[0-9A-Z]{16}\b/g, replacement: REDACTED },
 ];
+
+function normalizeKeyHint(keyHint: string): string[] {
+  return keyHint
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length > 0);
+}
+
+function matchesSensitiveKeySuffix(tokens: readonly string[], suffix: readonly string[]): boolean {
+  const start = tokens.length - suffix.length;
+  if (start < 0) return false;
+  for (let i = 0; i < suffix.length; i++) {
+    if (tokens[start + i] !== suffix[i]) return false;
+  }
+  return !NEGATED_SENSITIVE_PREFIXES.has(tokens[start - 1] ?? '');
+}
+
+export function isSensitiveKeyHint(keyHint: string): boolean {
+  const tokens = normalizeKeyHint(keyHint);
+  return SENSITIVE_KEY_SUFFIXES.some((suffix) => matchesSensitiveKeySuffix(tokens, suffix));
+}
+
+function isAwsSecretAccessKeyCandidate(value: string): boolean {
+  return /^[A-Za-z0-9/+=]{40}$/.test(value)
+    && /[A-Z]/.test(value)
+    && /[a-z]/.test(value)
+    && /\d/.test(value)
+    && /[/+=]/.test(value)
+    && !/^[0-9a-f]{40}$/i.test(value);
+}
+
+function redactStandaloneAwsSecretAccessKeys(text: string): string {
+  return text.replace(STANDALONE_AWS_SECRET_CANDIDATE, (match, prefix: string, candidate: string) => (
+    isAwsSecretAccessKeyCandidate(candidate) ? `${prefix}${REDACTED}` : match
+  ));
+}
 
 function isSecretAssignmentKeyChar(char: string | undefined): boolean {
   if (!char) return false;
@@ -88,6 +148,10 @@ function isSecretAssignmentKeyChar(char: string | undefined): boolean {
     || char === '_'
     || char === '-'
     || char === '.';
+}
+
+function isQuotedSecretAssignmentKeyChar(char: string | undefined): boolean {
+  return char === ' ' || isSecretAssignmentKeyChar(char);
 }
 
 function isAsciiWhitespace(char: string | undefined): boolean {
@@ -118,16 +182,37 @@ function scanSecretAssignmentValueEnd(text: string, start: number): number {
   return end;
 }
 
+function scanSecretAssignmentKey(text: string, start: number): { key: string; end: number } | undefined {
+  const quote = text[start];
+  if (quote === '"' || quote === "'") {
+    let end = start + 1;
+    while (end < text.length && text[end] !== quote) {
+      if (!isQuotedSecretAssignmentKeyChar(text[end])) return undefined;
+      end++;
+    }
+    if (end >= text.length || text[end] !== quote) return undefined;
+    const key = text.slice(start + 1, end);
+    return key ? { key, end: end + 1 } : undefined;
+  }
+
+  if (!isSecretAssignmentKeyChar(text[start]) || isSecretAssignmentKeyChar(text[start - 1])) {
+    return undefined;
+  }
+
+  let end = start + 1;
+  while (end < text.length && isSecretAssignmentKeyChar(text[end])) end++;
+  return { key: text.slice(start, end), end };
+}
+
 function redactSecretAssignments(text: string): string {
   let output = '';
   let cursor = 0;
   let i = 0;
   while (i < text.length) {
-    if (isSecretAssignmentKeyChar(text[i]) && !isSecretAssignmentKeyChar(text[i - 1])) {
-      let keyEnd = i + 1;
-      while (keyEnd < text.length && isSecretAssignmentKeyChar(text[keyEnd])) keyEnd++;
-      const key = text.slice(i, keyEnd);
-      if (SECRET_KEY.test(key)) {
+    const scanned = scanSecretAssignmentKey(text, i);
+    if (scanned) {
+      const { key, end: keyEnd } = scanned;
+      if (isSensitiveKeyHint(key)) {
         let separatorStart = keyEnd;
         while (separatorStart < text.length && isAsciiWhitespace(text[separatorStart])) separatorStart++;
         const separator = text[separatorStart];
@@ -136,8 +221,16 @@ function redactSecretAssignments(text: string): string {
           while (valueStart < text.length && isAsciiWhitespace(text[valueStart])) valueStart++;
           const valueEnd = scanSecretAssignmentValueEnd(text, valueStart);
           if (valueEnd > valueStart) {
-            output += text.slice(cursor, valueStart);
-            output += '[REDACTED]';
+            const valueQuote = text[valueStart];
+            const quoted = (valueQuote === '"' || valueQuote === "'") && text[valueEnd - 1] === valueQuote;
+            if (quoted) {
+              output += text.slice(cursor, valueStart + 1);
+              output += REDACTED;
+              output += valueQuote;
+            } else {
+              output += text.slice(cursor, valueStart);
+              output += REDACTED;
+            }
             cursor = valueEnd;
             i = valueEnd;
             continue;
@@ -161,6 +254,7 @@ export function createLogger(options: LoggerOptions = {}): Logger {
   );
 }
 
+
 /** Reads CRONTICK_VERBOSE; accepts 1|true|yes|on|debug (case-insensitive). */
 export function isVerboseEnv(env: NodeJS.ProcessEnv = process.env): boolean {
   const value = env['CRONTICK_VERBOSE'];
@@ -172,11 +266,12 @@ export function redactText(text: string): string {
   for (const { pattern, replacement } of SECRET_PATTERNS) {
     output = output.replace(pattern, replacement);
   }
-  return redactSecretAssignments(output);
+  output = redactSecretAssignments(output);
+  return redactStandaloneAwsSecretAccessKeys(output);
 }
 
 export function redactValue(value: unknown, keyHint?: string): unknown {
-  if (keyHint && SECRET_KEY.test(keyHint)) return '[REDACTED]';
+  if (keyHint && isSensitiveKeyHint(keyHint)) return REDACTED;
   if (typeof value === 'string') return redactText(value);
   if (typeof value === 'number' || typeof value === 'boolean' || value === null || value === undefined) {
     return value;
