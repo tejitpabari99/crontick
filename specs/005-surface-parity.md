@@ -43,7 +43,7 @@ CI fails.
 - **R-005-8**: Every MCP tool MUST accept an optional `verbose: boolean` parameter.
 - **R-005-9**: The non-parity exclusion set MUST be explicitly declared in the drift test (currently: `ensure`, `health`, `createJobFromCliOptions`, `jobJsonSchema`, `getConfig`, `drainNotices`, `isVerbose`, `request`, `baseUrl`, `normalizeOptions`, `shouldStartDaemon`, `effectiveEnv`, `fetchRequest`, `daemonRequestError`).
 - **R-005-10**: When adding a new capability, the developer MUST add it to `SURFACE_CAPABILITIES` and implement it on all three surfaces in the same change. When extending an existing capability with a new user-visible option, the developer MUST update the CLI flag(s), library options, MCP schema/input, and any documented `optionNames` on that existing capability row in the same change; option growth MUST NOT invent a new capability row unless the operation itself is new.
-- **R-005-10a**: Parameter-name normalizations MUST keep the shared behavior explicit in docs and tests. Soft-rename windows MAY keep a documented deprecated alias temporarily, but a breaking removal MUST delete the legacy parameter path entirely and update the reference docs, changeset, and regression tests in the same change.
+- **R-005-10a**: Parameter-name normalizations MUST keep the shared behavior explicit in docs and tests. Reference docs, schemas, and regression tests MUST use the current parameter name consistently on every surface.
 
 ### Non-functional requirements
 
@@ -73,7 +73,7 @@ The drift test (`tests/surface-drift.test.ts`) performs four checks:
 - New client method added without surface entry: Test 2 fails naming the method.
 - New parity-coupled option added on only one surface (for example CLI-only `--force` on create): behavioral parity drifts even though the capability count stays the same; document the option on the existing capability row and update all three surfaces together.
 - Surface spellings MAY intentionally differ when a host runtime reserves a token. Example: the CLI's `--job-env-file` flag maps to the same persisted `action.envFile` field used by the library, MCP, and HTTP JSON surfaces because Node intercepts `--env-file` before crontick can safely parse it.
-- Parameter renames MAY be breaking. Example: `crontick_job_cancel_run`, `crontick_run_get`, and `crontick_run_logs_tail` now require `id`; legacy `runId` callers fail schema validation until updated.
+- Run-oriented MCP tools use `id` as their required selector parameter. `crontick_job_cancel_run`, `crontick_run_get`, and `crontick_run_logs_tail` docs, schemas, and tests must stay aligned on that name.
 - New MCP tool added without surface entry: Test 4 reports unexpected tool.
 - CLI command fails to register (typo in command name): Test 3 fails with non-zero exit.
 - MCP server fails to start (build broken): Test 4 times out or errors on connect.

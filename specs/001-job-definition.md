@@ -55,7 +55,7 @@ daemon to validate and persist jobs without surface-specific logic.
 
 ## Behavior
 
-1. Client receives a job definition (create or update), plus any surface-specific overwrite intent (`--force`, `force: true`, or `force=1|true`) out of band from the persisted `Job` object. The persisted field name stays `action.envFile` on every surface even though the CLI spells that option `--job-env-file` (a breaking rename from `--env-file` because Node reserves the old token before crontick can parse it).
+1. Client receives a job definition (create or update), plus any surface-specific overwrite intent (`--force`, `force: true`, or `force=1|true`) out of band from the persisted `Job` object. The persisted field name is `action.envFile` on every surface; the CLI option name for that field is `--job-env-file`.
 2. Input is normalized via `normalizeJobInput` (reads `promptFile` if present, applies defaults).
 3. The normalized input is validated against `JobSchema` (Zod discriminated union).
 4. On create, if the ID already exists and overwrite intent was not supplied, the operation fails with `JOB_ALREADY_EXISTS` before any persistence.

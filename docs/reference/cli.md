@@ -149,10 +149,9 @@ create to replace the existing job. Schedule validation also happens before any
 persistence, so an invalid `--cron` / `--every` / `--at` value never leaves a broken job
 behind.
 
-`--job-env-file` is a CLI-only spelling. It still populates the persisted `action.envFile`
-field, and library/MCP/HTTP JSON continue to use `envFile`. The old `--env-file` CLI flag
-was removed as a breaking change because Node.js intercepts that token before Commander ever
-runs, so there is no safe alias or deprecation path inside crontick.
+`--job-env-file` loads extra environment variables from a `.env` file. In persisted job
+JSON and the library/MCP/HTTP JSON surfaces, the same setting is stored as `action.envFile`
+/ `envFile`.
 
 ```bash
 crontick new daily-backup --cron "0 2 * * *" --script "pg_dump mydb > /backups/db.sql"

@@ -70,6 +70,9 @@ crontick daemon status
 > now fails with `JOB_ALREADY_EXISTS`. Use `crontick update <id>` to mutate an existing job, or
 > pass `--force` / `force: true` when you intentionally want replacement.
 
+`--job-env-file <path>` loads extra environment variables from a `.env` file; persisted job
+definitions store that setting in `action.envFile`.
+
 ### Library (ESM)
 
 ```ts
@@ -248,24 +251,6 @@ See [docs/reference/errors.md](docs/reference/errors.md) for all error codes and
 | CJS import | Not supported; use dynamic `import()` from CJS if needed |
 | TypeScript | Full `.d.ts` declarations shipped |
 
----
-
-## Migration and breaking changes
-
-crontick uses [changesets](https://github.com/changesets/changesets) for versioning and
-follows semver strictly. On-disk state format compatibility is covered by
-[specs/006-state-and-persistence.md](specs/006-state-and-persistence.md).
-
-The pending 1.0.0 release consumes the changesets in `.changeset/`; see them for the
-behavior it introduces. Breaking changes already queued there include:
-
-- creating a job is no longer a silent upsert. A duplicate id now fails with
-  `JOB_ALREADY_EXISTS` unless you pass explicit overwrite intent (`--force` on the CLI,
-  `force: true` in library/MCP); invalid schedules are rejected before any existing job can
-  be replaced.
-- the CLI-only job env-file flag is now `--job-env-file`. The persisted job JSON and the
-  library/MCP/HTTP field name remain `action.envFile`; the old CLI spelling `--env-file`
-  could not be kept as an alias because Node.js intercepts it before crontick starts.
 
 ---
 
@@ -307,4 +292,3 @@ See [SECURITY.md](SECURITY.md) for the full security model.
 ## License
 
 [MIT](LICENSE) - crontick contributors
-
