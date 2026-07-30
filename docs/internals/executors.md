@@ -101,7 +101,6 @@ Before any child process is spawned, the runner pre-validates `action.cwd` for *
    - cmd: `cmd /c <tmpFile>`
    - bash: `bash <tmpFile>`
 4. Every wrapper/user-script file is deleted in the runner's `finally` block (best-effort, regardless of run outcome).
-5. Daemon startup also performs a best-effort sweep of the legacy `os.tmpdir()/crontick` location left by older builds; failures are logged and do not block startup.
 
 ### Exec actions (`action.kind === 'exec'`)
 

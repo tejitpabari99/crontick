@@ -20,7 +20,6 @@ import type { ApiContext } from './api.js';
 import { createLogger, isVerboseEnv, type LogEvent, type Logger } from '../logger.js';
 import { loadConfig } from '../config.js';
 import { createProcessLivenessCheck } from '../process-liveness.js';
-import { sweepLegacyScriptTempDir } from './ensure.js';
 
 /** Cap on missed fires recorded per job at startup (see enumerateFiresBetween()). */
 const MISSED_FIRE_CAP_PER_JOB = 500;
@@ -156,12 +155,6 @@ if (needsSqliteShim) {
     const startedAt = new Date();
     const startupConfig = loadConfig();
     const retentionCap = startupConfig.retention.maxRunsPerJob;
-    // CTD-017: older builds wrote transient script wrappers under the OS temp
-    // directory (%TEMP%\crontick on Windows). Clean up that legacy location on
-    // startup now that new wrappers live under CRONTICK_HOME-managed state.
-    // Best-effort only: startup must continue even if a file is locked or the
-    // directory is otherwise unreadable.
-    sweepLegacyScriptTempDir(logger);
     // Minor 6: bounded log retention, configured alongside run retention.
     // Best-effort — must never block startup.
     try {

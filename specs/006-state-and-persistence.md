@@ -63,7 +63,6 @@ both human-editability of jobs and efficient querying of run history.
 - **R-006-27**: `importRuns(runs)` MUST bulk-insert previously-exported run rows (from `crontick export --include-runs`) as archival data only -- no execution, no scheduler interaction. Each row MUST be validated individually against `RunImportSchema`; a row that fails validation, or whose `job_id` does not exist in this store, MUST be skipped (recorded in `skipped: Array<{ id, error }>`) without aborting the rest of the batch. Each valid row's insert MUST be wrapped independently (a single row's insert failure MUST NOT abort remaining rows). It MUST be idempotent on `id` (`INSERT OR IGNORE`: a row already present is left untouched and not counted as imported), returning `{ imported, skipped }`. After the batch, the store MUST run `pruneRunsForJob()` once per job that received at least one imported row, so an import cannot leave a job over its retention cap.
 - **R-006-28**: Read surfaces that serialize config values, run rows, run logs, or dashboard payloads MUST apply redaction defensively at read time as well, so secret-like values already on disk or introduced through config reads are masked consistently even if they predate current capture-time redaction patterns.
 - **R-006-29**: Config read helpers (`config get`, library, MCP, and equivalent HTTP-backed reads) MUST redact returned secret-like values without mutating the underlying `config.json` bytes on disk.
-- **R-006-30**: On daemon startup, crontick MUST best-effort delete the legacy script-wrapper directory from older builds (`os.tmpdir()/crontick`, typically `%TEMP%\crontick` on Windows). A cleanup failure MUST be logged but MUST NOT block startup.
 
 ### Non-functional requirements
 
@@ -124,7 +123,6 @@ both human-editability of jobs and efficient querying of run history.
 - `importRuns()` given a run whose `job_id` no longer exists: that row is skipped and reported, the rest of the batch still imports.
 - `reconcileOrphanRuns()`'s liveness check throws or cannot determine an answer: treated as inconclusive, and the run is adopted rather than canceled (favors not silently losing in-flight work over the smaller risk of double-running).
 - Secret-like text already present in persisted logs or config: read surfaces still redact it defensively before returning it.
-- Legacy `%TEMP%\crontick` cleanup fails on startup (for example, locked file or permissions): the daemon logs the failure and continues starting; new script wrappers still live under `<dataDir>/tmp/scripts/`.
 
 ## Acceptance criteria
 
@@ -143,7 +141,7 @@ both human-editability of jobs and efficient querying of run history.
 - [x] `recordMissedRun` inserts a terminal `missed` run with no pid, subject to the same retention cap as any other run (test file: `tests/store.test.ts`, lines 210-238)
 - [x] `importRuns` validates each row individually, skips malformed rows or rows for missing jobs without aborting the batch, is idempotent on `id`, and prunes affected jobs back to their retention cap afterward (test file: `tests/store.test.ts`, `describe('Store.importRuns', ...)`; exercised end-to-end via `tests/cli.test.ts`, line ~760; `tests/mcp.test.ts`, line ~709)
 - [x] Read-time redaction applies consistently to config, run, log, and dashboard read surfaces, including pre-existing stored values (test file: `tests/secret-redaction.ctd-003.test.ts`)
-- [x] Managed temp-script storage lives under CRONTICK_HOME and startup sweeps legacy OS-temp leftovers best-effort (test file: `tests/temp-script-cleanup.ctd-017.test.ts`)
+- [x] Managed temp-script storage lives under CRONTICK_HOME and wrapper files are removed after the run (test file: `tests/temp-script-cleanup.ctd-017.test.ts`)
 
 ## Out of scope
 

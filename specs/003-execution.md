@@ -116,7 +116,7 @@ preserving observability through captured logs and structured run records.
 - [x] `adoptRun` re-attaches overlap tracking for `skip` and `cancel-previous` across a restart (test file: `tests/runner.test.ts`, `adoptRun` describe block)
 - [x] PowerShell script jobs fail truthfully for implicit PowerShell/native failures while preserving explicit `exit N` (test file: `tests/powershell-exit.ctd-002.test.ts`)
 - [x] PowerShell script jobs preserve exact UTF-8 bytes across Windows code pages and chunk boundaries (test file: `tests/powershell-utf8.ctd-008.test.ts`)
-- [x] Script temp wrappers live under CRONTICK_HOME-managed state, are removed after the run, and daemon startup sweeps legacy `os.tmpdir()/crontick` leftovers best-effort (test file: `tests/temp-script-cleanup.ctd-017.test.ts`)
+- [x] Script temp wrappers live under CRONTICK_HOME-managed state and are removed after the run (test file: `tests/temp-script-cleanup.ctd-017.test.ts`)
 - [x] Repeatable `--arg <value>` round-trips spaces, embedded quotes, and a leading dash, and is mutually exclusive with `--` (test file: `tests/cli.test.ts`, "crontick new --arg round-trips a value with spaces, embedded double quotes, and a leading dash"; "crontick new rejects combining --arg with -- positional args (ambiguous args source)")
 - [x] `--exec` takes its command and args verbatim, with no whitespace splitting (test file: `tests/job-input.test.ts`, "buildJobFromCreateOptions -- --exec verbatim + rawArgs"; `tests/cli.test.ts`, "new --help describes --exec's real verbatim-command + --arg/-- args behavior")
 
