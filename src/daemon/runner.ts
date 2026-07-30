@@ -11,7 +11,7 @@ import type { Store, RunStatus } from './store.js';
 import { CrontickError } from '../errors.js';
 import { extractSessionId } from './prompt-session.js';
 import { buildPromptRunCommand, loadConfig } from '../config.js';
-import { nullLogger, redactText, type Logger } from '../logger.js';
+import { createStreamingTextRedactor, nullLogger, redactText, type Logger, type StreamingTextRedactor } from '../logger.js';
 import { tempScriptsDir } from '../paths.js';
 import { isProcessAlive, isSameRunProcess } from '../process-liveness.js';
 
@@ -65,18 +65,28 @@ interface RunResult {
 
 type QueueEntry = () => Promise<void>;
 
+interface SafeRedactResult {
+  chunk: Buffer;
+  textLike: boolean;
+}
+
 /**
  * Redact secrets from a chunk only when it is valid UTF-8 text.
  * Binary data (NUL bytes or lossy UTF-8 round-trip) is stored as-is.
  */
-function safeRedact(chunk: Buffer): Buffer {
+function safeRedact(chunk: Buffer, redactor?: StreamingTextRedactor): SafeRedactResult {
   // NUL byte → likely binary, skip redaction
-  if (chunk.includes(0)) return chunk;
+  if (chunk.includes(0)) return { chunk, textLike: false };
   const str = chunk.toString('utf8');
   // Lossy round-trip → binary or non-UTF-8, skip redaction
-  if (!Buffer.from(str, 'utf8').equals(chunk)) return chunk;
-  const cleaned = redactText(str);
-  return Buffer.from(cleaned, 'utf8');
+  if (!Buffer.from(str, 'utf8').equals(chunk)) return { chunk, textLike: false };
+  const cleaned = redactor ? redactor.write(str) : redactText(str);
+  return { chunk: Buffer.from(cleaned, 'utf8'), textLike: true };
+}
+
+function flushSafeRedactor(redactor: StreamingTextRedactor): Buffer {
+  const cleaned = redactor.flush();
+  return cleaned.length === 0 ? Buffer.alloc(0) : Buffer.from(cleaned, 'utf8');
 }
 
 /**
@@ -573,14 +583,28 @@ export class Runner {
         stdout: EMPTY_BUFFER,
         stderr: EMPTY_BUFFER,
       };
+      const streamRedactors: Record<'stdout' | 'stderr', StreamingTextRedactor> = {
+        stdout: createStreamingTextRedactor(),
+        stderr: createStreamingTextRedactor(),
+      };
+      const flushRedactor = (stream: 'stdout' | 'stderr'): void => {
+        const flushed = flushSafeRedactor(streamRedactors[stream]);
+        if (flushed.length > 0) store.appendLog(runId, stream, flushed);
+      };
       const captureChunk = (stream: 'stdout' | 'stderr', chunk: Buffer): void => {
         if (outputTruncated) return; // marker already emitted; drop silently, child keeps running
+        const redactor = streamRedactors[stream];
         if (capturedBytes + chunk.length > maxOutputBytes) {
           const room = Math.max(0, maxOutputBytes - capturedBytes);
           // truncateToUtf8Boundary (L5 fix): the cap cuts at an arbitrary byte
           // offset — trim back to a full character so the last stored bytes
           // before the marker are never an invalid, split UTF-8 sequence.
-          if (room > 0) store.appendLog(runId, stream, safeRedact(truncateToUtf8Boundary(chunk.subarray(0, room))));
+          if (room > 0) {
+            const redacted = safeRedact(truncateToUtf8Boundary(chunk.subarray(0, room)), redactor);
+            if (!redacted.textLike) flushRedactor(stream);
+            if (redacted.chunk.length > 0) store.appendLog(runId, stream, redacted.chunk);
+          }
+          flushRedactor(stream);
           store.appendLog(runId, stream, Buffer.from(truncationMarker(maxOutputBytes), 'utf-8'));
           try {
             store.updateRun(runId, { outputTruncated: true });
@@ -591,7 +615,9 @@ export class Runner {
           return;
         }
         capturedBytes += chunk.length;
-        store.appendLog(runId, stream, safeRedact(chunk));
+        const redacted = safeRedact(chunk, redactor);
+        if (!redacted.textLike) flushRedactor(stream);
+        if (redacted.chunk.length > 0) store.appendLog(runId, stream, redacted.chunk);
       };
       const captureBufferedChunk = (stream: 'stdout' | 'stderr', chunk: Buffer): void => {
         if (!bufferPowerShellUtf8) {
@@ -677,6 +703,8 @@ export class Runner {
           try {
             flushBufferedChunk('stdout');
             flushBufferedChunk('stderr');
+            flushRedactor('stdout');
+            flushRedactor('stderr');
           } catch (err) {
             finish({ status: 'failed', error: `RUNNER_CALLBACK_FAILED: ${errorMessage(err)}` });
             return;

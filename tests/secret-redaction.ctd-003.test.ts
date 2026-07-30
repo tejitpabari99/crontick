@@ -46,11 +46,12 @@ const JWT = [
   'eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkNyb250aWNrIn0',
   'signature0123456789abcdef',
 ].join('.');
-const PRIVATE_KEY = [
+const PRIVATE_KEY_LINES = [
   '-----BEGIN PRIVATE KEY-----',
   'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQD',
   '-----END PRIVATE KEY-----',
-].join('\n');
+] as const;
+const PRIVATE_KEY = PRIVATE_KEY_LINES.join('\n');
 const GENERIC_ASSIGNMENTS = 'password=hunter2 passwd=unix-secret api_key=service-secret token=refresh-secret secret=shared-secret';
 const BEARER_HEADER = `Authorization: Bearer ${JWT}`;
 const POSTGRES_URL = 'postgres://dbuser:DbPass123!@db.example.local/app';
@@ -244,7 +245,12 @@ function jobWithEnv(id: string, env: Record<string, string>): Job {
   };
 }
 
-function fakeSpawnWithOutput(text: string) {
+type SpawnWrite = {
+  stream: 'stdout' | 'stderr';
+  chunk: string | Buffer;
+};
+
+function fakeSpawnWithWrites(writes: readonly SpawnWrite[]) {
   return ((_cmd: string, _args?: readonly string[], _opts?: SpawnOptions): ChildProcess => {
     void _cmd;
     void _args;
@@ -260,12 +266,20 @@ function fakeSpawnWithOutput(text: string) {
       unref: () => child,
     });
     queueMicrotask(() => {
-      stdout.end(Buffer.from(text, 'utf-8'));
+      for (const { stream, chunk } of writes) {
+        const target = stream === 'stdout' ? stdout : stderr;
+        target.write(typeof chunk === 'string' ? Buffer.from(chunk, 'utf-8') : chunk);
+      }
+      stdout.end();
       stderr.end();
       child.emit('close', 0, null);
     });
     return child;
   }) as never;
+}
+
+function fakeSpawnWithOutput(text: string) {
+  return fakeSpawnWithWrites([{ stream: 'stdout', chunk: text }]);
 }
 
 function logText(store: Store, runId: string): string {
@@ -446,6 +460,30 @@ describe('CTD-003 shared secret redaction', () => {
     }
   });
 
+
+
+  it('redacts a chunk-split stdout private key before persistence without altering benign chunked output', async () => {
+    const fixture = await createFixture('split-pem');
+    try {
+      const splitPemRunner = new Runner(fakeSpawnWithWrites([
+        { stream: 'stdout', chunk: 'alpha ' },
+        { stream: 'stdout', chunk: 'beta\n-----BEGIN PRIVA' },
+        { stream: 'stdout', chunk: 'TE KEY-----\nMIIEvQIBADANBgkqhkiG9w0B' },
+        { stream: 'stdout', chunk: 'AQEFAASCBKcwggSjAgEAAoIBAQD\n-----END PRI' },
+        { stream: 'stdout', chunk: 'VATE KEY-----\nomega delta\n' },
+      ]));
+      const captureJob = jobWithEnv('ctd003-split-pem-capture', {});
+      const captureRun = fixture.store.insertRun(captureJob.id);
+      await splitPemRunner.run(captureJob, captureRun.id, fixture.store);
+
+      const logBytes = persistedLogBytes(fixture.dir, captureRun.id);
+      expectRawSecretBytesAbsent(logBytes, [...PRIVATE_KEY_LINES, PRIVATE_KEY], 'split pem persisted log bytes');
+      expect(logBytes.toString('utf-8')).toBe('alpha beta\n[REDACTED]\nomega delta\n');
+      expect(logText(fixture.store, captureRun.id)).toBe('alpha beta\n[REDACTED]\nomega delta\n');
+    } finally {
+      await fixture.close();
+    }
+  });
 
   it('redacts generic assignment lookalikes in linear time on large non-matching input', () => {
     const adversarial = 'tokentoken.'.repeat(5_000);
