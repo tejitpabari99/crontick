@@ -40,4 +40,9 @@ See [`mcp/README.md`](mcp/README.md) for MCP server registration and tool call e
 
 ## Type-checking
 
-These examples are intended to be type-checked in CI. They require a tsconfig that includes `examples/**/*.ts` with appropriate module resolution. The root `tsconfig.json` currently includes only `src/` and `tests/`; a separate `examples/tsconfig.json` or an update to the root include array would be needed to cover these files.
+These examples are already type-checked in CI using dedicated example configs and package scripts:
+
+- `npm run typecheck:examples` runs `tsc --project examples/tsconfig.json` against the source types.
+- `npm run typecheck:examples:dist` runs `tsc --project examples/tsconfig.dist.json` against the built `dist/index.d.ts`.
+
+The root `tsconfig.json` still focuses on `src/` and `tests/`, so example coverage now lives in these example-specific projects instead of the root config.
