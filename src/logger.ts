@@ -88,7 +88,7 @@ const SENSITIVE_KEY_SUFFIXES: ReadonlyArray<ReadonlyArray<string>> = [
 ];
 
 const NEGATED_SENSITIVE_PREFIXES = new Set(['no', 'non', 'not']);
-const STANDALONE_AWS_SECRET_CANDIDATE = /(^|[^A-Za-z0-9/+=])([A-Za-z0-9/+=]{40})(?=$|[^A-Za-z0-9/+=])/g;
+const STANDALONE_AWS_SECRET_CANDIDATE = /(^|[^A-Za-z0-9/+])([A-Za-z0-9/+=]{40})(?=$|[^A-Za-z0-9/+])/g;
 
 /** Patterns applied to log text to strip tokens/keys before they reach the sink. */
 const SECRET_PATTERNS: SecretPattern[] = [
@@ -251,6 +251,7 @@ function isPossiblePrivateKeyMarkerPrefix(text: string, kind: 'begin' | 'end'): 
 }
 
 function findPrivateKeyMarkerCarry(text: string, allowBegin: boolean, allowEnd: boolean): string {
+  if (/-----(?:BEGIN|END) [A-Z0-9 ]*PRIVATE KEY-----$/.test(text)) return '';
   let start = text.lastIndexOf('-');
   while (start >= 0) {
     const suffix = text.slice(start);

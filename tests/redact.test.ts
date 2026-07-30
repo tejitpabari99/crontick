@@ -5,6 +5,7 @@ import { redactForLlm } from '../src/mcp/index.js';
 const AWS_SECRET_ACCESS_KEY = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
 const HEX_LOOKALIKE = '0123456789abcdef0123456789abcdef01234567';
 const BASE62_LOOKALIKE = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789ABCD';
+const BASE64_LOOKALIKE = 'QWxhZGRpbjpvcGVuIHNlc2FtZQ==';
 const PRIVATE_KEY_BLOCK = [
   '-----BEGIN PRIVATE KEY-----',
   'line-one',
@@ -59,9 +60,9 @@ describe('redactForLlm', () => {
   });
 });
 
-describe('logger secret classifier', () => {
+describe('SAFE-003 logger secret classifier precision', () => {
   it('matches only precise sensitive key-hint suffixes', () => {
-    for (const keyHint of ['OPENAI_API_KEY', 'clientSecret', 'AWS_SECRET_ACCESS_KEY', 'authorization', 'refreshToken']) {
+    for (const keyHint of ['OPENAI_API_KEY', 'clientSecret', 'AWS_SECRET_ACCESS_KEY', 'authorization', 'refreshToken', 'privateKey']) {
       expect(isSensitiveKeyHint(keyHint), keyHint).toBe(true);
     }
 
@@ -72,6 +73,9 @@ describe('logger secret classifier', () => {
     const structured = redactValue({
       OPENAI_API_KEY: 'openai-secret',
       clientSecret: 'client-secret',
+      AWS_SECRET_ACCESS_KEY,
+      authorization: 'Bearer super-secret',
+      privateKey: PRIVATE_KEY_BLOCK,
       NON_SECRET: 'safe-visible',
       NOT_TOKEN: 'safe-visible',
       NO_PASSWORD: 'safe-visible',
@@ -82,6 +86,9 @@ describe('logger secret classifier', () => {
 
     expect(structured.OPENAI_API_KEY).toBe('[REDACTED]');
     expect(structured.clientSecret).toBe('[REDACTED]');
+    expect(structured.AWS_SECRET_ACCESS_KEY).toBe('[REDACTED]');
+    expect(structured.authorization).toBe('[REDACTED]');
+    expect(structured.privateKey).toBe('[REDACTED]');
     expect(structured.NON_SECRET).toBe('safe-visible');
     expect(structured.NOT_TOKEN).toBe('safe-visible');
     expect(structured.NO_PASSWORD).toBe('safe-visible');
@@ -94,7 +101,9 @@ describe('logger secret classifier', () => {
     const text = 'NON_SECRET=alpha NOT_TOKEN=beta NO_PASSWORD=gamma secretary=delta monkey=epsilon PUBLIC_KEY=zeta';
     expect(redactText(text)).toBe(text);
   });
+});
 
+describe('RED-003 logger must-redact corpus', () => {
   it('redacts contextual aws secret access keys for env-style and quoted keys', () => {
     expect(redactText(`AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}`)).toBe('AWS_SECRET_ACCESS_KEY=[REDACTED]');
     expect(redactText(`{"secretAccessKey":"${AWS_SECRET_ACCESS_KEY}"}`)).toBe('{"secretAccessKey":"[REDACTED]"}');
@@ -111,9 +120,7 @@ describe('logger secret classifier', () => {
     expect(result).toContain(HEX_LOOKALIKE);
     expect(result).toContain(BASE62_LOOKALIKE);
   });
-});
 
-describe('logger private-key redaction', () => {
   it('redacts full PEM private-key blocks in stateless text', () => {
     expect(redactText(`before\n${PRIVATE_KEY_BLOCK}\nafter`)).toBe('before\n[REDACTED]\nafter');
   });
@@ -158,14 +165,31 @@ describe('logger private-key redaction', () => {
     expect(output).not.toContain('END PRIV');
   });
 
+  it('keeps isolated streaming state per redactor instance', () => {
+    const first = createStreamingTextRedactor();
+    const second = createStreamingTextRedactor();
+
+    const firstOutput = first.write('alpha -----BEGIN PRIVATE KEY-----\nsecret\n') + first.flush();
+    const secondOutput = second.write('beta ok') + second.flush();
+
+    expect(firstOutput).toBe('alpha [REDACTED]');
+    expect(firstOutput).not.toContain('secret');
+    expect(secondOutput).toBe('beta ok');
+  });
+});
+
+describe('SAFE-004 logger near-miss preservation', () => {
   it('leaves certificate and public-key PEM text visible', () => {
     expect(redactText(CERTIFICATE_PEM)).toBe(CERTIFICATE_PEM);
     expect(redactText(PUBLIC_KEY_PEM)).toBe(PUBLIC_KEY_PEM);
+  });
 
+  it('preserves benign 40-char, base64-looking, and secret-adjacent text across streaming writes', () => {
+    const input = `hex=${HEX_LOOKALIKE} base62=${BASE62_LOOKALIKE} base64=${BASE64_LOOKALIKE} secretary=delta monkey=epsilon\ncert=${CERTIFICATE_PEM}\npub=${PUBLIC_KEY_PEM}`;
     const redactor = createStreamingTextRedactor();
-    const output = redactor.write(`cert=${CERTIFICATE_PEM}\npub=${PUBLIC_KEY_PEM}`) + redactor.flush();
+    const output = redactor.write(input.slice(0, 80)) + redactor.write(input.slice(80)) + redactor.flush();
 
-    expect(output).toBe(`cert=${CERTIFICATE_PEM}\npub=${PUBLIC_KEY_PEM}`);
+    expect(output).toBe(input);
     expect(output).not.toContain('[REDACTED]');
   });
 });

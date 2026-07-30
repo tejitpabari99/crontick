@@ -52,6 +52,8 @@ const PRIVATE_KEY_LINES = [
   '-----END PRIVATE KEY-----',
 ] as const;
 const PRIVATE_KEY = PRIVATE_KEY_LINES.join('\n');
+const PRIVATE_KEY_BEGIN_MARKER = PRIVATE_KEY_LINES[0];
+const PRIVATE_KEY_END_MARKER = '-----END RSA PRIVATE KEY-----';
 const GENERIC_ASSIGNMENTS = 'password=hunter2 passwd=unix-secret api_key=service-secret token=refresh-secret secret=shared-secret';
 const BEARER_HEADER = `Authorization: Bearer ${JWT}`;
 const POSTGRES_URL = 'postgres://dbuser:DbPass123!@db.example.local/app';
@@ -186,6 +188,15 @@ const SECRET_CASES: SecretCase[] = [
     expectedConfig: '[REDACTED] AWS_SECRET_ACCESS_KEY=[REDACTED]',
   },
   {
+    name: 'bare aws secret access key',
+    runtimeText: AWS_SECRET_ACCESS_KEY,
+    expectedRuntime: '[REDACTED]',
+    rawSecrets: [AWS_SECRET_ACCESS_KEY],
+    configKey: 'RUNTIME_SAMPLE',
+    configValue: AWS_SECRET_ACCESS_KEY,
+    expectedConfig: '[REDACTED]',
+  },
+  {
     name: 'google api key',
     runtimeText: GOOGLE_API_KEY,
     expectedRuntime: '[REDACTED]',
@@ -219,6 +230,24 @@ const SECRET_CASES: SecretCase[] = [
     rawSecrets: [PRIVATE_KEY],
     configKey: 'CERTIFICATE_DATA',
     configValue: PRIVATE_KEY,
+    expectedConfig: '[REDACTED]',
+  },
+  {
+    name: 'private key begin marker',
+    runtimeText: PRIVATE_KEY_BEGIN_MARKER,
+    expectedRuntime: '[REDACTED]',
+    rawSecrets: [PRIVATE_KEY_BEGIN_MARKER],
+    configKey: 'PEM_BEGIN_ONLY',
+    configValue: PRIVATE_KEY_BEGIN_MARKER,
+    expectedConfig: '[REDACTED]',
+  },
+  {
+    name: 'private key end marker',
+    runtimeText: PRIVATE_KEY_END_MARKER,
+    expectedRuntime: '[REDACTED]',
+    rawSecrets: [PRIVATE_KEY_END_MARKER],
+    configKey: 'PEM_END_ONLY',
+    configValue: PRIVATE_KEY_END_MARKER,
     expectedConfig: '[REDACTED]',
   },
   {
@@ -399,7 +428,7 @@ function expectNoRedactionMarker(text: string, surface: string): void {
 }
 
 describe('CTD-003 shared secret redaction', () => {
-  it('redacts each secret shape across persisted logs, run reads, config reads, dashboard data, and exports', async () => {
+  it('RED-001/RED-002 redacts the must-redact corpus across runtime, config, dashboard, and export surfaces', async () => {
     const fixture = await createFixture('matrix');
     try {
       writeConfig(
@@ -500,7 +529,7 @@ describe('CTD-003 shared secret redaction', () => {
 
 
 
-  it('redacts a chunk-split stdout private key before persistence without altering benign chunked output', async () => {
+  it('RED-003 redacts a chunk-split stdout private key before persistence without altering benign chunked output', async () => {
     const fixture = await createFixture('split-pem');
     try {
       const splitPemRunner = new Runner(fakeSpawnWithWrites([
@@ -523,7 +552,7 @@ describe('CTD-003 shared secret redaction', () => {
     }
   });
 
-  it('redacts daemon operational logs with the shared logger contract while preserving benign fields', () => {
+  it('RED-004 redacts daemon operational logs with the shared logger contract while preserving benign fields', () => {
     const events: Array<{ message: string; data?: { env?: Record<string, string> } }> = [];
     const logger = createLogger({
       verbose: true,
@@ -532,11 +561,15 @@ describe('CTD-003 shared secret redaction', () => {
     });
 
     logger.info(
-      `runtime AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} ${PRIVATE_KEY_LINES[0]}`,
+      `runtime AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} bare=${AWS_SECRET_ACCESS_KEY} begin=${PRIVATE_KEY_BEGIN_MARKER} path=${BENIGN_WINDOWS_PATH} url=${BENIGN_URL}`,
       {
         env: {
           AWS_SECRET_ACCESS_KEY,
+          RUNTIME_SAMPLE: AWS_SECRET_ACCESS_KEY,
           PRIVATE_KEY,
+          PEM_BEGIN_ONLY: PRIVATE_KEY_BEGIN_MARKER,
+          PEM_END_ONLY: PRIVATE_KEY_END_MARKER,
+          GITHUB_TOKEN: GITHUB_CLASSIC,
           ...BENIGN_CONFIG_ENV,
         },
       },
@@ -545,11 +578,19 @@ describe('CTD-003 shared secret redaction', () => {
     expect(events).toHaveLength(1);
     const [event] = events;
     expect(event?.message).toContain('AWS_SECRET_ACCESS_KEY=[REDACTED]');
-    expect(event?.message).toContain('[REDACTED]');
+    expect(event?.message).toContain('bare=[REDACTED]');
+    expect(event?.message).toContain('begin=[REDACTED]');
+    expect(event?.message).toContain(`path=${BENIGN_WINDOWS_PATH}`);
+    expect(event?.message).toContain(`url=${BENIGN_URL}`);
     expect(event?.message).not.toContain(AWS_SECRET_ACCESS_KEY);
-    expect(event?.message).not.toContain(PRIVATE_KEY_LINES[0]);
+    expect(event?.message).not.toContain(PRIVATE_KEY_BEGIN_MARKER);
+    expect(event?.message).not.toContain(PRIVATE_KEY_END_MARKER);
     expect(event?.data?.env?.AWS_SECRET_ACCESS_KEY).toBe('[REDACTED]');
+    expect(event?.data?.env?.RUNTIME_SAMPLE).toBe('[REDACTED]');
     expect(event?.data?.env?.PRIVATE_KEY).toBe('[REDACTED]');
+    expect(event?.data?.env?.PEM_BEGIN_ONLY).toBe('[REDACTED]');
+    expect(event?.data?.env?.PEM_END_ONLY).toBe('[REDACTED]');
+    expect(event?.data?.env?.GITHUB_TOKEN).toBe('[REDACTED]');
     for (const [key, value] of Object.entries(BENIGN_CONFIG_ENV)) {
       expect(event?.data?.env?.[key]).toBe(value);
     }
@@ -567,7 +608,7 @@ describe('CTD-003 shared secret redaction', () => {
     expect(elapsedMs).toBeLessThan(200);
   });
 
-  it('does not redact the benign runtime and config corpora on shared read surfaces', async () => {
+  it('SAFE-001/SAFE-002 preserves the must-not-redact runtime and config corpora on shared read surfaces', async () => {
     const fixture = await createFixture('false-positive');
     try {
       writeConfig(fixture.dir, { ...BENIGN_CONFIG_ENV });
