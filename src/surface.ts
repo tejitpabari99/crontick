@@ -56,8 +56,5 @@ export const SURFACE_CAPABILITIES = [
   { capability: 'config-validate', clientMethod: 'validateConfig', cliCommand: ['config', 'validate'], mcpTool: 'crontick_config_validate' },
 ] as const satisfies readonly SurfaceCapability[];
 
-/** All client method names covered by the parity contract. */
-export const CLIENT_METHODS = SURFACE_CAPABILITIES.map((capability) => capability.clientMethod);
-
 /** All MCP tool names covered by the parity contract. */
 export const MCP_TOOLS = SURFACE_CAPABILITIES.map((capability) => capability.mcpTool);

@@ -80,8 +80,7 @@ interface SurfaceCapability {
 export const SURFACE_CAPABILITIES: readonly SurfaceCapability[];
 ```
 
-Currently 37 entries. Derived exports:
-- `CLIENT_METHODS`: all client method names.
+Currently 37 entries. Derived export:
 - `MCP_TOOLS`: all MCP tool names.
 
 ---
