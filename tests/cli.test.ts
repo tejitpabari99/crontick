@@ -666,12 +666,15 @@ describe('CLI e2e with daemon', () => {
     expect(created.status, created.stderr).toBe(0);
     expect(JSON.parse(created.stdout).action).toMatchObject({ kind: 'exec', command: 'echo', args: ['a', 'b'] });
 
+    const envFilePath = join(dir, 'file-exec-args.env');
+    writeFileSync(envFilePath, 'FOO=bar\n', 'utf-8');
+
     const patchFile = join(dir, 'file-exec-args-patch.json');
-    writeFileSync(patchFile, JSON.stringify({ action: { kind: 'exec', command: 'echo', envFile: '.env.new' } }), 'utf-8');
+    writeFileSync(patchFile, JSON.stringify({ action: { kind: 'exec', command: 'echo', envFile: envFilePath } }), 'utf-8');
     const updated = cli(['--json', 'update', 'file-exec-args-job', '--file', patchFile], env());
     expect(updated.status, updated.stderr).toBe(0);
     expect(JSON.parse(updated.stdout).action).toMatchObject({
-      kind: 'exec', command: 'echo', args: ['a', 'b'], envFile: '.env.new',
+      kind: 'exec', command: 'echo', args: ['a', 'b'], envFile: envFilePath,
     });
   });
 
@@ -911,6 +914,50 @@ describe('CLI e2e with daemon', () => {
     expect(Array.isArray(data.jobs)).toBe(true);
     // --include-runs is opt-in -- keeps the default export small.
     expect(data.runs).toBeUndefined();
+  });
+
+  it('crontick import accepts a BOM-prefixed JSON file', () => {
+    const importFile = join(dir, 'import-bom.json');
+    writeFileSync(importFile, `\uFEFF${JSON.stringify({
+      jobs: [{
+        id: 'import-bom-job',
+        schedule: { kind: 'cron', cron: '0 12 * * *' },
+        action: { kind: 'exec', command: 'echo', args: ['bom'] },
+      }],
+    }, null, 2)}`, 'utf-8');
+
+    const imported = cli(['--json', 'import', importFile], env());
+    expect(imported.status, imported.stderr).toBe(0);
+
+    const fetched = cli(['--json', 'get', 'import-bom-job'], env());
+    expect(fetched.status, fetched.stderr).toBe(0);
+    expect(JSON.parse(fetched.stdout)).toMatchObject({
+      id: 'import-bom-job',
+      action: { kind: 'exec', command: 'echo', args: ['bom'] },
+    });
+
+    const removed = cli(['--json', 'delete', 'import-bom-job'], env());
+    expect(removed.status, removed.stderr).toBe(0);
+  });
+
+  it('crontick import reports malformed JSON with file path, parse position, and expected shape', () => {
+    const importFile = join(dir, 'import-bad.json');
+    writeFileSync(importFile, '{ nope', 'utf-8');
+
+    const before = cli(['--json', 'list'], env());
+    expect(before.status, before.stderr).toBe(0);
+    const beforeCount = (JSON.parse(before.stdout) as Array<unknown>).length;
+
+    const imported = cli(['import', importFile], env());
+    expect(imported.status).not.toBe(0);
+    expect(imported.stderr).toContain(importFile);
+    expect(imported.stderr).toMatch(/line \d+ column \d+ \(position \d+\)/);
+    expect(imported.stderr).toContain('expected either a JSON array of jobs or an export object with jobs and optional runs');
+    expect(imported.stderr).not.toContain('SyntaxError');
+
+    const after = cli(['--json', 'list'], env());
+    expect(after.status, after.stderr).toBe(0);
+    expect((JSON.parse(after.stdout) as Array<unknown>).length).toBe(beforeCount);
   });
 
   it('L7: crontick export --include-runs and crontick import round-trip run history', async () => {

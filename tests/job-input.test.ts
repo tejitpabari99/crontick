@@ -37,6 +37,20 @@ afterEach(() => {
   for (const dir of cleanupDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
+function expectJsonFileValidationError(fn: () => unknown, filePath: string, expectedShape: string): void {
+  try {
+    fn();
+    throw new Error('Expected JSON file validation error');
+  } catch (err) {
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(SyntaxError);
+    const message = (err as Error).message;
+    expect(message).toContain(filePath);
+    expect(message).toMatch(/line \d+ column \d+ \(position \d+\)/);
+    expect(message).toContain(expectedShape);
+  }
+}
+
 describe('normalizeJobInput', () => {
   it('normalizes prompt text jobs with defaults', () => {
     const job = normalizeJobInput(baseJob({ kind: 'prompt', prompt: 'Summarize' }));
@@ -146,6 +160,53 @@ describe('normalizeJobInput', () => {
 // ── buildJobFromCreateOptions — --exec verbatim + rawArgs (L6) ────────────────
 // --exec takes the command verbatim (no whitespace splitting); everything
 // after `--` (rawArgs) becomes action.args, reusing prompt mode's convention.
+
+describe('buildJobFromCreateOptions/buildJobPatchFromUpdateOptions — JSON file input', () => {
+  it('accepts a BOM-prefixed job definition file', () => {
+    const dir = makeDir();
+    const filePath = join(dir, 'job.json');
+    writeFileSync(filePath, `\uFEFF${JSON.stringify(baseJob({ kind: 'exec', command: 'echo', args: ['bom'] }), null, 2)}`, 'utf-8');
+
+    const job = buildJobFromCreateOptions({ id: 'ignored-by-file', file: 'job.json' }, { cwd: dir });
+    expect(job).toMatchObject({
+      id: 'prompt-job',
+      action: { kind: 'exec', command: 'echo', args: ['bom'] },
+    });
+  });
+
+  it('accepts a BOM-prefixed job patch file', () => {
+    const dir = makeDir();
+    const filePath = join(dir, 'patch.json');
+    writeFileSync(filePath, `\uFEFF${JSON.stringify({ action: { kind: 'exec', command: 'echo', args: ['patched'] } }, null, 2)}`, 'utf-8');
+
+    const patch = buildJobPatchFromUpdateOptions({ file: 'patch.json' }, { cwd: dir });
+    expect(patch).toMatchObject({ action: { kind: 'exec', command: 'echo', args: ['patched'] } });
+  });
+
+  it('reports malformed job definition JSON with file path, parse position, and expected shape', () => {
+    const dir = makeDir();
+    const filePath = join(dir, 'bad-job.json');
+    writeFileSync(filePath, '{ nope', 'utf-8');
+
+    expectJsonFileValidationError(
+      () => buildJobFromCreateOptions({ id: 'ignored-by-file', file: 'bad-job.json' }, { cwd: dir }),
+      filePath,
+      'expected a JSON object matching the crontick job schema',
+    );
+  });
+
+  it('reports malformed job patch JSON with file path, parse position, and expected shape', () => {
+    const dir = makeDir();
+    const filePath = join(dir, 'bad-patch.json');
+    writeFileSync(filePath, '{ nope', 'utf-8');
+
+    expectJsonFileValidationError(
+      () => buildJobPatchFromUpdateOptions({ file: 'bad-patch.json' }, { cwd: dir }),
+      filePath,
+      'expected a JSON object matching the crontick job patch schema',
+    );
+  });
+});
 
 describe('buildJobFromCreateOptions — --exec verbatim + rawArgs (L6)', () => {
   it('takes the command verbatim and args from rawArgs, with no whitespace splitting', () => {

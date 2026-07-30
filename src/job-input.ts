@@ -23,6 +23,7 @@ import {
 } from './schemas/job.js';
 import { EngineNameSchema } from './schemas/config.js';
 import { loadConfig } from './config.js';
+import { readJsonFile } from './json-file.js';
 import { promptRuntimeValidationMessage } from './prompt-runtime.js';
 
 /**
@@ -298,8 +299,11 @@ export function buildJobFromCreateOptions(
   if (input.file) {
     assertFileModeExclusive(input, resolvedArgs);
     const filePath = resolve(options.cwd ?? process.cwd(), input.file);
-    const raw = readFileSync(filePath, 'utf-8');
-    return normalizeJobInput(JSON.parse(raw) as JobCreateInput, {
+    return normalizeJobInput(readJsonFile(filePath, {
+      errorCode: 'VALIDATION_ERROR',
+      subject: 'job definition file',
+      expectedShape: 'expected a JSON object matching the crontick job schema',
+    }) as JobCreateInput, {
       ...options,
       fileBaseDir: dirname(filePath),
     });
@@ -325,8 +329,11 @@ export function buildJobPatchFromUpdateOptions(
   if (input.file) {
     assertFileModeExclusive(input, resolvedArgs);
     const filePath = resolve(options.cwd ?? process.cwd(), input.file);
-    const raw = readFileSync(filePath, 'utf-8');
-    const parsed = JobPatchInputSchema.safeParse(JSON.parse(raw));
+    const parsed = JobPatchInputSchema.safeParse(readJsonFile(filePath, {
+      errorCode: 'VALIDATION_ERROR',
+      subject: 'job patch file',
+      expectedShape: 'expected a JSON object matching the crontick job patch schema',
+    }));
     if (!parsed.success) throw new CrontickError('VALIDATION_ERROR', 'Invalid job patch', parsed.error.format());
     return parsed.data.action
       ? { ...parsed.data, action: normalizeActionInput(parsed.data.action, { ...options, fileBaseDir: dirname(filePath) }, false) as ActionInput }

@@ -6,11 +6,12 @@
  * Precedence for engine resolution: file config > BUILT_IN_CONFIG.
  * Writes use atomic rename (write-to-tmp, rename) for crash safety.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
 import { CrontickError } from './errors.js';
 import { configPath as defaultConfigPath, ensureDirs } from './paths.js';
+import { readJsonFile } from './json-file.js';
 import {
   ConfigKeySchema,
   ConfigSchema,
@@ -275,13 +276,20 @@ function parseConfig(input: unknown, filePath: string): CrontickConfig {
 
 function readConfigJson(filePath: string): unknown {
   try {
-    return JSON.parse(readFileSync(filePath, 'utf-8'));
+    return readJsonFile(filePath, {
+      errorCode: 'CONFIG_READ_ERROR',
+      subject: 'config file',
+      expectedShape: 'expected a JSON object matching the crontick config schema',
+    });
   } catch (err) {
-    throw new CrontickError(
-      'CONFIG_READ_ERROR',
-      `Failed to read config file ${filePath}: ${errorMessage(err)}. Fix the JSON syntax or run "crontick config init --force" to recreate the default config.`,
-      { path: filePath },
-    );
+    if (err instanceof CrontickError && err.code === 'CONFIG_READ_ERROR') {
+      throw new CrontickError(
+        err.code,
+        `${err.message}. Fix the JSON syntax or run "crontick config init --force" to recreate the default config.`,
+        err.details,
+      );
+    }
+    throw err;
   }
 }
 

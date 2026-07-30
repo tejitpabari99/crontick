@@ -7,7 +7,7 @@
  */
 import { Command } from 'commander';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { VERSION } from '../version.js';
@@ -17,6 +17,7 @@ import { buildJobPatchFromUpdateOptions, type JobCreateCliOptions, type JobPatch
 import type { Schedule } from '../schemas/job.js';
 import type { EngineConfig } from '../schemas/config.js';
 import { isVerboseEnv, type LogEvent } from '../logger.js';
+import { readJsonFile } from '../json-file.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -643,7 +644,11 @@ program.command('export')
 program.command('import <file>').description('Import jobs (and run history, if present) from a JSON file').action(async (file: string) => {
   try {
     const filePath = resolve(process.cwd(), file);
-    const data = JSON.parse(readFileSync(filePath, 'utf-8')) as { jobs?: unknown[]; runs?: unknown[] } | unknown[];
+    const data = readJsonFile(filePath, {
+      errorCode: 'VALIDATION_ERROR',
+      subject: 'import file',
+      expectedShape: 'expected either a JSON array of jobs or an export object with jobs and optional runs',
+    }) as { jobs?: unknown[]; runs?: unknown[] } | unknown[];
     const jobs = Array.isArray(data) ? data : data.jobs;
     const runs = Array.isArray(data) ? undefined : data.runs;
     print(await client().importJobs(Array.isArray(jobs) ? jobs : [], { fileBaseDir: dirname(filePath), runs }));

@@ -71,12 +71,39 @@ describe('crontick config core', () => {
     });
   });
 
-  it('reports invalid JSON with file path and next step', () => {
+  it('accepts a BOM-prefixed config file', () => {
+    const { env, path } = makeHome();
+    writeFileSync(path, `\uFEFF${JSON.stringify({ defaultEngine: 'agency', engines: { agency: { command: 'agency' } } }, null, 2)}`, 'utf-8');
+
+    expect(loadConfig({ env })).toMatchObject({
+      defaultEngine: 'agency',
+      engines: { agency: { command: 'agency', args: [], env: {} } },
+    });
+    expect(validateConfigFile({ env })).toMatchObject({ ok: true, path, problems: [] });
+  });
+
+  it('reports invalid JSON with file path, parse position, and expected shape', () => {
     const { env, path } = makeHome();
     writeFileSync(path, '{ nope', 'utf-8');
 
-    expect(() => loadConfig({ env })).toThrow(/Failed to read config file .*config\.json.*Fix the JSON syntax/);
-    expect(validateConfigFile({ env })).toMatchObject({ ok: false, path });
+    try {
+      loadConfig({ env });
+      throw new Error('Expected config read failure');
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(SyntaxError);
+      const message = (err as Error).message;
+      expect(message).toContain(path);
+      expect(message).toMatch(/line \d+ column \d+ \(position \d+\)/);
+      expect(message).toContain('expected a JSON object matching the crontick config schema');
+      expect(message).toContain('Fix the JSON syntax');
+    }
+
+    const validation = validateConfigFile({ env });
+    expect(validation).toMatchObject({ ok: false, path });
+    expect(validation.problems[0]).toContain(path);
+    expect(validation.problems[0]).toMatch(/line \d+ column \d+ \(position \d+\)/);
+    expect(validation.problems[0]).toContain('expected a JSON object matching the crontick config schema');
   });
 
   it('reports unknown keys with key path and fix guidance', () => {
