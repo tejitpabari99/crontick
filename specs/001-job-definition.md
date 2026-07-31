@@ -80,7 +80,7 @@ daemon to validate and persist jobs without surface-specific logic.
 - Invalid schedule on create/update: MUST reject before persistence, so create writes nothing and update preserves the prior job.
 - `action.envFile` missing or unreadable on create/update: MUST reject with `ENV_FILE_ERROR` before persistence; relative paths are resolved against `action.cwd ?? process.cwd()`.
 - Create/update job JSON loaded from `--file` with a leading UTF-8 BOM: MUST be accepted.
-- Malformed create/update job JSON loaded from `--file`: MUST reject with a message that names the file, parse location, and expected job/job-patch shape.
+- Malformed create/update job JSON loaded from `--file`: MUST reject with a message that names the file, parse location, and expected job/job-patch shape. EOF-truncated files MUST report the end-of-input location and, when inferable, what construct or token was still expected.
 - `timeoutSec` <= 0: MUST reject (schema requires `.positive()`).
 - `retry.max` with fractional value: MUST reject (schema requires `.int()`).
 

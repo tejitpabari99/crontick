@@ -53,6 +53,37 @@ function expectJsonFileValidationError(fn: () => unknown, filePath: string, expe
   }
 }
 
+function expectJsonFileEofValidationError(
+  fn: () => unknown,
+  filePath: string,
+  expectedShape: string,
+  expectedHint: string,
+  expectedPosition: number,
+): void {
+  try {
+    fn();
+    throw new Error('Expected EOF JSON file validation error');
+  } catch (err) {
+    expect(err).toBeInstanceOf(CrontickError);
+    expect(err).not.toBeInstanceOf(SyntaxError);
+    expect(err).toMatchObject({
+      details: expect.objectContaining({
+        path: filePath,
+        expectedShape,
+        position: expectedPosition,
+        line: expect.any(Number),
+        column: expect.any(Number),
+      }),
+    });
+    const message = (err as Error).message;
+    expect(message).toContain(filePath);
+    expect(message).toContain('Unexpected end of JSON input');
+    expect(message).toMatch(/line \d+ column \d+ \(position \d+\)/);
+    expect(message).toContain(expectedHint);
+    expect(message).toContain(expectedShape);
+  }
+}
+
 describe('readJsonFile', () => {
   it('accepts a BOM-prefixed JSON file', () => {
     const dir = makeDir();
@@ -119,6 +150,54 @@ describe('readJsonFile', () => {
         expect(message).toMatch(/line \d+ column \d+ \(position \d+\)/);
         expect(message).toContain(testCase.options.expectedShape);
       }
+    }
+  });
+
+  it('reports EOF-truncated JSON with end-of-input positions and unfinished-construct hints', () => {
+    const dir = makeDir();
+    const cases = [
+      {
+        fileName: 'eof-job.json',
+        contents: '{ "id": "helper-eof-job", "schedule": ',
+        options: {
+          errorCode: 'VALIDATION_ERROR',
+          subject: 'job definition file',
+          expectedShape: 'expected a JSON object matching the crontick job schema',
+        },
+        expectedHint: "expected a value after ':'",
+      },
+      {
+        fileName: 'eof-import.json',
+        contents: '{ "jobs": [ ',
+        options: {
+          errorCode: 'VALIDATION_ERROR',
+          subject: 'import file',
+          expectedShape: 'expected either a JSON array of jobs or an export object with jobs and optional runs',
+        },
+        expectedHint: 'unterminated array',
+      },
+      {
+        fileName: 'eof-config.json',
+        contents: '{ "defaultEngine": ',
+        options: {
+          errorCode: 'CONFIG_READ_ERROR',
+          subject: 'config file',
+          expectedShape: 'expected a JSON object matching the crontick config schema',
+        },
+        expectedHint: "expected a value after ':'",
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const filePath = join(dir, testCase.fileName);
+      writeFileSync(filePath, testCase.contents, 'utf-8');
+      expectJsonFileEofValidationError(
+        () => readJsonFile(filePath, testCase.options),
+        filePath,
+        testCase.options.expectedShape,
+        testCase.expectedHint,
+        testCase.contents.length,
+      );
     }
   });
 });

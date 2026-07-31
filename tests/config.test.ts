@@ -40,7 +40,7 @@ function promptJob(action: Record<string, unknown> = {}): JobCreateInput {
   } as JobCreateInput;
 }
 
-function expectConfigJsonError(fn: () => unknown, path: string): void {
+function expectConfigJsonError(fn: () => unknown, path: string, extraFragments: string[] = []): void {
   try {
     fn();
     throw new Error('Expected config read failure');
@@ -52,6 +52,7 @@ function expectConfigJsonError(fn: () => unknown, path: string): void {
     expect(message).toMatch(/line \d+ column \d+ \(position \d+\)/);
     expect(message).toContain('expected a JSON object matching the crontick config schema');
     expect(message).toContain('Fix the JSON syntax');
+    for (const fragment of extraFragments) expect(message).toContain(fragment);
   }
 }
 
@@ -114,6 +115,22 @@ describe('crontick config core', () => {
     expect(validation.problems[0]).toContain(path);
     expect(validation.problems[0]).toMatch(/line \d+ column \d+ \(position \d+\)/);
     expect(validation.problems[0]).toContain('expected a JSON object matching the crontick config schema');
+  });
+
+  it('reports EOF-truncated JSON with end-of-input position and unfinished-construct hints', () => {
+    const { env, path } = makeHome();
+    const contents = '{ "defaultEngine": ';
+    writeFileSync(path, contents, 'utf-8');
+
+    expectConfigJsonError(() => loadConfig({ env }), path, ['Unexpected end of JSON input', "expected a value after ':'"]);
+    expectConfigJsonError(() => readConfigFile({ env }), path, ['Unexpected end of JSON input', "expected a value after ':'"]);
+
+    const validation = validateConfigFile({ env });
+    expect(validation).toMatchObject({ ok: false, path });
+    expect(validation.problems[0]).toContain(path);
+    expect(validation.problems[0]).toContain('Unexpected end of JSON input');
+    expect(validation.problems[0]).toContain("expected a value after ':'");
+    expect(validation.problems[0]).toContain(`position ${contents.length}`);
   });
 
   it('reports unknown keys with key path and fix guidance', () => {

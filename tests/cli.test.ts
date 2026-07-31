@@ -1200,6 +1200,58 @@ describe('CLI e2e with daemon', () => {
     expect(removed.status, removed.stderr).toBe(0);
   });
 
+  it('crontick new/update --file report EOF-truncated JSON with end-of-input position and expected-value hints', () => {
+    const createFile = join(dir, 'new-file-eof.json');
+    const createContents = '{ "id": "cli-file-eof-job", "schedule": ';
+    writeFileSync(createFile, createContents, 'utf-8');
+
+    const beforeCreate = cli(['--json', 'list'], env());
+    expect(beforeCreate.status, beforeCreate.stderr).toBe(0);
+    const beforeCreateCount = (JSON.parse(beforeCreate.stdout) as Array<unknown>).length;
+
+    const badCreate = cli(['new', 'ignored-cli-file-id', '--file', createFile], env());
+    expect(badCreate.status).not.toBe(0);
+    expect(badCreate.stderr).toContain(createFile);
+    expect(badCreate.stderr).toContain('Unexpected end of JSON input');
+    expect(badCreate.stderr).toContain("expected a value after ':'");
+    expect(badCreate.stderr).toContain(`position ${createContents.length}`);
+    expect(badCreate.stderr).toContain('expected a JSON object matching the crontick job schema');
+    expect(badCreate.stderr).not.toContain('SyntaxError');
+
+    const afterCreate = cli(['--json', 'list'], env());
+    expect(afterCreate.status, afterCreate.stderr).toBe(0);
+    expect((JSON.parse(afterCreate.stdout) as Array<unknown>).length).toBe(beforeCreateCount);
+
+    const created = cli([
+      '--json', 'new', 'cli-file-eof-update-job', '--cron', '0 12 * * *', '--exec', 'echo', '--arg', 'before',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+
+    let fetched = cli(['--json', 'get', 'cli-file-eof-update-job'], env());
+    expect(fetched.status, fetched.stderr).toBe(0);
+    const beforeBad = JSON.parse(fetched.stdout);
+
+    const patchFile = join(dir, 'update-file-eof.json');
+    const patchContents = '{ "action": { "kind": "exec", "command": ';
+    writeFileSync(patchFile, patchContents, 'utf-8');
+
+    const badUpdate = cli(['update', 'cli-file-eof-update-job', '--file', patchFile], env());
+    expect(badUpdate.status).not.toBe(0);
+    expect(badUpdate.stderr).toContain(patchFile);
+    expect(badUpdate.stderr).toContain('Unexpected end of JSON input');
+    expect(badUpdate.stderr).toContain("expected a value after ':'");
+    expect(badUpdate.stderr).toContain(`position ${patchContents.length}`);
+    expect(badUpdate.stderr).toContain('expected a JSON object matching the crontick job patch schema');
+    expect(badUpdate.stderr).not.toContain('SyntaxError');
+
+    fetched = cli(['--json', 'get', 'cli-file-eof-update-job'], env());
+    expect(fetched.status, fetched.stderr).toBe(0);
+    expect(JSON.parse(fetched.stdout)).toEqual(beforeBad);
+
+    const removed = cli(['--json', 'delete', 'cli-file-eof-update-job'], env());
+    expect(removed.status, removed.stderr).toBe(0);
+  });
+
   it('crontick import accepts a BOM-prefixed JSON file', () => {
     const importFile = join(dir, 'import-bom.json');
     writeFileSync(importFile, `\uFEFF${JSON.stringify({
@@ -1236,6 +1288,30 @@ describe('CLI e2e with daemon', () => {
     expect(imported.status).not.toBe(0);
     expect(imported.stderr).toContain(importFile);
     expect(imported.stderr).toMatch(/line \d+ column \d+ \(position \d+\)/);
+    expect(imported.stderr).toContain('expected either a JSON array of jobs or an export object with jobs and optional runs');
+    expect(imported.stderr).not.toContain('SyntaxError');
+
+    const after = cli(['--json', 'list'], env());
+    expect(after.status, after.stderr).toBe(0);
+    expect((JSON.parse(after.stdout) as Array<unknown>).length).toBe(beforeCount);
+  });
+
+
+  it('crontick import reports EOF-truncated JSON with end-of-input position and unterminated-array hints', () => {
+    const importFile = join(dir, 'import-eof.json');
+    const importContents = '{ "jobs": [ ';
+    writeFileSync(importFile, importContents, 'utf-8');
+
+    const before = cli(['--json', 'list'], env());
+    expect(before.status, before.stderr).toBe(0);
+    const beforeCount = (JSON.parse(before.stdout) as Array<unknown>).length;
+
+    const imported = cli(['import', importFile], env());
+    expect(imported.status).not.toBe(0);
+    expect(imported.stderr).toContain(importFile);
+    expect(imported.stderr).toContain('Unexpected end of JSON input');
+    expect(imported.stderr).toContain('unterminated array');
+    expect(imported.stderr).toContain(`position ${importContents.length}`);
     expect(imported.stderr).toContain('expected either a JSON array of jobs or an export object with jobs and optional runs');
     expect(imported.stderr).not.toContain('SyntaxError');
 
