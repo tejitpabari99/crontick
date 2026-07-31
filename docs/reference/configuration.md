@@ -140,7 +140,7 @@ touching that key. To see exactly what's explicitly set (as opposed to inherited
 redacted. This uses the same shared redaction contract as run reads, log tails, and
 dashboard data: GitHub/OpenAI/Anthropic/Stripe/Slack-style tokens, JWT-like blobs,
 key/value assignments such as `token=...`, connection-string passwords, contextual or
-standalone AWS secret-access-key values, and private keys (including lone `BEGIN`/`END
+nearby-access-key-paired AWS secret-access-key values, and private keys (including lone `BEGIN`/`END
 ... PRIVATE KEY` markers) are masked before they are printed or serialized. Structured
 key-hint redaction is intentionally narrow: names such as `OPENAI_API_KEY`,
 `clientSecret`, and `AWS_SECRET_ACCESS_KEY` redact, while benign names such as

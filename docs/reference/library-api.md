@@ -87,7 +87,7 @@ returning strings or structured text fields. Job-returning methods (`createJob`,
 `addEngine`, `updateEngine`, and `removeEngine`) also redact secret-like env/config values
 in their returned objects without changing the response schema. The same contract applies
 on CLI, MCP, and HTTP read surfaces: common provider tokens, `token=`/`******
-assignments, contextual or standalone AWS secret-access-key values, and private keys
+assignments, contextual or nearby-access-key-paired AWS secret-access-key values, and private keys
 (including lone PEM markers) are redacted, while benign key names such as `NON_SECRET`
 remain visible.
 

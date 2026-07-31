@@ -98,7 +98,10 @@ const SENSITIVE_KEY_SUFFIXES: ReadonlyArray<ReadonlyArray<string>> = [
 ];
 
 const NEGATED_SENSITIVE_PREFIXES = new Set(['no', 'non', 'not']);
-const STANDALONE_AWS_SECRET_CANDIDATE = /(^|[^A-Za-z0-9/+])([A-Za-z0-9/+=]{40})(?=$|[^A-Za-z0-9/+])/g;
+const AWS_ACCESS_KEY_ID_PATTERN = /\bA(?:KIA|SIA)[0-9A-Z]{16}\b/g;
+const AWS_ACCESS_KEY_ID_LINE_HINT = /\bA(?:KIA|SIA)[0-9A-Z]{16}\b/;
+const AWS_SECRET_ACCESS_KEY_CANDIDATE_PATTERN = /(^|[^A-Za-z0-9/+])([A-Za-z0-9/+=]{40})(?=$|[^A-Za-z0-9/+])/g;
+const CONTEXTUAL_AWS_SECRET_ACCESS_KEY_LABEL_PATTERN = /(\b(?:aws[\s._-]*)?secret[\s._-]*access[\s._-]*key\b\s*[:=]\s*)(?:"([A-Za-z0-9/+=]{40})"|'([A-Za-z0-9/+=]{40})'|([A-Za-z0-9/+=]{40}))/gi;
 
 /** Patterns applied to log text to strip tokens/keys before they reach the sink. */
 const SECRET_PATTERNS: SecretPattern[] = [
@@ -125,7 +128,7 @@ const SECRET_PATTERNS: SecretPattern[] = [
   { pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, replacement: REDACTED },
   { pattern: /\bAIza[0-9A-Za-z\-_]{35}\b/g, replacement: REDACTED },
   { pattern: /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b/g, replacement: REDACTED },
-  { pattern: /\bAKIA[0-9A-Z]{16}\b/g, replacement: REDACTED },
+  { pattern: AWS_ACCESS_KEY_ID_PATTERN, replacement: REDACTED },
 ];
 
 function normalizeKeyHint(keyHint: string): string[] {
@@ -190,10 +193,26 @@ function isAwsSecretAccessKeyCandidate(value: string): boolean {
     && !/^[0-9a-f]{40}$/i.test(value);
 }
 
-function redactStandaloneAwsSecretAccessKeys(text: string): string {
-  return text.replace(STANDALONE_AWS_SECRET_CANDIDATE, (match, prefix: string, candidate: string) => (
-    isAwsSecretAccessKeyCandidate(candidate) ? `${prefix}${REDACTED}` : match
-  ));
+function redactAwsSecretAccessKeysNearAccessKeyIds(text: string): string {
+  return text.replace(/^.*$/gm, (line) => {
+    if (!AWS_ACCESS_KEY_ID_LINE_HINT.test(line)) return line;
+    return line.replace(AWS_SECRET_ACCESS_KEY_CANDIDATE_PATTERN, (match, prefix: string, candidate: string) => (
+      isAwsSecretAccessKeyCandidate(candidate) ? `${prefix}${REDACTED}` : match
+    ));
+  });
+}
+
+function redactContextualAwsSecretAccessKeyLabels(text: string): string {
+  return text.replace(
+    CONTEXTUAL_AWS_SECRET_ACCESS_KEY_LABEL_PATTERN,
+    (match, prefix: string, doubleQuoted: string | undefined, singleQuoted: string | undefined, bare: string | undefined) => {
+      const candidate = doubleQuoted ?? singleQuoted ?? bare;
+      if (!candidate || !isAwsSecretAccessKeyCandidate(candidate)) return match;
+      if (doubleQuoted !== undefined) return `${prefix}"${REDACTED}"`;
+      if (singleQuoted !== undefined) return `${prefix}'${REDACTED}'`;
+      return `${prefix}${REDACTED}`;
+    },
+  );
 }
 
 function isSecretAssignmentKeyChar(char: string | undefined): boolean {
@@ -558,12 +577,13 @@ export function isVerboseEnv(env: NodeJS.ProcessEnv = process.env): boolean {
 }
 
 export function redactText(text: string): string {
-  let output = text;
+  let output = redactAwsSecretAccessKeysNearAccessKeyIds(text);
+  output = redactContextualAwsSecretAccessKeyLabels(output);
   for (const { pattern, replacement } of SECRET_PATTERNS) {
     output = output.replace(pattern, replacement);
   }
   output = redactSecretAssignments(output);
-  return redactStandaloneAwsSecretAccessKeys(output);
+  return output;
 }
 
 export function redactValue(value: unknown, keyHint?: string): unknown {

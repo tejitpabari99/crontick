@@ -63,7 +63,7 @@ Error messages are redacted via `redactForLlm()`: loopback addresses become `<da
 Tools that expose config values, run rows, log text, or dashboard payloads also apply
 the shared redaction contract before serializing successful results. That contract
 redacts common provider tokens, `token=`/`password=`-style assignments, contextual or
-standalone AWS secret-access-key values, and private keys (including lone PEM markers)
+nearby-access-key-paired AWS secret-access-key values, and private keys (including lone PEM markers)
 while avoiding broad substring matches such as `NON_SECRET`.
 
 ---

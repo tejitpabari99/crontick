@@ -388,7 +388,7 @@ crontick config get [path]
 | `path` | string (optional) | Dot-separated config path (e.g. `engines.copilot.command`) |
 
 Returns the effective config with secret-like values redacted. The shared contract masks
-common provider tokens, `token=`/`password=`-style assignments, contextual or standalone AWS
+common provider tokens, `token=`/`password=`-style assignments, contextual or nearby-access-key-paired AWS
 secret-access-key values, and private keys (including lone PEM begin/end markers) while avoiding
 broad substring matches such as `NON_SECRET`. The underlying `config.json` file on disk is not
 rewritten; read it directly if you need the literal stored bytes.

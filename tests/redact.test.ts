@@ -3,9 +3,10 @@ import { createStreamingTextRedactor, isSensitiveKeyHint, redactText, redactValu
 import { redactForLlm } from '../src/mcp/index.js';
 
 const AWS_SECRET_ACCESS_KEY = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
+const AWS_SESSION_ACCESS_KEY_ID = 'ASIA1234567890ABCDEF';
 const HEX_LOOKALIKE = '0123456789abcdef0123456789abcdef01234567';
 const BASE62_LOOKALIKE = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789ABCD';
-const BASE64_LOOKALIKE = 'QWxhZGRpbjpvcGVuIHNlc2FtZQ==';
+const QA_BENIGN_BASE64 = 'aGVsbG8gd29ybGQgZnJvbSBjcm9udGljayBxYQ==';
 const PRIVATE_KEY_BLOCK = [
   '-----BEGIN PRIVATE KEY-----',
   'line-one',
@@ -104,21 +105,27 @@ describe('SAFE-003 logger secret classifier precision', () => {
 });
 
 describe('RED-003 logger must-redact corpus', () => {
-  it('redacts contextual aws secret access keys for env-style and quoted keys', () => {
+  it('redacts contextual aws secret access keys for env-style, label-style, and quoted keys', () => {
     expect(redactText(`AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}`)).toBe('AWS_SECRET_ACCESS_KEY=[REDACTED]');
+    expect(redactText(`aws_secret_access_key=${AWS_SECRET_ACCESS_KEY}`)).toBe('aws_secret_access_key=[REDACTED]');
+    expect(redactText(`AWS Secret Access Key: ${AWS_SECRET_ACCESS_KEY}`)).toBe('AWS Secret Access Key: [REDACTED]');
     expect(redactText(`{"secretAccessKey":"${AWS_SECRET_ACCESS_KEY}"}`)).toBe('{"secretAccessKey":"[REDACTED]"}');
   });
 
-  it('uses a strict standalone aws fallback heuristic', () => {
+  it('redacts aws access key ids and nearby aws secret access keys', () => {
+    expect(redactText(`AKIA1234567890ABCDEF ${AWS_SECRET_ACCESS_KEY}`)).toBe('[REDACTED] [REDACTED]');
+    expect(redactText(`${AWS_SESSION_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY}`)).toBe('[REDACTED] [REDACTED]');
+  });
+
+  it('preserves unlabeled standalone 40-character blobs without aws context', () => {
     expect(AWS_SECRET_ACCESS_KEY).toHaveLength(40);
     expect(HEX_LOOKALIKE).toHaveLength(40);
     expect(BASE62_LOOKALIKE).toHaveLength(40);
+    expect(QA_BENIGN_BASE64).toHaveLength(40);
 
-    const result = redactText(`standalone ${AWS_SECRET_ACCESS_KEY} ${HEX_LOOKALIKE} ${BASE62_LOOKALIKE}`);
+    const result = redactText(`payload: ${QA_BENIGN_BASE64} standalone ${AWS_SECRET_ACCESS_KEY} ${HEX_LOOKALIKE} ${BASE62_LOOKALIKE}`);
 
-    expect(result).toContain('standalone [REDACTED]');
-    expect(result).toContain(HEX_LOOKALIKE);
-    expect(result).toContain(BASE62_LOOKALIKE);
+    expect(result).toBe(`payload: ${QA_BENIGN_BASE64} standalone ${AWS_SECRET_ACCESS_KEY} ${HEX_LOOKALIKE} ${BASE62_LOOKALIKE}`);
   });
 
   it('redacts full PEM private-key blocks in stateless text', () => {
@@ -238,7 +245,7 @@ describe('SAFE-004 logger near-miss preservation', () => {
   });
 
   it('preserves benign 40-char, base64-looking, and secret-adjacent text across streaming writes', () => {
-    const input = `hex=${HEX_LOOKALIKE} base62=${BASE62_LOOKALIKE} base64=${BASE64_LOOKALIKE} secretary=delta monkey=epsilon\ncert=${CERTIFICATE_PEM}\npub=${PUBLIC_KEY_PEM}`;
+    const input = `hex=${HEX_LOOKALIKE} base62=${BASE62_LOOKALIKE} payload: ${QA_BENIGN_BASE64} secretary=delta monkey=epsilon\ncert=${CERTIFICATE_PEM}\npub=${PUBLIC_KEY_PEM}`;
     const redactor = createStreamingTextRedactor();
     const output = redactor.write(input.slice(0, 80)) + redactor.write(input.slice(80)) + redactor.flush();
 

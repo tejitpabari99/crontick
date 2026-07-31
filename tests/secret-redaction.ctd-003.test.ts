@@ -38,6 +38,7 @@ const SLACK_TOKENS = [
   `xoxs-${'O'.repeat(12)}`,
 ].join(' ');
 const AWS_ACCESS_KEY_ID = 'AKIA1234567890ABCDEF';
+const AWS_SESSION_ACCESS_KEY_ID = 'ASIA1234567890ABCDEF';
 const AWS_SECRET_ACCESS_KEY = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
 const GOOGLE_API_KEY = `AIza${'P'.repeat(35)}`;
 const AZURE_SUBSCRIPTION_KEY = '0123456789abcdef0123456789abcdef';
@@ -62,7 +63,7 @@ const CONNECTION_STRINGS = `${POSTGRES_URL} ${MONGODB_URL}`;
 const BENIGN_WINDOWS_PATH = String.raw`C:\Users\Example\project-alpha`;
 const BENIGN_URL = 'https://example.test/maps?mode=public';
 const BENIGN_40_CHAR = 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn';
-const BENIGN_BASE64 = 'QWxhZGRpbjpvcGVuIHNlc2FtZQ==';
+const QA_BENIGN_BASE64 = 'aGVsbG8gd29ybGQgZnJvbSBjcm9udGljayBxYQ==';
 const BENIGN_PUBLIC_KEY = [
   '-----BEGIN PUBLIC KEY-----',
   'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArandompublickey',
@@ -79,7 +80,7 @@ const BENIGN_LITERAL_VALUES = [
   'secretary',
   'monkey',
   BENIGN_40_CHAR,
-  BENIGN_BASE64,
+  `payload: ${QA_BENIGN_BASE64}`,
   BENIGN_PUBLIC_KEY,
   BENIGN_CERTIFICATE,
 ] as const;
@@ -92,7 +93,7 @@ const BENIGN_CONFIG_ENV = {
   CERTIFICATE_DATA: BENIGN_CERTIFICATE,
   SECRETARY: 'secretary',
   MONKEY: 'monkey',
-  BASE64_VALUE: BENIGN_BASE64,
+  BASE64_VALUE: QA_BENIGN_BASE64,
 } as const;
 
 interface SecretCase {
@@ -188,13 +189,13 @@ const SECRET_CASES: SecretCase[] = [
     expectedConfig: '[REDACTED] AWS_SECRET_ACCESS_KEY=[REDACTED]',
   },
   {
-    name: 'bare aws secret access key',
-    runtimeText: AWS_SECRET_ACCESS_KEY,
-    expectedRuntime: '[REDACTED]',
-    rawSecrets: [AWS_SECRET_ACCESS_KEY],
-    configKey: 'RUNTIME_SAMPLE',
-    configValue: AWS_SECRET_ACCESS_KEY,
-    expectedConfig: '[REDACTED]',
+    name: 'aws session access and secret key',
+    runtimeText: `${AWS_SESSION_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY}`,
+    expectedRuntime: '[REDACTED] [REDACTED]',
+    rawSecrets: [AWS_SESSION_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY],
+    configKey: 'AWS_SESSION_PAIR',
+    configValue: `${AWS_SESSION_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY}`,
+    expectedConfig: '[REDACTED] [REDACTED]',
   },
   {
     name: 'google api key',
@@ -712,11 +713,12 @@ describe('CTD-003 shared secret redaction', () => {
     });
 
     logger.info(
-      `runtime AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} bare=${AWS_SECRET_ACCESS_KEY} begin=${PRIVATE_KEY_BEGIN_MARKER} path=${BENIGN_WINDOWS_PATH} url=${BENIGN_URL}`,
+      `runtime AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} bare=${AWS_SECRET_ACCESS_KEY}\npaired=${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY} begin=${PRIVATE_KEY_BEGIN_MARKER} path=${BENIGN_WINDOWS_PATH} url=${BENIGN_URL}`,
       {
         env: {
           AWS_SECRET_ACCESS_KEY,
           RUNTIME_SAMPLE: AWS_SECRET_ACCESS_KEY,
+          AWS_SESSION_PAIR: `${AWS_SESSION_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY}`,
           PRIVATE_KEY,
           PEM_BEGIN_ONLY: PRIVATE_KEY_BEGIN_MARKER,
           PEM_END_ONLY: PRIVATE_KEY_END_MARKER,
@@ -729,15 +731,17 @@ describe('CTD-003 shared secret redaction', () => {
     expect(events).toHaveLength(1);
     const [event] = events;
     expect(event?.message).toContain('AWS_SECRET_ACCESS_KEY=[REDACTED]');
-    expect(event?.message).toContain('bare=[REDACTED]');
+    expect(event?.message).toContain(`bare=${AWS_SECRET_ACCESS_KEY}`);
+    expect(event?.message).toContain('paired=[REDACTED] [REDACTED]');
     expect(event?.message).toContain('begin=[REDACTED]');
     expect(event?.message).toContain(`path=${BENIGN_WINDOWS_PATH}`);
     expect(event?.message).toContain(`url=${BENIGN_URL}`);
-    expect(event?.message).not.toContain(AWS_SECRET_ACCESS_KEY);
+    expect(event?.message).toContain(AWS_SECRET_ACCESS_KEY);
     expect(event?.message).not.toContain(PRIVATE_KEY_BEGIN_MARKER);
     expect(event?.message).not.toContain(PRIVATE_KEY_END_MARKER);
     expect(event?.data?.env?.AWS_SECRET_ACCESS_KEY).toBe('[REDACTED]');
-    expect(event?.data?.env?.RUNTIME_SAMPLE).toBe('[REDACTED]');
+    expect(event?.data?.env?.RUNTIME_SAMPLE).toBe(AWS_SECRET_ACCESS_KEY);
+    expect(event?.data?.env?.AWS_SESSION_PAIR).toBe('[REDACTED] [REDACTED]');
     expect(event?.data?.env?.PRIVATE_KEY).toBe('[REDACTED]');
     expect(event?.data?.env?.PEM_BEGIN_ONLY).toBe('[REDACTED]');
     expect(event?.data?.env?.PEM_END_ONLY).toBe('[REDACTED]');
