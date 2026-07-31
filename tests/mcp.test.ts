@@ -384,7 +384,7 @@ describe('MCP server — full contract', () => {
 
   it('crontick_job_update sets overlap to skip when explicitly provided', async () => {
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-overlap-cases-job',
+      id: 'mcp-overlap-skip-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'exec', command: 'echo', args: ['hi'] },
       overlap: 'queue',
@@ -393,7 +393,7 @@ describe('MCP server — full contract', () => {
     expect((created.json as { overlap: string }).overlap).toBe('queue');
 
     const skipped = await callTool(client, 'crontick_job_update', {
-      id: 'mcp-overlap-cases-job',
+      id: 'mcp-overlap-skip-job',
       overlap: 'skip',
     });
     expect(skipped.isError).toBe(false);
@@ -401,8 +401,16 @@ describe('MCP server — full contract', () => {
   });
 
   it('crontick_job_update sets overlap to cancel-previous when explicitly provided', async () => {
+    const created = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-overlap-cancel-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'exec', command: 'echo', args: ['hi'] },
+      overlap: 'queue',
+    });
+    expect(created.isError).toBe(false);
+
     const updated = await callTool(client, 'crontick_job_update', {
-      id: 'mcp-overlap-cases-job',
+      id: 'mcp-overlap-cancel-job',
       overlap: 'cancel-previous',
     });
     expect(updated.isError).toBe(false);
@@ -410,8 +418,16 @@ describe('MCP server — full contract', () => {
   });
 
   it('crontick_job_update omitting overlap leaves the existing value alone', async () => {
+    const created = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-overlap-preserve-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'exec', command: 'echo', args: ['hi'] },
+      overlap: 'cancel-previous',
+    });
+    expect(created.isError).toBe(false);
+
     const updated = await callTool(client, 'crontick_job_update', {
-      id: 'mcp-overlap-cases-job',
+      id: 'mcp-overlap-preserve-job',
       description: 'no overlap field',
     });
     expect(updated.isError).toBe(false);
@@ -441,8 +457,17 @@ describe('MCP server — full contract', () => {
   });
 
   it('crontick_job_update explicit shell changes the shell', async () => {
+    writeFileSync(join(dir, '.env.shell-explicit.test'), 'FOO=bar\n', 'utf-8');
+
+    const created = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-shell-explicit-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'script', script: 'echo hi', shell: 'cmd', cwd: dir, envFile: '.env.shell-explicit.test', timeoutSec: 30 },
+    });
+    expect(created.isError).toBe(false);
+
     const updated = await callTool(client, 'crontick_job_update', {
-      id: 'mcp-shell-preserve-job',
+      id: 'mcp-shell-explicit-job',
       action: { kind: 'script', script: 'echo again', shell: 'pwsh' },
     });
     expect(updated.isError).toBe(false);
@@ -450,8 +475,17 @@ describe('MCP server — full contract', () => {
   });
 
   it('crontick_job_update switching action kind fully replaces the action', async () => {
+    writeFileSync(join(dir, '.env.shell-replace.test'), 'FOO=bar\n', 'utf-8');
+
+    const created = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-shell-replace-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'script', script: 'echo hi', shell: 'cmd', cwd: dir, envFile: '.env.shell-replace.test', timeoutSec: 30 },
+    });
+    expect(created.isError).toBe(false);
+
     const updated = await callTool(client, 'crontick_job_update', {
-      id: 'mcp-shell-preserve-job',
+      id: 'mcp-shell-replace-job',
       action: { kind: 'exec', command: 'echo', args: ['done'] },
     });
     expect(updated.isError).toBe(false);
@@ -471,14 +505,14 @@ describe('MCP server — full contract', () => {
     writeFileSync(join(dir, '.env.new'), 'FOO=bar\n', 'utf-8');
 
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-exec-args-job',
+      id: 'mcp-exec-args-preserve-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'exec', command: 'echo', args: ['a', 'b'], cwd: dir },
     });
     expect(created.isError).toBe(false);
 
     const updated = await callTool(client, 'crontick_job_update', {
-      id: 'mcp-exec-args-job',
+      id: 'mcp-exec-args-preserve-job',
       action: { kind: 'exec', command: 'echo', envFile: '.env.new' },
     });
     expect(updated.isError).toBe(false);
@@ -488,8 +522,15 @@ describe('MCP server — full contract', () => {
   });
 
   it('crontick_job_update applies explicit exec args when provided', async () => {
+    const created = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-exec-args-explicit-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'exec', command: 'echo', args: ['a', 'b'], cwd: dir },
+    });
+    expect(created.isError).toBe(false);
+
     const updated = await callTool(client, 'crontick_job_update', {
-      id: 'mcp-exec-args-job',
+      id: 'mcp-exec-args-explicit-job',
       action: { kind: 'exec', command: 'echo', args: ['c'] },
     });
     expect(updated.isError).toBe(false);
@@ -498,14 +539,14 @@ describe('MCP server — full contract', () => {
 
   it('crontick_job_update preserves prompt args and reuseSession when the patch only changes prompt text', async () => {
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-prompt-args-job',
+      id: 'mcp-prompt-args-preserve-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'prompt', prompt: 'old', args: ['--flag'], reuseSession: true },
     });
     expect(created.isError).toBe(false);
 
     const updated = await callTool(client, 'crontick_job_update', {
-      id: 'mcp-prompt-args-job',
+      id: 'mcp-prompt-args-preserve-job',
       action: { kind: 'prompt', prompt: 'new' },
     });
     expect(updated.isError).toBe(false);
@@ -515,8 +556,15 @@ describe('MCP server — full contract', () => {
   });
 
   it('crontick_job_update applies explicit prompt args/reuseSession when provided', async () => {
+    const created = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-prompt-args-explicit-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'prompt', prompt: 'old', args: ['--flag'], reuseSession: true },
+    });
+    expect(created.isError).toBe(false);
+
     const updated = await callTool(client, 'crontick_job_update', {
-      id: 'mcp-prompt-args-job',
+      id: 'mcp-prompt-args-explicit-job',
       action: { kind: 'prompt', prompt: 'old', args: [], reuseSession: false },
     });
     expect(updated.isError).toBe(false);
@@ -559,7 +607,7 @@ describe('MCP server — full contract', () => {
 
   it('crontick_job_update preserves retry.backoffSec when the patch only sets max', async () => {
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-retry-job',
+      id: 'mcp-retry-preserve-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'exec', command: 'echo' },
       retry: { max: 1, backoffSec: 90 },
@@ -567,7 +615,7 @@ describe('MCP server — full contract', () => {
     expect(created.isError).toBe(false);
 
     const updated = await callTool(client, 'crontick_job_update', {
-      id: 'mcp-retry-job',
+      id: 'mcp-retry-preserve-job',
       retry: { max: 3 },
     });
     expect(updated.isError).toBe(false);
@@ -575,8 +623,16 @@ describe('MCP server — full contract', () => {
   });
 
   it('crontick_job_update applies an explicit backoffSec over the preserved retry fields', async () => {
+    const created = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-retry-explicit-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'exec', command: 'echo' },
+      retry: { max: 1, backoffSec: 90 },
+    });
+    expect(created.isError).toBe(false);
+
     const updated = await callTool(client, 'crontick_job_update', {
-      id: 'mcp-retry-job',
+      id: 'mcp-retry-explicit-job',
       retry: { max: 3, backoffSec: 15 },
     });
     expect(updated.isError).toBe(false);

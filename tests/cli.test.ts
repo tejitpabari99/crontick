@@ -704,25 +704,37 @@ describe('CLI e2e with daemon', () => {
 
   it('crontick update --overlap skip explicitly sets skip (not silently ignored)', () => {
     const created = cli([
-      '--json', 'new', 'overlap-cases-job', '--cron', '0 9 * * *',
+      '--json', 'new', 'overlap-skip-job', '--cron', '0 9 * * *',
       '--exec', 'echo', '--overlap', 'queue', '--', 'hi',
     ], env());
     expect(created.status, created.stderr).toBe(0);
     expect(JSON.parse(created.stdout).overlap).toBe('queue');
 
-    const updated = cli(['--json', 'update', 'overlap-cases-job', '--overlap', 'skip'], env());
+    const updated = cli(['--json', 'update', 'overlap-skip-job', '--overlap', 'skip'], env());
     expect(updated.status, updated.stderr).toBe(0);
     expect(JSON.parse(updated.stdout).overlap).toBe('skip');
   });
 
   it('crontick update --overlap cancel-previous sets that value', () => {
-    const updated = cli(['--json', 'update', 'overlap-cases-job', '--overlap', 'cancel-previous'], env());
+    const created = cli([
+      '--json', 'new', 'overlap-cancel-job', '--cron', '0 9 * * *',
+      '--exec', 'echo', '--overlap', 'queue', '--', 'hi',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+
+    const updated = cli(['--json', 'update', 'overlap-cancel-job', '--overlap', 'cancel-previous'], env());
     expect(updated.status, updated.stderr).toBe(0);
     expect(JSON.parse(updated.stdout).overlap).toBe('cancel-previous');
   });
 
   it('crontick update omitting --overlap leaves the existing value alone', () => {
-    const updated = cli(['--json', 'update', 'overlap-cases-job', '--desc', 'no overlap flag'], env());
+    const created = cli([
+      '--json', 'new', 'overlap-preserve-job', '--cron', '0 9 * * *',
+      '--exec', 'echo', '--overlap', 'cancel-previous', '--', 'hi',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+
+    const updated = cli(['--json', 'update', 'overlap-preserve-job', '--desc', 'no overlap flag'], env());
     expect(updated.status, updated.stderr).toBe(0);
     const data = JSON.parse(updated.stdout);
     expect(data.overlap).toBe('cancel-previous');
@@ -749,13 +761,29 @@ describe('CLI e2e with daemon', () => {
   });
 
   it('crontick update --shell explicitly changes the shell', () => {
-    const updated = cli(['--json', 'update', 'shell-preserve-job', '--script', 'echo again', '--shell', 'pwsh'], env());
+    const envFilePath = join(dir, 'shell-explicit.env');
+    writeFileSync(envFilePath, 'FOO=bar\n', 'utf-8');
+    const created = cli([
+      '--json', 'new', 'shell-explicit-job', '--cron', '0 9 * * *',
+      '--script', 'echo hi', '--shell', 'cmd', '--job-env-file', envFilePath, '--timeout', '30',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+
+    const updated = cli(['--json', 'update', 'shell-explicit-job', '--script', 'echo again', '--shell', 'pwsh'], env());
     expect(updated.status, updated.stderr).toBe(0);
     expect(JSON.parse(updated.stdout).action).toMatchObject({ shell: 'pwsh' });
   });
 
   it('crontick update switching action kind fully replaces the action (no stale fields)', () => {
-    const updated = cli(['--json', 'update', 'shell-preserve-job', '--exec', 'echo', '--', 'done'], env());
+    const envFilePath = join(dir, 'shell-replace.env');
+    writeFileSync(envFilePath, 'FOO=bar\n', 'utf-8');
+    const created = cli([
+      '--json', 'new', 'shell-replace-job', '--cron', '0 9 * * *',
+      '--script', 'echo hi', '--shell', 'cmd', '--job-env-file', envFilePath, '--timeout', '30',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+
+    const updated = cli(['--json', 'update', 'shell-replace-job', '--exec', 'echo', '--', 'done'], env());
     expect(updated.status, updated.stderr).toBe(0);
     const data = JSON.parse(updated.stdout);
     expect(data.action).toMatchObject({ kind: 'exec', command: 'echo', args: ['done'] });
@@ -772,7 +800,7 @@ describe('CLI e2e with daemon', () => {
 
   it('crontick update --file preserves exec args when the patch only changes envFile', () => {
     const created = cli([
-      '--json', 'new', 'file-exec-args-job', '--cron', '0 9 * * *',
+      '--json', 'new', 'file-exec-args-preserve-job', '--cron', '0 9 * * *',
       '--exec', 'echo', '--', 'a', 'b',
     ], env());
     expect(created.status, created.stderr).toBe(0);
@@ -783,7 +811,7 @@ describe('CLI e2e with daemon', () => {
 
     const patchFile = join(dir, 'file-exec-args-patch.json');
     writeFileSync(patchFile, JSON.stringify({ action: { kind: 'exec', command: 'echo', envFile: envFilePath } }), 'utf-8');
-    const updated = cli(['--json', 'update', 'file-exec-args-job', '--file', patchFile], env());
+    const updated = cli(['--json', 'update', 'file-exec-args-preserve-job', '--file', patchFile], env());
     expect(updated.status, updated.stderr).toBe(0);
     expect(JSON.parse(updated.stdout).action).toMatchObject({
       kind: 'exec', command: 'echo', args: ['a', 'b'], envFile: envFilePath,
@@ -791,16 +819,22 @@ describe('CLI e2e with daemon', () => {
   });
 
   it('crontick update --file applies explicit exec args when provided', () => {
+    const created = cli([
+      '--json', 'new', 'file-exec-args-explicit-job', '--cron', '0 9 * * *',
+      '--exec', 'echo', '--', 'a', 'b',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+
     const patchFile = join(dir, 'file-exec-args-explicit-patch.json');
     writeFileSync(patchFile, JSON.stringify({ action: { kind: 'exec', command: 'echo', args: ['c'] } }), 'utf-8');
-    const updated = cli(['--json', 'update', 'file-exec-args-job', '--file', patchFile], env());
+    const updated = cli(['--json', 'update', 'file-exec-args-explicit-job', '--file', patchFile], env());
     expect(updated.status, updated.stderr).toBe(0);
     expect(JSON.parse(updated.stdout).action).toMatchObject({ kind: 'exec', args: ['c'] });
   });
 
   it('crontick update --file preserves prompt args and reuseSession when the patch only changes prompt text', () => {
     const created = cli([
-      '--json', 'new', 'file-prompt-args-job', '--cron', '0 9 * * *',
+      '--json', 'new', 'file-prompt-args-preserve-job', '--cron', '0 9 * * *',
       '--prompt', 'old', '--reuse-session', '--', '--flag',
     ], env());
     expect(created.status, created.stderr).toBe(0);
@@ -810,7 +844,7 @@ describe('CLI e2e with daemon', () => {
 
     const patchFile = join(dir, 'file-prompt-args-patch.json');
     writeFileSync(patchFile, JSON.stringify({ action: { kind: 'prompt', prompt: 'new' } }), 'utf-8');
-    const updated = cli(['--json', 'update', 'file-prompt-args-job', '--file', patchFile], env());
+    const updated = cli(['--json', 'update', 'file-prompt-args-preserve-job', '--file', patchFile], env());
     expect(updated.status, updated.stderr).toBe(0);
     expect(JSON.parse(updated.stdout).action).toMatchObject({
       kind: 'prompt', prompt: 'new', args: ['--flag'], reuseSession: true,
@@ -818,9 +852,15 @@ describe('CLI e2e with daemon', () => {
   });
 
   it('crontick update --file applies explicit prompt args/reuseSession when provided', () => {
+    const created = cli([
+      '--json', 'new', 'file-prompt-args-explicit-job', '--cron', '0 9 * * *',
+      '--prompt', 'old', '--reuse-session', '--', '--flag',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+
     const patchFile = join(dir, 'file-prompt-args-explicit-patch.json');
     writeFileSync(patchFile, JSON.stringify({ action: { kind: 'prompt', prompt: 'old', args: [], reuseSession: false } }), 'utf-8');
-    const updated = cli(['--json', 'update', 'file-prompt-args-job', '--file', patchFile], env());
+    const updated = cli(['--json', 'update', 'file-prompt-args-explicit-job', '--file', patchFile], env());
     expect(updated.status, updated.stderr).toBe(0);
     expect(JSON.parse(updated.stdout).action).toMatchObject({ args: [], reuseSession: false });
   });
@@ -871,28 +911,38 @@ describe('CLI e2e with daemon', () => {
 
   it('crontick update --file preserves retry.backoffSec when the patch only sets max', () => {
     const created = cli([
-      '--json', 'new', 'file-retry-job', '--cron', '0 9 * * *', '--exec', 'echo',
+      '--json', 'new', 'file-retry-preserve-job', '--cron', '0 9 * * *', '--exec', 'echo',
     ], env());
     expect(created.status, created.stderr).toBe(0);
     // --retry only ever sets max (backoffSec fixed at 30 by the CLI flag
     // builder), so seed a custom backoffSec via --file to set up this case.
     const seedFile = join(dir, 'file-retry-seed-patch.json');
     writeFileSync(seedFile, JSON.stringify({ retry: { max: 1, backoffSec: 90 } }), 'utf-8');
-    const seeded = cli(['--json', 'update', 'file-retry-job', '--file', seedFile], env());
+    const seeded = cli(['--json', 'update', 'file-retry-preserve-job', '--file', seedFile], env());
     expect(seeded.status, seeded.stderr).toBe(0);
     expect(JSON.parse(seeded.stdout).retry).toEqual({ max: 1, backoffSec: 90 });
 
     const patchFile = join(dir, 'file-retry-patch.json');
     writeFileSync(patchFile, JSON.stringify({ retry: { max: 3 } }), 'utf-8');
-    const updated = cli(['--json', 'update', 'file-retry-job', '--file', patchFile], env());
+    const updated = cli(['--json', 'update', 'file-retry-preserve-job', '--file', patchFile], env());
     expect(updated.status, updated.stderr).toBe(0);
     expect(JSON.parse(updated.stdout).retry).toEqual({ max: 3, backoffSec: 90 });
   });
 
   it('crontick update --file applies an explicit backoffSec over the preserved retry fields', () => {
+    const created = cli([
+      '--json', 'new', 'file-retry-explicit-job', '--cron', '0 9 * * *', '--exec', 'echo',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+
+    const seedFile = join(dir, 'file-retry-explicit-seed-patch.json');
+    writeFileSync(seedFile, JSON.stringify({ retry: { max: 1, backoffSec: 90 } }), 'utf-8');
+    const seeded = cli(['--json', 'update', 'file-retry-explicit-job', '--file', seedFile], env());
+    expect(seeded.status, seeded.stderr).toBe(0);
+
     const patchFile = join(dir, 'file-retry-explicit-patch.json');
     writeFileSync(patchFile, JSON.stringify({ retry: { max: 3, backoffSec: 15 } }), 'utf-8');
-    const updated = cli(['--json', 'update', 'file-retry-job', '--file', patchFile], env());
+    const updated = cli(['--json', 'update', 'file-retry-explicit-job', '--file', patchFile], env());
     expect(updated.status, updated.stderr).toBe(0);
     expect(JSON.parse(updated.stdout).retry).toEqual({ max: 3, backoffSec: 15 });
   });

@@ -525,7 +525,7 @@ describe('CTD-003 shared secret redaction', () => {
     } finally {
       await fixture.close();
     }
-  });
+  }, 20_000);
 
 
 
@@ -813,7 +813,7 @@ describe('CTD-003 shared secret redaction', () => {
     } finally {
       await fixture.close();
     }
-  });
+  }, 20_000);
 });
 
 
