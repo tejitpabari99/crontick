@@ -57,16 +57,26 @@ type TextMatch = {
   end: number;
 };
 
+type SecretAssignmentQuote = '"' | "'" | null;
+
+type SensitiveAssignmentMatch = {
+  keyStart: number;
+  valueStart: number;
+  quote: SecretAssignmentQuote;
+};
+
 const REDACTED = '[REDACTED]';
-const PRIVATE_KEY_BLOCK_PATTERN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g;
-const PRIVATE_KEY_BEGIN_MARKER_PATTERN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/g;
-const PRIVATE_KEY_END_MARKER_PATTERN = /-----END [A-Z0-9 ]*PRIVATE KEY-----/g;
-const PRIVATE_KEY_ANY_MARKER_PATTERN = /-----(?:BEGIN|END) [A-Z0-9 ]*PRIVATE KEY-----/g;
-const EXACT_PRIVATE_KEY_BEGIN_MARKER = /^-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----$/;
-const EXACT_PRIVATE_KEY_END_MARKER = /^-----END [A-Z0-9 ]*PRIVATE KEY-----$/;
+const PRIVATE_KEY_BLOCK_PATTERN = /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----/g;
+const PRIVATE_KEY_BEGIN_MARKER_PATTERN = /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----/g;
+const PRIVATE_KEY_END_MARKER_PATTERN = /-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----/g;
+const PRIVATE_KEY_ANY_MARKER_PATTERN = /-----(?:BEGIN|END) [A-Z0-9 ]{0,40}PRIVATE KEY-----/g;
+const EXACT_PRIVATE_KEY_BEGIN_MARKER = /^-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----$/;
+const EXACT_PRIVATE_KEY_END_MARKER = /^-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----$/;
 const PRIVATE_KEY_BEGIN_PREFIX = '-----BEGIN ';
 const PRIVATE_KEY_END_PREFIX = '-----END ';
 const PRIVATE_KEY_MARKER_SUFFIX = 'PRIVATE KEY-----';
+const MAX_PRIVATE_KEY_MARKER_LABEL_LENGTH = 40;
+const MAX_SECRET_ASSIGNMENT_CARRY = 256;
 
 const SENSITIVE_KEY_SUFFIXES: ReadonlyArray<ReadonlyArray<string>> = [
   ['token'],
@@ -141,6 +151,36 @@ export function isSensitiveKeyHint(keyHint: string): boolean {
   return SENSITIVE_KEY_SUFFIXES.some((suffix) => matchesSensitiveKeySuffix(tokens, suffix));
 }
 
+function matchesSensitiveKeyHintPrefix(tokens: readonly string[], suffix: readonly string[]): boolean {
+  for (let start = 0; start < tokens.length; start++) {
+    if (NEGATED_SENSITIVE_PREFIXES.has(tokens[start - 1] ?? '')) continue;
+    const candidateLength = tokens.length - start;
+    if (candidateLength > suffix.length) continue;
+    let matches = true;
+    for (let i = 0; i < candidateLength; i++) {
+      const token = tokens[start + i]!;
+      const expected = suffix[i]!;
+      if (i === candidateLength - 1) {
+        if (!expected.startsWith(token)) {
+          matches = false;
+          break;
+        }
+      } else if (token !== expected) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return true;
+  }
+  return false;
+}
+
+function couldBeSensitiveKeyHintPrefix(keyHint: string): boolean {
+  const tokens = normalizeKeyHint(keyHint);
+  return tokens.length > 0
+    && SENSITIVE_KEY_SUFFIXES.some((suffix) => matchesSensitiveKeyHintPrefix(tokens, suffix));
+}
+
 function isAwsSecretAccessKeyCandidate(value: string): boolean {
   return /^[A-Za-z0-9/+=]{40}$/.test(value)
     && /[A-Z]/.test(value)
@@ -183,6 +223,10 @@ function isAsciiWhitespace(char: string | undefined): boolean {
   return code === 32 || (code >= 9 && code <= 13);
 }
 
+function isSecretAssignmentValueTerminator(char: string | undefined): boolean {
+  return isAsciiWhitespace(char) || char === ',' || char === ';';
+}
+
 function scanSecretAssignmentValueEnd(text: string, start: number): number {
   if (start >= text.length) return start;
   const quote = text[start];
@@ -199,7 +243,7 @@ function scanSecretAssignmentValueEnd(text: string, start: number): number {
   let end = start;
   while (end < text.length) {
     const char = text[end];
-    if (isAsciiWhitespace(char) || char === ',' || char === ';') return end;
+    if (isSecretAssignmentValueTerminator(char)) return end;
     end++;
   }
   return end;
@@ -232,8 +276,12 @@ function matchesPrivateKeyMarker(text: string, kind: 'begin' | 'end'): boolean {
 }
 
 function isPossiblePrivateKeyMarkerBodyPrefix(text: string): boolean {
+  if (text.length > MAX_PRIVATE_KEY_MARKER_LABEL_LENGTH + PRIVATE_KEY_MARKER_SUFFIX.length) {
+    return false;
+  }
   for (let split = 0; split <= text.length; split++) {
     const label = text.slice(0, split);
+    if (label.length > MAX_PRIVATE_KEY_MARKER_LABEL_LENGTH) break;
     const suffix = text.slice(split);
     if ([...label].every((char) => isPrivateKeyMarkerLabelChar(char)) && PRIVATE_KEY_MARKER_SUFFIX.startsWith(suffix)) {
       return true;
@@ -251,7 +299,7 @@ function isPossiblePrivateKeyMarkerPrefix(text: string, kind: 'begin' | 'end'): 
 }
 
 function findPrivateKeyMarkerCarry(text: string, allowBegin: boolean, allowEnd: boolean): string {
-  if (/-----(?:BEGIN|END) [A-Z0-9 ]*PRIVATE KEY-----$/.test(text)) return '';
+  if (/-----(?:BEGIN|END) [A-Z0-9 ]{0,40}PRIVATE KEY-----$/.test(text)) return '';
   let start = text.lastIndexOf('-');
   while (start >= 0) {
     const suffix = text.slice(start);
@@ -259,9 +307,81 @@ function findPrivateKeyMarkerCarry(text: string, allowBegin: boolean, allowEnd: 
       || (allowEnd && isPossiblePrivateKeyMarkerPrefix(suffix, 'end'))) {
       return suffix;
     }
+    if (start === 0) break;
     start = text.lastIndexOf('-', start - 1);
   }
   return '';
+}
+
+function findNextSensitiveAssignmentStart(text: string, start = 0): SensitiveAssignmentMatch | undefined {
+  let cursor = start;
+  while (cursor < text.length) {
+    const scanned = scanSecretAssignmentKey(text, cursor);
+    if (!scanned) {
+      cursor++;
+      continue;
+    }
+    const { key, end: keyEnd } = scanned;
+    if (isSensitiveKeyHint(key)) {
+      let separatorStart = keyEnd;
+      while (separatorStart < text.length && isAsciiWhitespace(text[separatorStart])) separatorStart++;
+      const separator = text[separatorStart];
+      if (separator === '=' || separator === ':') {
+        let valueStart = separatorStart + 1;
+        while (valueStart < text.length && isAsciiWhitespace(text[valueStart])) valueStart++;
+        if (valueStart < text.length) {
+          const quote = text[valueStart];
+          return {
+            keyStart: cursor,
+            valueStart,
+            quote: quote === '"' || quote === "'" ? quote : null,
+          };
+        }
+      }
+    }
+    cursor = keyEnd;
+  }
+  return undefined;
+}
+
+function findSecretAssignmentCarry(text: string): string {
+  const minStart = Math.max(0, text.length - MAX_SECRET_ASSIGNMENT_CARRY);
+  let candidateStart = -1;
+  let cursor = minStart;
+  while (cursor < text.length) {
+    const scanned = scanSecretAssignmentKey(text, cursor);
+    if (!scanned) {
+      cursor++;
+      continue;
+    }
+    const { key, end: keyEnd } = scanned;
+    let carry = false;
+    if (keyEnd === text.length) {
+      carry = couldBeSensitiveKeyHintPrefix(key);
+    } else {
+      let separatorStart = keyEnd;
+      while (separatorStart < text.length && isAsciiWhitespace(text[separatorStart])) separatorStart++;
+      if (separatorStart >= text.length) {
+        carry = isSensitiveKeyHint(key) || couldBeSensitiveKeyHintPrefix(key);
+      } else {
+        const separator = text[separatorStart];
+        if ((separator === '=' || separator === ':') && isSensitiveKeyHint(key)) {
+          let valueStart = separatorStart + 1;
+          while (valueStart < text.length && isAsciiWhitespace(text[valueStart])) valueStart++;
+          carry = valueStart >= text.length;
+        }
+      }
+    }
+    if (carry) candidateStart = cursor;
+    cursor = keyEnd;
+  }
+  return candidateStart >= 0 ? text.slice(candidateStart) : '';
+}
+
+function findStreamingRedactionCarry(text: string): string {
+  const privateKeyCarry = findPrivateKeyMarkerCarry(text, true, true);
+  const secretAssignmentCarry = findSecretAssignmentCarry(text);
+  return secretAssignmentCarry.length > privateKeyCarry.length ? secretAssignmentCarry : privateKeyCarry;
 }
 
 function findNextMatch(pattern: RegExp, text: string, start = 0): TextMatch | undefined {
@@ -277,6 +397,7 @@ function findNextMatch(pattern: RegExp, text: string, start = 0): TextMatch | un
 class PrivateKeyStreamingTextRedactor implements StreamingTextRedactor {
   private carry = '';
   private insidePrivateKeyBlock = false;
+  private pendingSecretAssignmentQuote: SecretAssignmentQuote | undefined;
 
   write(chunk: string): string {
     if (chunk.length === 0) return '';
@@ -287,6 +408,7 @@ class PrivateKeyStreamingTextRedactor implements StreamingTextRedactor {
     const output = this.process(this.carry, true);
     this.carry = '';
     this.insidePrivateKeyBlock = false;
+    this.pendingSecretAssignmentQuote = undefined;
     return output;
   }
 
@@ -306,23 +428,72 @@ class PrivateKeyStreamingTextRedactor implements StreamingTextRedactor {
         continue;
       }
 
+      if (this.pendingSecretAssignmentQuote !== undefined) {
+        const secretEnd = this.findPendingSecretAssignmentEnd(text, cursor);
+        if (!secretEnd) {
+          if (flush) this.pendingSecretAssignmentQuote = undefined;
+          this.carry = '';
+          return output;
+        }
+        output += secretEnd.closingQuote;
+        this.pendingSecretAssignmentQuote = undefined;
+        cursor = secretEnd.cursor;
+        continue;
+      }
+
       const beginMatch = findNextMatch(PRIVATE_KEY_BEGIN_MARKER_PATTERN, text, cursor);
-      if (!beginMatch) {
+      const secretMatch = findNextSensitiveAssignmentStart(text, cursor);
+      if (!beginMatch && !secretMatch) {
         const remaining = text.slice(cursor);
-        const carry = flush ? '' : findPrivateKeyMarkerCarry(remaining, true, true);
+        const carry = flush ? '' : findStreamingRedactionCarry(remaining);
         output += redactText(remaining.slice(0, remaining.length - carry.length));
         this.carry = carry;
         return output;
       }
 
-      output += redactText(text.slice(cursor, beginMatch.index));
+      if (secretMatch && (!beginMatch || secretMatch.keyStart < beginMatch.index)) {
+        output += redactText(text.slice(cursor, secretMatch.keyStart));
+        const valuePrefixEnd = secretMatch.quote === null ? secretMatch.valueStart : secretMatch.valueStart + 1;
+        output += text.slice(secretMatch.keyStart, valuePrefixEnd);
+        output += REDACTED;
+        this.pendingSecretAssignmentQuote = secretMatch.quote;
+        cursor = valuePrefixEnd;
+        continue;
+      }
+
+      output += redactText(text.slice(cursor, beginMatch!.index));
       output += REDACTED;
       this.insidePrivateKeyBlock = true;
-      cursor = beginMatch.end;
+      cursor = beginMatch!.end;
     }
 
     this.carry = '';
     return output;
+  }
+
+  private findPendingSecretAssignmentEnd(
+    text: string,
+    start: number,
+  ): { cursor: number; closingQuote: string } | undefined {
+    const quote = this.pendingSecretAssignmentQuote;
+    let cursor = start;
+    while (cursor < text.length) {
+      const char = text[cursor];
+      if (quote === null) {
+        if (isSecretAssignmentValueTerminator(char)) {
+          return { cursor, closingQuote: '' };
+        }
+      } else {
+        if (char === quote) {
+          return { cursor: cursor + 1, closingQuote: quote };
+        }
+        if (char === '\r' || char === '\n') {
+          return { cursor, closingQuote: '' };
+        }
+      }
+      cursor++;
+    }
+    return undefined;
   }
 }
 

@@ -176,6 +176,59 @@ describe('RED-003 logger must-redact corpus', () => {
     expect(firstOutput).not.toContain('secret');
     expect(secondOutput).toBe('beta ok');
   });
+
+  it('redacts secret assignments split across chunk boundaries at multiple split points', () => {
+    const cases = [
+      {
+        name: 'split mid key name',
+        chunks: ['prefix AWS_SECRET_ACCESS_KE', `Y=${AWS_SECRET_ACCESS_KEY} suffix`],
+      },
+      {
+        name: 'split mid value',
+        chunks: ['prefix AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MD', 'ENG/bPxRfiCYEXAMPLEKEY suffix'],
+      },
+      {
+        name: 'split across three writes',
+        chunks: ['prefix AWS_SEC', 'RET_ACCESS_KEY=wJalrXUtnFEMI/K7', 'MDENG/bPxRfiCYEXAMPLEKEY suffix'],
+      },
+      {
+        name: 'quoted split value',
+        chunks: ['prefix {"secretAccessKey":"wJalrXUtnFEMI/', 'K7MDENG/bPxRfiCYEXAMPLEKEY"} suffix'],
+        expected: 'prefix {"secretAccessKey":"[REDACTED]"} suffix',
+      },
+    ];
+
+    for (const entry of cases) {
+      const redactor = createStreamingTextRedactor();
+      const output = entry.chunks.map((chunk) => redactor.write(chunk)).join('') + redactor.flush();
+      expect(output, entry.name).toBe(entry.expected ?? 'prefix AWS_SECRET_ACCESS_KEY=[REDACTED] suffix');
+      expect(output, entry.name).not.toContain(AWS_SECRET_ACCESS_KEY);
+    }
+  });
+
+  it('does not leak a buffered secret-assignment tail on flush at EOF', () => {
+    const redactor = createStreamingTextRedactor();
+    const output = redactor.write('prefix AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MD') + redactor.flush();
+
+    expect(output).toBe('prefix AWS_SECRET_ACCESS_KEY=[REDACTED]');
+    expect(output).not.toContain(AWS_SECRET_ACCESS_KEY);
+    expect(output).not.toContain('wJalrXUtnFEMI/K7MD');
+  });
+
+  it('flushes long benign -----BEGIN lines instead of carrying them indefinitely', () => {
+    const line = `-----BEGIN ${'A'.repeat(8_192)}
+trailer`;
+    const redactor = createStreamingTextRedactor();
+    let streamed = '';
+    for (let offset = 0; offset < line.length; offset += 64) {
+      streamed += redactor.write(line.slice(offset, offset + 64));
+    }
+    const output = streamed + redactor.flush();
+
+    expect(streamed.length).toBeGreaterThan(0);
+    expect(output).toBe(line);
+    expect(output).not.toContain('[REDACTED]');
+  });
 });
 
 describe('SAFE-004 logger near-miss preservation', () => {

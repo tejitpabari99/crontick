@@ -552,6 +552,28 @@ describe('CTD-003 shared secret redaction', () => {
     }
   });
 
+
+  it('RED-005 redacts chunk-split AWS secret assignments before they reach persisted logs', async () => {
+    const fixture = await createFixture('split-aws-assignment');
+    try {
+      const splitSecretRunner = new Runner(fakeSpawnWithWrites([
+        { stream: 'stdout', chunk: 'alpha AWS_SECRET_ACCESS_KE' },
+        { stream: 'stdout', chunk: 'Y=wJalrXUtnFEMI/K7MDENG/bPxRfiC' },
+        { stream: 'stdout', chunk: 'YEXAMPLEKEY omega\n' },
+      ]));
+      const captureJob = jobWithEnv('ctd003-split-aws-capture', {});
+      const captureRun = fixture.store.insertRun(captureJob.id);
+      await splitSecretRunner.run(captureJob, captureRun.id, fixture.store);
+
+      const logBytes = persistedLogBytes(fixture.dir, captureRun.id);
+      expectRawSecretBytesAbsent(logBytes, [AWS_SECRET_ACCESS_KEY], 'split aws assignment persisted log bytes');
+      expect(logBytes.toString('utf-8')).toBe('alpha AWS_SECRET_ACCESS_KEY=[REDACTED] omega\n');
+      expect(logText(fixture.store, captureRun.id)).toBe('alpha AWS_SECRET_ACCESS_KEY=[REDACTED] omega\n');
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it('RED-004 redacts daemon operational logs with the shared logger contract while preserving benign fields', () => {
     const events: Array<{ message: string; data?: { env?: Record<string, string> } }> = [];
     const logger = createLogger({
