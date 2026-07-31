@@ -837,7 +837,7 @@ describe('CLI e2e with daemon', () => {
         update: ['update', 'modifier-tz-job', '--tz', 'UTC'],
         stderr: ['--tz requires --cron on update'],
       },
-    ] as const;
+    ];
 
     for (const testCase of cases) {
       const created = cli(testCase.create, env());
