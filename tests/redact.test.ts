@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createStreamingTextRedactor, isSensitiveKeyHint, redactText, redactValue } from '../src/logger.js';
 import { redactForLlm } from '../src/mcp/index.js';
 
+const AWS_ACCESS_KEY_ID = 'AKIA1234567890ABCDEF';
 const AWS_SECRET_ACCESS_KEY = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
 const AWS_SESSION_ACCESS_KEY_ID = 'ASIA1234567890ABCDEF';
 const HEX_LOOKALIKE = '0123456789abcdef0123456789abcdef01234567';
@@ -113,8 +114,15 @@ describe('RED-003 logger must-redact corpus', () => {
   });
 
   it('redacts aws access key ids and nearby aws secret access keys', () => {
-    expect(redactText(`AKIA1234567890ABCDEF ${AWS_SECRET_ACCESS_KEY}`)).toBe('[REDACTED] [REDACTED]');
+    expect(redactText(`${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY}`)).toBe('[REDACTED] [REDACTED]');
     expect(redactText(`${AWS_SESSION_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY}`)).toBe('[REDACTED] [REDACTED]');
+  });
+
+  it('does not over-redact unrelated same-line 40-character tokens far from aws access key ids', () => {
+    expect(redactText(`id=${AWS_ACCESS_KEY_ID} context=benign payload=${QA_BENIGN_BASE64}`))
+      .toBe(`id=[REDACTED] context=benign payload=${QA_BENIGN_BASE64}`);
+    expect(redactText(`id=${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY} payload=${QA_BENIGN_BASE64}`))
+      .toBe(`id=[REDACTED] [REDACTED] payload=${QA_BENIGN_BASE64}`);
   });
 
   it('preserves unlabeled standalone 40-character blobs without aws context', () => {

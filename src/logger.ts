@@ -77,6 +77,8 @@ const PRIVATE_KEY_END_PREFIX = '-----END ';
 const PRIVATE_KEY_MARKER_SUFFIX = 'PRIVATE KEY-----';
 const MAX_PRIVATE_KEY_MARKER_LABEL_LENGTH = 40;
 const MAX_SECRET_ASSIGNMENT_CARRY = 256;
+const MAX_AWS_ACCESS_KEY_PAIR_GAP = 12;
+const MAX_AWS_ACCESS_KEY_PAIR_CARRY = 128;
 
 const SENSITIVE_KEY_SUFFIXES: ReadonlyArray<ReadonlyArray<string>> = [
   ['token'],
@@ -102,6 +104,8 @@ const AWS_ACCESS_KEY_ID_PATTERN = /\bA(?:KIA|SIA)[0-9A-Z]{16}\b/g;
 const AWS_ACCESS_KEY_ID_LINE_HINT = /\bA(?:KIA|SIA)[0-9A-Z]{16}\b/;
 const AWS_SECRET_ACCESS_KEY_CANDIDATE_PATTERN = /(^|[^A-Za-z0-9/+])([A-Za-z0-9/+=]{40})(?=$|[^A-Za-z0-9/+])/g;
 const CONTEXTUAL_AWS_SECRET_ACCESS_KEY_LABEL_PATTERN = /(\b(?:aws[\s._-]*)?secret[\s._-]*access[\s._-]*key\b\s*[:=]\s*)(?:"([A-Za-z0-9/+=]{40})"|'([A-Za-z0-9/+=]{40})'|([A-Za-z0-9/+=]{40}))/gi;
+const AWS_PAIR_SEPARATOR_PATTERN = /^[\s"'=:,;()[\]{}]{1,12}$/;
+const AWS_SECRET_ACCESS_KEY_CANDIDATE_CHARS_PATTERN = /^[A-Za-z0-9/+=]+$/;
 
 /** Patterns applied to log text to strip tokens/keys before they reach the sink. */
 const SECRET_PATTERNS: SecretPattern[] = [
@@ -193,12 +197,80 @@ function isAwsSecretAccessKeyCandidate(value: string): boolean {
     && !/^[0-9a-f]{40}$/i.test(value);
 }
 
+function hasNearbyAwsAccessKeyId(line: string, candidateStart: number): boolean {
+  AWS_ACCESS_KEY_ID_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = AWS_ACCESS_KEY_ID_PATTERN.exec(line)) !== null) {
+    const idEnd = match.index + match[0].length;
+    if (idEnd >= candidateStart) continue;
+    const gap = line.slice(idEnd, candidateStart);
+    if (gap.length === 0 || gap.length > MAX_AWS_ACCESS_KEY_PAIR_GAP || !AWS_PAIR_SEPARATOR_PATTERN.test(gap)) continue;
+    return true;
+  }
+  return false;
+}
+
+function findAwsAccessKeyPairCarry(text: string): string {
+  const lineStart = Math.max(text.lastIndexOf('\n'), text.lastIndexOf('\r')) + 1;
+  const line = text.slice(lineStart);
+  AWS_ACCESS_KEY_ID_PATTERN.lastIndex = 0;
+  let carryStart = -1;
+  let match: RegExpExecArray | null;
+  while ((match = AWS_ACCESS_KEY_ID_PATTERN.exec(line)) !== null) {
+    const idStart = match.index;
+    const idEnd = idStart + match[0].length;
+    const suffixLength = line.length - idStart;
+    if (suffixLength > MAX_AWS_ACCESS_KEY_PAIR_CARRY) continue;
+
+    let separatorEnd = idEnd;
+    while (separatorEnd < line.length && /[\s"'=:,;()[\]{}]/.test(line[separatorEnd]!)) separatorEnd++;
+    const gap = line.slice(idEnd, separatorEnd);
+    if (gap.length === 0 || gap.length > MAX_AWS_ACCESS_KEY_PAIR_GAP || !AWS_PAIR_SEPARATOR_PATTERN.test(gap)) continue;
+
+    const candidatePrefix = line.slice(separatorEnd);
+    if (candidatePrefix.length === 0
+      || (candidatePrefix.length < 40 && AWS_SECRET_ACCESS_KEY_CANDIDATE_CHARS_PATTERN.test(candidatePrefix))) {
+      carryStart = idStart;
+    }
+  }
+  return carryStart >= 0 ? line.slice(carryStart) : '';
+}
+
+function redactIncompleteAwsAccessKeyPairCarry(carry: string): string {
+  const match = AWS_ACCESS_KEY_ID_LINE_HINT.exec(carry);
+  if (!match || match.index !== 0) return redactText(carry);
+
+  const idEnd = match[0].length;
+  let separatorEnd = idEnd;
+  while (separatorEnd < carry.length && /[\s"'=:,;()[\]{}]/.test(carry[separatorEnd]!)) separatorEnd++;
+  const gap = carry.slice(idEnd, separatorEnd);
+  const candidatePrefix = carry.slice(separatorEnd);
+
+  if (gap.length > 0 && gap.length <= MAX_AWS_ACCESS_KEY_PAIR_GAP && AWS_PAIR_SEPARATOR_PATTERN.test(gap)) {
+    if (candidatePrefix.length === 0) return `${REDACTED}${gap}`;
+    if (candidatePrefix.length < 40 && AWS_SECRET_ACCESS_KEY_CANDIDATE_CHARS_PATTERN.test(candidatePrefix)) {
+      return `${REDACTED}${gap}${REDACTED}`;
+    }
+  }
+
+  return redactText(carry);
+}
+
+function redactTextWithStreamingAwsPairFlush(text: string): string {
+  const carry = findAwsAccessKeyPairCarry(text);
+  if (!carry) return redactText(text);
+  return `${redactText(text.slice(0, text.length - carry.length))}${redactIncompleteAwsAccessKeyPairCarry(carry)}`;
+}
+
 function redactAwsSecretAccessKeysNearAccessKeyIds(text: string): string {
   return text.replace(/^.*$/gm, (line) => {
     if (!AWS_ACCESS_KEY_ID_LINE_HINT.test(line)) return line;
-    return line.replace(AWS_SECRET_ACCESS_KEY_CANDIDATE_PATTERN, (match, prefix: string, candidate: string) => (
-      isAwsSecretAccessKeyCandidate(candidate) ? `${prefix}${REDACTED}` : match
-    ));
+    return line.replace(AWS_SECRET_ACCESS_KEY_CANDIDATE_PATTERN, (match, prefix: string, candidate: string, offset: number) => {
+      const candidateStart = offset + prefix.length;
+      return isAwsSecretAccessKeyCandidate(candidate) && hasNearbyAwsAccessKeyId(line, candidateStart)
+        ? `${prefix}${REDACTED}`
+        : match;
+    });
   });
 }
 
@@ -398,9 +470,12 @@ function findSecretAssignmentCarry(text: string): string {
 }
 
 function findStreamingRedactionCarry(text: string): string {
-  const privateKeyCarry = findPrivateKeyMarkerCarry(text, true, true);
-  const secretAssignmentCarry = findSecretAssignmentCarry(text);
-  return secretAssignmentCarry.length > privateKeyCarry.length ? secretAssignmentCarry : privateKeyCarry;
+  const carries = [
+    findPrivateKeyMarkerCarry(text, true, true),
+    findSecretAssignmentCarry(text),
+    findAwsAccessKeyPairCarry(text),
+  ];
+  return carries.reduce((longest, carry) => (carry.length > longest.length ? carry : longest), '');
 }
 
 function findNextMatch(pattern: RegExp, text: string, start = 0): TextMatch | undefined {
@@ -464,7 +539,12 @@ class PrivateKeyStreamingTextRedactor implements StreamingTextRedactor {
       const secretMatch = findNextSensitiveAssignmentStart(text, cursor);
       if (!beginMatch && !secretMatch) {
         const remaining = text.slice(cursor);
-        const carry = flush ? '' : findStreamingRedactionCarry(remaining);
+        if (flush) {
+          output += redactTextWithStreamingAwsPairFlush(remaining);
+          this.carry = '';
+          return output;
+        }
+        const carry = findStreamingRedactionCarry(remaining);
         output += redactText(remaining.slice(0, remaining.length - carry.length));
         this.carry = carry;
         return output;

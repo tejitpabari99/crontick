@@ -452,6 +452,37 @@ describe('MCP server — full contract', () => {
     expect((updated.json as { schedule: unknown }).schedule).toEqual({ kind: 'cron', cron: '0 10 * * *', tz: 'UTC' });
   });
 
+  it('crontick_job_update rejects modifier-only shell/envFile/timeout action patches', async () => {
+    const envFilePath = join(dir, '.env.mcp-update.test');
+    writeFileSync(envFilePath, 'FOO=bar\n', 'utf-8');
+
+    const created = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-action-modifier-update-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'script', script: 'echo hi', shell: 'cmd', envFile: envFilePath, timeoutSec: 30 },
+    });
+    expect(created.isError).toBe(false);
+
+    const before = await callTool(client, 'crontick_job_get', { id: 'mcp-action-modifier-update-job' });
+    expect(before.isError).toBe(false);
+
+    const cases = [
+      { name: 'envFile', args: { id: 'mcp-action-modifier-update-job', action: { kind: 'script', envFile: envFilePath } } },
+      { name: 'shell', args: { id: 'mcp-action-modifier-update-job', action: { kind: 'script', shell: 'pwsh' } } },
+      { name: 'timeoutSec', args: { id: 'mcp-action-modifier-update-job', action: { kind: 'script', timeoutSec: 45 } } },
+    ] as const;
+
+    for (const testCase of cases) {
+      const result = await callTool(client, 'crontick_job_update', testCase.args);
+      expect(result.isError, testCase.name).toBe(true);
+      expect(result.text, testCase.name).toContain('Invalid');
+
+      const after = await callTool(client, 'crontick_job_get', { id: 'mcp-action-modifier-update-job' });
+      expect(after.isError, testCase.name).toBe(false);
+      expect(after.json, testCase.name).toEqual(before.json);
+    }
+  });
+
   it('crontick_job_update preserves shell/envFile/timeoutSec when only script is repeated', async () => {
     writeFileSync(join(dir, '.env.test'), 'FOO=bar\n', 'utf-8');
 

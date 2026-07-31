@@ -575,6 +575,32 @@ describe('CTD-003 shared secret redaction', () => {
     }
   });
 
+  it('RED-006 preserves aws-pair context across streaming chunks on the logs-tail path', async () => {
+    const fixture = await createFixture('split-aws-pair');
+    try {
+      const splitPairRunner = new Runner(fakeSpawnWithWrites([
+        { stream: 'stdout', chunk: `${AWS_ACCESS_KEY_ID} ` },
+        { stream: 'stdout', chunk: AWS_SECRET_ACCESS_KEY },
+      ]));
+      const captureJob = jobWithEnv('ctd003-split-aws-pair-capture', {});
+      const captureRun = fixture.store.insertRun(captureJob.id);
+      await splitPairRunner.run(captureJob, captureRun.id, fixture.store);
+
+      const logBytes = persistedLogBytes(fixture.dir, captureRun.id);
+      expectRawSecretBytesAbsent(logBytes, [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY], 'split aws pair persisted log bytes');
+      expect(logBytes.toString('utf-8')).toBe('[REDACTED] [REDACTED]');
+      expect(logText(fixture.store, captureRun.id)).toBe('[REDACTED] [REDACTED]');
+
+      const logs = await fixture.client.getLogs(captureRun.id);
+      const tailed = logs.lines.map((line) => line.data).join('');
+      expect(tailed).toBe('[REDACTED] [REDACTED]');
+      expect(tailed).not.toContain(AWS_ACCESS_KEY_ID);
+      expect(tailed).not.toContain(AWS_SECRET_ACCESS_KEY);
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it('SEC-1 redacts job create/get/list/update responses on the client surface while preserving benign env values', async () => {
     const fixture = await createFixture('job-response-redaction');
     try {

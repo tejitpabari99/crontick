@@ -355,6 +355,39 @@ process.stdout.write(JSON.stringify({ id: created.id }));
     });
   }, 15_000);
 
+  it('rejects modifier-only shell/envFile/timeout action patches through updateJob', async () => {
+    const home = makeHome();
+    const client = createClient({ daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 15_000 });
+    const envFilePath = join(home, '.env.client-update.test');
+    writeFileSync(envFilePath, 'FOO=bar\n', 'utf-8');
+
+    const original = await client.createJob({
+      id: 'client-action-modifier-update-job',
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: {
+        kind: 'script',
+        script: 'echo before',
+        shell: 'cmd',
+        envFile: envFilePath,
+        timeoutSec: 30,
+      },
+    });
+
+    const cases = [
+      { name: 'envFile', patch: { action: { kind: 'script', envFile: envFilePath } } },
+      { name: 'shell', patch: { action: { kind: 'script', shell: 'pwsh' } } },
+      { name: 'timeoutSec', patch: { action: { kind: 'script', timeoutSec: 45 } } },
+    ] as const;
+
+    for (const testCase of cases) {
+      await expect(client.updateJob(
+        'client-action-modifier-update-job',
+        testCase.patch as unknown as Parameters<typeof client.updateJob>[1],
+      ), testCase.name).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+      await expect(client.getJob('client-action-modifier-update-job'), testCase.name).resolves.toEqual(original);
+    }
+  }, 15_000);
+
   it('supports common CRUD and helper methods through the HTTP API', async () => {
     const home = makeHome();
     const client = createClient({ daemonScript: writeFakeApiDaemon(home), startupTimeoutMs: 5_000 });

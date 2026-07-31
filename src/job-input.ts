@@ -196,7 +196,10 @@ export function normalizeJobPatch(
   patch: JobPatchInput,
   options: NormalizeJobInputOptions = {},
 ): Job {
-  let normalizedPatch: JobPatchInput = patch;
+  const parsedPatch = JobPatchInputSchema.safeParse(patch);
+  if (!parsedPatch.success) throw new CrontickError('VALIDATION_ERROR', 'Invalid job patch', parsedPatch.error.format());
+
+  let normalizedPatch: JobPatchInput = parsedPatch.data;
   if (patch.action) {
     const merged = mergeActionPatch(existing.action, normalizeActionInput(patch.action, options, false));
     normalizedPatch = { ...normalizedPatch, action: withEngineDefaultForNewPromptAction(existing.action, merged, options) as ActionInput };
