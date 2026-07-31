@@ -574,6 +574,119 @@ describe('CTD-003 shared secret redaction', () => {
     }
   });
 
+  it('SEC-1 redacts job create/get/list/update responses on the client surface while preserving benign env values', async () => {
+    const fixture = await createFixture('job-response-redaction');
+    try {
+      const jobId = 'ctd003-job-response-redaction';
+      const created = await fixture.client.createJob({
+        id: jobId,
+        schedule: { kind: 'cron', cron: '0 0 * * *' },
+        action: {
+          kind: 'exec',
+          command: process.execPath,
+          args: ['-e', 'process.exit(0)'],
+          env: {
+            OPENAI_API_KEY: OPENAI_PROJECT,
+            NON_SECRET: BENIGN_WINDOWS_PATH,
+          },
+        },
+      });
+      expect(JSON.stringify(created)).not.toContain(OPENAI_PROJECT);
+      expect((created.action as { env?: Record<string, string> }).env).toMatchObject({
+        OPENAI_API_KEY: '[REDACTED]',
+        NON_SECRET: BENIGN_WINDOWS_PATH,
+      });
+
+      const fetched = await fixture.client.getJob(jobId);
+      expect(JSON.stringify(fetched)).not.toContain(OPENAI_PROJECT);
+      expect((fetched.action as { env?: Record<string, string> }).env).toMatchObject({
+        OPENAI_API_KEY: '[REDACTED]',
+        NON_SECRET: BENIGN_WINDOWS_PATH,
+      });
+
+      const listed = await fixture.client.listJobs();
+      const listedJob = listed.find((job) => job.id === jobId);
+      expect(listedJob).toBeTruthy();
+      expect(JSON.stringify(listedJob)).not.toContain(OPENAI_PROJECT);
+      expect(((listedJob as Job).action as { env?: Record<string, string> }).env).toMatchObject({
+        OPENAI_API_KEY: '[REDACTED]',
+        NON_SECRET: BENIGN_WINDOWS_PATH,
+      });
+
+      const updated = await fixture.client.updateJob(jobId, {
+        description: 'updated secret env',
+        action: {
+          kind: 'exec',
+          command: process.execPath,
+          args: ['-e', 'process.exit(0)'],
+          env: {
+            AWS_SECRET_ACCESS_KEY,
+            NO_PASSWORD: BENIGN_40_CHAR,
+          },
+        },
+      });
+      expect(JSON.stringify(updated)).not.toContain(AWS_SECRET_ACCESS_KEY);
+      expect((updated.action as { env?: Record<string, string> }).env).toMatchObject({
+        AWS_SECRET_ACCESS_KEY: '[REDACTED]',
+        NO_PASSWORD: BENIGN_40_CHAR,
+      });
+
+      const refetched = await fixture.client.getJob(jobId);
+      expect(JSON.stringify(refetched)).not.toContain(AWS_SECRET_ACCESS_KEY);
+      expect((refetched.action as { env?: Record<string, string> }).env).toMatchObject({
+        AWS_SECRET_ACCESS_KEY: '[REDACTED]',
+        NO_PASSWORD: BENIGN_40_CHAR,
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('SEC-2 redacts config mutation responses on the client surface while preserving substring-trap keys', async () => {
+    const fixture = await createFixture('config-response-redaction');
+    try {
+      fixture.client.initConfig({ force: true });
+
+      const setResult = fixture.client.setConfigValue('engines.copilot.env', {
+        OPENAI_API_KEY: OPENAI_GENERIC,
+        NON_SECRET: BENIGN_WINDOWS_PATH,
+      });
+      expect(JSON.stringify(setResult)).not.toContain(OPENAI_GENERIC);
+      expect(setResult.engines.copilot.env).toMatchObject({
+        OPENAI_API_KEY: '[REDACTED]',
+        NON_SECRET: BENIGN_WINDOWS_PATH,
+      });
+
+      const added = fixture.client.addEngine('client-redaction-engine', {
+        command: 'agency',
+        args: ['cp'],
+        env: {
+          OPENAI_API_KEY: OPENAI_PROJECT,
+          NON_SECRET: BENIGN_URL,
+        },
+      });
+      expect(JSON.stringify(added)).not.toContain(OPENAI_PROJECT);
+      expect(added.engines['client-redaction-engine']?.env).toMatchObject({
+        OPENAI_API_KEY: '[REDACTED]',
+        NON_SECRET: BENIGN_URL,
+      });
+
+      const updated = fixture.client.updateEngine('client-redaction-engine', {
+        env: {
+          AWS_SECRET_ACCESS_KEY,
+          NO_PASSWORD: BENIGN_40_CHAR,
+        },
+      });
+      expect(JSON.stringify(updated)).not.toContain(AWS_SECRET_ACCESS_KEY);
+      expect(updated.engines['client-redaction-engine']?.env).toMatchObject({
+        AWS_SECRET_ACCESS_KEY: '[REDACTED]',
+        NO_PASSWORD: BENIGN_40_CHAR,
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it('RED-004 redacts daemon operational logs with the shared logger contract while preserving benign fields', () => {
     const events: Array<{ message: string; data?: { env?: Record<string, string> } }> = [];
     const logger = createLogger({

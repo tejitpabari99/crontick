@@ -637,6 +637,61 @@ describe('MCP server — full contract', () => {
     expect((json as { action: Record<string, unknown> }).action).not.toHaveProperty('promptFile');
   });
 
+  it('job create/get/list/update tool responses redact secret env values while preserving benign ones', async () => {
+    const jobId = 'mcp-redaction-job';
+    const createSecret = `sk-proj-${'U'.repeat(28)}`;
+    const updateSecret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
+
+    let result = await callTool(client, 'crontick_job_create', {
+      id: jobId,
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: {
+        kind: 'exec',
+        command: process.execPath,
+        args: ['-e', 'process.exit(0)'],
+        env: { OPENAI_API_KEY: createSecret, NON_SECRET: 'https://example.test/mcp-visible' },
+      },
+    });
+    expect(result.isError).toBe(false);
+    expect(JSON.stringify(result.json)).not.toContain(createSecret);
+    expect(result.json).toMatchObject({
+      id: jobId,
+      action: { env: { OPENAI_API_KEY: '[REDACTED]', NON_SECRET: 'https://example.test/mcp-visible' } },
+    });
+
+    result = await callTool(client, 'crontick_job_get', { id: jobId });
+    expect(result.isError).toBe(false);
+    expect(JSON.stringify(result.json)).not.toContain(createSecret);
+    expect(result.json).toMatchObject({
+      id: jobId,
+      action: { env: { OPENAI_API_KEY: '[REDACTED]', NON_SECRET: 'https://example.test/mcp-visible' } },
+    });
+
+    result = await callTool(client, 'crontick_job_list');
+    expect(result.isError).toBe(false);
+    expect(JSON.stringify(result.json)).not.toContain(createSecret);
+    expect(result.json).toContainEqual(expect.objectContaining({
+      id: jobId,
+      action: expect.objectContaining({ env: expect.objectContaining({ OPENAI_API_KEY: '[REDACTED]', NON_SECRET: 'https://example.test/mcp-visible' }) }),
+    }));
+
+    result = await callTool(client, 'crontick_job_update', {
+      id: jobId,
+      action: {
+        kind: 'exec',
+        command: process.execPath,
+        args: ['-e', 'process.exit(0)'],
+        env: { AWS_SECRET_ACCESS_KEY: updateSecret, NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' },
+      },
+    });
+    expect(result.isError).toBe(false);
+    expect(JSON.stringify(result.json)).not.toContain(updateSecret);
+    expect(result.json).toMatchObject({
+      id: jobId,
+      action: { env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
+    });
+  });
+
   it('crontick_job_list returns the created job', async () => {
     const { json, isError } = await callTool(client, 'crontick_job_list');
     expect(isError).toBe(false);
@@ -874,6 +929,54 @@ describe('MCP server — full contract', () => {
     expect((await callTool(client, 'crontick_config_validate')).json).toMatchObject({ ok: true });
   });
 
+
+  it('config mutation tools redact secret engine env values in their responses while preserving benign trap keys', async () => {
+    const secret = `sk-proj-${'V'.repeat(28)}`;
+    const updatedSecret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
+    expect((await callTool(client, 'crontick_config_init', { force: true })).isError).toBe(false);
+
+    let result = await callTool(client, 'crontick_config_set', {
+      path: 'engines.copilot.env',
+      value: { OPENAI_API_KEY: secret, NON_SECRET: String.raw`C:\Users\Example\mcp-benign` },
+    });
+    expect(result.isError).toBe(false);
+    expect(JSON.stringify(result.json)).not.toContain(secret);
+    expect(result.json).toMatchObject({
+      engines: { copilot: { env: { OPENAI_API_KEY: '[REDACTED]', NON_SECRET: String.raw`C:\Users\Example\mcp-benign` } } },
+    });
+
+    result = await callTool(client, 'crontick_config_engine_add', {
+      name: 'mcp-redaction-engine',
+      engine: {
+        command: 'agency',
+        args: ['cp'],
+        env: { OPENAI_API_KEY: secret, NON_SECRET: 'https://example.test/mcp-visible' },
+      },
+    });
+    expect(result.isError).toBe(false);
+    expect(JSON.stringify(result.json)).not.toContain(secret);
+    expect(result.json).toMatchObject({
+      engines: {
+        'mcp-redaction-engine': {
+          env: { OPENAI_API_KEY: '[REDACTED]', NON_SECRET: 'https://example.test/mcp-visible' },
+        },
+      },
+    });
+
+    result = await callTool(client, 'crontick_config_engine_update', {
+      name: 'mcp-redaction-engine',
+      engine: { env: { AWS_SECRET_ACCESS_KEY: updatedSecret, NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
+    });
+    expect(result.isError).toBe(false);
+    expect(JSON.stringify(result.json)).not.toContain(updatedSecret);
+    expect(result.json).toMatchObject({
+      engines: {
+        'mcp-redaction-engine': {
+          env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' },
+        },
+      },
+    });
+  });
 
   it('config read tools redact secret engine env values', async () => {
     const secret = `sk-proj-${'T'.repeat(28)}`;

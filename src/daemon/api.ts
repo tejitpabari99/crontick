@@ -90,7 +90,7 @@ async function handleRequest(
 
     // ── Jobs ─────────────────────────────────────────────────────────────────
     if (method === 'GET' && path === '/api/jobs') {
-      return sendJson(res, 200, ctx.store.listJobs());
+      return sendJson(res, 200, redactValue(ctx.store.listJobs()));
     }
 
     if (method === 'POST' && path === '/api/jobs') {
@@ -112,7 +112,7 @@ async function handleRequest(
       // L2: seed the missed-fire watermark so a restart computes forward from
       // "job just created/updated", not from some earlier (or absent) state.
       ctx.store.recordTick(stored.id);
-      return sendJson(res, 201, stored);
+      return sendJson(res, 201, redactValue(stored));
     }
 
     // /api/jobs/:id/*
@@ -124,7 +124,7 @@ async function handleRequest(
       if (method === 'GET' && sub === '') {
         const job = ctx.store.getJob(id);
         if (!job) return sendError(res, 404, 'NOT_FOUND', `Job ${id} not found`);
-        return sendJson(res, 200, job);
+        return sendJson(res, 200, redactValue(job));
       }
 
       if (method === 'PUT' && sub === '') {
@@ -145,7 +145,7 @@ async function handleRequest(
         // job or change its schedule, both of which should compute missed
         // fires forward from now, not from a stale pre-update state.
         ctx.store.recordTick(stored.id);
-        return sendJson(res, 200, stored);
+        return sendJson(res, 200, redactValue(stored));
       }
 
       if (method === 'DELETE' && sub === '') {

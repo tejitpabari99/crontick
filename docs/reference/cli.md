@@ -184,8 +184,10 @@ Accepts all options from `crontick new` plus:
 `--enable` and `--disable` are mutually exclusive.
 
 `crontick update` shares `crontick new`'s `--file`, `--job-env-file`, and read-surface redaction
-semantics. Missing or unreadable `--job-env-file` now fails before persistence with
-`ENV_FILE_ERROR`, so the stored job remains unchanged.
+semantics. Its JSON result redacts secret-like `action.env` values with the same contract
+used by `crontick new`, `crontick list`, and `crontick get`. Missing or unreadable
+`--job-env-file` now fails before persistence with `ENV_FILE_ERROR`, so the stored job
+remains unchanged.
 
 ```bash
 crontick update daily-backup --cron "30 3 * * *"
@@ -195,7 +197,7 @@ crontick update daily-backup --cron "30 3 * * *"
 
 ### crontick list
 
-List all jobs.
+List all jobs. Returned job JSON redacts secret-like `action.env` values while preserving benign trap names such as `NON_SECRET`.
 
 ```bash
 crontick list
@@ -207,7 +209,7 @@ No additional options.
 
 ### crontick get
 
-Get a job by ID.
+Get a job by ID. Returned job JSON redacts secret-like `action.env` values while preserving benign trap names such as `NON_SECRET`.
 
 ```bash
 crontick get <id>
@@ -395,19 +397,19 @@ rewritten; read it directly if you need the literal stored bytes.
 
 ### crontick config set
 
-Set one config value.
+Set one config value. The printed updated config uses the same secret-redaction contract as `config get`.
 
 ```bash
 crontick config set <path> <value>
 ```
 
-`value` is parsed as JSON when possible; otherwise treated as a string.
+`value` is parsed as JSON when possible; otherwise treated as a string. Benign trap names such as `NON_SECRET` remain visible in the returned config.
 
 ---
 
 ### crontick config unset
 
-Remove one config value.
+Remove one config value. The printed updated config uses the same secret-redaction contract as `config get`.
 
 ```bash
 crontick config unset <path>
@@ -454,7 +456,7 @@ a raw `SyntaxError`.
 
 ### crontick config engines
 
-List configured engines.
+List configured engines. Add/update commands return the updated config with secret-like engine `env` values redacted while preserving benign trap names such as `NON_SECRET`.
 
 ```bash
 crontick config engines

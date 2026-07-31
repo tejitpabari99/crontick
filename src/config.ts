@@ -148,14 +148,14 @@ export function setConfigValue(path: string, value: unknown, options: ConfigOpti
   const keyPath = parseKeyPath(path);
   const updated = cloneRaw(readRawStoredConfig(options));
   writePath(updated as unknown as Record<string, unknown>, keyPath, value);
-  return persistRawConfig(updated, options);
+  return redactConfigForRead(persistRawConfig(updated, options));
 }
 
 export function removeConfigValue(path: string, options: ConfigOptions = {}): CrontickConfig {
   const keyPath = parseKeyPath(path);
   const updated = cloneRaw(readRawStoredConfig(options));
   removePath(updated as unknown as Record<string, unknown>, keyPath);
-  return persistRawConfig(updated, options);
+  return redactConfigForRead(persistRawConfig(updated, options));
 }
 
 export function listEngines(options: ConfigOptions = {}): Record<string, EngineConfig> {
@@ -199,7 +199,7 @@ export function removeEngine(name: string, options: ConfigOptions = {}): Crontic
   if (isRecord(engines) && Object.prototype.hasOwnProperty.call(engines, key)) {
     delete engines[key];
   }
-  return persistRawConfig(updated, options);
+  return redactConfigForRead(persistRawConfig(updated, options));
 }
 
 /**
@@ -263,7 +263,7 @@ function setEngine(name: string, engine: unknown, mustExist: boolean, options: C
   const updated = cloneRaw(readRawStoredConfig(options));
   if (!isRecord(updated.engines)) updated.engines = {};
   (updated.engines as Record<string, unknown>)[key] = parsed.data;
-  return persistRawConfig(updated, options);
+  return redactConfigForRead(persistRawConfig(updated, options));
 }
 
 /** Deep-merges file config over BUILT_IN_CONFIG then validates via ConfigSchema. */

@@ -86,7 +86,7 @@ Create and schedule a new cron job.
 | `force` | `boolean` | no | `false` | Replace an existing job with the same id |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** The created `Job` object. Duplicate ids are rejected with
+**Result:** The created `Job` object, with secret-like `action.env` values redacted. Duplicate ids are rejected with
 `JOB_ALREADY_EXISTS` unless `force=true` is supplied. Schedule validation runs before
 any existing job is replaced. If `action.envFile` is set, the daemon also preflights that
 file before persistence; a missing or unreadable file returns `ENV_FILE_ERROR`, resolves
@@ -103,7 +103,7 @@ List all scheduled jobs with their current status and next run time.
 |-----------|------|----------|---------|-------------|
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Array of `Job` objects.
+**Result:** Array of `Job` objects, with secret-like `action.env` values redacted.
 
 ---
 
@@ -116,7 +116,7 @@ Get the full definition and status of a specific job by ID.
 | `id` | `string` | yes | — | Job ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `Job` object.
+**Result:** `Job` object, with secret-like `action.env` values redacted.
 
 ---
 
@@ -501,7 +501,7 @@ Set one config value by dot-separated path.
 | `value` | `unknown` | yes | — | Value to set |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Updated `CrontickConfig`.
+**Result:** Updated `CrontickConfig`, with secret-like values redacted.
 
 ---
 
@@ -514,7 +514,7 @@ Remove one config value by dot-separated path.
 | `path` | `string` | yes | — | Dot-separated config path |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Updated `CrontickConfig`.
+**Result:** Updated `CrontickConfig`, with secret-like values redacted.
 
 ---
 
@@ -540,7 +540,7 @@ Add a prompt engine.
 | `engine` | `EngineConfig` | yes | — | `{ command, args, env }` |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Updated `CrontickConfig`.
+**Result:** Updated `CrontickConfig`, with secret-like values redacted.
 
 ---
 
@@ -554,7 +554,7 @@ Update a prompt engine (provided fields replace existing values).
 | `engine` | `Partial<EngineConfig>` | yes | — | Fields to update |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Updated `CrontickConfig`.
+**Result:** Updated `CrontickConfig`, with secret-like values redacted.
 
 ---
 

@@ -238,6 +238,58 @@ describe('CLI binary (dist/cli/index.js)', () => {
   });
 
 
+  it('config mutation commands redact secret engine env values in their JSON responses while preserving benign trap keys', () => {
+    const tmp = makeTmpDir();
+    const secret = `sk-proj-${'U'.repeat(28)}`;
+    const updatedSecret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
+    try {
+      expect(cli(['--json', 'config', 'init'], { CRONTICK_HOME: tmp }).status).toBe(0);
+
+      let result = cli([
+        '--json', 'config', 'set', 'engines.copilot.env',
+        JSON.stringify({ OPENAI_API_KEY: secret, NON_SECRET: String.raw`C:\Users\Example\cli-benign` }),
+      ], { CRONTICK_HOME: tmp });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).not.toContain(secret);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        engines: { copilot: { env: { OPENAI_API_KEY: '[REDACTED]', NON_SECRET: String.raw`C:\Users\Example\cli-benign` } } },
+      });
+
+      result = cli([
+        '--json', 'config', 'engines', 'add', 'cli-redaction-engine',
+        '--command', 'agency',
+        '--env', `OPENAI_API_KEY=${secret}`,
+        '--env', 'NON_SECRET=https://example.test/cli-visible',
+      ], { CRONTICK_HOME: tmp });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).not.toContain(secret);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        engines: {
+          'cli-redaction-engine': {
+            env: { OPENAI_API_KEY: '[REDACTED]', NON_SECRET: 'https://example.test/cli-visible' },
+          },
+        },
+      });
+
+      result = cli([
+        '--json', 'config', 'engines', 'update', 'cli-redaction-engine',
+        '--env', `AWS_SECRET_ACCESS_KEY=${updatedSecret}`,
+        '--env', 'NO_PASSWORD=Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn',
+      ], { CRONTICK_HOME: tmp });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).not.toContain(updatedSecret);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        engines: {
+          'cli-redaction-engine': {
+            env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' },
+          },
+        },
+      });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('config read commands redact secret engine env values', () => {
     const tmp = makeTmpDir();
     const secret = `sk-proj-${'S'.repeat(28)}`;
@@ -561,6 +613,66 @@ describe('CLI e2e with daemon', () => {
     expect(r.status).toBe(0);
     const data = JSON.parse(r.stdout);
     expect(data.id).toBe('e2e-job');
+  });
+
+  it('job create/get/list/update responses redact secret env values while preserving benign ones', () => {
+    const jobId = 'cli-redaction-job';
+    const createSecret = `sk-proj-${'V'.repeat(28)}`;
+    const updateSecret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
+    const createFile = join(dir, 'cli-redaction-job-create.json');
+    const patchFile = join(dir, 'cli-redaction-job-update.json');
+
+    writeFileSync(createFile, JSON.stringify({
+      id: jobId,
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: {
+        kind: 'exec',
+        command: process.execPath,
+        args: ['-e', 'process.exit(0)'],
+        env: { OPENAI_API_KEY: createSecret, NON_SECRET: 'https://example.test/job-visible' },
+      },
+    }), 'utf-8');
+
+    let result = cli(['--json', 'new', 'ignored-cli-redaction-job', '--file', createFile], env());
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain(createSecret);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      id: jobId,
+      action: { env: { OPENAI_API_KEY: '[REDACTED]', NON_SECRET: 'https://example.test/job-visible' } },
+    });
+
+    result = cli(['--json', 'get', jobId], env());
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain(createSecret);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      id: jobId,
+      action: { env: { OPENAI_API_KEY: '[REDACTED]', NON_SECRET: 'https://example.test/job-visible' } },
+    });
+
+    result = cli(['--json', 'list'], env());
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain(createSecret);
+    expect((JSON.parse(result.stdout) as Array<{ id: string; action: { env?: Record<string, string> } }>)).toContainEqual(expect.objectContaining({
+      id: jobId,
+      action: expect.objectContaining({ env: expect.objectContaining({ OPENAI_API_KEY: '[REDACTED]', NON_SECRET: 'https://example.test/job-visible' }) }),
+    }));
+
+    writeFileSync(patchFile, JSON.stringify({
+      action: {
+        kind: 'exec',
+        command: process.execPath,
+        args: ['-e', 'process.exit(0)'],
+        env: { AWS_SECRET_ACCESS_KEY: updateSecret, NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' },
+      },
+    }), 'utf-8');
+
+    result = cli(['--json', 'update', jobId, '--file', patchFile], env());
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain(updateSecret);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      id: jobId,
+      action: { env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
+    });
   });
 
   it('crontick update changes a job through the client/core path', () => {

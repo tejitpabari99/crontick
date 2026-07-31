@@ -82,10 +82,14 @@ class CrontickClient {
 
 Read methods that surface config values or captured text (`getConfigValue`, `getRun`,
 `listRuns`, `getLogs`, and `dashboardData`) apply the shared redaction contract before
-returning strings or structured text fields. The same contract applies on CLI, MCP, and
-HTTP read surfaces: common provider tokens, `token=`/`password=`-style assignments,
-contextual or standalone AWS secret-access-key values, and private keys (including lone
-PEM markers) are redacted, while benign key names such as `NON_SECRET` remain visible.
+returning strings or structured text fields. Job-returning methods (`createJob`, `listJobs`,
+`getJob`, and `updateJob`) and config mutators (`setConfigValue`, `removeConfigValue`,
+`addEngine`, `updateEngine`, and `removeEngine`) also redact secret-like env/config values
+in their returned objects without changing the response schema. The same contract applies
+on CLI, MCP, and HTTP read surfaces: common provider tokens, `token=`/`******
+assignments, contextual or standalone AWS secret-access-key values, and private keys
+(including lone PEM markers) are redacted, while benign key names such as `NON_SECRET`
+remain visible.
 
 `createJob()` and `updateJob()` also preflight `action.envFile` before persistence. If
 the file is missing or unreadable, they reject with `ENV_FILE_ERROR`, resolve relative
