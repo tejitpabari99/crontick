@@ -2,7 +2,7 @@
 
 - Status: Active
 - Owner: crontick maintainers
-- Last reviewed: 2026-07-28
+- Last reviewed: 2026-07-30
 
 ## Summary
 
@@ -39,7 +39,7 @@ daemon to validate and persist jobs without surface-specific logic.
 - **R-001-6**: The `retry.max` field MUST default to `0`; `retry.backoffSec` MUST default to `30`.
 - **R-001-7**: The `description` field MAY be omitted; it has no behavioral effect.
 - **R-001-8**: Creating a job with an existing ID MUST fail with `JOB_ALREADY_EXISTS` and MUST leave the existing definition unchanged, unless the caller explicitly requests overwrite intent (`--force` on the CLI, `force: true` on library/MCP, or `force=1|true` on the HTTP route). This is a breaking change from the earlier silent-upsert create behavior; see ADR 0021.
-- **R-001-9**: Updating a job MUST merge the patch onto the existing definition, re-validate the merged result against `JobSchema`, and complete schedule validation before any persistence. If validation fails, the previously stored job MUST remain unchanged.
+- **R-001-9**: Updating a job MUST merge the patch onto the existing definition, re-validate the merged result against `JobSchema`, and complete schedule validation plus any `action.envFile` preflight before any persistence. `action.envFile` preflight MUST resolve relative paths against `action.cwd ?? process.cwd()`, confirm the file is readable, and leave the previously stored job unchanged on failure.
 - **R-001-10**: Deleting a job MUST remove both the JSON file and the SQLite row; the scheduler MUST unschedule the job.
 - **R-001-11**: A `script` action MUST have a non-empty `script` string. The `shell` field MUST default to `"auto"`.
 - **R-001-12**: An `exec` action MUST have a non-empty `command` string. The `args` field MUST default to `[]`.
@@ -59,7 +59,7 @@ daemon to validate and persist jobs without surface-specific logic.
 2. Input is normalized via `normalizeJobInput` (reads `promptFile` if present, applies defaults).
 3. The normalized input is validated against `JobSchema` (Zod discriminated union).
 4. On create, if the ID already exists and overwrite intent was not supplied, the operation fails with `JOB_ALREADY_EXISTS` before any persistence.
-5. Schedule validation runs before any persistence; if it fails, no new job is written and an existing job remains unchanged.
+5. Schedule validation and any `action.envFile` preflight run before any persistence; if either fails, no new job is written and an existing job remains unchanged.
 6. On success, the daemon API persists via `Store.upsertJob()`: writes JSON file + SQLite row + schema sidecar.
 7. The scheduler is invoked to register or update the timer for the job.
 8. On update, the existing job is fetched, merged with the patch, and re-validated as a full job before persistence.
@@ -78,6 +78,9 @@ daemon to validate and persist jobs without surface-specific logic.
 - Job ID not found on update/delete: MUST return `NOT_FOUND` error.
 - Duplicate create without explicit overwrite intent: MUST reject with `JOB_ALREADY_EXISTS`; the prior job definition remains unchanged.
 - Invalid schedule on create/update: MUST reject before persistence, so create writes nothing and update preserves the prior job.
+- `action.envFile` missing or unreadable on create/update: MUST reject with `ENV_FILE_ERROR` before persistence; relative paths are resolved against `action.cwd ?? process.cwd()`.
+- Create/update job JSON loaded from `--file` with a leading UTF-8 BOM: MUST be accepted.
+- Malformed create/update job JSON loaded from `--file`: MUST reject with a message that names the file, parse location, and expected job/job-patch shape.
 - `timeoutSec` <= 0: MUST reject (schema requires `.positive()`).
 - `retry.max` with fractional value: MUST reject (schema requires `.int()`).
 
@@ -92,6 +95,7 @@ daemon to validate and persist jobs without surface-specific logic.
 - [x] Schema sidecar written on persist (test file: `tests/store.test.ts`)
 - [x] Prompt action validates reserved args (test file: `tests/job-input.test.ts`)
 - [x] Update merge semantics tested end-to-end (CLI and MCP) (test files: `tests/cli.test.ts`, `tests/mcp.test.ts`)
+- [x] Missing `envFile` on create/update is rejected before persistence, while BOM-prefixed job files still load and malformed job/job-patch files report file/position/expected-shape diagnostics (test files: `tests/job-create-atomicity.ctd-004.test.ts`, `tests/env-file.test.ts`, `tests/job-input.test.ts`, `tests/cli.test.ts`, `tests/mcp.test.ts`)
 
 ## Out of scope
 

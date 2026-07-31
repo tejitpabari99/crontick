@@ -2,7 +2,7 @@
 
 - Status: Active
 - Owner: crontick maintainers
-- Last reviewed: 2026-07-29
+- Last reviewed: 2026-07-30
 
 ## Summary
 
@@ -41,7 +41,7 @@ preserving observability through captured logs and structured run records.
 - **R-003-9**: All spawned processes MUST inherit `process.env` merged with `action.env` (action.env wins). If `envFile` is specified, its variables are merged below `action.env` but above `process.env`.
 - **R-003-10**: `action.cwd` MUST be used as the working directory; if omitted, `process.cwd()` MUST be used. If `action.cwd` is provided but does not exist or is not a directory, the runner MUST fail the run before spawn with `ACTION_CWD_INVALID: <kind> action cwd ...` naming both the action kind and the rejected path.
 - **R-003-11**: If `action.timeoutSec` is set, the runner MUST start its own timer for `timeoutSec * 1000` ms (not the spawn-level `timeout` option, which cannot be distinguished from a user cancellation -- see R-003-15) and, on expiry, send `SIGTERM` to the child itself.
-- **R-003-12**: stdout and stderr MUST be captured, redacted via `safeRedact()`, and stored via `Store.appendLog()`. For PowerShell script jobs, capture MUST preserve UTF-8 byte sequences exactly across chunk boundaries instead of splitting a multibyte character.
+- **R-003-12**: stdout and stderr MUST be captured, redacted via `safeRedact()`, and stored via `Store.appendLog()`. For text-like output, the shared redaction contract MUST redact full `BEGIN/END ... PRIVATE KEY` blocks, lone private-key markers, high-confidence structured secret values, and AWS secret-access-key values (including the standalone 40-character fallback) before persistence. Streaming capture MUST preserve that protection even when a private-key block spans multiple chunks or lines. For PowerShell script jobs, capture MUST also preserve UTF-8 byte sequences exactly across chunk boundaries instead of splitting a multibyte character.
 - **R-003-13**: On exit code 0, run status MUST be `success`. On non-zero exit, status MUST be `failed`. For PowerShell script jobs this includes non-terminating errors, uncaught terminating errors, command-not-found, missing-module failures, and native non-zero exits that occur without an explicit `exit N`; an explicit `exit N` remains authoritative.
 - **R-003-14**: On `SIGTERM`/`SIGKILL` signal that was NOT sent by the runner's own timeout timer (R-003-11) -- i.e. a user cancellation or overlap-policy abort -- run status MUST be `canceled`.
 - **R-003-15**: On expiry of the runner's own timeout timer (R-003-11), run status MUST be `timeout`, distinct from `canceled`, with an error message naming `timeoutSec`.
@@ -68,7 +68,7 @@ preserving observability through captured logs and structured run records.
 2. `runner.run(job, runId, store)` evaluates overlap policy.
 3. If allowed to proceed, run transitions to `running`.
 4. Runner resolves command/args per action kind; script jobs materialize transient wrapper files under `<dataDir>/tmp/scripts/`, and a PowerShell script job emits a wrapper + user script pair there so exit semantics and UTF-8 output are normalized before spawn.
-5. stdout/stderr `data` events -> per-stream UTF-8 buffering (when needed) -> `safeRedact` -> `store.appendLog`.
+5. stdout/stderr `data` events -> per-stream UTF-8 buffering (when needed) + per-stream private-key streaming redaction -> `safeRedact` -> `store.appendLog`.
 6. Child `close` event determines status from exit code/signal.
 7. If failed and retries remain, waits backoff then re-spawns (step 4).
 8. `finalizeRun` writes terminal status, endedAt, durationMs to store.
@@ -86,6 +86,8 @@ preserving observability through captured logs and structured run records.
 - Missing or non-directory `action.cwd`: Run finalized as `failed` before spawn with an `ACTION_CWD_INVALID` message naming the action kind and path.
 - Command not found (`ENOENT`): Run finalized as `failed` with descriptive error. When the missing binary is a prompt engine command, the error remains the existing PATH-focused guidance rather than the cwd-preflight message.
 - envFile not found/unreadable: Run fails with `ENV_FILE_ERROR` before spawn.
+- Private-key PEM output split across chunk/line boundaries: persisted log bytes store a single redacted placeholder rather than raw begin/body/end fragments.
+- Standalone/contextual AWS secret-access-key output is redacted, while benign 40-character lookalikes and non-private-key PEM text remain visible.
 - PowerShell non-terminating or uncaught terminating error without explicit `exit N`: the wrapper exits non-zero and the run finalizes `failed` instead of `success/0`.
 - PowerShell UTF-8 output split across chunk boundaries: buffered per stream and reconstructed exactly before persistence.
 - Process exits without code (null): Status is `failed`, error "process exited without code".
@@ -108,6 +110,7 @@ preserving observability through captured logs and structured run records.
 - [x] Exec action spawns command directly (test file: `tests/runner.test.ts`)
 - [x] envFile is loaded and merged (test file: `tests/env-file.test.ts`)
 - [x] safeRedact skips binary data (test file: `tests/redact.test.ts`)
+- [x] Streaming private-key / AWS-secret redaction protects persisted logs without over-redacting benign key names or non-private-key PEM text (test files: `tests/redact.test.ts`, `tests/secret-redaction.ctd-003.test.ts`)
 - [x] cancelRun aborts active run (test file: `tests/runner.test.ts`)
 - [x] ENOENT for prompt engine produces actionable error, while a missing `action.cwd` fails earlier with a consistent explicit cwd message across script/exec/prompt actions (test files: `tests/runner.test.ts`, `tests/spawn-enoent-cwd.ctd-011.test.ts`)
 - [x] Spawn sets `detached: true` and `windowsHide: true` for every action kind except a Windows pwsh/powershell.exe script job, which is spawned attached so it can produce output (test file: `tests/runner.test.ts`, "script: shell=\"auto\" (the default job kind) captures non-empty output on every platform (BLOCKER 1 regression)")

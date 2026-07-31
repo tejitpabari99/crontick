@@ -35,11 +35,11 @@ class CrontickClient {
 |--------|-----------|---------|--------|
 | `ensure` | `(): Promise<DaemonInfo>` | `DaemonInfo` | `CrontickError` (`DAEMON_START_FAILED`, `DAEMON_TIMEOUT`, `DAEMON_START_LOCK_TIMEOUT`) |
 | `health` | `(options?: { ensure?: boolean }): Promise<unknown>` | Health response | `CrontickError` |
-| `createJob` | `(input: Job \| JobCreateInput, options?: CreateJobOptions): Promise<Job>` | Created `Job` | `CrontickError` (`VALIDATION_ERROR`, `JOB_ALREADY_EXISTS`, `DAEMON_REQUEST_FAILED`) |
+| `createJob` | `(input: Job \| JobCreateInput, options?: CreateJobOptions): Promise<Job>` | Created `Job` | `CrontickError` (`VALIDATION_ERROR`, `JOB_ALREADY_EXISTS`, `ENV_FILE_ERROR`, `DAEMON_REQUEST_FAILED`) |
 | `createJobFromCliOptions` | `(input: JobCreateCliOptions): Promise<Job>` | Created `Job` | `CrontickError` |
 | `listJobs` | `(): Promise<Job[]>` | Array of `Job` | `CrontickError` |
 | `getJob` | `(id: string): Promise<Job>` | `Job` | `CrontickError` (`NOT_FOUND`) |
-| `updateJob` | `(id: string, patch: JobPatchInput, options?: NormalizeJobInputOptions): Promise<Job>` | Updated `Job` | `CrontickError` |
+| `updateJob` | `(id: string, patch: JobPatchInput, options?: NormalizeJobInputOptions): Promise<Job>` | Updated `Job` | `CrontickError` (`VALIDATION_ERROR`, `ENV_FILE_ERROR`, `NOT_FOUND`, `DAEMON_REQUEST_FAILED`) |
 | `deleteJob` | `(id: string): Promise<{ ok: true; canceledRun: boolean }>` | `{ ok: true, canceledRun }` — `canceledRun` is `true` when the job had an in-flight run that was canceled as part of the delete | `CrontickError` (`NOT_FOUND`) |
 | `enableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
 | `disableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
@@ -81,9 +81,16 @@ class CrontickClient {
 **Library-only methods (not in `SURFACE_CAPABILITIES`, no CLI/MCP equivalent):** `ensure`, `health`, `createJobFromCliOptions`, `jobJsonSchema`, `getConfig`, `drainNotices`, `isVerbose`. These are intentionally excluded from the parity contract because they serve internal wiring, direct-use library scenarios, or launch infrastructure rather than proxying a daemon operation.
 
 Read methods that surface config values or captured text (`getConfigValue`, `getRun`,
-`listRuns`, `getLogs`, and `dashboardData`) redact common secret shapes before returning
-strings or structured text fields. The same contract applies on CLI, MCP, and HTTP read
-surfaces.
+`listRuns`, `getLogs`, and `dashboardData`) apply the shared redaction contract before
+returning strings or structured text fields. The same contract applies on CLI, MCP, and
+HTTP read surfaces: common provider tokens, `token=`/`password=`-style assignments,
+contextual or standalone AWS secret-access-key values, and private keys (including lone
+PEM markers) are redacted, while benign key names such as `NON_SECRET` remain visible.
+
+`createJob()` and `updateJob()` also preflight `action.envFile` before persistence. If
+the file is missing or unreadable, they reject with `ENV_FILE_ERROR`, resolve relative
+paths against `action.cwd` when set (otherwise the caller's current working directory),
+and leave previously stored job state unchanged.
 
 `getLogs({ lines: N })` reconstructs newline-delimited text lines from the ordered
 stdout/stderr chunk rows returned by the daemon before applying the last-`N` slice, so
@@ -256,6 +263,11 @@ interface JobCreateCliOptions {
 ```ts
 type JobPatchCliOptions = Omit<JobCreateCliOptions, 'id'>;
 ```
+
+`createJobFromCliOptions()` inherits the CLI file-loading behavior: `input.file` accepts
+UTF-8 JSON with an optional leading BOM, malformed JSON throws `VALIDATION_ERROR` with
+`details` containing `path`, `position`, `line`, `column`, and an expected-shape hint,
+and `envFile` is preflighted before persistence the same way as `createJob()`/`updateJob()`.
 
 ### DaemonStopResult
 
@@ -630,6 +642,11 @@ function updateEngine(name: string, engine: unknown, options?: ConfigOptions): C
 function removeEngine(name: string, options?: ConfigOptions): CrontickConfig;
 function buildPromptRunCommand(action: PromptAction, options?: ConfigOptions): PromptRunCommand;
 ```
+
+`loadConfig()`, `readConfigFile()`, and `validateConfigFile()` accept UTF-8 JSON with an
+optional leading BOM. Malformed config JSON produces `CONFIG_READ_ERROR` with `details`
+that include `path`, `position`, `line`, `column`, and `expectedShape`. Returned config
+values are redacted using the same shared read-surface contract described above.
 
 ---
 

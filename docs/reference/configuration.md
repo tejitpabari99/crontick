@@ -103,6 +103,13 @@ Schema is `.strict()` — no extra fields allowed.
 
 If `config.json` does not exist, crontick uses this built-in config. The file config is deep-merged over the built-in defaults.
 
+### JSON parsing behavior
+
+Config file reads accept UTF-8 JSON with an optional leading BOM. When the file cannot be parsed,
+`crontick config validate`, `CrontickClient.validateConfig()`, and `crontick_config_validate`
+report `CONFIG_READ_ERROR` with the file path, line, column, position, and the expected config
+shape.
+
 ### Prompt-engine argv ordering
 
 `buildPromptRunCommand()` always emits prompt-engine argv as `[..., ...engine.args, prompt, ...action.args]`.
@@ -132,8 +139,12 @@ touching that key. To see exactly what's explicitly set (as opposed to inherited
 `crontick_config_get` tool return effective config values with secret-like material
 redacted. This uses the same shared redaction contract as run reads, log tails, and
 dashboard data: GitHub/OpenAI/Anthropic/Stripe/Slack-style tokens, JWT-like blobs,
-private keys, key/value assignments such as `token=...`, and connection-string
-passwords are masked before they are printed or serialized.
+key/value assignments such as `token=...`, connection-string passwords, contextual or
+standalone AWS secret-access-key values, and private keys (including lone `BEGIN`/`END
+... PRIVATE KEY` markers) are masked before they are printed or serialized. Structured
+key-hint redaction is intentionally narrow: names such as `OPENAI_API_KEY`,
+`clientSecret`, and `AWS_SECRET_ACCESS_KEY` redact, while benign names such as
+`NON_SECRET` do not.
 
 This is presentation-only redaction. The underlying `config.json` file on disk is not
 rewritten; read the file directly if you need the literal stored bytes.

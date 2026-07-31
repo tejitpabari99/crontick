@@ -142,6 +142,10 @@ quotes before Node ever sees them.
 
 Exactly one schedule source (`--cron`, `--every`, `--at`) and one action source (`--script`, `--exec`, `--prompt`, `--prompt-file`) are required unless `--file` is used.
 
+When `--file` is used for create or update, crontick accepts UTF-8 JSON with an optional leading
+BOM. Malformed JSON fails with `VALIDATION_ERROR` that names the file, reports line/column/position,
+and states the expected job or job-patch shape.
+
 Creating a job is no longer a silent upsert. If `<id>` already exists, `crontick new`
 fails with `JOB_ALREADY_EXISTS` and leaves the existing definition unchanged. Use
 `crontick update <id>` for in-place edits, or pass `--force` when you intentionally want
@@ -151,7 +155,10 @@ behind.
 
 `--job-env-file` loads extra environment variables from a `.env` file. In persisted job
 JSON and the library/MCP/HTTP JSON surfaces, the same setting is stored as `action.envFile`
-/ `envFile`.
+/ `envFile`. `crontick new` and `crontick update` preflight that file before persistence: if it is
+missing or unreadable, the command fails with `ENV_FILE_ERROR`, resolves relative paths against
+`action.cwd` when set (otherwise the current working directory), and leaves existing job state
+unchanged.
 
 ```bash
 crontick new daily-backup --cron "0 2 * * *" --script "pg_dump mydb > /backups/db.sql"
@@ -175,6 +182,10 @@ Accepts all options from `crontick new` plus:
 | `--disable` | boolean | — | Disable the job |
 
 `--enable` and `--disable` are mutually exclusive.
+
+`crontick update` shares `crontick new`'s `--file`, `--job-env-file`, and read-surface redaction
+semantics. Missing or unreadable `--job-env-file` now fails before persistence with
+`ENV_FILE_ERROR`, so the stored job remains unchanged.
 
 ```bash
 crontick update daily-backup --cron "30 3 * * *"
@@ -374,9 +385,11 @@ crontick config get [path]
 |------------|------|-------------|
 | `path` | string (optional) | Dot-separated config path (e.g. `engines.copilot.command`) |
 
-Returns the effective config with secret-like values redacted. The underlying
-`config.json` file on disk is not rewritten; read it directly if you need the literal
-stored bytes.
+Returns the effective config with secret-like values redacted. The shared contract masks
+common provider tokens, `token=`/`password=`-style assignments, contextual or standalone AWS
+secret-access-key values, and private keys (including lone PEM begin/end markers) while avoiding
+broad substring matches such as `NON_SECRET`. The underlying `config.json` file on disk is not
+rewritten; read it directly if you need the literal stored bytes.
 
 ---
 
@@ -433,7 +446,9 @@ crontick config validate [path]
 |------------|------|-------------|
 | `path` | string (optional) | File path to validate (defaults to the standard config path) |
 
-Exits with code `1` if validation fails.
+Exits with code `1` if validation fails. A leading UTF-8 BOM is accepted. Malformed JSON now
+reports the file path, line, column, position, and the expected config shape instead of surfacing
+a raw `SyntaxError`.
 
 ---
 
@@ -521,7 +536,10 @@ crontick import <file>
 Jobs are upserted (existing jobs with the same ID are updated). If the file was produced with
 `--include-runs`, its `runs` array is restored archivally into `runs.db` (`INSERT OR IGNORE`,
 keyed by run id; rows for a job that no longer exists are skipped) -- this is a plain data
-restore, not re-execution, and does not touch the scheduler.
+restore, not re-execution, and does not touch the scheduler. A leading UTF-8 BOM is accepted.
+Malformed import JSON fails with `VALIDATION_ERROR` that names the file, reports line/column/position,
+and states that crontick expected either a JSON array of jobs or an export object with jobs and
+optional runs.
 
 ---
 

@@ -2,7 +2,7 @@
 
 - Status: Active
 - Owner: crontick maintainers
-- Last reviewed: 2026-07-29
+- Last reviewed: 2026-07-30
 
 ## Summary
 
@@ -54,15 +54,15 @@ both human-editability of jobs and efficient querying of run history.
 - **R-006-15**: `appendLog()` MUST insert a new row into `run_logs` with the current timestamp. Text-like output is expected to have already passed through runner redaction before persistence (see spec 003 R-003-12).
 - **R-006-16**: `getLogs()` MUST return all log entries for a run ordered by insertion order (id ASC).
 - **R-006-17**: Malformed job JSON files (parse failure or schema validation failure) MUST be silently skipped during `loadJobsFromDisk()`.
-- **R-006-18**: Config file MUST be located at `<dataDir>/config.json`.
+- **R-006-18**: Config file MUST be located at `<dataDir>/config.json`. User-facing config read/validate helpers MUST accept a leading UTF-8 BOM and, on malformed JSON, MUST report the file path, parse position, line/column, and expected config shape via `CONFIG_READ_ERROR`.
 - **R-006-19**: Config writes MUST be atomic (write to temp file, rename over original).
 - **R-006-20**: The store MUST cap retained runs per job at `config.retention.maxRunsPerJob` (default 100, range 1-100,000). `Store.pruneRunsForJob()` MUST evict the oldest terminal runs (and their `run_logs`) once a job exceeds the cap, MUST NOT evict `running`/`queued` runs, and MUST tie-break same-timestamp evictions deterministically. `Store.pruneAllJobsRunHistory()` MUST run this reconciliation sweep across every job on daemon startup (reconciling any cap value that was changed while the daemon was not running), and `Store.setRunRetentionCap()` MUST let a running daemon apply an updated cap without restart, e.g. via `daemon reload` (see R-004-21).
 - **R-006-24**: A `job_schedule_state` table MUST exist, keyed by `job_id` (PK, references `jobs.id`), storing `last_tick_at` (epoch ms, nullable) and `updated_at` (epoch ms). `recordTick(jobId, tickAtMs)` MUST upsert this row every time the scheduler observes a live tick for that job while the daemon is running.
 - **R-006-25**: `getScheduleState(jobId)` MUST return the stored `last_tick_at` for a job, or `undefined` if the job has never ticked while a daemon was running (e.g. a brand-new job, or one created since the last daemon start).
 - **R-006-26**: `recordMissedRun(jobId, firedAtMs)` MUST insert a terminal run row with `status = 'missed'`, no `pid`, `error` set to `MISSED_RUN_ERROR_MESSAGE` (`"MISSED: daemon was not running at the scheduled fire time"`, `src/daemon/store.ts`), and `started_at`/`ended_at` both set to the missed fire time. Missed runs MUST be ordinary rows subject to the same retention cap and `listRuns`/export behavior as any other terminal run.
 - **R-006-27**: `importRuns(runs)` MUST bulk-insert previously-exported run rows (from `crontick export --include-runs`) as archival data only -- no execution, no scheduler interaction. Each row MUST be validated individually against `RunImportSchema`; a row that fails validation, or whose `job_id` does not exist in this store, MUST be skipped (recorded in `skipped: Array<{ id, error }>`) without aborting the rest of the batch. Each valid row's insert MUST be wrapped independently (a single row's insert failure MUST NOT abort remaining rows). It MUST be idempotent on `id` (`INSERT OR IGNORE`: a row already present is left untouched and not counted as imported), returning `{ imported, skipped }`. After the batch, the store MUST run `pruneRunsForJob()` once per job that received at least one imported row, so an import cannot leave a job over its retention cap.
-- **R-006-28**: Read surfaces that serialize config values, run rows, run logs, or dashboard payloads MUST apply redaction defensively at read time as well, so secret-like values already on disk or introduced through config reads are masked consistently even if they predate current capture-time redaction patterns.
-- **R-006-29**: Config read helpers (`config get`, library, MCP, and equivalent HTTP-backed reads) MUST redact returned secret-like values without mutating the underlying `config.json` bytes on disk.
+- **R-006-28**: Read surfaces that serialize config values, run rows, run logs, or dashboard payloads MUST apply the shared redaction contract defensively at read time as well, so secret-like values already on disk or introduced through config reads are masked consistently even if they predate current capture-time redaction patterns. This contract includes full or marker-only private keys, high-confidence secret-key hints, and contextual/standalone AWS secret-access-key detection.
+- **R-006-29**: Config read helpers (`config get`, library, MCP, and equivalent HTTP-backed reads) MUST redact returned secret-like values without mutating the underlying `config.json` bytes on disk. Key-hint-based redaction MUST use high-confidence normalized suffix matching so names such as `OPENAI_API_KEY`, `clientSecret`, and `AWS_SECRET_ACCESS_KEY` are masked while benign names such as `NON_SECRET` remain visible.
 
 ### Non-functional requirements
 
@@ -119,7 +119,7 @@ both human-editability of jobs and efficient querying of run history.
 - Concurrent writes to runs.db: WAL mode allows single-writer; only one daemon runs.
 - Deleting a job with historical runs: direct `getRun` / `getLogs` by run id still works, but current-job aggregate views exclude those archived rows.
 - Disk full on job write: Write throws; operation fails at API level.
-- Config file has syntax errors: `CONFIG_READ_ERROR` thrown with fix instructions.
+- Config file has syntax errors: `CONFIG_READ_ERROR` thrown with fix instructions, including the file path, parse position, line/column, and expected config shape. A leading UTF-8 BOM is accepted.
 - `importRuns()` given a run whose `job_id` no longer exists: that row is skipped and reported, the rest of the batch still imports.
 - `reconcileOrphanRuns()`'s liveness check throws or cannot determine an answer: treated as inconclusive, and the run is adopted rather than canceled (favors not silently losing in-flight work over the smaller risk of double-running).
 - Secret-like text already present in persisted logs or config: read surfaces still redact it defensively before returning it.
@@ -140,7 +140,8 @@ both human-editability of jobs and efficient querying of run history.
 - [x] `job_schedule_state`: `recordTick`/`getScheduleState` seed and advance a job's watermark (test file: `tests/store.test.ts`, "getScheduleState ..." / "recordTick ..." describe block, lines 275-294)
 - [x] `recordMissedRun` inserts a terminal `missed` run with no pid, subject to the same retention cap as any other run (test file: `tests/store.test.ts`, lines 210-238)
 - [x] `importRuns` validates each row individually, skips malformed rows or rows for missing jobs without aborting the batch, is idempotent on `id`, and prunes affected jobs back to their retention cap afterward (test file: `tests/store.test.ts`, `describe('Store.importRuns', ...)`; exercised end-to-end via `tests/cli.test.ts`, line ~760; `tests/mcp.test.ts`, line ~709)
-- [x] Read-time redaction applies consistently to config, run, log, and dashboard read surfaces, including pre-existing stored values (test file: `tests/secret-redaction.ctd-003.test.ts`)
+- [x] Read-time redaction applies consistently to config, run, log, and dashboard read surfaces, including pre-existing stored values, private-key markers, AWS secrets, and the `NON_SECRET` false-positive boundary (test file: `tests/secret-redaction.ctd-003.test.ts`)
+- [x] Config reads/validation accept BOM-prefixed JSON and report structured parse diagnostics for malformed JSON (test file: `tests/config.test.ts`)
 - [x] Managed temp-script storage lives under CRONTICK_HOME and wrapper files are removed after the run (test file: `tests/temp-script-cleanup.ctd-017.test.ts`)
 
 ## Out of scope

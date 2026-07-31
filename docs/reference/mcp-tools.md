@@ -60,8 +60,11 @@ Error:
 
 Error messages are redacted via `redactForLlm()`: loopback addresses become `<daemon-addr>`, filesystem paths become `<path>`.
 
-Tools that expose config values, run rows, log text, or dashboard payloads also redact
-common secret shapes before serializing successful results.
+Tools that expose config values, run rows, log text, or dashboard payloads also apply
+the shared redaction contract before serializing successful results. That contract
+redacts common provider tokens, `token=`/`password=`-style assignments, contextual or
+standalone AWS secret-access-key values, and private keys (including lone PEM markers)
+while avoiding broad substring matches such as `NON_SECRET`.
 
 ---
 
@@ -85,7 +88,10 @@ Create and schedule a new cron job.
 
 **Result:** The created `Job` object. Duplicate ids are rejected with
 `JOB_ALREADY_EXISTS` unless `force=true` is supplied. Schedule validation runs before
-any existing job is replaced.
+any existing job is replaced. If `action.envFile` is set, the daemon also preflights that
+file before persistence; a missing or unreadable file returns `ENV_FILE_ERROR`, resolves
+relative paths against `action.cwd` when set (otherwise the daemon process cwd), and
+leaves existing job state unchanged.
 
 ---
 
@@ -129,7 +135,9 @@ Update an existing job (partial update merged with existing definition).
 | `retry` | `{ max: number, backoffSec: number }` | no | — | Retry config |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Updated `Job` object.
+**Result:** Updated `Job` object. If the patch leaves `action.envFile` pointing at a
+missing or unreadable file, the update returns `ENV_FILE_ERROR` before persistence and
+keeps the previously stored job unchanged.
 
 ---
 
@@ -586,6 +594,10 @@ Validate the current crontick config file.
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `{ ok: boolean, path: string, config?: CrontickConfig, problems: string[] }`
+
+A leading UTF-8 BOM is accepted. Malformed config JSON returns the same friendly
+`CONFIG_READ_ERROR` problem text as the CLI/library surfaces: file path,
+line/column/position, and the expected config shape.
 
 ---
 
