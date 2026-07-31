@@ -389,10 +389,12 @@ describe('MCP server — full contract', () => {
   });
 
   it('crontick_job_update preserves shell/envFile/timeoutSec when only script is repeated', async () => {
+    writeFileSync(join(dir, '.env.test'), 'FOO=bar\n', 'utf-8');
+
     const created = await callTool(client, 'crontick_job_create', {
       id: 'mcp-shell-preserve-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
-      action: { kind: 'script', script: 'echo hi', shell: 'cmd', envFile: '.env.test', timeoutSec: 30 },
+      action: { kind: 'script', script: 'echo hi', shell: 'cmd', cwd: dir, envFile: '.env.test', timeoutSec: 30 },
     });
     expect(created.isError).toBe(false);
 
@@ -434,10 +436,12 @@ describe('MCP server — full contract', () => {
   // explicitly, so its parity proof for these fields uses --file instead of flags).
 
   it('crontick_job_update preserves exec args when the patch only changes envFile', async () => {
+    writeFileSync(join(dir, '.env.new'), 'FOO=bar\n', 'utf-8');
+
     const created = await callTool(client, 'crontick_job_create', {
       id: 'mcp-exec-args-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
-      action: { kind: 'exec', command: 'echo', args: ['a', 'b'] },
+      action: { kind: 'exec', command: 'echo', args: ['a', 'b'], cwd: dir },
     });
     expect(created.isError).toBe(false);
 
