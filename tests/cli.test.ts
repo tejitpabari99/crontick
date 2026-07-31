@@ -792,6 +792,70 @@ describe('CLI e2e with daemon', () => {
     expect(JSON.parse(updated.stdout).action).toMatchObject({ shell: 'pwsh' });
   });
 
+  it('crontick update --cron with --tz updates the cron timezone', () => {
+    const created = cli([
+      '--json', 'new', 'tz-update-job', '--cron', '0 9 * * *', '--script', 'echo hi',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+
+    const updated = cli(['--json', 'update', 'tz-update-job', '--cron', '0 10 * * *', '--tz', 'UTC'], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    expect(JSON.parse(updated.stdout).schedule).toEqual({ kind: 'cron', cron: '0 10 * * *', tz: 'UTC' });
+  });
+
+  it('crontick update rejects lone modifier flags instead of silently succeeding', () => {
+    const existingEnvFile = join(dir, 'modifier-base.env');
+    const missingEnvFile = join(dir, 'modifier-missing.env');
+    writeFileSync(existingEnvFile, 'FOO=bar\n', 'utf-8');
+
+    const cases = [
+      {
+        name: '--job-env-file',
+        jobId: 'modifier-env-file-job',
+        create: ['--json', 'new', 'modifier-env-file-job', '--cron', '0 9 * * *', '--script', 'echo hi'],
+        update: ['update', 'modifier-env-file-job', '--job-env-file', missingEnvFile],
+        stderr: ['modifier-missing.env', '--job-env-file'],
+      },
+      {
+        name: '--shell',
+        jobId: 'modifier-shell-job',
+        create: ['--json', 'new', 'modifier-shell-job', '--cron', '0 9 * * *', '--script', 'echo hi', '--shell', 'cmd', '--job-env-file', existingEnvFile, '--timeout', '30'],
+        update: ['update', 'modifier-shell-job', '--shell', 'pwsh'],
+        stderr: ['--shell', 'action source on update'],
+      },
+      {
+        name: '--timeout',
+        jobId: 'modifier-timeout-job',
+        create: ['--json', 'new', 'modifier-timeout-job', '--cron', '0 9 * * *', '--script', 'echo hi', '--timeout', '30'],
+        update: ['update', 'modifier-timeout-job', '--timeout', '45'],
+        stderr: ['--timeout', 'action source on update'],
+      },
+      {
+        name: '--tz',
+        jobId: 'modifier-tz-job',
+        create: ['--json', 'new', 'modifier-tz-job', '--cron', '0 9 * * *', '--script', 'echo hi'],
+        update: ['update', 'modifier-tz-job', '--tz', 'UTC'],
+        stderr: ['--tz requires --cron on update'],
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const created = cli(testCase.create, env());
+      expect(created.status, `${testCase.name} create failed: ${created.stderr}`).toBe(0);
+
+      const before = cli(['--json', 'get', testCase.jobId], env());
+      expect(before.status, before.stderr).toBe(0);
+
+      const updated = cli(testCase.update, env());
+      expect(updated.status, `${testCase.name} stderr: ${updated.stderr}`).toBe(1);
+      for (const part of testCase.stderr) expect(updated.stderr).toContain(part);
+
+      const after = cli(['--json', 'get', testCase.jobId], env());
+      expect(after.status, after.stderr).toBe(0);
+      expect(after.stdout).toBe(before.stdout);
+    }
+  });
+
   it('crontick update switching action kind fully replaces the action (no stale fields)', () => {
     const envFilePath = join(dir, 'shell-replace.env');
     writeFileSync(envFilePath, 'FOO=bar\n', 'utf-8');

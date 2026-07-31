@@ -338,6 +338,23 @@ process.stdout.write(JSON.stringify({ id: created.id }));
     await expect(client.listJobs()).resolves.toEqual([original]);
   }, 15_000);
 
+  it('updates cron schedules with explicit timezone objects through updateJob', async () => {
+    makeHome();
+    const client = createClient({ daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 15_000 });
+
+    await client.createJob({
+      id: 'client-cron-tz-update-job',
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: { kind: 'exec', command: 'echo', args: ['before'] },
+    });
+
+    await expect(client.updateJob('client-cron-tz-update-job', {
+      schedule: { kind: 'cron', cron: '0 1 * * *', tz: 'UTC' },
+    })).resolves.toMatchObject({
+      schedule: { kind: 'cron', cron: '0 1 * * *', tz: 'UTC' },
+    });
+  }, 15_000);
+
   it('supports common CRUD and helper methods through the HTTP API', async () => {
     const home = makeHome();
     const client = createClient({ daemonScript: writeFakeApiDaemon(home), startupTimeoutMs: 5_000 });

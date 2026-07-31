@@ -436,6 +436,22 @@ describe('MCP server — full contract', () => {
     expect(data.description).toBe('no overlap field');
   });
 
+  it('crontick_job_update applies explicit cron timezone updates', async () => {
+    const created = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-cron-tz-update-job',
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'exec', command: 'echo', args: ['hi'] },
+    });
+    expect(created.isError).toBe(false);
+
+    const updated = await callTool(client, 'crontick_job_update', {
+      id: 'mcp-cron-tz-update-job',
+      schedule: { kind: 'cron', cron: '0 10 * * *', tz: 'UTC' },
+    });
+    expect(updated.isError).toBe(false);
+    expect((updated.json as { schedule: unknown }).schedule).toEqual({ kind: 'cron', cron: '0 10 * * *', tz: 'UTC' });
+  });
+
   it('crontick_job_update preserves shell/envFile/timeoutSec when only script is repeated', async () => {
     writeFileSync(join(dir, '.env.test'), 'FOO=bar\n', 'utf-8');
 

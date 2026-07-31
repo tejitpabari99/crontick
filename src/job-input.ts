@@ -343,9 +343,9 @@ export function buildJobPatchFromUpdateOptions(
   const patch: JobPatchInput = {};
   if (input.desc !== undefined) patch.description = input.desc;
   if (input.enabled !== undefined) patch.enabled = input.enabled;
-  const schedule = maybeBuildSchedule(input);
+  const schedule = maybeBuildSchedule(input, true);
   if (schedule !== undefined) patch.schedule = schedule;
-  const action = maybeBuildAction(input, resolvedArgs);
+  const action = maybeBuildAction(input, resolvedArgs, true);
   if (action !== undefined) patch.action = normalizeActionInput(action, options, false) as ActionInput;
   // Commander no longer supplies a hardcoded default for --overlap (see
   // commonJobOptions in cli/index.ts), so `undefined` unambiguously means
@@ -421,14 +421,34 @@ function validatePromptActionRuntimeArgs(action: Record<string, unknown>): void 
   if (message) throw new CrontickError('VALIDATION_ERROR', message);
 }
 
+function standaloneActionModifierFlags(input: JobPatchCliOptions): string[] {
+  const flags: string[] = [];
+  if (input.shell !== undefined) flags.push('--shell');
+  if (input.envFile !== undefined) flags.push(`--job-env-file ${JSON.stringify(input.envFile)}`);
+  if (input.timeout !== undefined) flags.push('--timeout');
+  return flags;
+}
+
+function formatCliFlagList(flags: readonly string[]): string {
+  if (flags.length === 1) return flags[0]!;
+  if (flags.length === 2) return `${flags[0]} and ${flags[1]}`;
+  return `${flags.slice(0, -1).join(', ')}, and ${flags.at(-1)}`;
+}
+
 function buildSchedule(input: JobCreateCliOptions): JobCreateInput['schedule'] {
   const schedule = maybeBuildSchedule(input);
   if (!schedule) throw new CrontickError('MISSING_ARG', 'Provide --cron, --every <sec>, or --at <iso>');
   return schedule;
 }
 
-function maybeBuildSchedule(input: JobPatchCliOptions): JobCreateInput['schedule'] | undefined {
+function maybeBuildSchedule(input: JobPatchCliOptions, strictUpdate = false): JobCreateInput['schedule'] | undefined {
   const count = [input.cron, input.every, input.at].filter((value) => value !== undefined).length;
+  if (strictUpdate && input.tz !== undefined && input.cron === undefined) {
+    throw new CrontickError(
+      'VALIDATION_ERROR',
+      '--tz requires --cron on update. Repeat the cron schedule with --cron <expr> when changing its timezone, or remove --tz.',
+    );
+  }
   if (count === 0) return undefined;
   if (count > 1) throw new CrontickError('VALIDATION_ERROR', 'Provide only one schedule source: --cron, --every, or --at');
   if (input.cron !== undefined) return { kind: 'cron', cron: input.cron, tz: input.tz };
@@ -443,12 +463,25 @@ function buildAction(input: JobCreateCliOptions, rawArgs: string[]): ActionInput
   return action;
 }
 
-function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[]): ActionInput | undefined {
+function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[], strictUpdate = false): ActionInput | undefined {
   const actionSourceCount = [input.script, input.exec, input.prompt, input.promptFile].filter(
     (value) => value !== undefined,
   ).length;
   if (actionSourceCount === 0) {
-    if (rawArgs.length > 0 || input.engine !== undefined || input.sessionId !== undefined || input.reuseSession) {
+    const modifierFlags = standaloneActionModifierFlags(input);
+    if (strictUpdate && modifierFlags.length > 0) {
+      throw new CrontickError(
+        'VALIDATION_ERROR',
+        `${formatCliFlagList(modifierFlags)} ${modifierFlags.length === 1 ? 'requires' : 'require'} an action source on update. Repeat the existing action with one of --script, --exec, --prompt, or --prompt-file, or remove ${formatCliFlagList(modifierFlags)}.`,
+      );
+    }
+    if (rawArgs.length > 0) {
+      throw new CrontickError(
+        'VALIDATION_ERROR',
+        'Arguments (via --arg or --) are valid only with --exec, --prompt, or --prompt-file. Remove them or use one of those action sources.',
+      );
+    }
+    if (input.engine !== undefined || input.sessionId !== undefined || input.reuseSession) {
       throw new CrontickError(
         'VALIDATION_ERROR',
         'Prompt engine/session flags are valid only with prompt mode. Use --prompt or --prompt-file, or remove --engine/--session-id/--reuse-session.',

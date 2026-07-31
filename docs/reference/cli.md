@@ -81,6 +81,17 @@ unchanged — there is no update-time default, so a partial update never silentl
 fields. See [job-schema.md](job-schema.md#update-vs-create-semantics) and
 [jobs.md](../concepts/jobs.md).
 
+On `crontick update`, `--shell`, `--job-env-file`, and `--timeout` are action modifiers, not
+standalone changes. Pass them together with the action source you are updating (`--script`,
+`--exec`, `--prompt`, or `--prompt-file`). If you pass one of those flags without an action source,
+crontick now fails with `VALIDATION_ERROR` and leaves the stored job unchanged instead of
+silently succeeding with no effect.
+
+On `crontick update`, `--tz` must be paired with `--cron`. To change a cron job's timezone, repeat
+the cron expression and timezone together (for example `crontick update job --cron "0 10 * * *"
+--tz UTC`). Passing `--tz` by itself, or with `--every` / `--at`, now fails loudly instead of
+being silently ignored.
+
 `--exec` takes `<cmd>` verbatim: it is never split on whitespace, so a command string containing
 a space (e.g. a path) is passed through unchanged as one argv element. Pass its arguments with
 repeatable `--arg <value>`, once per argument:
@@ -186,8 +197,10 @@ Accepts all options from `crontick new` plus:
 `crontick update` shares `crontick new`'s `--file`, `--job-env-file`, and read-surface redaction
 semantics. Its JSON result redacts secret-like `action.env` values with the same contract
 used by `crontick new`, `crontick list`, and `crontick get`. Missing or unreadable
-`--job-env-file` now fails before persistence with `ENV_FILE_ERROR`, so the stored job
-remains unchanged.
+`--job-env-file` still fails before persistence with `ENV_FILE_ERROR` when an action update is
+actually being applied, so the stored job remains unchanged. If `--job-env-file` is passed without
+an action source, the command now fails earlier with `VALIDATION_ERROR` instead of silently doing
+nothing.
 
 ```bash
 crontick update daily-backup --cron "30 3 * * *"

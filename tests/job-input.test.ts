@@ -457,6 +457,62 @@ function patchOpts(overrides: Partial<JobPatchCliOptions>): JobPatchCliOptions {
   return { ...overrides };
 }
 
+describe('buildJobPatchFromUpdateOptions - no update flag silently no-ops', () => {
+  it('makes every update flag either apply or fail loudly when passed alone', () => {
+    const dir = makeDir();
+    const promptFile = join(dir, 'prompt.txt');
+    const patchFile = join(dir, 'patch.json');
+    writeFileSync(promptFile, 'from file', 'utf-8');
+    writeFileSync(patchFile, JSON.stringify({ description: 'from file patch' }), 'utf-8');
+
+    const cases: Array<{
+      flag: string;
+      opts: JobPatchCliOptions;
+      options?: { cwd?: string };
+      assert?: (patch: JobPatchInput) => void;
+      error?: RegExp;
+    }> = [
+      { flag: '--cron', opts: patchOpts({ cron: '0 9 * * *' }), assert: (patch) => expect(patch.schedule).toEqual({ kind: 'cron', cron: '0 9 * * *' }) },
+      { flag: '--every', opts: patchOpts({ every: 60 }), assert: (patch) => expect(patch.schedule).toEqual({ kind: 'interval', everySec: 60 }) },
+      { flag: '--at', opts: patchOpts({ at: '2030-01-01T00:00:00.000Z' }), assert: (patch) => expect(patch.schedule).toEqual({ kind: 'one-shot', runAt: '2030-01-01T00:00:00.000Z' }) },
+      { flag: '--tz', opts: patchOpts({ tz: 'UTC' }), error: /--tz requires --cron on update/ },
+      { flag: '--script', opts: patchOpts({ script: 'echo hi' }), assert: (patch) => expect(patch.action).toMatchObject({ kind: 'script', script: 'echo hi' }) },
+      { flag: '--exec', opts: patchOpts({ exec: 'echo' }), assert: (patch) => expect(patch.action).toMatchObject({ kind: 'exec', command: 'echo', args: [] }) },
+      { flag: '--prompt', opts: patchOpts({ prompt: 'hello' }), assert: (patch) => expect(patch.action).toMatchObject({ kind: 'prompt', prompt: 'hello' }) },
+      { flag: '--prompt-file', opts: patchOpts({ promptFile }), assert: (patch) => expect(patch.action).toMatchObject({ kind: 'prompt', prompt: 'from file' }) },
+      { flag: '--arg', opts: patchOpts({ args: ['x'] }), error: /Arguments \(via --arg or --\) are valid only/ },
+      { flag: '--', opts: patchOpts({ rawArgs: ['x'] }), error: /Arguments \(via --arg or --\) are valid only/ },
+      { flag: '--engine', opts: patchOpts({ engine: 'copilot' }), error: /Prompt engine\/session flags are valid only with prompt mode/ },
+      { flag: '--session-id', opts: patchOpts({ sessionId: 'sess-12345678' }), error: /Prompt engine\/session flags are valid only with prompt mode/ },
+      { flag: '--reuse-session', opts: patchOpts({ reuseSession: true }), error: /Prompt engine\/session flags are valid only with prompt mode/ },
+      { flag: '--file', opts: patchOpts({ file: 'patch.json' }), options: { cwd: dir }, assert: (patch) => expect(patch.description).toBe('from file patch') },
+      { flag: '--shell', opts: patchOpts({ shell: 'pwsh' }), error: /--shell requires an action source on update/ },
+      { flag: '--job-env-file', opts: patchOpts({ envFile: join(dir, 'vars.env') }), error: /--job-env-file .* requires an action source on update/ },
+      { flag: '--timeout', opts: patchOpts({ timeout: 30 }), error: /--timeout requires an action source on update/ },
+      { flag: '--overlap', opts: patchOpts({ overlap: 'queue' }), assert: (patch) => expect(patch.overlap).toBe('queue') },
+      { flag: '--retry', opts: patchOpts({ retry: 3 }), assert: (patch) => expect(patch.retry).toEqual({ max: 3, backoffSec: 30 }) },
+      { flag: '--desc', opts: patchOpts({ desc: 'updated' }), assert: (patch) => expect(patch.description).toBe('updated') },
+      { flag: '--enable', opts: patchOpts({ enabled: true }), assert: (patch) => expect(patch.enabled).toBe(true) },
+      { flag: '--disable', opts: patchOpts({ enabled: false }), assert: (patch) => expect(patch.enabled).toBe(false) },
+    ];
+
+    for (const testCase of cases) {
+      if (testCase.error) {
+        expect(() => buildJobPatchFromUpdateOptions(testCase.opts, testCase.options)).toThrow(testCase.error);
+        continue;
+      }
+      const patch = buildJobPatchFromUpdateOptions(testCase.opts, testCase.options);
+      expect(patch).not.toEqual({});
+      testCase.assert?.(patch);
+    }
+  });
+
+  it('rejects --tz on non-cron update schedules instead of silently dropping it', () => {
+    expect(() => buildJobPatchFromUpdateOptions(patchOpts({ every: 60, tz: 'UTC' }))).toThrow(/--tz requires --cron on update/);
+    expect(() => buildJobPatchFromUpdateOptions(patchOpts({ at: '2030-01-01T00:00:00.000Z', tz: 'UTC' }))).toThrow(/--tz requires --cron on update/);
+  });
+});
+
 function existingJob(action: unknown, overlap: Job['overlap'] = 'skip'): Job {
   const job = normalizeJobInput(baseJob(action));
   return { ...job, overlap };
@@ -629,3 +685,4 @@ describe('normalizeJobPatch — prompt engine preservation and kind-change defau
     expect(result.action).toMatchObject({ kind: 'prompt', prompt: 'hello', engine: 'copilot' });
   });
 });
+
