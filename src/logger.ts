@@ -79,6 +79,7 @@ const MAX_PRIVATE_KEY_MARKER_LABEL_LENGTH = 40;
 const MAX_SECRET_ASSIGNMENT_CARRY = 256;
 const MAX_AWS_ACCESS_KEY_PAIR_GAP = 12;
 const MAX_AWS_ACCESS_KEY_PAIR_CARRY = 128;
+const MIN_AWS_SECRET_ACCESS_KEY_PARTIAL_CARRY_LENGTH = 16;
 
 const SENSITIVE_KEY_SUFFIXES: ReadonlyArray<ReadonlyArray<string>> = [
   ['token'],
@@ -197,6 +198,16 @@ function isAwsSecretAccessKeyCandidate(value: string): boolean {
     && !/^[0-9a-f]{40}$/i.test(value);
 }
 
+function isPlausiblePartialAwsSecretAccessKeyCandidate(value: string): boolean {
+  return value.length >= MIN_AWS_SECRET_ACCESS_KEY_PARTIAL_CARRY_LENGTH
+    && value.length < 40
+    && AWS_SECRET_ACCESS_KEY_CANDIDATE_CHARS_PATTERN.test(value)
+    && /[A-Z]/.test(value)
+    && /[a-z]/.test(value)
+    && /[0-9/+=]/.test(value)
+    && !/^[0-9a-f]+$/i.test(value);
+}
+
 function hasNearbyAwsAccessKeyId(line: string, candidateStart: number): boolean {
   AWS_ACCESS_KEY_ID_PATTERN.lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -248,7 +259,7 @@ function redactIncompleteAwsAccessKeyPairCarry(carry: string): string {
 
   if (gap.length > 0 && gap.length <= MAX_AWS_ACCESS_KEY_PAIR_GAP && AWS_PAIR_SEPARATOR_PATTERN.test(gap)) {
     if (candidatePrefix.length === 0) return `${REDACTED}${gap}`;
-    if (candidatePrefix.length < 40 && AWS_SECRET_ACCESS_KEY_CANDIDATE_CHARS_PATTERN.test(candidatePrefix)) {
+    if (isPlausiblePartialAwsSecretAccessKeyCandidate(candidatePrefix)) {
       return `${REDACTED}${gap}${REDACTED}`;
     }
   }

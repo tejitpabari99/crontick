@@ -230,6 +230,24 @@ describe('RED-003 logger must-redact corpus', () => {
     expect(output).not.toContain('wJalrXUtnFEMI/K7MD');
   });
 
+  it('preserves benign trailing tokens after aws access key ids at stream flush', () => {
+    const redactor = createStreamingTextRedactor();
+    const output = redactor.write(`${AWS_ACCESS_KEY_ID} token`) + redactor.flush();
+
+    expect(output).toBe('[REDACTED] token');
+    expect(output).toContain('token');
+  });
+
+  it('still redacts nearby aws secrets split across streaming writes', () => {
+    const redactor = createStreamingTextRedactor();
+    const output = redactor.write(`${AWS_ACCESS_KEY_ID} `)
+      + redactor.write(AWS_SECRET_ACCESS_KEY)
+      + redactor.flush();
+
+    expect(output).toBe('[REDACTED] [REDACTED]');
+    expect(output).not.toContain(AWS_SECRET_ACCESS_KEY);
+  });
+
   it('flushes long benign -----BEGIN lines instead of carrying them indefinitely', () => {
     const line = `-----BEGIN ${'A'.repeat(8_192)}
 trailer`;
