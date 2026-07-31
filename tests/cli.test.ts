@@ -673,6 +673,24 @@ describe('CLI e2e with daemon', () => {
       id: jobId,
       action: { env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
     });
+
+    result = cli(['--json', 'disable', jobId], env());
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain(updateSecret);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      id: jobId,
+      enabled: false,
+      action: { env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
+    });
+
+    result = cli(['--json', 'enable', jobId], env());
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain(updateSecret);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      id: jobId,
+      enabled: true,
+      action: { env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
+    });
   });
 
   it('crontick update changes a job through the client/core path', () => {

@@ -631,6 +631,22 @@ describe('CTD-003 shared secret redaction', () => {
         NO_PASSWORD: BENIGN_40_CHAR,
       });
 
+      const disabled = await fixture.client.disableJob(jobId);
+      expect(JSON.stringify(disabled)).not.toContain(AWS_SECRET_ACCESS_KEY);
+      expect(disabled.enabled).toBe(false);
+      expect((disabled.action as { env?: Record<string, string> }).env).toMatchObject({
+        AWS_SECRET_ACCESS_KEY: '[REDACTED]',
+        NO_PASSWORD: BENIGN_40_CHAR,
+      });
+
+      const reenabled = await fixture.client.enableJob(jobId);
+      expect(JSON.stringify(reenabled)).not.toContain(AWS_SECRET_ACCESS_KEY);
+      expect(reenabled.enabled).toBe(true);
+      expect((reenabled.action as { env?: Record<string, string> }).env).toMatchObject({
+        AWS_SECRET_ACCESS_KEY: '[REDACTED]',
+        NO_PASSWORD: BENIGN_40_CHAR,
+      });
+
       const refetched = await fixture.client.getJob(jobId);
       expect(JSON.stringify(refetched)).not.toContain(AWS_SECRET_ACCESS_KEY);
       expect((refetched.action as { env?: Record<string, string> }).env).toMatchObject({

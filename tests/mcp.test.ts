@@ -746,6 +746,24 @@ describe('MCP server — full contract', () => {
       id: jobId,
       action: { env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
     });
+
+    result = await callTool(client, 'crontick_job_disable', { id: jobId });
+    expect(result.isError).toBe(false);
+    expect(JSON.stringify(result.json)).not.toContain(updateSecret);
+    expect(result.json).toMatchObject({
+      id: jobId,
+      enabled: false,
+      action: { env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
+    });
+
+    result = await callTool(client, 'crontick_job_enable', { id: jobId });
+    expect(result.isError).toBe(false);
+    expect(JSON.stringify(result.json)).not.toContain(updateSecret);
+    expect(result.json).toMatchObject({
+      id: jobId,
+      enabled: true,
+      action: { env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
+    });
   });
 
   it('crontick_job_list returns the created job', async () => {

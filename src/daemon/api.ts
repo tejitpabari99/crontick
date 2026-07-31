@@ -170,7 +170,7 @@ async function handleRequest(
         ctx.scheduler.schedule(updated);
         // L2: re-enabling starts a fresh watermark, same reasoning as create/update.
         ctx.store.recordTick(id);
-        return sendJson(res, 200, updated);
+        return sendJson(res, 200, redactValue(updated));
       }
 
       if (method === 'POST' && sub === '/disable') {
@@ -179,7 +179,7 @@ async function handleRequest(
         const updated = { ...job, enabled: false };
         ctx.store.upsertJob(updated);
         ctx.scheduler.unschedule(id);
-        return sendJson(res, 200, updated);
+        return sendJson(res, 200, redactValue(updated));
       }
 
       if (method === 'POST' && sub === '/run') {
