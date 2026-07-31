@@ -115,6 +115,10 @@ describe('CTD-004 create/update schedule atomicity', () => {
       const listed = await apiCall(port, 'GET', '/api/jobs');
       expect(listed.status).toBe(200);
       expect(listed.data).toEqual([]);
+
+      const exported = await apiCall(port, 'GET', '/api/export');
+      expect(exported.status).toBe(200);
+      expect(exported.data).toMatchObject({ jobs: [] });
     } finally {
       await stopServer(server);
       store.close();
@@ -226,6 +230,10 @@ describe('CTD-004 create/update schedule atomicity', () => {
       const fetched = await apiCall(port, 'GET', '/api/jobs/missing-env-update-job');
       expect(fetched.status).toBe(200);
       expect(fetched.data).toEqual(original);
+
+      const exported = await apiCall(port, 'GET', '/api/export');
+      expect(exported.status).toBe(200);
+      expect(exported.data).toMatchObject({ jobs: [original] });
     } finally {
       await stopServer(server);
       store.close();

@@ -916,6 +916,110 @@ describe('CLI e2e with daemon', () => {
     expect(data.runs).toBeUndefined();
   });
 
+
+  it('crontick update rejects a missing --job-env-file before mutating the job', () => {
+    const created = cli(['--json', 'new', 'cli-missing-env-update-job', '--cron', '0 9 * * *', '--script', 'echo before'], env());
+    expect(created.status, created.stderr).toBe(0);
+
+    const missingEnvFile = join(dir, 'cli-missing-update.env');
+    const updated = cli([
+      '--json', 'update', 'cli-missing-env-update-job',
+      '--script', 'echo after', '--job-env-file', missingEnvFile,
+    ], env());
+    expect(updated.status, updated.stderr).toBe(1);
+    const payload = JSON.parse(updated.stderr) as { code: string; message: string };
+    expect(payload.code).toBe('ENV_FILE_ERROR');
+    expect(payload.message).toContain(missingEnvFile);
+
+    const fetched = cli(['--json', 'get', 'cli-missing-env-update-job'], env());
+    expect(fetched.status, fetched.stderr).toBe(0);
+    expect(JSON.parse(fetched.stdout)).toMatchObject({
+      id: 'cli-missing-env-update-job',
+      action: { kind: 'script', script: 'echo before' },
+    });
+
+    const removed = cli(['--json', 'delete', 'cli-missing-env-update-job'], env());
+    expect(removed.status, removed.stderr).toBe(0);
+  });
+
+  it('crontick new --file accepts a BOM-prefixed JSON file and rejects malformed JSON without persisting a job', () => {
+    const createFile = join(dir, 'new-file-bom.json');
+    writeFileSync(createFile, `\uFEFF${JSON.stringify({
+      id: 'cli-file-create-job',
+      schedule: { kind: 'cron', cron: '0 12 * * *' },
+      action: { kind: 'exec', command: 'echo', args: ['bom-create'] },
+    }, null, 2)}`, 'utf-8');
+
+    const created = cli(['--json', 'new', 'ignored-cli-file-id', '--file', createFile], env());
+    expect(created.status, created.stderr).toBe(0);
+
+    const fetched = cli(['--json', 'get', 'cli-file-create-job'], env());
+    expect(fetched.status, fetched.stderr).toBe(0);
+    expect(JSON.parse(fetched.stdout)).toMatchObject({
+      id: 'cli-file-create-job',
+      action: { kind: 'exec', command: 'echo', args: ['bom-create'] },
+    });
+
+    const before = cli(['--json', 'list'], env());
+    expect(before.status, before.stderr).toBe(0);
+    const beforeCount = (JSON.parse(before.stdout) as Array<unknown>).length;
+
+    const badFile = join(dir, 'new-file-bad.json');
+    writeFileSync(badFile, '{ nope', 'utf-8');
+    const badCreate = cli(['new', 'ignored-cli-file-id', '--file', badFile], env());
+    expect(badCreate.status).not.toBe(0);
+    expect(badCreate.stderr).toContain(badFile);
+    expect(badCreate.stderr).toMatch(/line \d+ column \d+ \(position \d+\)/);
+    expect(badCreate.stderr).toContain('expected a JSON object matching the crontick job schema');
+    expect(badCreate.stderr).not.toContain('SyntaxError');
+
+    const after = cli(['--json', 'list'], env());
+    expect(after.status, after.stderr).toBe(0);
+    expect((JSON.parse(after.stdout) as Array<unknown>).length).toBe(beforeCount);
+
+    const removed = cli(['--json', 'delete', 'cli-file-create-job'], env());
+    expect(removed.status, removed.stderr).toBe(0);
+  });
+
+  it('crontick update --file accepts a BOM-prefixed patch and rejects malformed JSON without mutating the job', () => {
+    const created = cli([
+      '--json', 'new', 'cli-file-update-job', '--cron', '0 12 * * *', '--exec', 'echo', '--arg', 'before',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+
+    const patchFile = join(dir, 'update-file-bom.json');
+    writeFileSync(patchFile, `\uFEFF${JSON.stringify({
+      action: { kind: 'exec', command: 'echo', args: ['bom-update'] },
+    }, null, 2)}`, 'utf-8');
+
+    const updated = cli(['--json', 'update', 'cli-file-update-job', '--file', patchFile], env());
+    expect(updated.status, updated.stderr).toBe(0);
+
+    let fetched = cli(['--json', 'get', 'cli-file-update-job'], env());
+    expect(fetched.status, fetched.stderr).toBe(0);
+    const beforeBad = JSON.parse(fetched.stdout);
+    expect(beforeBad).toMatchObject({
+      id: 'cli-file-update-job',
+      action: { kind: 'exec', command: 'echo', args: ['bom-update'] },
+    });
+
+    const badFile = join(dir, 'update-file-bad.json');
+    writeFileSync(badFile, '{ nope', 'utf-8');
+    const badUpdate = cli(['update', 'cli-file-update-job', '--file', badFile], env());
+    expect(badUpdate.status).not.toBe(0);
+    expect(badUpdate.stderr).toContain(badFile);
+    expect(badUpdate.stderr).toMatch(/line \d+ column \d+ \(position \d+\)/);
+    expect(badUpdate.stderr).toContain('expected a JSON object matching the crontick job patch schema');
+    expect(badUpdate.stderr).not.toContain('SyntaxError');
+
+    fetched = cli(['--json', 'get', 'cli-file-update-job'], env());
+    expect(fetched.status, fetched.stderr).toBe(0);
+    expect(JSON.parse(fetched.stdout)).toEqual(beforeBad);
+
+    const removed = cli(['--json', 'delete', 'cli-file-update-job'], env());
+    expect(removed.status, removed.stderr).toBe(0);
+  });
+
   it('crontick import accepts a BOM-prefixed JSON file', () => {
     const importFile = join(dir, 'import-bom.json');
     writeFileSync(importFile, `\uFEFF${JSON.stringify({

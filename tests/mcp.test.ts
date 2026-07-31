@@ -320,6 +320,38 @@ describe('MCP server — full contract', () => {
     expect((result.json as { error: string }).error).toContain(missingEnvFile);
   });
 
+
+  it('crontick_job_update preserves the previous job when env-file preflight fails', async () => {
+    const created = await callTool(client, 'crontick_job_create', {
+      id: 'mcp-missing-env-update-job',
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: { kind: 'script', script: 'echo before' },
+    });
+    expect(created.isError).toBe(false);
+
+    const missingEnvFile = join(dir, 'missing-mcp-update.env');
+    const result = await callTool(client, 'crontick_job_update', {
+      id: 'mcp-missing-env-update-job',
+      action: {
+        kind: 'exec',
+        command: process.execPath,
+        args: ['-e', 'process.exit(0)'],
+        cwd: dir,
+        envFile: 'missing-mcp-update.env',
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect((result.json as { error: string }).error).toContain('Failed to load envFile');
+    expect((result.json as { error: string }).error).toContain(missingEnvFile);
+
+    const fetched = await callTool(client, 'crontick_job_get', { id: 'mcp-missing-env-update-job' });
+    expect(fetched.isError).toBe(false);
+    expect(fetched.json).toMatchObject({
+      id: 'mcp-missing-env-update-job',
+      action: { kind: 'script', script: 'echo before' },
+    });
+  });
+
   it('crontick_job_update merges a partial patch onto the existing definition rather than replacing it', async () => {
     const created = await callTool(client, 'crontick_job_create', {
       id: 'mcp-merge-job',

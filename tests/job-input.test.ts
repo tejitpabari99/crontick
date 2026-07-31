@@ -13,6 +13,8 @@ import {
   type JobPatchCliOptions,
   type JobPatchInput,
 } from '../src/job-input.js';
+import { CrontickError } from '../src/errors.js';
+import { readJsonFile } from '../src/json-file.js';
 import { JobSchema, type Job } from '../src/schemas/job.js';
 
 const scratchRoot = resolve('.crontick', 'job-input-tests');
@@ -50,6 +52,76 @@ function expectJsonFileValidationError(fn: () => unknown, filePath: string, expe
     expect(message).toContain(expectedShape);
   }
 }
+
+describe('readJsonFile', () => {
+  it('accepts a BOM-prefixed JSON file', () => {
+    const dir = makeDir();
+    const filePath = join(dir, 'helper-bom.json');
+    writeFileSync(filePath, `\uFEFF${JSON.stringify({ id: 'helper-bom-job' }, null, 2)}`, 'utf-8');
+
+    expect(readJsonFile(filePath, {
+      errorCode: 'VALIDATION_ERROR',
+      subject: 'job definition file',
+      expectedShape: 'expected a JSON object matching the crontick job schema',
+    })).toMatchObject({ id: 'helper-bom-job' });
+  });
+
+  it('reports malformed JSON with caller-specific expected shapes', () => {
+    const dir = makeDir();
+    const cases = [
+      {
+        fileName: 'bad-job.json',
+        options: {
+          errorCode: 'VALIDATION_ERROR',
+          subject: 'job definition file',
+          expectedShape: 'expected a JSON object matching the crontick job schema',
+        },
+      },
+      {
+        fileName: 'bad-import.json',
+        options: {
+          errorCode: 'VALIDATION_ERROR',
+          subject: 'import file',
+          expectedShape: 'expected either a JSON array of jobs or an export object with jobs and optional runs',
+        },
+      },
+      {
+        fileName: 'bad-config.json',
+        options: {
+          errorCode: 'CONFIG_READ_ERROR',
+          subject: 'config file',
+          expectedShape: 'expected a JSON object matching the crontick config schema',
+        },
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const filePath = join(dir, testCase.fileName);
+      writeFileSync(filePath, '{ nope', 'utf-8');
+
+      try {
+        readJsonFile(filePath, testCase.options);
+        throw new Error(`Expected readJsonFile to fail for ${testCase.fileName}`);
+      } catch (err) {
+        expect(err).toBeInstanceOf(CrontickError);
+        expect(err).toMatchObject({
+          code: testCase.options.errorCode,
+          details: expect.objectContaining({
+            path: filePath,
+            expectedShape: testCase.options.expectedShape,
+            position: expect.any(Number),
+            line: expect.any(Number),
+            column: expect.any(Number),
+          }),
+        });
+        const message = (err as Error).message;
+        expect(message).toContain(filePath);
+        expect(message).toMatch(/line \d+ column \d+ \(position \d+\)/);
+        expect(message).toContain(testCase.options.expectedShape);
+      }
+    }
+  });
+});
 
 describe('normalizeJobInput', () => {
   it('normalizes prompt text jobs with defaults', () => {

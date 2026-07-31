@@ -11,6 +11,7 @@ import {
   loadConfig,
   removeConfigValue,
   setConfigValue,
+  readConfigFile,
   validateConfigFile,
   writeConfigFile,
 } from '../src/config.js';
@@ -37,6 +38,21 @@ function promptJob(action: Record<string, unknown> = {}): JobCreateInput {
     schedule: { kind: 'cron', cron: '0 9 * * *' },
     action: { kind: 'prompt', prompt: 'hello', ...action },
   } as JobCreateInput;
+}
+
+function expectConfigJsonError(fn: () => unknown, path: string): void {
+  try {
+    fn();
+    throw new Error('Expected config read failure');
+  } catch (err) {
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(SyntaxError);
+    const message = (err as Error).message;
+    expect(message).toContain(path);
+    expect(message).toMatch(/line \d+ column \d+ \(position \d+\)/);
+    expect(message).toContain('expected a JSON object matching the crontick config schema');
+    expect(message).toContain('Fix the JSON syntax');
+  }
 }
 
 afterEach(() => {
@@ -79,6 +95,10 @@ describe('crontick config core', () => {
       defaultEngine: 'agency',
       engines: { agency: { command: 'agency', args: [], env: {} } },
     });
+    expect(readConfigFile({ env })).toMatchObject({
+      defaultEngine: 'agency',
+      engines: { agency: { command: 'agency', args: [], env: {} } },
+    });
     expect(validateConfigFile({ env })).toMatchObject({ ok: true, path, problems: [] });
   });
 
@@ -86,18 +106,8 @@ describe('crontick config core', () => {
     const { env, path } = makeHome();
     writeFileSync(path, '{ nope', 'utf-8');
 
-    try {
-      loadConfig({ env });
-      throw new Error('Expected config read failure');
-    } catch (err) {
-      expect(err).toBeInstanceOf(Error);
-      expect(err).not.toBeInstanceOf(SyntaxError);
-      const message = (err as Error).message;
-      expect(message).toContain(path);
-      expect(message).toMatch(/line \d+ column \d+ \(position \d+\)/);
-      expect(message).toContain('expected a JSON object matching the crontick config schema');
-      expect(message).toContain('Fix the JSON syntax');
-    }
+    expectConfigJsonError(() => loadConfig({ env }), path);
+    expectConfigJsonError(() => readConfigFile({ env }), path);
 
     const validation = validateConfigFile({ env });
     expect(validation).toMatchObject({ ok: false, path });

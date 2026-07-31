@@ -311,6 +311,33 @@ process.stdout.write(JSON.stringify({ id: created.id }));
     await expect(client.listJobs()).resolves.toEqual([]);
   }, 15_000);
 
+
+  it('surfaces ENV_FILE_ERROR from updateJob without mutating the stored job', async () => {
+    const home = makeHome();
+    const client = createClient({ daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 15_000 });
+    const original = await client.createJob({
+      id: 'client-missing-env-update-job',
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: { kind: 'exec', command: 'echo', args: ['before'] },
+    });
+    const missingEnvFile = join(home, 'missing-client-update.env');
+
+    await expect(client.updateJob('client-missing-env-update-job', {
+      action: {
+        kind: 'exec',
+        command: process.execPath,
+        args: ['-e', 'process.exit(0)'],
+        cwd: home,
+        envFile: 'missing-client-update.env',
+      },
+    })).rejects.toMatchObject({
+      code: 'ENV_FILE_ERROR',
+      message: expect.stringContaining(missingEnvFile),
+    });
+    await expect(client.getJob('client-missing-env-update-job')).resolves.toEqual(original);
+    await expect(client.listJobs()).resolves.toEqual([original]);
+  }, 15_000);
+
   it('supports common CRUD and helper methods through the HTTP API', async () => {
     const home = makeHome();
     const client = createClient({ daemonScript: writeFakeApiDaemon(home), startupTimeoutMs: 5_000 });

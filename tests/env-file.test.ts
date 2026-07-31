@@ -119,4 +119,31 @@ describe('readEnvFileForAction', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+
+  it('reports the resolved path when the env file path is unreadable', () => {
+    const dir = makeDir('unreadable');
+    const envFilePath = join(dir, 'env-dir');
+    mkdirSync(envFilePath, { recursive: true });
+
+    try {
+      const error = (() => {
+        try {
+          readEnvFileForAction({ kind: 'exec', cwd: dir, envFile: 'env-dir' });
+          return undefined;
+        } catch (err) {
+          return err;
+        }
+      })();
+
+      expect(error).toBeInstanceOf(CrontickError);
+      expect(error).toMatchObject({
+        code: 'ENV_FILE_ERROR',
+        message: expect.stringContaining(envFilePath),
+        details: expect.objectContaining({ path: envFilePath }),
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
