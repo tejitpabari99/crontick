@@ -21,9 +21,14 @@ export async function pollUntilTerminal(cliDriver, jobId, opts = {}) {
     if (r.exitCode === 0) {
       let runs;
       try { runs = JSON.parse(r.stdout || '[]'); } catch { runs = []; }
-      if (Array.isArray(runs) && runs.length > 0 && !['running', 'queued'].includes(runs[0].status)) {
-        lastRun = runs[0];
-        break;
+      if (Array.isArray(runs) && runs.length > 0) {
+        // Select the most recent run by startedAt (epoch ms); fall back to index 0 if absent.
+        const newest = runs.reduce((best, r) =>
+          (r.startedAt ?? 0) > (best.startedAt ?? 0) ? r : best, runs[0]);
+        if (!['running', 'queued'].includes(newest.status)) {
+          lastRun = newest;
+          break;
+        }
       }
     }
     if (Date.now() < deadline) await sleep(intervalMs);

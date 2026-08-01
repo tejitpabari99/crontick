@@ -158,6 +158,7 @@ async function runStep(step, driverCtx, vars, bestEffort = false) {
       return result;
     }
     if (surface === 'raw') {
+      assertSafeHome(driverCtx.testHome, driverCtx.scratchDir);
       const isWindows = process.platform === 'win32';
       const rawCmd = isWindows && expanded.command === 'npm' ? 'npm.cmd' : expanded.command;
       const result = await runWithTimeout(
@@ -165,8 +166,8 @@ async function runStep(step, driverCtx, vars, bestEffort = false) {
         expanded.args ?? [],
         {
           cwd: expanded.cwd ?? driverCtx.scratchDir,
-          env: { ...process.env },
-          shell: false,
+          env: { ...process.env, CRONTICK_HOME: driverCtx.testHome },
+          shell: isWindows && rawCmd.endsWith('.cmd'),
         },
         30_000,
       );
@@ -361,12 +362,17 @@ async function main() {
           };
           invocationResults.set(ref, result);
         } else if (surface === 'raw') {
+          assertSafeHome(testHome, scratchDir);
           const isWindows = process.platform === 'win32';
           const rawCmd = isWindows && expandedInv.command === 'npm' ? 'npm.cmd' : expandedInv.command;
           result = await runWithTimeout(
             rawCmd,
             expandedInv.args ?? [],
-            { cwd: expandedInv.cwd ?? scratchDir, env: { ...process.env }, shell: false },
+            {
+              cwd: expandedInv.cwd ?? scratchDir,
+              env: { ...process.env, CRONTICK_HOME: testHome },
+              shell: isWindows && rawCmd.endsWith('.cmd'),
+            },
             30_000,
           );
           invocationLogs[ref] = { stdout: result.stdout ?? '', stderr: result.stderr ?? '' };

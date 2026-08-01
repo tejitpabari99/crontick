@@ -74,5 +74,11 @@ export async function mcpCall(
     );
   }
 
-  return JSON.parse(responseLine);
+  const parsed = JSON.parse(responseLine);
+  if (parsed.error !== undefined) {
+    throw new Error(
+      `MCP tool "${toolName}" returned JSON-RPC error: code=${parsed.error.code}, message=${parsed.error.message}`,
+    );
+  }
+  return parsed;
 }
