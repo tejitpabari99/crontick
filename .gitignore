@@ -17,6 +17,9 @@ npm-debug.log*
 .verify-package-scratch/
 *.tgz
 
+# scratch artifacts from tests/integration/run-harness.mjs
+.e2e-scratch/
+
 # ad hoc scratch dumps (e.g. Get-Process snapshots) accidentally left at the
 # repo root during manual debugging -- never commit these; use a directory
 # outside the repo instead

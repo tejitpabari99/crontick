@@ -21,6 +21,27 @@ export default tseslint.config(
       globals: globals.node,
     },
   },
+  // Integration harness: plain Node.js ESM (.mjs) and CJS (.cjs) files
+  {
+    files: ['tests/integration/**/*.mjs'],
+    languageOptions: {
+      globals: globals.node,
+      sourceType: 'module',
+    },
+    rules: {
+      'no-console': 'off',
+    },
+  },
+  {
+    files: ['tests/integration/**/*.cjs'],
+    languageOptions: {
+      globals: globals.node,
+      sourceType: 'commonjs',
+    },
+    rules: {
+      'no-console': 'off',
+    },
+  },
   {
     files: ['src/dashboard/**/*.js'],
     languageOptions: {

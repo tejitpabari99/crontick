@@ -50,6 +50,8 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "e2e": "node tests/integration/run-harness.mjs",
+    "e2e:smoke": "node tests/integration/run-harness.mjs --tier smoke",
     "validate": "npm run lint && npm run typecheck && npm run typecheck:examples && npm test && npm run build && npm run typecheck:examples:dist",
     "release": "changeset publish",
     "prepublishOnly": "npm run validate"
