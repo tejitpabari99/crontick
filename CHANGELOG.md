@@ -9,7 +9,7 @@
 - Removed superseded historical manual-test campaign docs.
 - Added `docs/e2e-testing.md` documenting the E2E harness.
 - Security: `Authorization: Bearer <token>` values are now fully redacted on the streaming/tail run-log read paths (CTD-025), closing a plaintext-token leak.
-- Fix: single-field action patches (e.g. `shell`, `envFile`, or `timeout` alone) are now accepted on the library/HTTP and MCP surfaces, matching the CLI (CTD-026); modifier-only action patches (no primary source) are rejected on the MCP surface with a clear error.
+- Fix: single-field action patches (e.g. `shell`, `envFile`, or `timeout` alone) are now accepted on the library/HTTP surface (CTD-026); modifier-only action patches (no prompt/script/command source) are intentionally rejected on the CLI and MCP surfaces with a clear, fail-loud error — the CLI has always enforced this; MCP now mirrors the same guard so agents receive an actionable error rather than silently mutating a job.
 - Docs: clarified the two envFile-related error classes (`ENV_FILE_ERROR` vs update-time `VALIDATION_ERROR`) in `docs/reference/errors.md`.
 
 ## 0.1.1

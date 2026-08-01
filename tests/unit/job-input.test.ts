@@ -748,3 +748,43 @@ describe('normalizeJobPatch — single-field action patch (CTD-026)', () => {
   });
 });
 
+// ── normalizeJobPatch — B-2 sessionId+reuseSession invariant ─────────────────
+describe('normalizeJobPatch — sessionId-only prompt patch clears reuseSession (B-2 regression)', () => {
+  it('clears reuseSession when a sessionId-only patch is applied to a job with reuseSession=true', () => {
+    const notices: string[] = [];
+    const existing = existingJob({ kind: 'prompt', prompt: 'do the thing', args: [], reuseSession: true });
+    // Patch carries only sessionId, no prompt/promptFile — exercises the early-return path
+    const patch = mcpPatch({ action: { kind: 'prompt', sessionId: 'sess-12345678' } });
+    const result = normalizeJobPatch('job-1', existing, patch, { onNotice: (m) => notices.push(m) });
+    expect((result.action as Record<string, unknown>).reuseSession, 'reuseSession must be cleared').toBe(false);
+    expect((result.action as Record<string, unknown>).sessionId).toBe('sess-12345678');
+    expect(notices.join('\n')).toContain('reuseSession was ignored');
+  });
+
+  it('leaves reuseSession unchanged when sessionId is not in the patch', () => {
+    const existing = existingJob({ kind: 'prompt', prompt: 'do the thing', reuseSession: true });
+    const patch = mcpPatch({ action: { kind: 'prompt', timeoutSec: 30 } });
+    const result = normalizeJobPatch('job-1', existing, patch);
+    expect((result.action as Record<string, unknown>).reuseSession).toBe(true);
+  });
+});
+
+// ── normalizeJobPatch — C-1 args-only prompt patch validation ─────────────────
+// Decision: route args-only patches through validatePromptActionRuntimeArgs so
+// reserved-arg errors surface at patch time.
+describe('normalizeJobPatch — args-only prompt patch validation (C-1)', () => {
+  it('accepts a valid args-only prompt patch', () => {
+    const existing = existingJob({ kind: 'prompt', prompt: 'hello', args: [] });
+    const patch = mcpPatch({ action: { kind: 'prompt', args: ['--verbose'] } });
+    const result = normalizeJobPatch('job-1', existing, patch);
+    expect((result.action as Record<string, unknown>).args).toEqual(['--verbose']);
+  });
+
+  it('rejects reserved args in an args-only prompt patch at patch time', () => {
+    const existing = existingJob({ kind: 'prompt', prompt: 'hello', args: [] });
+    // --session-id is a reserved crontick arg that the runtime would reject
+    const patch = mcpPatch({ action: { kind: 'prompt', args: ['--session-id', 'x'] } });
+    expect(() => normalizeJobPatch('job-1', existing, patch)).toThrow();
+  });
+});
+

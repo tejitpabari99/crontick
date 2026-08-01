@@ -497,6 +497,32 @@ function findStreamingRedactionCarry(text: string): string {
   return carries.reduce((longest, carry) => (carry.length > longest.length ? carry : longest), '');
 }
 
+const MAX_BEARER_CARRY = 300;
+
+/**
+ * Returns a suffix of `text` that contains a partial-or-complete
+ * `Authorization: Bearer <token>` header ending the text (no newline after it).
+ * The suffix is carried forward so the next chunk can be combined with it before
+ * the pre-pass runs, preventing a cross-chunk token leak.
+ */
+function findBearerHeaderCarry(text: string): string {
+  const tail = text.slice(Math.max(0, text.length - MAX_BEARER_CARRY));
+  // Match "Authorization" followed by any non-newline characters to end-of-string.
+  // This covers: "Authorization" alone, partial "Bearer" keyword, full "Authorization: Bearer token".
+  const m = /(?<![A-Za-z0-9_])Authorization[^\n\r]*$/i.exec(tail);
+  if (m) return text.slice(text.length - tail.length + m.index);
+  // Also handle a chunk that ends mid-word within "Authorization" (e.g. "Authoriz").
+  const kw = 'authorization';
+  for (let len = Math.min(kw.length - 1, tail.length); len >= 2; len--) {
+    const pos = tail.length - len;
+    if (pos > 0 && /[A-Za-z0-9_]/.test(tail[pos - 1]!)) continue;
+    if (kw.startsWith(tail.slice(-len).toLowerCase())) {
+      return text.slice(-len);
+    }
+  }
+  return '';
+}
+
 function findNextMatch(pattern: RegExp, text: string, start = 0): TextMatch | undefined {
   pattern.lastIndex = start;
   const match = pattern.exec(text);
@@ -514,7 +540,23 @@ class PrivateKeyStreamingTextRedactor implements StreamingTextRedactor {
 
   write(chunk: string): string {
     if (chunk.length === 0) return '';
-    return this.process(`${this.carry}${chunk}`, false);
+    const combined = `${this.carry}${chunk}`;
+    // Bearer carry: before the pre-pass, detect a partial-or-complete bearer header ending
+    // the combined text. Strip it and hold it in this.carry so the next chunk combines with
+    // it before the pre-pass runs — preventing a cross-chunk token leak where the pre-pass
+    // redacts only the partial token visible in this chunk and the continuation leaks.
+    if (!this.insidePrivateKeyBlock && this.pendingSecretAssignmentQuote === undefined) {
+      const bearerCarry = findBearerHeaderCarry(combined);
+      if (bearerCarry) {
+        const safe = combined.slice(0, combined.length - bearerCarry.length);
+        const output = safe.length > 0 ? this.process(safe, false) : '';
+        // Append the bearer carry to any state-machine carry set by process(), so both
+        // portions are prepended to the next chunk.
+        this.carry = this.carry + bearerCarry;
+        return output;
+      }
+    }
+    return this.process(combined, false);
   }
 
   flush(): string {

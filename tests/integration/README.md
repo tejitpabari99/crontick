@@ -60,7 +60,7 @@ node tests/integration/run-harness.mjs --tier tier1 --dry-run
 | `--keep-home` | Skip teardown of per-test `CRONTICK_HOME` dirs (useful for debugging) |
 | `--fail-fast` | Stop after the first failure |
 | `--json` | Write machine-readable summary to stdout (in addition to the log file) |
-| `--build` | Run `npm run build` before packing (default: skip build, warn if `dist/` looks stale) |
+| `--build` | Run `npm run build` before packing **and force a fresh reinstall** (required when verifying source changes without a version bump) |
 | `--no-cleanup` | Skip global teardown; keep `.e2e-scratch/` intact; implies `--keep-home` |
 
 ### Stubbed for later (prints "not yet implemented" if used)
@@ -92,7 +92,10 @@ Every test gets a fresh, isolated `CRONTICK_HOME`:
 - **Safety guard:** before any process is spawned, `assertSafeHome(testHome, scratchDir)` asserts the home path is strictly inside `.e2e-scratch/`. If not, the test aborts immediately. Real user data (your actual `CRONTICK_HOME`) is **never touched**.
 - After each test's checks run (or fail), the harness: (1) runs any `cleanup` steps from the test definition; (2) kills the daemon (reads `daemon.pid`, sends SIGTERM then SIGKILL); (3) removes the per-test home.
 
-The installed crontick package itself (under `.e2e-scratch/node_modules/`) is reused across runs if the version matches — only a new `npm pack` + install is triggered when `package.json` version changes.
+The installed crontick package itself (under `.e2e-scratch/node_modules/`) is reused across runs
+if the version matches **and** `dist/` is not newer than the installed copy. **When verifying a
+source change that does not bump the version, always pass `--build`** so the suite exercises the
+actual changed code rather than a stale install. `--clean` also forces reinstall without rebuilding.
 
 `.e2e-scratch/` is gitignored and should never be committed.
 

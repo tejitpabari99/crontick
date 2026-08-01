@@ -1797,7 +1797,7 @@
     {
       "id": "CT-JOB-019",
       "seq": 690,
-      "title": "Single-field action patch (shell-only) accepted on API and MCP surfaces (CTD-026 regression)",
+      "title": "Single-field action patch: accepted on library/HTTP, rejected (fail-loud) on MCP (CTD-026)",
       "area": "job",
       "surface": ["api", "mcp"],
       "priority": "P1",
@@ -1840,12 +1840,7 @@
         {
           "type": "mcpToolResultJsonPath",
           "invocationRef": "update-mcp",
-          "params": { "jsonPath": "action.shell", "expectedValue": "pwsh" }
-        },
-        {
-          "type": "mcpToolResultJsonPath",
-          "invocationRef": "update-mcp",
-          "params": { "jsonPath": "action.script", "expectedValue": "echo original" }
+          "params": { "jsonPath": "isError", "expectedValue": true }
         }
       ],
       "cleanup": [

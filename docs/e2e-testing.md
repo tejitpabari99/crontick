@@ -26,8 +26,9 @@ and drives CLI, API, and MCP surfaces exactly as a user would. It never touches 
 ## Prerequisites
 
 - Node.js ≥ 22.5 (same requirement as the package itself).
-- No manual build step is required: by default the harness reuses a prior `dist/` build and warns
-  if it looks stale. Pass `--build` to trigger `npm run build` automatically before packing.
+- No manual build step is required: by default the harness reuses a prior `dist/` build. Pass
+  `--build` to trigger `npm run build` automatically before packing (required when verifying a
+  source change — see "Avoiding stale installs" below).
 
 ---
 
@@ -72,7 +73,7 @@ with appropriate flags pre-set.
 | `--keep-home` | Skip teardown of per-test `CRONTICK_HOME` dirs (useful for debugging) |
 | `--fail-fast` | Stop after the first failure |
 | `--json` | Write machine-readable summary to stdout (in addition to the log file) |
-| `--build` | Run `npm run build` before packing |
+| `--build` | Run `npm run build` before packing **and force a fresh reinstall** (busts the version-keyed reuse fast-path) |
 | `--no-cleanup` | Skip global teardown; keep `.e2e-scratch/` intact; implies `--keep-home` |
 
 ---
@@ -86,7 +87,10 @@ Each test runs in a fully isolated environment:
 - Safety guard: if the computed home path escapes `.e2e-scratch/`, the test aborts immediately.
   **Your real `CRONTICK_HOME` is never touched.**
 - The installed package (`.e2e-scratch/node_modules/`) is reused across runs when the version
-  matches; a fresh `npm pack` + install is only triggered when `package.json` version changes.
+  matches **and** `dist/` is not newer than the installed copy. **When verifying a source change
+  that does not bump the version, always pass `--build`** — this forces a fresh rebuild and
+  reinstall so the E2E suite exercises the actual changed code rather than a stale install.
+  `--clean` also forces reinstall without rebuilding.
 - `.e2e-scratch/` is gitignored and never committed.
 
 ---

@@ -385,8 +385,29 @@ function normalizeActionInput(action: ActionInput, options: NormalizeJobInputOpt
   const prompt = typeof action.prompt === 'string' ? action.prompt : undefined;
   const promptFile = typeof action.promptFile === 'string' ? action.promptFile : undefined;
   // On a patch (isCreate=false) with no prompt/promptFile, the source is preserved
-  // by mergeActionPatch — skip normalization and return the partial patch as-is.
-  if (!isCreate && prompt === undefined && promptFile === undefined) return action;
+  // by mergeActionPatch — skip the full normalization path that requires exactly one source.
+  // However, some invariants still apply to source-free patches: clear reuseSession when a
+  // sessionId is patched in (B-2 invariant), and validate args if present (C-1).
+  if (!isCreate && prompt === undefined && promptFile === undefined) {
+    let result = action as unknown as Record<string, unknown>;
+    if (typeof result['sessionId'] === 'string') {
+      // Always include reuseSession:false in the patch result so that mergeDefinedFields
+      // propagates it to the merged job even when the existing job has reuseSession:true
+      // (the invariant: a job cannot have both sessionId and reuseSession:true).
+      if (result['reuseSession'] !== false) {
+        options.onNotice?.(
+          'reuseSession was ignored because an explicit sessionId was provided; crontick will reuse the explicit session id.',
+        );
+        result = { ...result, reuseSession: false };
+      }
+    }
+    // Route args-only patches through runtime arg validation so reserved-arg / cmdline-length
+    // errors are caught at patch time rather than deferred to execution.
+    if (Array.isArray(result['args'])) {
+      validatePromptActionRuntimeArgs(result);
+    }
+    return result;
+  }
   if ((prompt ? 1 : 0) + (promptFile ? 1 : 0) !== 1) {
     throw new CrontickError(
       'VALIDATION_ERROR',

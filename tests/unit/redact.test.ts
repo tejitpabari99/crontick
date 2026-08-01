@@ -279,3 +279,46 @@ describe('SAFE-004 logger near-miss preservation', () => {
     expect(output).not.toContain('[REDACTED]');
   });
 });
+
+describe('CTD-025-B1 bearer token cross-chunk carry', () => {
+  // Regression: the pre-pass replaces "Authorization: Bearer <partial>" in chunk 1 but
+  // the token continuation in chunk 2 leaked because it had no context.  The bearer carry
+  // mechanism holds the partial header in this.carry so chunk 2 combines before the
+  // pre-pass sees it and the full token is redacted in one shot.
+
+  it('does not leak a bearer token split across two write() calls', () => {
+    const token = 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36';
+    const chunk1 = `Authorization: Bearer ${token.slice(0, 30)}`;
+    const chunk2 = `${token.slice(30)}\n`;
+
+    const redactor = createStreamingTextRedactor();
+    const output = redactor.write(chunk1) + redactor.write(chunk2) + redactor.flush();
+
+    expect(output, 'token continuation must not appear in plaintext').not.toContain(token.slice(30));
+    expect(output, 'full token must not appear in plaintext').not.toContain(token);
+    expect(output, 'output must contain a redaction marker').toContain('[REDACTED]');
+  });
+
+  it('fully redacts a bearer token even when "Authorization: Bea" is in chunk 1 and "rer token" is in chunk 2', () => {
+    const token = 'my-opaque-bearer-secret-9988';
+    const header = `Authorization: Bearer ${token}`;
+    const splitAt = 'Authorization: Bea'.length;
+    const chunk1 = header.slice(0, splitAt);
+    const chunk2 = `${header.slice(splitAt)}\n`;
+
+    const redactor = createStreamingTextRedactor();
+    const output = redactor.write(chunk1) + redactor.write(chunk2) + redactor.flush();
+
+    expect(output, 'token must not appear in plaintext').not.toContain(token);
+    expect(output, 'output must contain a redaction marker').toContain('[REDACTED]');
+  });
+
+  it('still redacts a single-chunk bearer header (no regression on non-split case)', () => {
+    const token = 'singleChunkTokenABC123';
+    const redactor = createStreamingTextRedactor();
+    const output = redactor.write(`Authorization: Bearer ${token}\n`) + redactor.flush();
+
+    expect(output).not.toContain(token);
+    expect(output).toContain('[REDACTED]');
+  });
+});

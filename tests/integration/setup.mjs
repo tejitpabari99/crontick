@@ -1,7 +1,7 @@
 // setup.mjs — build+pack+install orchestrator
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rmWithRetry, resolveInstalledBin, runWithTimeout } from './utils.mjs';
@@ -44,14 +44,25 @@ export async function setup({ build = false, clean = false } = {}) {
     execFileSync(npmCmd, ['run', 'build'], { cwd: repoRoot, stdio: 'inherit', shell: isWindows });
   }
 
-  // Install-reuse fast path
+  // Install-reuse fast path.
+  // Skip reuse when --build or --clean is set so a source change without a version bump
+  // is never silently exercised against a stale install (stale-install hazard).
   const installedPkgPath = join(scratchDir, 'node_modules', 'crontick', 'package.json');
   let needsInstall = true;
-  if (!clean && existsSync(installedPkgPath)) {
+  if (!clean && !build && existsSync(installedPkgPath)) {
     try {
       const installedPkg = JSON.parse(readFileSync(installedPkgPath, 'utf-8'));
       if (installedPkg.version === packageVersion) {
-        needsInstall = false;
+        // Additionally reinstall if dist/ is newer than the installed copy.
+        // A source change without a version bump would otherwise be skipped silently.
+        const distDir = join(repoRoot, 'dist');
+        if (existsSync(distDir)) {
+          const distMtime = statSync(distDir).mtimeMs;
+          const installedMtime = statSync(installedPkgPath).mtimeMs;
+          needsInstall = distMtime > installedMtime;
+        } else {
+          needsInstall = false;
+        }
       }
     } catch {
       // fall through to reinstall
