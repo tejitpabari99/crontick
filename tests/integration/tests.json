@@ -172,7 +172,7 @@
       "seq": 70,
       "title": "npm pack --dry-run includes only allowlisted files",
       "area": "install",
-      "surface": ["cli"],
+      "surface": ["raw"],
       "priority": "P1",
       "tier": "tier1",
       "slow": false,
@@ -180,9 +180,11 @@
       "knownDefect": null,
       "invocations": [
         {
-          "surface": "cli",
+          "surface": "raw",
           "ref": "pack",
-          "command": ["pack", "--dry-run", "--json"]
+          "command": "npm",
+          "args": ["pack", "--dry-run", "--json"],
+          "cwd": "${REPO_ROOT}"
         }
       ],
       "checks": [
@@ -304,17 +306,17 @@
         {
           "type": "stdoutJsonPathEquals",
           "invocationRef": "cli-status",
-          "params": { "jsonPath": "running", "expectedValue": true }
+          "params": { "jsonPath": "version", "expectedValue": "${PACKAGE_VERSION}" }
         },
         {
           "type": "apiResultJsonPathEquals",
           "invocationRef": "api-status",
-          "params": { "jsonPath": "running", "expectedValue": true }
+          "params": { "jsonPath": "version", "expectedValue": "${PACKAGE_VERSION}" }
         },
         {
           "type": "mcpToolResultJsonPath",
           "invocationRef": "mcp-status",
-          "params": { "jsonPath": "running", "expectedValue": true }
+          "params": { "jsonPath": "version", "expectedValue": "${PACKAGE_VERSION}" }
         },
         {
           "type": "crossSurfaceFieldEquals",
@@ -595,7 +597,7 @@
         {
           "surface": "api",
           "ref": "create",
-          "script": "const c = crontick.createClient(); return await c.createJob({ id: 'ct-script-002', schedule: { every: 3600 }, action: { kind: 'script', script: 'Set-Content -Path \"${SCRATCH_WORK}\\\\ct-script-002.txt\" -Value \"hello from api\"; exit 0', shell: 'auto' } });"
+          "script": "const c = crontick.createClient(); return await c.createJob({ id: 'ct-script-002', schedule: { kind: 'interval', everySec: 3600 }, action: { kind: 'script', script: 'Set-Content -Path \"${SCRATCH_WORK}\\\\ct-script-002.txt\" -Value \"hello from api\"; exit 0', shell: 'auto' } });"
         }
       ],
       "checks": [
@@ -628,7 +630,7 @@
           "tool": "crontick_job_create",
           "args": {
             "id": "ct-script-003",
-            "schedule": { "every": 3600 },
+            "schedule": { "kind": "interval", "everySec": 3600 },
             "action": { "kind": "script", "script": "exit 0", "shell": "auto" }
           }
         }
@@ -794,7 +796,7 @@
         {
           "surface": "api",
           "ref": "create",
-          "script": "const c = crontick.createClient(); return await c.createJob({ id: 'ct-exec-002', schedule: { every: 3600 }, action: { kind: 'exec', command: 'node', args: ['--version'] } });"
+          "script": "const c = crontick.createClient(); return await c.createJob({ id: 'ct-exec-002', schedule: { kind: 'interval', everySec: 3600 }, action: { kind: 'exec', command: 'node', args: ['--version'] } });"
         }
       ],
       "checks": [
@@ -831,7 +833,7 @@
           "tool": "crontick_job_create",
           "args": {
             "id": "ct-exec-003",
-            "schedule": { "every": 3600 },
+            "schedule": { "kind": "interval", "everySec": 3600 },
             "action": { "kind": "exec", "command": "node", "args": ["--version"] }
           }
         }
@@ -1050,7 +1052,7 @@
         {
           "surface": "api",
           "ref": "create",
-          "script": "const c = crontick.createClient(); return await c.createJob({ id: 'ct-prompt-003', schedule: { every: 3600 }, action: { kind: 'prompt', prompt: 'hello from api', engine: 'qa-mock' } });"
+          "script": "const c = crontick.createClient(); return await c.createJob({ id: 'ct-prompt-003', schedule: { kind: 'interval', everySec: 3600 }, action: { kind: 'prompt', prompt: 'hello from api', engine: 'qa-mock' } });"
         }
       ],
       "checks": [
@@ -1095,7 +1097,7 @@
           "tool": "crontick_job_create",
           "args": {
             "id": "ct-prompt-004",
-            "schedule": { "every": 3600 },
+            "schedule": { "kind": "interval", "everySec": 3600 },
             "action": { "kind": "prompt", "prompt": "hello from mcp", "engine": "qa-mock" }
           }
         }
@@ -1920,6 +1922,12 @@
           "surface": "api",
           "ref": "api-get",
           "script": "const c = crontick.createClient(); const runs = await c.listRuns({ jobId: 'ct-run-006' }); return runs[0];"
+        },
+        {
+          "surface": "mcp",
+          "ref": "mcp-get",
+          "tool": "crontick_run_list",
+          "args": { "jobId": "ct-run-006" }
         }
       ],
       "checks": [
@@ -1942,6 +1950,11 @@
           "type": "apiResultJsonPathEquals",
           "invocationRef": "api-get",
           "params": { "jsonPath": "jobId", "expectedValue": "ct-run-006" }
+        },
+        {
+          "type": "mcpToolResultJsonPath",
+          "invocationRef": "mcp-get",
+          "params": { "jsonPath": "[0].jobId", "expectedValue": "ct-run-006" }
         }
       ],
       "cleanup": [
@@ -2212,7 +2225,7 @@
         {
           "surface": "api",
           "ref": "api-err",
-          "script": "try { const c = crontick.createClient(); await c.createJob({ id: 'ct-err-013-api', schedule: { every: 3600 } }); return { threw: false }; } catch(e) { return { threw: true, code: e.code }; }"
+          "script": "try { const c = crontick.createClient(); await c.createJob({ id: 'ct-err-013-api', schedule: { kind: 'interval', everySec: 3600 } }); return { threw: false }; } catch(e) { return { threw: true, code: e.code }; }"
         }
       ],
       "checks": [
@@ -2396,7 +2409,7 @@
         {
           "type": "mcpToolResultJsonPath",
           "invocationRef": "mcp-list",
-          "params": { "jsonPath": "count", "expectedValue": 2 }
+          "params": { "jsonPath": "length", "expectedValue": 2 }
         }
       ],
       "cleanup": [

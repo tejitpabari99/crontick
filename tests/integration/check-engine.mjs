@@ -185,15 +185,19 @@ export async function runCheck(check, invocationResults, ctx) {
       const mcpResult = result?.mcpResponse?.result;
       if (!mcpResult) throw new Error('mcpToolResultJsonPath: no MCP result available');
       let parsed;
+      const textContent = mcpResult.content?.[0]?.text ?? '';
       try {
-        parsed = JSON.parse(mcpResult.content[0].text);
+        parsed = JSON.parse(textContent);
       } catch {
-        throw new Error('mcpToolResultJsonPath: MCP result text is not valid JSON');
+        // text is not JSON (e.g. plain error message) — use empty object
+        parsed = {};
       }
+      // Merge top-level MCP result fields (e.g. isError) into parsed for navigation
+      if (mcpResult.isError !== undefined) parsed = { ...parsed, isError: mcpResult.isError };
       const actual = jsonPathGet(parsed, jsonPath);
       if (!deepEqual(actual, expectedValue)) {
         throw new Error(
-          `mcpToolResultJsonPath: at "${jsonPath}" expected ${JSON.stringify(expectedValue)} but got ${JSON.stringify(actual)}`,
+          `mcpToolResultJsonPath: at "${jsonPath}" expected ${JSON.stringify(expectedValue)} but got ${JSON.stringify(actual)}\ntext: ${textContent.slice(0, 200)}`,
         );
       }
       break;
@@ -337,11 +341,17 @@ export async function runCheck(check, invocationResults, ctx) {
         const res = invocationResults.get(r);
         if (!res) throw new Error(`crossSurfaceFieldEquals: invocation ref "${r}" not found`);
         if (res.mcpResponse !== undefined) {
+          const mcpRes = res.mcpResponse.result;
+          if (!mcpRes) throw new Error(`crossSurfaceFieldEquals: ref "${r}" has no MCP result`);
+          const textContent = mcpRes.content?.[0]?.text ?? '';
+          let mcpParsed;
           try {
-            return jsonPathGet(JSON.parse(res.mcpResponse.result.content[0].text), jsonPath);
+            mcpParsed = JSON.parse(textContent);
           } catch {
-            throw new Error(`crossSurfaceFieldEquals: ref "${r}" MCP result is not valid JSON`);
+            mcpParsed = {};
           }
+          if (mcpRes.isError !== undefined) mcpParsed = { ...mcpParsed, isError: mcpRes.isError };
+          return jsonPathGet(mcpParsed, jsonPath);
         }
         if (res.parsed !== undefined) {
           return jsonPathGet(res.parsed, jsonPath);

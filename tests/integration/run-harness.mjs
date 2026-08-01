@@ -6,9 +6,11 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { setup } from './setup.mjs';
-import { assertSafeHome, rmWithRetry } from './utils.mjs';
+import { assertSafeHome, rmWithRetry, runWithTimeout } from './utils.mjs';
 import { killDaemonProcess, teardownGlobal } from './teardown.mjs';
 import { runCli } from './drivers/cli-driver.mjs';
+import { runApi } from './drivers/api-driver.mjs';
+import { runMcp } from './drivers/mcp-driver.mjs';
 import { pollUntilTerminal } from './poll.mjs';
 import { KNOWN_CHECK_TYPES, runCheck } from './check-engine.mjs';
 import { createReporter } from './reporter.mjs';
@@ -148,12 +150,29 @@ async function runStep(step, driverCtx, vars, bestEffort = false) {
       return result;
     }
     if (surface === 'api') {
-      throw new Error('API driver not ready in this wave — skipping API step');
+      const result = await runApi(expanded.script ?? '', driverCtx);
+      return result;
     }
     if (surface === 'mcp') {
-      throw new Error('MCP driver not ready in this wave — skipping MCP step');
+      const result = await runMcp(expanded.tool ?? '', expanded.args ?? {}, driverCtx);
+      return result;
     }
-    throw new Error(`Unknown step surface: "${surface}"`);
+    if (surface === 'raw') {
+      const isWindows = process.platform === 'win32';
+      const rawCmd = isWindows && expanded.command === 'npm' ? 'npm.cmd' : expanded.command;
+      const result = await runWithTimeout(
+        rawCmd,
+        expanded.args ?? [],
+        {
+          cwd: expanded.cwd ?? driverCtx.scratchDir,
+          env: { ...process.env },
+          shell: false,
+        },
+        30_000,
+      );
+      return result;
+    }
+    throw new Error(`Unknown step surface: "${expanded.surface}"`);
   } catch (err) {
     if (bestEffort) {
       console.error(`  [cleanup warn] ${err.message}`);
@@ -251,7 +270,7 @@ async function main() {
     process.exit(1);
   }
 
-  const { scratchDir, homeRoot, bins, packageVersion, mockEnginePath } = ctx;
+  const { scratchDir, homeRoot, bins, packageVersion, mockEnginePath, repoRoot } = ctx;
   const logDir = join(scratchDir, 'logs');
   mkdirSync(logDir, { recursive: true });
 
@@ -310,6 +329,7 @@ async function main() {
         SCRATCH_ROOT: scratchDir,
         PACKAGE_VERSION: packageVersion,
         MOCK_ENGINE_PATH: mockEnginePath,
+        REPO_ROOT: repoRoot,
       };
 
       const driverCtx = { bins, scratchDir, testHome };
@@ -330,9 +350,27 @@ async function main() {
           invocationLogs[ref] = { stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
           invocationResults.set(ref, result);
         } else if (surface === 'api') {
-          throw new Error(`API driver not ready in this wave (invocation ref: "${ref}")`);
+          result = await runApi(expandedInv.script ?? '', driverCtx);
+          invocationLogs[ref] = { stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+          invocationResults.set(ref, result);
         } else if (surface === 'mcp') {
-          throw new Error(`MCP driver not ready in this wave (invocation ref: "${ref}")`);
+          result = await runMcp(expandedInv.tool ?? '', expandedInv.args ?? {}, driverCtx);
+          invocationLogs[ref] = {
+            stdout: JSON.stringify(result.mcpResponse),
+            stderr: '',
+          };
+          invocationResults.set(ref, result);
+        } else if (surface === 'raw') {
+          const isWindows = process.platform === 'win32';
+          const rawCmd = isWindows && expandedInv.command === 'npm' ? 'npm.cmd' : expandedInv.command;
+          result = await runWithTimeout(
+            rawCmd,
+            expandedInv.args ?? [],
+            { cwd: expandedInv.cwd ?? scratchDir, env: { ...process.env }, shell: false },
+            30_000,
+          );
+          invocationLogs[ref] = { stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+          invocationResults.set(ref, result);
         } else {
           throw new Error(`Unknown invocation surface: "${surface}"`);
         }
@@ -376,6 +414,7 @@ async function main() {
         SCRATCH_ROOT: scratchDir,
         PACKAGE_VERSION: packageVersion,
         MOCK_ENGINE_PATH: mockEnginePath,
+        REPO_ROOT: repoRoot,
       };
       for (const step of test.cleanup ?? []) {
         await runStep(step, driverCtxForCleanup, vars, true);
