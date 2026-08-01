@@ -1795,6 +1795,64 @@
       ]
     },
     {
+      "id": "CT-JOB-019",
+      "seq": 690,
+      "title": "Single-field action patch (shell-only) accepted on API and MCP surfaces (CTD-026 regression)",
+      "area": "job",
+      "surface": ["api", "mcp"],
+      "priority": "P1",
+      "tier": "tier1",
+      "slow": false,
+      "tags": ["update", "patch", "parity"],
+      "knownDefect": null,
+      "skipOn": [],
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": ["new", "ct-job-019", "--every", "3600", "--script", "echo original", "--shell", "auto"]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "api",
+          "ref": "update-api",
+          "script": "const c = crontick.createClient(); return await c.updateJob('ct-job-019', { action: { kind: 'script', shell: 'pwsh' } });"
+        },
+        {
+          "surface": "mcp",
+          "ref": "update-mcp",
+          "tool": "crontick_job_update",
+          "args": { "id": "ct-job-019", "action": { "kind": "script", "shell": "pwsh" } }
+        }
+      ],
+      "checks": [
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "update-api",
+          "params": { "jsonPath": "action.shell", "expectedValue": "pwsh" }
+        },
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "update-api",
+          "params": { "jsonPath": "action.script", "expectedValue": "echo original" }
+        },
+        {
+          "type": "mcpToolResultJsonPath",
+          "invocationRef": "update-mcp",
+          "params": { "jsonPath": "action.shell", "expectedValue": "pwsh" }
+        },
+        {
+          "type": "mcpToolResultJsonPath",
+          "invocationRef": "update-mcp",
+          "params": { "jsonPath": "action.script", "expectedValue": "echo original" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-job-019"] }
+      ]
+    },
+    {
       "id": "CT-RUN-001",
       "seq": 710,
       "title": "runs list (no filters) returns all recent, newest first",
@@ -2247,6 +2305,51 @@
       ]
     },
     {
+      "id": "CT-SECURITY-001",
+      "seq": 950,
+      "title": "Authorization: Bearer token is fully redacted on the run-log streaming path (CTD-025 regression)",
+      "area": "security",
+      "surface": ["cli"],
+      "priority": "P1",
+      "tier": "tier1",
+      "slow": false,
+      "tags": ["security", "redact", "bearer"],
+      "knownDefect": null,
+      "skipOn": ["linux", "darwin"],
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": ["new", "ct-security-001", "--every", "3600", "--script", "Write-Output 'Authorization: Bearer zzverifytoken998877'"]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "run",
+          "command": ["run-now", "ct-security-001"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-security-001", "timeoutSec": 30 },
+      "checks": [
+        {
+          "type": "runStatusEquals",
+          "params": { "jobId": "ct-security-001", "runIndex": 0, "expectedStatus": "success" }
+        },
+        {
+          "type": "runLogNotContains",
+          "params": { "jobId": "ct-security-001", "runId": null, "forbidden": "zzverifytoken998877" }
+        },
+        {
+          "type": "runLogContains",
+          "params": { "jobId": "ct-security-001", "runId": null, "substring": "[REDACTED]" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-security-001"] }
+      ]
+    },
+    {
       "id": "CT-CFG-001",
       "seq": 1010,
       "title": "CRONTICK_HOME fully isolates one instance from another",
@@ -2503,6 +2606,74 @@
           "type": "fileNotExists",
           "params": { "pathTemplate": "${SCRATCH_HOME}/daemon.pid" }
         }
+      ]
+    },
+    {
+      "id": "CT-CONC-009",
+      "seq": 4500,
+      "title": "Cross-surface rapid sequential mutations of same job — SQLite ground-truth consistency (deferred parallel, sequential best-effort)",
+      "area": "concurrency",
+      "surface": ["cli", "api", "mcp"],
+      "priority": "P2",
+      "tier": "tier3",
+      "slow": true,
+      "tags": ["concurrency", "sqlite", "parity"],
+      "knownDefect": null,
+      "skipOn": [],
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": ["new", "ct-conc-009", "--every", "3600", "--script", "echo base"]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "update-cli",
+          "command": ["update", "ct-conc-009", "--script", "echo from-cli"]
+        },
+        {
+          "surface": "api",
+          "ref": "update-api",
+          "script": "const c = crontick.createClient(); return await c.updateJob('ct-conc-009', { action: { kind: 'script', script: 'echo from-api' } });"
+        },
+        {
+          "surface": "mcp",
+          "ref": "update-mcp",
+          "tool": "crontick_job_update",
+          "args": { "id": "ct-conc-009", "action": { "kind": "script", "script": "echo from-mcp" } }
+        },
+        {
+          "surface": "cli",
+          "ref": "final-get",
+          "command": ["get", "ct-conc-009", "--json"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "update-cli",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "update-api",
+          "params": { "jsonPath": "action.script", "expectedValue": "echo from-api" }
+        },
+        {
+          "type": "mcpToolResultJsonPath",
+          "invocationRef": "update-mcp",
+          "params": { "jsonPath": "action.script", "expectedValue": "echo from-mcp" }
+        },
+        {
+          "type": "stdoutJsonPathEquals",
+          "invocationRef": "final-get",
+          "params": { "jsonPath": "action.script", "expectedValue": "echo from-mcp" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-conc-009"] }
       ]
     }
   ]

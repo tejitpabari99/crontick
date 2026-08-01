@@ -75,6 +75,12 @@ node tests/integration/run-harness.mjs --tier tier1 --dry-run
 | `--timeout-scale F` | Multiply all timeouts by factor F (useful on slow CI) |
 | `--report-dir <path>` | Override the log output directory |
 
+> **CT-CONC-009 note:** The `CT-CONC-009` entry exercises rapid *sequential* cross-surface mutations
+> of the same job (CLI → API → MCP) as a best-effort approximation of the original concurrent-
+> mutation test scenario. True simultaneous cross-surface firing is deferred until the `--parallel N`
+> flag is implemented. The sequential version still exercises the SQLite write path across all three
+> surfaces and verifies ground-truth consistency of the final persisted state.
+
 ---
 
 ## Isolation model
@@ -158,6 +164,7 @@ Key `TestEntry` fields:
 | `runExitCodeEquals` | `runs list --job <jobId>` → `[runIndex].exitCode === expectedExitCode` |
 | `runErrorMatches` | `runs list --job <jobId>` → `[runIndex].error` matches regex `pattern` |
 | `runLogContains` | `logs <runId>` stdout+stderr contains `substring` |
+| `runLogNotContains` | `logs <runId>` stdout+stderr does NOT contain `forbidden` (resolves most-recent run from `jobId` if `runId` is null) |
 | `crossSurfaceFieldEquals` | Same `jsonPath` value across multiple named invocation `refs` |
 | `daemonHealthOk` | `GET http://127.0.0.1:<port>/health` returns `{ ok: true }` |
 

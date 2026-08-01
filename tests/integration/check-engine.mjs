@@ -20,6 +20,7 @@ export const KNOWN_CHECK_TYPES = new Set([
   'runExitCodeEquals',
   'runErrorMatches',
   'runLogContains',
+  'runLogNotContains',
   'crossSurfaceFieldEquals',
   'stdoutJsonArrayContains',
   'stdoutJsonArrayNotContains',
@@ -331,6 +332,33 @@ export async function runCheck(check, invocationResults, ctx) {
       const combined = logResult.stdout + logResult.stderr;
       if (!combined.includes(substring)) {
         throw new Error(`runLogContains: logs for run ${resolvedRunId} do not contain "${substring}"`);
+      }
+      break;
+    }
+
+    case 'runLogNotContains': {
+      const { runId: rlncRunId, jobId: rlncJobId, forbidden } = params;
+      let resolvedRunId = rlncRunId;
+      if (!resolvedRunId && rlncJobId) {
+        const r = await ctx.cliRunner(['runs', 'list', '--job', rlncJobId, '--json']);
+        let runs;
+        try {
+          runs = JSON.parse(r.stdout || '[]');
+        } catch {
+          throw new Error('runLogNotContains: could not parse runs list JSON');
+        }
+        if (!Array.isArray(runs) || runs.length === 0) {
+          throw new Error(`runLogNotContains: no runs found for job ${rlncJobId}`);
+        }
+        resolvedRunId = runs[0].id;
+      }
+      if (!resolvedRunId) throw new Error('runLogNotContains: no runId and no jobId provided');
+      const logResult = await ctx.cliRunner(['logs', resolvedRunId]);
+      const combined = logResult.stdout + logResult.stderr;
+      if (combined.includes(forbidden)) {
+        throw new Error(
+          `runLogNotContains: logs for run ${resolvedRunId} must NOT contain "${forbidden}" but it does`,
+        );
       }
       break;
     }
