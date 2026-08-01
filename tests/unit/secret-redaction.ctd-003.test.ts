@@ -860,6 +860,46 @@ describe('CTD-003 shared secret redaction', () => {
       await fixture.close();
     }
   }, 20_000);
+
+  it('CTD-025 fully redacts Authorization: Bearer tokens on the streaming run-log path (regression)', async () => {
+    // Verify that a non-JWT Bearer token (one that does not start with "eyJ" and therefore
+    // cannot be caught by the JWT pattern) is fully masked on the streaming persisted-log
+    // and logs-tail paths. Before the fix the key/value scanner consumed "Bearer" as the
+    // sole secret word, leaving the real token after the space in plaintext.
+    const fixture = await createFixture('ctd025-bearer');
+    try {
+      const bearerToken = 'zzverifytoken998877';
+      const bearerLine = `Authorization: Bearer ${bearerToken}`;
+      // Guard: a simple authorization=<secret> key/value form must still be redacted by
+      // the key/value scanner (no space in the value so the scanner catches it cleanly).
+      const nonBearerSecret = 'directauthsecret7765';
+      const nonBearerLine = `authorization=${nonBearerSecret}`;
+
+      const runner = new Runner(fakeSpawnWithOutput(`${bearerLine}\n${nonBearerLine}\n`));
+      const captureJob = jobWithEnv('ctd025-bearer-capture', {});
+      const captureRun = fixture.store.insertRun(captureJob.id);
+      await runner.run(captureJob, captureRun.id, fixture.store);
+
+      const persisted = logText(fixture.store, captureRun.id);
+
+      // Bearer token must not appear in persisted log.
+      expect(persisted, 'CTD-025: Bearer token leaked on persisted log path').not.toContain(bearerToken);
+      // Must have a redaction marker (token replaced).
+      expect(persisted, 'CTD-025: no redaction marker on persisted log path').toContain('[REDACTED]');
+
+      // Guard: non-Bearer authorization secret must still be redacted.
+      expect(persisted, 'CTD-025 guard: basic token leaked').not.toContain(nonBearerSecret);
+
+      // Verify on the logs-tail (getLogs) surface too.
+      fixture.store.appendLog(captureRun.id, 'stdout', Buffer.from(`${bearerLine}\n${nonBearerLine}\n`));
+      const logs = await fixture.client.getLogs(captureRun.id);
+      const tailed = logs.lines.map((line) => line.data).join('');
+      expect(tailed, 'CTD-025: Bearer token leaked on logs-tail path').not.toContain(bearerToken);
+      expect(tailed, 'CTD-025 guard: basic token leaked on logs-tail path').not.toContain(nonBearerSecret);
+    } finally {
+      await fixture.close();
+    }
+  }, 10_000);
 });
 
 

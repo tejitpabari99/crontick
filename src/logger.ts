@@ -50,6 +50,14 @@ const LEVELS: Record<LogLevel, number> = {
 type SecretPattern = {
   pattern: RegExp;
   replacement: string;
+  /**
+   * When true, the pattern must NOT be applied in the streaming pre-pass inside
+   * PrivateKeyStreamingTextRedactor.process(). Patterns are unsafe when they match
+   * constructs that the streaming layer already handles with cross-chunk carry logic
+   * (private-key markers, AWS access-key pairs). Applying them in the pre-pass would
+   * transform the text before the carry state machine can see it.
+   */
+  streamingUnsafe?: true;
 };
 
 type TextMatch = {
@@ -110,8 +118,8 @@ const AWS_SECRET_ACCESS_KEY_CANDIDATE_CHARS_PATTERN = /^[A-Za-z0-9/+=]+$/;
 
 /** Patterns applied to log text to strip tokens/keys before they reach the sink. */
 const SECRET_PATTERNS: SecretPattern[] = [
-  { pattern: PRIVATE_KEY_BLOCK_PATTERN, replacement: REDACTED },
-  { pattern: PRIVATE_KEY_ANY_MARKER_PATTERN, replacement: REDACTED },
+  { pattern: PRIVATE_KEY_BLOCK_PATTERN, replacement: REDACTED, streamingUnsafe: true },
+  { pattern: PRIVATE_KEY_ANY_MARKER_PATTERN, replacement: REDACTED, streamingUnsafe: true },
   {
     pattern: /(Authorization\s*:\s*Bearer\s+)[A-Za-z0-9\-._~+/]+=*/gi,
     replacement: `$1${REDACTED}`,
@@ -133,7 +141,7 @@ const SECRET_PATTERNS: SecretPattern[] = [
   { pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, replacement: REDACTED },
   { pattern: /\bAIza[0-9A-Za-z\-_]{35}\b/g, replacement: REDACTED },
   { pattern: /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b/g, replacement: REDACTED },
-  { pattern: AWS_ACCESS_KEY_ID_PATTERN, replacement: REDACTED },
+  { pattern: AWS_ACCESS_KEY_ID_PATTERN, replacement: REDACTED, streamingUnsafe: true },
 ];
 
 function normalizeKeyHint(keyHint: string): string[] {
@@ -518,6 +526,19 @@ class PrivateKeyStreamingTextRedactor implements StreamingTextRedactor {
   }
 
   private process(text: string, flush: boolean): string {
+    // Apply pattern-based redactions before the key/value scanner runs — same first pass
+    // as non-streaming redactText. Without this, `Authorization: Bearer <token>` has
+    // "Bearer" consumed as the key/value secret value (stopping at the space), leaving
+    // the real token after "Bearer " unredacted. With this pre-pass, the Bearer pattern
+    // masks the token first; the key/value scanner then redacts the word "Bearer" too.
+    // Only apply when in the base state (not mid-private-key-block or mid-quoted-value).
+    // Patterns marked streamingUnsafe are skipped: they handle constructs (private-key
+    // markers, AWS key IDs) that the streaming carry state machine must see in raw form.
+    if (!this.insidePrivateKeyBlock && this.pendingSecretAssignmentQuote === undefined) {
+      for (const { pattern, replacement, streamingUnsafe } of SECRET_PATTERNS) {
+        if (!streamingUnsafe) text = text.replace(pattern, replacement);
+      }
+    }
     let output = '';
     let cursor = 0;
 
