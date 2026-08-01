@@ -16,7 +16,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['scripts/**/*.mjs', '.github/skills/**/*.mjs', 'docs/manual-tests/**/*.mjs'],
+    files: ['scripts/**/*.mjs', '.github/skills/**/*.mjs'],
     languageOptions: {
       globals: globals.node,
     },
