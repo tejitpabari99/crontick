@@ -186,6 +186,17 @@ id: z.string(),
     },
     async (args) => {
       const { id, ...patch } = args;
+      const action = args.action;
+      if (action) {
+        if (action.kind === 'script' && action.script === undefined &&
+            (action.shell !== undefined || action.envFile !== undefined || action.timeoutSec !== undefined)) {
+          return errResult(new Error('Invalid action patch: shell, envFile, and timeoutSec require a script source on update'));
+        }
+        if (action.kind === 'exec' && action.command === undefined &&
+            (action.envFile !== undefined || action.timeoutSec !== undefined)) {
+          return errResult(new Error('Invalid action patch: envFile and timeoutSec require a command source on update'));
+        }
+      }
 return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     },
   );
