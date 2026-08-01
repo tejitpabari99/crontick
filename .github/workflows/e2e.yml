@@ -1,0 +1,38 @@
+name: E2E Integration Harness
+on:
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: 'Test tier to run (smoke, tier1, tier2, tier3)'
+        required: false
+        default: 'tier1'
+  schedule:
+    - cron: '0 4 * * *'  # nightly at 04:00 UTC
+
+jobs:
+  e2e:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - run: npm run e2e -- --tier ${{ github.event.inputs.tier || 'tier1' }} --json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-logs-${{ matrix.os }}-node${{ matrix.node }}
+          path: .e2e-scratch/logs/
