@@ -4,11 +4,12 @@
 
 | Layer | Files | Guarantees |
 |-------|-------|------------|
-| Unit | `store.test.ts`, `scheduler.test.ts`, `runner.test.ts`, `config.test.ts`, `logging.test.ts`, `redact.test.ts`, `job-input.test.ts` | Core modules work in isolation with injectable deps |
-| Integration | `api.test.ts`, `cli.test.ts`, `mcp.test.ts`, `client.test.ts`, `integration.*.test.ts` | Real daemon processes, real HTTP, real MCP stdio |
-| Surface parity | `surface-drift.test.ts` | CLI, MCP, and library expose every `SURFACE_CAPABILITIES` entry |
-| Fuzz / Property | `fuzz.*.test.ts`, `property.*.test.ts` | Schema validation never panics; scheduler invariants hold for arbitrary inputs |
-| Packaging | `smoke.test.ts`, `build-sqlite.test.ts`, `rebrand.test.ts` | Package exports resolve; dist builds are valid |
+| Unit | `tests/unit/store.test.ts`, `tests/unit/scheduler.test.ts`, `tests/unit/runner.test.ts`, `tests/unit/config.test.ts`, `tests/unit/logging.test.ts`, `tests/unit/redact.test.ts`, `tests/unit/job-input.test.ts` | Core modules work in isolation with injectable deps |
+| Integration | `tests/unit/api.test.ts`, `tests/unit/cli.test.ts`, `tests/unit/mcp.test.ts`, `tests/unit/client.test.ts`, `tests/unit/integration.*.test.ts` | Real daemon processes, real HTTP, real MCP stdio |
+| Surface parity | `tests/unit/surface-drift.test.ts` | CLI, MCP, and library expose every `SURFACE_CAPABILITIES` entry |
+| Fuzz / Property | `tests/unit/fuzz.*.test.ts`, `tests/unit/property.*.test.ts` | Schema validation never panics; scheduler invariants hold for arbitrary inputs |
+| Packaging | `tests/unit/smoke.test.ts`, `tests/unit/build-sqlite.test.ts`, `tests/unit/rebrand.test.ts` | Package exports resolve; dist builds are valid |
+| **E2E (on-demand)** | `tests/integration/` | Real pack+install; drives CLI/API/MCP as a real user would; never part of `npm run validate` |
 
 ## Running tests locally
 
@@ -20,7 +21,7 @@ npm test
 
 ```powershell
 # Single file
-npx vitest run tests/cli.test.ts
+npx vitest run tests/unit/cli.test.ts
 ```
 
 ```powershell
@@ -40,37 +41,57 @@ npx vitest run --coverage
 
 All test commands are cross-platform (Windows and Linux/macOS).
 
+## Running the E2E integration harness
+
+The on-demand E2E harness packs and installs the real package into `.e2e-scratch/` and drives
+CLI, API, and MCP surfaces as a real user would. It is never part of `npm run validate`.
+
+```powershell
+npm run e2e:smoke    # 6 smoke tests, <45s
+npm run e2e          # full Tier 1 (~47 tests)
+node tests/integration/run-harness.mjs --id CT-DAEMON-001   # single test
+```
+
+See [`docs/e2e-testing.md`](e2e-testing.md) for all CLI flags, the isolation model, and log locations.
+For adding tests and check types, see [`tests/integration/README.md`](../tests/integration/README.md).
+
 ## Test layout
 
 ```
 tests/
-  api.test.ts              Integration: daemon HTTP API
-  cli.test.ts              Integration: CLI spawns, exit codes, output
-  mcp.test.ts              Integration: MCP server via SDK client
-  client.test.ts           CrontickClient against fake/real daemons
-  surface-drift.test.ts    Parity: all surfaces expose every capability
-  store.test.ts            Unit: SQLite store CRUD, schedule state, missed runs, run retention
-  scheduler.test.ts        Unit: cron/interval/one-shot scheduling
-  runner.test.ts           Unit: process spawning, overlap, timeout
-  config.test.ts           Unit: config load/write/engines, retention bounds
-  integration.*.test.ts    Integration scenarios (persistence, retry, overlap, timeout,
-                           one-shot end-to-end, live-daemon auto-fire, daemon shutdown/
-                           reload/fresh-install, prompt end-to-end)
-  fuzz.*.test.ts           Property-based fuzz (fast-check) for API, MCP, env-file, paths
-  property.*.test.ts       Property-based: cron preview, scheduler invariants, schema
-  security.test.ts         API auth/binding/traversal hardening
-  perf.test.ts             Advisory perf baselines (not gated)
-  smoke.test.ts            Package export sanity
-  autostart-removal.test.ts  Guard: removed autostart-registration strings do not reappear
-                              in shipped product files (src/plugin/scripts/README/package.json)
-  ...
+  unit/                      All vitest tests (run by `npm test`)
+    api.test.ts              Integration: daemon HTTP API
+    cli.test.ts              Integration: CLI spawns, exit codes, output
+    mcp.test.ts              Integration: MCP server via SDK client
+    client.test.ts           CrontickClient against fake/real daemons
+    surface-drift.test.ts    Parity: all surfaces expose every capability
+    store.test.ts            Unit: SQLite store CRUD, schedule state, missed runs, run retention
+    scheduler.test.ts        Unit: cron/interval/one-shot scheduling
+    runner.test.ts           Unit: process spawning, overlap, timeout
+    config.test.ts           Unit: config load/write/engines, retention bounds
+    integration.*.test.ts    Integration scenarios (persistence, retry, overlap, timeout,
+                             one-shot end-to-end, live-daemon auto-fire, daemon shutdown/
+                             reload/fresh-install, prompt end-to-end)
+    fuzz.*.test.ts           Property-based fuzz (fast-check) for API, MCP, env-file, paths
+    property.*.test.ts       Property-based: cron preview, scheduler invariants, schema
+    security.test.ts         API auth/binding/traversal hardening
+    perf.test.ts             Advisory perf baselines (not gated)
+    smoke.test.ts            Package export sanity
+    autostart-removal.test.ts  Guard: removed autostart-registration strings do not reappear
+                                in shipped product files (src/plugin/scripts/README/package.json)
+    ...
+  integration/               On-demand E2E harness (NOT run by `npm test`)
+    run-harness.mjs          Harness entry point (npm run e2e)
+    tests.json               Canonical test definitions
+    check-engine.mjs         Check-type executor
+    README.md                Full operator and contributor guide
 ```
 
-As of this writing the suite has 381 tests across 41 files (`npx vitest run`); treat this as a
+As of this writing the vitest suite has 381 tests across 41 files (`npx vitest run`); treat this as a
 point-in-time count, not a value to keep manually in sync -- run the command above for the
 current number.
 
-Naming convention: `<module-or-layer>.<optional-qualifier>.test.ts`. Place new tests in `tests/` at the root level. Name regression tests after the bug: `tests/<area>.<ticket-or-slug>.test.ts`.
+Naming convention: `<module-or-layer>.<optional-qualifier>.test.ts`. Place new vitest tests in `tests/unit/`. Name regression tests after the bug: `tests/unit/<area>.<ticket-or-slug>.test.ts`.
 
 ## Writing tests
 
@@ -266,7 +287,7 @@ publishing.
 
 - [ ] On Windows, `script` jobs with `shell: "auto"` use PowerShell (check run output)
 - [ ] Path separators in `CRONTICK_HOME` work with backslashes
-- [ ] Long command lines for prompt jobs do not exceed 8191-char Windows limit (validated by `prompt-runtime.ts`)
+- [ ] Long command lines for prompt jobs do not exceed 30,000-char Windows limit (validated by `prompt-runtime.ts`)
 
 ### Error paths
 

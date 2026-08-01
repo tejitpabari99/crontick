@@ -47,6 +47,7 @@ observable behavior without updating relevant docs is incomplete.
 |------|-------------|
 | [architecture.md](architecture.md) | System architecture: daemon, client, shims, state, IPC |
 | [testing.md](testing.md) | Test layers, running tests, pre-release checklist |
+| [e2e-testing.md](e2e-testing.md) | How to run the end-to-end integration harness |
 | [troubleshooting.md](troubleshooting.md) | Common issues and diagnostics |
 
 ### docs/concepts/
@@ -94,7 +95,7 @@ observable behavior without updating relevant docs is incomplete.
 | [README.md](decisions/README.md) | ADR index and process |
 | [0000-template.md](decisions/0000-template.md) | Template for new ADRs |
 
-See [decisions/README.md](decisions/README.md) for the full list of architecture decision records (ADRs 0001-0013).
+See [decisions/README.md](decisions/README.md) for the full list of architecture decision records (ADRs 0001-0023).
 
 ### specs/
 
