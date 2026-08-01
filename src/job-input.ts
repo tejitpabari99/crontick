@@ -51,6 +51,7 @@ const ActionInputSchema = z.discriminatedUnion('kind', [
  * lets normalizeJobPatch merge it in from the existing action instead.
  */
 const ScriptActionPatchSchema = ScriptActionSchema.extend({
+  script: z.string().min(1).optional(),
   shell: z.enum(['auto', 'bash', 'pwsh', 'cmd']).optional(),
 });
 
@@ -62,6 +63,7 @@ const ScriptActionPatchSchema = ScriptActionSchema.extend({
  * existing exec arguments.
  */
 const ExecActionPatchSchema = ExecActionSchema.extend({
+  command: z.string().min(1).optional(),
   args: z.array(z.string()).optional(),
 });
 
@@ -73,6 +75,7 @@ const ExecActionPatchSchema = ExecActionSchema.extend({
  * `false`, silently resetting both on every unrelated prompt update.
  */
 const PromptActionPatchSchema = PromptActionInputSchema.extend({
+  prompt: z.string().min(1).optional(),
   args: z.array(z.string()).optional(),
   reuseSession: z.boolean().optional(),
 });
@@ -201,7 +204,7 @@ export function normalizeJobPatch(
 
   let normalizedPatch: JobPatchInput = parsedPatch.data;
   if (patch.action) {
-    const merged = mergeActionPatch(existing.action, normalizeActionInput(patch.action, options, false));
+    const merged = mergeActionPatch(existing.action, normalizeActionInput(patch.action as ActionInput, options, false));
     normalizedPatch = { ...normalizedPatch, action: withEngineDefaultForNewPromptAction(existing.action, merged, options) as ActionInput };
   }
   if (patch.retry) {
@@ -339,7 +342,7 @@ export function buildJobPatchFromUpdateOptions(
     }));
     if (!parsed.success) throw new CrontickError('VALIDATION_ERROR', 'Invalid job patch', parsed.error.format());
     return parsed.data.action
-      ? { ...parsed.data, action: normalizeActionInput(parsed.data.action, { ...options, fileBaseDir: dirname(filePath) }, false) as ActionInput }
+      ? { ...parsed.data, action: normalizeActionInput(parsed.data.action as ActionInput, { ...options, fileBaseDir: dirname(filePath) }, false) as ActionInput }
       : parsed.data;
   }
 
@@ -381,6 +384,9 @@ function normalizeActionInput(action: ActionInput, options: NormalizeJobInputOpt
 
   const prompt = typeof action.prompt === 'string' ? action.prompt : undefined;
   const promptFile = typeof action.promptFile === 'string' ? action.promptFile : undefined;
+  // On a patch (isCreate=false) with no prompt/promptFile, the source is preserved
+  // by mergeActionPatch — skip normalization and return the partial patch as-is.
+  if (!isCreate && prompt === undefined && promptFile === undefined) return action;
   if ((prompt ? 1 : 0) + (promptFile ? 1 : 0) !== 1) {
     throw new CrontickError(
       'VALIDATION_ERROR',

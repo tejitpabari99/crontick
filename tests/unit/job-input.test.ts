@@ -686,3 +686,65 @@ describe('normalizeJobPatch — prompt engine preservation and kind-change defau
   });
 });
 
+// ── CTD-026 regression: single-field action patches (no script/command/prompt) ─
+
+describe('normalizeJobPatch — single-field action patch (CTD-026)', () => {
+  it('accepts a script patch with only shell (no script re-supplied) and merges it', () => {
+    const existing = existingJob({ kind: 'script', script: 'echo hi', shell: 'bash' });
+    const patch = mcpPatch({ action: { kind: 'script', shell: 'pwsh' } });
+    const result = normalizeJobPatch('job-1', existing, patch);
+    expect(result.action).toMatchObject({ kind: 'script', script: 'echo hi', shell: 'pwsh' });
+  });
+
+  it('accepts a script patch with only envFile (no script re-supplied) and merges it', () => {
+    const existing = existingJob({ kind: 'script', script: 'echo hi', shell: 'bash' });
+    const patch = mcpPatch({ action: { kind: 'script', envFile: '.env.prod' } });
+    const result = normalizeJobPatch('job-1', existing, patch);
+    expect(result.action).toMatchObject({ kind: 'script', script: 'echo hi', shell: 'bash', envFile: '.env.prod' });
+  });
+
+  it('accepts a script patch with only timeoutSec (no script re-supplied) and merges it', () => {
+    const existing = existingJob({ kind: 'script', script: 'echo hi', shell: 'cmd', timeoutSec: 10 });
+    const patch = mcpPatch({ action: { kind: 'script', timeoutSec: 60 } });
+    const result = normalizeJobPatch('job-1', existing, patch);
+    expect(result.action).toMatchObject({ kind: 'script', script: 'echo hi', shell: 'cmd', timeoutSec: 60 });
+  });
+
+  it('accepts an exec patch with only envFile (no command re-supplied) and merges it', () => {
+    const existing = existingJob({ kind: 'exec', command: 'node', args: ['server.js'] });
+    const patch = mcpPatch({ action: { kind: 'exec', envFile: '.env.prod' } });
+    const result = normalizeJobPatch('job-1', existing, patch);
+    expect(result.action).toMatchObject({ kind: 'exec', command: 'node', args: ['server.js'], envFile: '.env.prod' });
+  });
+
+  it('accepts an exec patch with only timeoutSec (no command re-supplied) and merges it', () => {
+    const existing = existingJob({ kind: 'exec', command: 'node', args: ['server.js'] });
+    const patch = mcpPatch({ action: { kind: 'exec', timeoutSec: 120 } });
+    const result = normalizeJobPatch('job-1', existing, patch);
+    expect(result.action).toMatchObject({ kind: 'exec', command: 'node', timeoutSec: 120 });
+  });
+
+  it('accepts a prompt patch with only timeoutSec (no prompt re-supplied) and merges it', () => {
+    const existing = existingJob({ kind: 'prompt', prompt: 'hello world', reuseSession: true });
+    const patch = mcpPatch({ action: { kind: 'prompt', timeoutSec: 45 } });
+    const result = normalizeJobPatch('job-1', existing, patch);
+    expect(result.action).toMatchObject({ kind: 'prompt', prompt: 'hello world', reuseSession: true, timeoutSec: 45 });
+  });
+
+  it('accepts a prompt patch with only envFile (no prompt re-supplied) and merges it', () => {
+    const existing = existingJob({ kind: 'prompt', prompt: 'hello world' });
+    const patch = mcpPatch({ action: { kind: 'prompt', envFile: '.env.ai' } });
+    const result = normalizeJobPatch('job-1', existing, patch);
+    expect(result.action).toMatchObject({ kind: 'prompt', prompt: 'hello world', envFile: '.env.ai' });
+  });
+
+  it('still replaces the action when the kind changes (single-field patches do not short-circuit kind switch)', () => {
+    const existing = existingJob({ kind: 'script', script: 'echo hi', shell: 'cmd', envFile: '.env.test' });
+    const patch = mcpPatch({ action: { kind: 'exec', command: 'node' } });
+    const result = normalizeJobPatch('job-1', existing, patch);
+    expect(result.action).toMatchObject({ kind: 'exec', command: 'node' });
+    expect((result.action as Record<string, unknown>).script).toBeUndefined();
+    expect((result.action as Record<string, unknown>).shell).toBeUndefined();
+  });
+});
+

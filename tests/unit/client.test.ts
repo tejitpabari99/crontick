@@ -355,13 +355,13 @@ process.stdout.write(JSON.stringify({ id: created.id }));
     });
   }, 15_000);
 
-  it('rejects modifier-only shell/envFile/timeout action patches through updateJob', async () => {
+  it('accepts modifier-only shell/envFile/timeout action patches through updateJob and merges them (CTD-026)', async () => {
     const home = makeHome();
     const client = createClient({ daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 15_000 });
     const envFilePath = join(home, '.env.client-update.test');
     writeFileSync(envFilePath, 'FOO=bar\n', 'utf-8');
 
-    const original = await client.createJob({
+    await client.createJob({
       id: 'client-action-modifier-update-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: {
@@ -373,19 +373,23 @@ process.stdout.write(JSON.stringify({ id: created.id }));
       },
     });
 
-    const cases = [
-      { name: 'envFile', patch: { action: { kind: 'script', envFile: envFilePath } } },
-      { name: 'shell', patch: { action: { kind: 'script', shell: 'pwsh' } } },
-      { name: 'timeoutSec', patch: { action: { kind: 'script', timeoutSec: 45 } } },
-    ] as const;
+    // envFile-only patch — script and shell must be preserved
+    const afterEnvFile = await client.updateJob('client-action-modifier-update-job', {
+      action: { kind: 'script', envFile: envFilePath } as Parameters<typeof client.updateJob>[1]['action'],
+    });
+    expect(afterEnvFile.action).toMatchObject({ kind: 'script', script: 'echo before', shell: 'cmd', envFile: envFilePath });
 
-    for (const testCase of cases) {
-      await expect(client.updateJob(
-        'client-action-modifier-update-job',
-        testCase.patch as unknown as Parameters<typeof client.updateJob>[1],
-      ), testCase.name).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
-      await expect(client.getJob('client-action-modifier-update-job'), testCase.name).resolves.toEqual(original);
-    }
+    // shell-only patch — script must be preserved
+    const afterShell = await client.updateJob('client-action-modifier-update-job', {
+      action: { kind: 'script', shell: 'pwsh' } as Parameters<typeof client.updateJob>[1]['action'],
+    });
+    expect(afterShell.action).toMatchObject({ kind: 'script', script: 'echo before', shell: 'pwsh' });
+
+    // timeoutSec-only patch — script and shell must be preserved
+    const afterTimeout = await client.updateJob('client-action-modifier-update-job', {
+      action: { kind: 'script', timeoutSec: 45 } as Parameters<typeof client.updateJob>[1]['action'],
+    });
+    expect(afterTimeout.action).toMatchObject({ kind: 'script', script: 'echo before', shell: 'pwsh', timeoutSec: 45 });
   }, 15_000);
 
   it('supports common CRUD and helper methods through the HTTP API', async () => {
