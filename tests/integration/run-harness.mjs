@@ -1,10 +1,17 @@
 // run-harness.mjs — integration harness entry point + orchestrator
 // Usage: node tests/integration/run-harness.mjs [options]
 
-import { createReadStream } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
+import { setup } from './setup.mjs';
+import { assertSafeHome, rmWithRetry } from './utils.mjs';
+import { killDaemonProcess, teardownGlobal } from './teardown.mjs';
+import { runCli } from './drivers/cli-driver.mjs';
+import { pollUntilTerminal } from './poll.mjs';
+import { KNOWN_CHECK_TYPES, runCheck } from './check-engine.mjs';
+import { createReporter } from './reporter.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TESTS_JSON = join(__dirname, 'tests.json');
@@ -67,7 +74,7 @@ function parseArgs(argv) {
 
 const TIER_ORDER = ['smoke', 'tier1', 'tier2', 'tier3'];
 
-/** Filter tests by options. */
+/** Filter and sort tests by options. */
 function filterTests(tests, opts) {
   let filtered = tests.slice();
 
@@ -91,6 +98,73 @@ function filterTests(tests, opts) {
   return filtered.sort((a, b) => a.seq - b.seq);
 }
 
+/**
+ * Expand ${VAR} tokens in a string using the vars map.
+ * @param {string} str
+ * @param {Record<string, string>} vars
+ * @returns {string}
+ */
+function expandStr(str, vars) {
+  return str.replace(/\$\{([^}]+)\}/g, (match, name) => {
+    if (Object.prototype.hasOwnProperty.call(vars, name)) return vars[name];
+    return match;
+  });
+}
+
+/**
+ * Recursively expand ${VAR} tokens in any string values within a value tree.
+ * @param {unknown} val
+ * @param {Record<string, string>} vars
+ * @returns {unknown}
+ */
+function expandInValue(val, vars) {
+  if (typeof val === 'string') return expandStr(val, vars);
+  if (Array.isArray(val)) return val.map((v) => expandInValue(v, vars));
+  if (val !== null && typeof val === 'object') {
+    const result = {};
+    for (const [k, v] of Object.entries(val)) result[k] = expandInValue(v, vars);
+    return result;
+  }
+  return val;
+}
+
+/**
+ * Execute a single invocation step (setup step, invocation, or cleanup step).
+ * Returns the result object or throws on unrecoverable error.
+ *
+ * @param {object} step
+ * @param {{ bins: object; scratchDir: string; testHome: string }} driverCtx
+ * @param {Record<string, string>} vars - context vars for expansion
+ * @param {boolean} bestEffort - if true, errors are caught and logged (for cleanup steps)
+ * @returns {Promise<object|null>}
+ */
+async function runStep(step, driverCtx, vars, bestEffort = false) {
+  try {
+    const expanded = /** @type {object} */ (expandInValue(step, vars));
+    const { surface } = expanded;
+
+    if (surface === 'cli') {
+      const result = await runCli(expanded.command ?? [], driverCtx);
+      return result;
+    }
+    if (surface === 'api') {
+      throw new Error('API driver not ready in this wave — skipping API step');
+    }
+    if (surface === 'mcp') {
+      throw new Error('MCP driver not ready in this wave — skipping MCP step');
+    }
+    throw new Error(`Unknown step surface: "${surface}"`);
+  } catch (err) {
+    if (bestEffort) {
+      console.error(`  [cleanup warn] ${err.message}`);
+      return null;
+    }
+    throw err;
+  }
+}
+
+const REQUIRED_FIELDS = ['id', 'seq', 'title', 'area', 'surface', 'priority', 'tier', 'slow', 'invocations', 'checks'];
+
 async function main() {
   const argv = process.argv.slice(2);
   const opts = parseArgs(argv);
@@ -110,6 +184,37 @@ async function main() {
   }
 
   const allTests = testsJson.tests;
+
+  // Validate: required fields
+  for (const t of allTests) {
+    for (const f of REQUIRED_FIELDS) {
+      if (!(f in t)) {
+        console.error(`Error: test "${t.id ?? '(no id)'}" is missing required field "${f}"`);
+        process.exit(1);
+      }
+    }
+  }
+
+  // Validate: unique seq
+  const seqMap = new Map();
+  for (const t of allTests) {
+    if (seqMap.has(t.seq)) {
+      console.error(`Error: duplicate seq ${t.seq} used by both "${seqMap.get(t.seq)}" and "${t.id}"`);
+      process.exit(1);
+    }
+    seqMap.set(t.seq, t.id);
+  }
+
+  // Validate: all check types are known
+  for (const t of allTests) {
+    for (const c of t.checks ?? []) {
+      if (!KNOWN_CHECK_TYPES.has(c.type)) {
+        console.error(`Error: test "${t.id}" uses unknown check type "${c.type}"`);
+        process.exit(1);
+      }
+    }
+  }
+
   const filtered = filterTests(allTests, opts);
 
   if (opts.list) {
@@ -137,13 +242,196 @@ async function main() {
     process.exit(0);
   }
 
-  // TODO(A3): run setup.mjs, execute tests, run teardown
-  // For now, print a placeholder so the entry point is exercisable.
-  console.error('Harness execution not yet implemented (Task A3+). Use --list or --dry-run.');
-  process.exit(1);
-}
+  // Run global setup
+  let ctx;
+  try {
+    ctx = await setup({ build: opts.build });
+  } catch (err) {
+    console.error(`Global setup failed: ${err.message}`);
+    process.exit(1);
+  }
 
-// Suppress unused import warning for createReadStream (used in later tasks).
-void createReadStream;
+  const { scratchDir, homeRoot, bins, packageVersion, mockEnginePath } = ctx;
+  const logDir = join(scratchDir, 'logs');
+  mkdirSync(logDir, { recursive: true });
+
+  const reporter = createReporter({ logDir, packageVersion, jsonToStdout: opts.json });
+
+  let anyFailOrUnexpected = false;
+  let aborted = false;
+
+  for (const test of filtered) {
+    if (aborted) break;
+
+    const testId = test.id;
+    const testHome = join(homeRoot, testId.toLowerCase());
+    const testWork = join(testHome, 'work');
+
+    // Platform skip check
+    if (test.skipOn?.includes(process.platform)) {
+      reporter.record({
+        seq: test.seq,
+        id: testId,
+        title: test.title,
+        area: test.area,
+        surface: test.surface,
+        tier: test.tier,
+        status: 'skipped',
+        durationMs: 0,
+        checks: [],
+        knownDefect: test.knownDefect ?? null,
+        errorMessage: null,
+        invocationLogs: null,
+      });
+      continue;
+    }
+
+    const startTime = Date.now();
+    /** @type {Map<string, object>} */
+    const invocationResults = new Map();
+    /** @type {Record<string, {stdout:string; stderr:string}>} */
+    const invocationLogs = {};
+    /** @type {{ type: string; status: 'pass'|'fail'; message?: string }[]} */
+    const checkResults = [];
+    let testErrorMessage = null;
+
+    try {
+      // Create per-test dirs
+      mkdirSync(testHome, { recursive: true });
+      mkdirSync(testWork, { recursive: true });
+
+      // HARD GUARD: assert testHome is under scratchDir
+      assertSafeHome(testHome, scratchDir);
+
+      // Build context variable map
+      const vars = {
+        SCRATCH_HOME: testHome,
+        SCRATCH_WORK: testWork,
+        SCRATCH_ROOT: scratchDir,
+        PACKAGE_VERSION: packageVersion,
+        MOCK_ENGINE_PATH: mockEnginePath,
+      };
+
+      const driverCtx = { bins, scratchDir, testHome };
+
+      // Run setup steps
+      for (const step of test.setup ?? []) {
+        await runStep(step, driverCtx, vars, false);
+      }
+
+      // Run invocations
+      for (const inv of test.invocations ?? []) {
+        const expandedInv = /** @type {object} */ (expandInValue(inv, vars));
+        const { surface, ref } = expandedInv;
+        let result;
+
+        if (surface === 'cli') {
+          result = await runCli(expandedInv.command ?? [], driverCtx);
+          invocationLogs[ref] = { stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+          invocationResults.set(ref, result);
+        } else if (surface === 'api') {
+          throw new Error(`API driver not ready in this wave (invocation ref: "${ref}")`);
+        } else if (surface === 'mcp') {
+          throw new Error(`MCP driver not ready in this wave (invocation ref: "${ref}")`);
+        } else {
+          throw new Error(`Unknown invocation surface: "${surface}"`);
+        }
+      }
+
+      // Optional polling
+      if (test.pollJobUntilTerminal) {
+        const { jobId, timeoutSec } = test.pollJobUntilTerminal;
+        const expandedJobId = expandStr(jobId, vars);
+        const cliRunner = (args) => runCli(args, driverCtx);
+        await pollUntilTerminal(cliRunner, expandedJobId, { timeoutSec });
+      }
+
+      // Build check context
+      const checkCtx = {
+        testHome,
+        scratchDir,
+        cliRunner: (args) => runCli(args, driverCtx),
+        expandVars: (str) => expandStr(str, vars),
+      };
+
+      // Run checks (expand context vars in params before evaluating)
+      for (const check of test.checks ?? []) {
+        const expandedCheck = /** @type {object} */ (expandInValue(check, vars));
+        try {
+          await runCheck(expandedCheck, invocationResults, checkCtx);
+          checkResults.push({ type: expandedCheck.type, status: 'pass' });
+        } catch (checkErr) {
+          checkResults.push({ type: expandedCheck.type, status: 'fail', message: checkErr.message });
+          if (testErrorMessage === null) testErrorMessage = `check[${checkResults.length - 1}] ${expandedCheck.type}: ${checkErr.message}`;
+        }
+      }
+    } catch (err) {
+      if (testErrorMessage === null) testErrorMessage = err.message;
+    } finally {
+      // Best-effort cleanup steps
+      const driverCtxForCleanup = { bins, scratchDir, testHome };
+      const vars = {
+        SCRATCH_HOME: testHome,
+        SCRATCH_WORK: testWork,
+        SCRATCH_ROOT: scratchDir,
+        PACKAGE_VERSION: packageVersion,
+        MOCK_ENGINE_PATH: mockEnginePath,
+      };
+      for (const step of test.cleanup ?? []) {
+        await runStep(step, driverCtxForCleanup, vars, true);
+      }
+
+      // Kill daemon (reads daemon.pid)
+      try { killDaemonProcess(testHome); } catch { /* best-effort */ }
+
+      // Remove testHome unless --keep-home
+      if (!opts.keepHome) {
+        try { rmWithRetry(testHome); } catch { /* best-effort */ }
+      }
+    }
+
+    // Classify result
+    const anyCheckFailed = checkResults.some((c) => c.status === 'fail');
+    const hasKnownDefect = Boolean(test.knownDefect);
+    let testStatus;
+    if (!anyCheckFailed && testErrorMessage === null) {
+      testStatus = hasKnownDefect ? 'unexpected-pass' : 'pass';
+    } else {
+      testStatus = hasKnownDefect ? 'known-fail' : 'fail';
+    }
+
+    if (testStatus === 'fail' || testStatus === 'unexpected-pass') anyFailOrUnexpected = true;
+
+    const durationMs = Date.now() - startTime;
+    reporter.record({
+      seq: test.seq,
+      id: testId,
+      title: test.title,
+      area: test.area,
+      surface: test.surface,
+      tier: test.tier,
+      status: testStatus,
+      durationMs,
+      checks: checkResults,
+      knownDefect: test.knownDefect ?? null,
+      errorMessage: testErrorMessage,
+      invocationLogs,
+    });
+
+    if (opts.failFast && (testStatus === 'fail' || testStatus === 'unexpected-pass')) {
+      console.error('--fail-fast: stopping after first failure');
+      aborted = true;
+    }
+  }
+
+  await reporter.flush();
+
+  // Global teardown
+  if (!opts.noCleanup) {
+    try { teardownGlobal(ctx, { keepHome: opts.keepHome }); } catch { /* best-effort */ }
+  }
+
+  process.exit(anyFailOrUnexpected ? 1 : 0);
+}
 
 main();

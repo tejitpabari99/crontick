@@ -1,6 +1,6 @@
 // cli-driver.mjs — executes CLI commands via spawned process
 
-import { runWithTimeout } from '../utils.mjs';
+import { assertSafeHome, runWithTimeout } from '../utils.mjs';
 
 /** Default CLI timeout in milliseconds. */
 const CLI_TIMEOUT_MS = 30_000;
@@ -13,10 +13,16 @@ const CLI_TIMEOUT_MS = 30_000;
  * @returns {Promise<{ exitCode: number; stdout: string; stderr: string; timedOut: boolean }>}
  */
 export async function runCli(args, ctx) {
-  // TODO(A3): implement
-  void runWithTimeout;
-  void args;
-  void ctx;
-  void CLI_TIMEOUT_MS;
-  throw new Error('runCli: not implemented');
+  const { bins, scratchDir, testHome, env = {} } = ctx;
+  assertSafeHome(testHome, scratchDir);
+  return runWithTimeout(
+    process.execPath,
+    [bins.crontick, ...args],
+    {
+      cwd: scratchDir,
+      env: { ...process.env, CRONTICK_HOME: testHome, ...env },
+      shell: false,
+    },
+    CLI_TIMEOUT_MS,
+  );
 }
