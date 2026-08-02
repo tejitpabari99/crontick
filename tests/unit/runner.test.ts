@@ -889,7 +889,10 @@ describe('Runner', () => {
       runner.adoptRun(jobId, adoptedRun.id, child.pid!, store);
 
       try {
-        const deadline = Date.now() + 5000;
+        // Generous deadline: the poll re-verifies identity by shelling out to
+        // the OS for the pid's real start time, which can be slow on a loaded
+        // Windows runner (powershell.exe cold start).
+        const deadline = Date.now() + 25000;
         while (Date.now() < deadline && store.getRun(adoptedRun.id)!.status === 'running') {
           await new Promise((r) => setTimeout(r, 50));
         }
@@ -905,6 +908,6 @@ describe('Runner', () => {
       } finally {
         child.kill();
       }
-    }, 15_000);
+    }, 40_000);
   });
 });

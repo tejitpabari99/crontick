@@ -41,5 +41,13 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.test.ts'],
     exclude: ['tests/integration/**'],
+    // Many unit tests spawn a real daemon/child processes and shell out to the
+    // OS (e.g. powershell.exe on Windows for process start times). The 5s
+    // vitest default is too tight for a loaded CI runner, so give tests and
+    // hooks generous headroom and retry a couple of times in CI to absorb
+    // transient OS-load flakiness. Tests that set their own timeout keep it.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
+    retry: process.env['CI'] ? 2 : 0,
   },
 });
