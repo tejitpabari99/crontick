@@ -1,5 +1,5 @@
 ---
-'crontick': major
+'crontick': minor
 ---
 
 Fix AWS secret redaction to require high-confidence context instead of treating every bare

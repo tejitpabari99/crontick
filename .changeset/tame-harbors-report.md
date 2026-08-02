@@ -1,5 +1,5 @@
 ---
-"crontick": major
+"crontick": minor
 ---
 
 Daemon reliability and observability for v1.0.0:

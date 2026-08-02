@@ -1,5 +1,5 @@
 ---
-"crontick": major
+"crontick": minor
 ---
 
 BREAKING: `crontick update` no longer silently succeeds when modifier flags cannot identify what to patch.
