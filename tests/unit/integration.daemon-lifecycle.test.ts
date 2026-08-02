@@ -751,19 +751,24 @@ describe('Integration: daemon lifecycle', () => {
     });
     expect(created.status).toBe(201);
 
-    // Let it tick at least once so job_schedule_state has a watermark to
-    // compute missed fires from on the next start. On loaded CI runners the
-    // first spawn can be slow, so wait generously and REQUIRE a tick — the
-    // missed-fire computation is meaningless without an established watermark.
+    // Let it tick at least twice so job_schedule_state has a DURABLY-persisted
+    // watermark to compute missed fires from on the next start. Observing a
+    // single run can race ahead of the watermark flush on a slow/loaded runner
+    // (the run row lands before the schedule state is written), which would
+    // leave the restart with no baseline and therefore zero missed fires.
+    // Requiring a second tick guarantees the first tick's watermark is on disk,
+    // and a short settle covers the last tick's flush.
     const tickDeadline = Date.now() + 20_000;
-    let ticked = false;
+    let tickCount = 0;
     for (;;) {
       const { data } = await apiCall(first.port, 'GET', `/api/runs?jobId=${jobId}`);
-      if ((data as unknown[]).length > 0) { ticked = true; break; }
+      tickCount = (data as unknown[]).length;
+      if (tickCount >= 2) break;
       if (Date.now() >= tickDeadline) break;
       await new Promise((r) => setTimeout(r, 100));
     }
-    expect(ticked).toBe(true);
+    expect(tickCount).toBeGreaterThanOrEqual(2);
+    await new Promise((r) => setTimeout(r, 500));
 
     // Simulate a crash (not a graceful stop) so no watermark bookkeeping
     // beyond the last recorded tick happens on the way down.
