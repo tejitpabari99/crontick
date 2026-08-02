@@ -456,7 +456,15 @@ program
   .description('A standalone cron daemon, CLI, and MCP server for local scheduled jobs.')
   .version(VERSION)
   .option('--json', 'Output as JSON')
-  .option('-v, --verbose', 'Write crontick diagnostic logs to stderr (also enabled by CRONTICK_VERBOSE=1)');
+  .option('-v, --verbose', 'Write crontick diagnostic logs to stderr (also enabled by CRONTICK_VERBOSE=1)')
+  .action(() => {
+    // Bare `crontick` (no subcommand) prints help and exits 0. Commander's
+    // default for a command group with no matching subcommand is to print help
+    // and exit 1, which PowerShell 7.4+ surfaces as a noisy
+    // NativeCommandExitException on a purely informational invocation. Returning
+    // normally here leaves process.exitCode at 0.
+    program.outputHelp();
+  });
 
 commonJobOptions(program.command('new <id> [engineArgs...]').description('Create a new job'))
   .option('--force', 'Replace an existing job when the same id already exists')

@@ -93,6 +93,13 @@ describe('CLI binary (dist/cli/index.js)', () => {
     expect(result.stdout.toLowerCase()).not.toContain('auto' + 'start');
   });
 
+  it('bare invocation (no subcommand) prints help and exits 0', () => {
+    const result = cli([]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Usage: crontick');
+    expect(result.stdout).toContain('Commands:');
+  });
+
   it('doctor exits 1 when daemon is not running (no CRONTICK_HOME)', () => {
     const tmp = makeTmpDir();
     const result = cli(['doctor'], { CRONTICK_HOME: tmp });

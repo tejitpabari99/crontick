@@ -10,6 +10,10 @@ Complete reference for the `crontick` command-line interface.
 | `--json` | boolean | `false` | Format all output as JSON |
 | `-v`, `--verbose` | boolean | `false` | Write diagnostic logs to stderr (also enabled by `CRONTICK_VERBOSE=1`) |
 
+Running `crontick` with no subcommand prints this help and exits `0` (not `1`), so a plain
+informational invocation is not treated as an error (e.g. it does not trigger PowerShell's
+`NativeCommandExitException`). `crontick --help` behaves identically.
+
 ## Exit Codes
 
 | Code | Meaning |
