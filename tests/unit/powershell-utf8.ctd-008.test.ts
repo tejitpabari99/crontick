@@ -158,10 +158,11 @@ describe('CTD-008 PowerShell UTF-8 fidelity', () => {
 
       expect(store.getRun(run.id)).toMatchObject({ status: 'success', exitCode: 0 });
       const persistedBytes = persistedStreamBytes(dir, run.id, 'stdout');
-      const expected = Buffer.from('café 你好 😀\r\n', 'utf-8');
-      expect(persistedBytes).toEqual(expected);
+      // PowerShell appends the platform line ending (CRLF on Windows, LF on Linux/macOS),
+      // so normalize the trailing newline before asserting. The point of this test is UTF-8
+      // fidelity: exact multibyte content preserved with no replacement characters.
       expect(persistedBytes.includes(Buffer.from([0xef, 0xbf, 0xbd]))).toBe(false);
-      expect(persistedBytes.toString('utf-8')).toBe('café 你好 😀\r\n');
+      expect(persistedBytes.toString('utf-8').replace(/\r?\n$/, '')).toBe('café 你好 😀');
     }, 15_000);
   });
 });

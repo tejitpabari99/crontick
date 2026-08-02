@@ -74,7 +74,10 @@ afterEach(async () => {
   client = undefined;
 });
 
-describe('CTD-017 temp script cleanup', () => {
+// This scenario exercises Windows cmd/.bat managed temp-script materialization and cleanup:
+// it spawns `cmd` with a `.bat` script and `ping -n`, which do not exist on Linux/macOS.
+// It is therefore gated to Windows.
+describe.runIf(process.platform === 'win32')('CTD-017 temp script cleanup', () => {
   it('uses CRONTICK_HOME-managed temp scripts and cleans them up after the run', async () => {
     expect(managedScriptsDir()).toBe(join(home, 'tmp', 'scripts'));
 

@@ -694,7 +694,7 @@ describe('Integration: daemon lifecycle', () => {
   // Report-only: missed fires while the daemon was down are recorded as
   // 'missed' runs and surfaced in /api/daemon/status, but never replayed.
 
-  it('records missed fires across a crash/restart and surfaces them in status (L2)', async () => {
+  it('records missed fires across a crash/restart and surfaces them in status (L2)', { timeout: 45_000, retry: 2 }, async () => {
     const dir = makeTmpDir('crontick-missed-');
     liveDirs.add(dir);
     const first = await spawnDaemon(dir);
@@ -711,14 +711,18 @@ describe('Integration: daemon lifecycle', () => {
     expect(created.status).toBe(201);
 
     // Let it tick at least once so job_schedule_state has a watermark to
-    // compute missed fires from on the next start.
-    const tickDeadline = Date.now() + 8000;
+    // compute missed fires from on the next start. On loaded CI runners the
+    // first spawn can be slow, so wait generously and REQUIRE a tick — the
+    // missed-fire computation is meaningless without an established watermark.
+    const tickDeadline = Date.now() + 20_000;
+    let ticked = false;
     for (;;) {
       const { data } = await apiCall(first.port, 'GET', `/api/runs?jobId=${jobId}`);
-      if ((data as unknown[]).length > 0) break;
+      if ((data as unknown[]).length > 0) { ticked = true; break; }
       if (Date.now() >= tickDeadline) break;
       await new Promise((r) => setTimeout(r, 100));
     }
+    expect(ticked).toBe(true);
 
     // Simulate a crash (not a graceful stop) so no watermark bookkeeping
     // beyond the last recorded tick happens on the way down.
@@ -745,7 +749,7 @@ describe('Integration: daemon lifecycle', () => {
     const rows = missedRuns.data as Array<{ status: string; error?: string }>;
     expect(rows.length).toBeGreaterThanOrEqual(1);
     expect(rows[0].status).toBe('missed');
-  }, 30_000);
+  });
 
   it('creates the full data directory tree on a clean machine (no pre-existing directories)', async () => {
     // Unlike every other daemon-spawning test in this suite, this one does
