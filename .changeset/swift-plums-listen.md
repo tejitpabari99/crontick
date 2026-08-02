@@ -1,5 +1,5 @@
 ---
-"crontick": major
+"crontick": minor
 ---
 
 Run history is capped per job: crontick keeps at most `retention.maxRunsPerJob` runs (and their

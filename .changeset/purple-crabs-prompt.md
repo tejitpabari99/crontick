@@ -1,5 +1,5 @@
 ---
-"crontick": major
+"crontick": minor
 ---
 
 Add first-class prompt cron jobs for Copilot and Agency. Prompt jobs can be created from the CLI,

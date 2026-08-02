@@ -1,5 +1,5 @@
 ---
-"crontick": major
+"crontick": minor
 ---
 
 BREAKING: creating a job is no longer a silent upsert. Duplicate ids now fail with

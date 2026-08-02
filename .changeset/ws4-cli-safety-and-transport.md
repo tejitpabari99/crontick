@@ -1,5 +1,5 @@
 ---
-"crontick": major
+"crontick": minor
 ---
 
 The library client now uses a short-lived `node:http` loopback transport instead of
