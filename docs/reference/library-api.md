@@ -35,11 +35,11 @@ class CrontickClient {
 |--------|-----------|---------|--------|
 | `ensure` | `(): Promise<DaemonInfo>` | `DaemonInfo` | `CrontickError` (`DAEMON_START_FAILED`, `DAEMON_TIMEOUT`, `DAEMON_START_LOCK_TIMEOUT`) |
 | `health` | `(options?: { ensure?: boolean }): Promise<unknown>` | Health response | `CrontickError` |
-| `createJob` | `(input: Job \| JobCreateInput, options?: NormalizeJobInputOptions): Promise<Job>` | Created `Job` | `CrontickError` (`VALIDATION_ERROR`, `DAEMON_REQUEST_FAILED`) |
+| `createJob` | `(input: Job \| JobCreateInput, options?: CreateJobOptions): Promise<Job>` | Created `Job` | `CrontickError` (`VALIDATION_ERROR`, `JOB_ALREADY_EXISTS`, `ENV_FILE_ERROR`, `DAEMON_REQUEST_FAILED`) |
 | `createJobFromCliOptions` | `(input: JobCreateCliOptions): Promise<Job>` | Created `Job` | `CrontickError` |
 | `listJobs` | `(): Promise<Job[]>` | Array of `Job` | `CrontickError` |
 | `getJob` | `(id: string): Promise<Job>` | `Job` | `CrontickError` (`NOT_FOUND`) |
-| `updateJob` | `(id: string, patch: JobPatchInput, options?: NormalizeJobInputOptions): Promise<Job>` | Updated `Job` | `CrontickError` |
+| `updateJob` | `(id: string, patch: JobPatchInput, options?: NormalizeJobInputOptions): Promise<Job>` | Updated `Job` | `CrontickError` (`VALIDATION_ERROR`, `ENV_FILE_ERROR`, `NOT_FOUND`, `DAEMON_REQUEST_FAILED`) |
 | `deleteJob` | `(id: string): Promise<{ ok: true; canceledRun: boolean }>` | `{ ok: true, canceledRun }` — `canceledRun` is `true` when the job had an in-flight run that was canceled as part of the delete | `CrontickError` (`NOT_FOUND`) |
 | `enableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
 | `disableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
@@ -58,7 +58,7 @@ class CrontickClient {
 | `daemonStop` | `(): Promise<DaemonStopResult>` | Stop result — see [DaemonStopResult](#daemonstopresult) | `CrontickError` |
 | `daemonRestart` | `(): Promise<DaemonRestartResult>` | `{ ok: true, baseUrl, port?, pid?, started, stopped, previousPid? }` — the stop phase escalates internally the same way as `daemonStop`, but only `stopped`/`previousPid` are surfaced (no `mode`/`activeRuns`) | `CrontickError` |
 | `daemonReload` | `(): Promise<{ ok: true }>` | `{ ok: true }` | `CrontickError` |
-| `daemonStatus` | `(): Promise<unknown>` | Status object | `CrontickError` |
+| `daemonStatus` | `(): Promise<DaemonStatus>` | `DaemonStatus` | `CrontickError` |
 | `doctor` | `(options?: DoctorOptions): Promise<DoctorResult>` | `DoctorResult` | `CrontickError` |
 | `dashboardStart` | `(): Promise<DashboardStartResult>` | `DashboardStartResult` | `CrontickError` |
 | `dashboardStop` | `(): Promise<DashboardStopResult>` | Stop result | `CrontickError` |
@@ -79,6 +79,26 @@ class CrontickClient {
 | `isVerbose` | `(): boolean` | Verbose flag | — |
 
 **Library-only methods (not in `SURFACE_CAPABILITIES`, no CLI/MCP equivalent):** `ensure`, `health`, `createJobFromCliOptions`, `jobJsonSchema`, `getConfig`, `drainNotices`, `isVerbose`. These are intentionally excluded from the parity contract because they serve internal wiring, direct-use library scenarios, or launch infrastructure rather than proxying a daemon operation.
+
+Read methods that surface config values or captured text (`getConfigValue`, `getRun`,
+`listRuns`, `getLogs`, and `dashboardData`) apply the shared redaction contract before
+returning strings or structured text fields. Job-returning methods (`createJob`, `listJobs`,
+`getJob`, and `updateJob`) and config mutators (`setConfigValue`, `removeConfigValue`,
+`addEngine`, `updateEngine`, and `removeEngine`) also redact secret-like env/config values
+in their returned objects without changing the response schema. The same contract applies
+on CLI, MCP, and HTTP read surfaces: common provider tokens, `token=`/`******
+assignments, contextual or nearby-access-key-paired AWS secret-access-key values, and private keys
+(including lone PEM markers) are redacted, while benign key names such as `NON_SECRET`
+remain visible.
+
+`createJob()` and `updateJob()` also preflight `action.envFile` before persistence. If
+the file is missing or unreadable, they reject with `ENV_FILE_ERROR`, resolve relative
+paths against `action.cwd` when set (otherwise the caller's current working directory),
+and leave previously stored job state unchanged.
+
+`getLogs({ lines: N })` reconstructs newline-delimited text lines from the ordered
+stdout/stderr chunk rows returned by the daemon before applying the last-`N` slice, so
+chunk boundaries do not change the visible tail result.
 
 ---
 
@@ -104,6 +124,11 @@ See [errors.md](errors.md) for all known codes.
 ```ts
 function createClient(options?: CrontickClientOptions): CrontickClient;
 ```
+
+> Exit guidance: after daemon-backed calls, prefer `process.exitCode = n` and let Node exit
+> naturally instead of calling `process.exit(n)` immediately. The client now uses a short-lived
+> `node:http` transport to avoid the historical Windows native crash, but natural exit remains the
+> recommended library-consumer pattern.
 
 ---
 
@@ -165,7 +190,9 @@ interface StatsSummary {
 `avgDurationMs` averages `durationMs` over runs that actually finished executing --
 `success`/`failed`/`timeout` -- and excludes `missed`, `queued`, `running`, and `canceled` runs,
 since those either never ran to completion or never ran at all. `null` when there are no
-qualifying runs. Same computation backs [`DashboardStats`](#dashboardstats) (`GET
+qualifying runs. These summary counts include only runs whose parent job still exists: deleting a
+job keeps its historical runs directly queryable by run id/logs, but removes those archived rows
+from live aggregate totals. Same computation backs [`DashboardStats`](#dashboardstats) (`GET
 /api/stats/summary` and the dashboard both call `buildDashboardStats()`).
 
 ### JobStats
@@ -192,6 +219,17 @@ interface NormalizeJobInputOptions {
   onNotice?: (message: string) => void;
 }
 ```
+
+### CreateJobOptions
+
+```ts
+interface CreateJobOptions extends NormalizeJobInputOptions {
+  force?: boolean;
+}
+```
+
+`force` intentionally replaces an existing job with the same id. When omitted or
+`false`, `createJob()` rejects duplicates with `JOB_ALREADY_EXISTS`.
 
 ### JobCreateCliOptions
 
@@ -220,6 +258,7 @@ interface JobCreateCliOptions {
   retry?: number;
   desc?: string;
   enabled?: boolean;
+  force?: boolean;
 }
 ```
 
@@ -228,6 +267,11 @@ interface JobCreateCliOptions {
 ```ts
 type JobPatchCliOptions = Omit<JobCreateCliOptions, 'id'>;
 ```
+
+`createJobFromCliOptions()` inherits the CLI file-loading behavior: `input.file` accepts
+UTF-8 JSON with an optional leading BOM, malformed JSON throws `VALIDATION_ERROR` with
+`details` containing `path`, `position`, `line`, `column`, and an expected-shape hint,
+and `envFile` is preflighted before persistence the same way as `createJob()`/`updateJob()`.
 
 ### DaemonStopResult
 
@@ -266,6 +310,30 @@ Returned by `daemonRestart`/`crontick daemon restart`. The stop phase (`stopDaem
 same graceful-then-escalate sequence as [`DaemonStopResult`](#daemonstopresult), but only
 `stopped` (whether the previous daemon actually exited) and `previousPid` are surfaced here —
 `mode` and `activeRuns` are not part of this result.
+
+### DaemonStatus
+
+```ts
+interface DaemonStatus {
+  pid: number;
+  version: string;
+  port: number;
+  baseUrl: string;
+  uptimeSec: number;
+  jobs: number;
+  missedFires: {
+    jobsWithMissedFires: number;
+    missedRunsRecorded: number;
+    jobsCapped: number;
+    capPerJob: number;
+  };
+}
+```
+
+Returned by `daemonStatus` (`CrontickClient`), `crontick daemon status`, and
+`crontick_daemon_status`. `baseUrl` is always the daemon's loopback listener URL
+(`http://127.0.0.1:<port>`), so scripts can discover the daemon endpoint without reading internal
+state files.
 
 ### DashboardOptions
 
@@ -319,7 +387,9 @@ interface DashboardStats {
 ```
 
 Same shape and computation as [`StatsSummary`](#statssummary) -- see there for how
-`avgDurationMs` is averaged.
+`avgDurationMs` is averaged and how deleted-job history is excluded from live aggregates.
+`DashboardData.runs` likewise lists only runs whose parent job still exists, even though deleted
+job runs remain directly queryable by run id.
 
 ### DashboardJob
 
@@ -492,7 +562,9 @@ A logger at `error` level with no sink (discards all output).
 function redactText(text: string): string;
 ```
 
-Replaces known secret patterns (Bearer tokens, AWS keys, GitHub PATs, `KEY=VALUE` env leaks) with `[REDACTED]`.
+Replaces common secret patterns (provider tokens/keys, JWT-like bearer blobs, private
+keys, key/value secret assignments, and connection-string passwords) with
+`[REDACTED]`.
 
 ### redactValue
 
@@ -500,7 +572,9 @@ Replaces known secret patterns (Bearer tokens, AWS keys, GitHub PATs, `KEY=VALUE
 function redactValue(value: unknown, keyHint?: string): unknown;
 ```
 
-Recursively redacts secrets from objects. Keys matching `/token|secret|password|credential|apikey|api_key|authorization|cookie/i` are fully replaced.
+Recursively redacts secret-like strings from objects and arrays. Keys matching the
+shared secret-key matcher (for example `token`, `secret`, `password`, `api_key`,
+`authorization`, or `subscription_key`) are fully replaced.
 
 ### sanitizeLogEvent
 
@@ -573,6 +647,11 @@ function removeEngine(name: string, options?: ConfigOptions): CrontickConfig;
 function buildPromptRunCommand(action: PromptAction, options?: ConfigOptions): PromptRunCommand;
 ```
 
+`loadConfig()`, `readConfigFile()`, and `validateConfigFile()` accept UTF-8 JSON with an
+optional leading BOM. Malformed config JSON produces `CONFIG_READ_ERROR` with `details`
+that include `path`, `position`, `line`, `column`, and `expectedShape`. Returned config
+values are redacted using the same shared read-surface contract described above.
+
 ---
 
 ## Constants
@@ -592,7 +671,7 @@ const BUILT_IN_CONFIG: CrontickConfig;
 ```
 
 ```json
-{ "defaultEngine": "copilot", "engines": { "copilot": { "command": "copilot", "args": [], "env": {} } }, "retention": { "maxRunsPerJob": 100, "maxOutputBytesPerRun": 2000000, "maxLogFiles": 30 } }
+{ "defaultEngine": "copilot", "engines": { "copilot": { "command": "copilot", "args": ["--allow-all-tools", "-p"], "env": {} } }, "retention": { "maxRunsPerJob": 100, "maxOutputBytesPerRun": 2000000, "maxLogFiles": 30 } }
 ```
 
 ### SURFACE_CAPABILITIES
@@ -601,7 +680,9 @@ const BUILT_IN_CONFIG: CrontickConfig;
 const SURFACE_CAPABILITIES: readonly SurfaceCapability[];
 ```
 
-37-element array mapping every capability to its client method, CLI command path, and MCP tool name.
+37-element array mapping every capability to its client method, CLI command path, and
+MCP tool name. The existing `create-job` capability row also records its parity-coupled
+`force` option via `optionNames: ['force']`.
 
 ### ORPHAN_RUN_ERROR_CODE
 
@@ -638,3 +719,4 @@ The full stored `runs.error` value written by `reconcileOrphanRuns()`.
 | `ConfigSchema` | `z.ZodObject` | Config file schema |
 | `EngineConfigSchema` | `z.ZodObject` | Single engine config |
 | `RetentionConfigSchema` | `z.ZodObject` | `{ maxRunsPerJob: number; maxOutputBytesPerRun: number; maxLogFiles: number }`, `.strict()`, defaults `100`/`2_000_000`/`30` |
+

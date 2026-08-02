@@ -23,18 +23,19 @@ import {
 } from './schemas/job.js';
 import { EngineNameSchema } from './schemas/config.js';
 import { loadConfig } from './config.js';
+import { readJsonFile } from './json-file.js';
 import { promptRuntimeValidationMessage } from './prompt-runtime.js';
 
 /**
  * Input schema extends prompt action to accept `promptFile` as an alternative
  * to `prompt`. During normalization, the file is read and inlined.
  */
-export const PromptActionInputSchema = PromptActionBaseSchema.omit({ prompt: true }).extend({
+const PromptActionInputSchema = PromptActionBaseSchema.omit({ prompt: true }).extend({
   prompt: z.string().min(1).optional(),
   promptFile: z.string().min(1).optional(),
 }).strict();
 
-export const ActionInputSchema = z.discriminatedUnion('kind', [
+const ActionInputSchema = z.discriminatedUnion('kind', [
   ScriptActionSchema,
   ExecActionSchema,
   PromptActionInputSchema,
@@ -49,7 +50,8 @@ export const ActionInputSchema = z.discriminatedUnion('kind', [
  * silently resetting a customized shell. Leaving it optional/undefined here
  * lets normalizeJobPatch merge it in from the existing action instead.
  */
-export const ScriptActionPatchSchema = ScriptActionSchema.extend({
+const ScriptActionPatchSchema = ScriptActionSchema.extend({
+  script: z.string().min(1).optional(),
   shell: z.enum(['auto', 'bash', 'pwsh', 'cmd']).optional(),
 });
 
@@ -60,7 +62,8 @@ export const ScriptActionPatchSchema = ScriptActionSchema.extend({
  * changes e.g. `envFile` would zod-fill `args` to `[]` and silently wipe out
  * existing exec arguments.
  */
-export const ExecActionPatchSchema = ExecActionSchema.extend({
+const ExecActionPatchSchema = ExecActionSchema.extend({
+  command: z.string().min(1).optional(),
   args: z.array(z.string()).optional(),
 });
 
@@ -71,12 +74,13 @@ export const ExecActionPatchSchema = ExecActionSchema.extend({
  * `prompt` would otherwise zod-fill `args` to `[]` and `reuseSession` to
  * `false`, silently resetting both on every unrelated prompt update.
  */
-export const PromptActionPatchSchema = PromptActionInputSchema.extend({
+const PromptActionPatchSchema = PromptActionInputSchema.extend({
+  prompt: z.string().min(1).optional(),
   args: z.array(z.string()).optional(),
   reuseSession: z.boolean().optional(),
 });
 
-export const ActionPatchInputSchema = z.discriminatedUnion('kind', [
+const ActionPatchInputSchema = z.discriminatedUnion('kind', [
   ScriptActionPatchSchema,
   ExecActionPatchSchema,
   PromptActionPatchSchema,
@@ -93,7 +97,7 @@ export const JobCreateInputSchema = JobSchema.omit({ action: true }).extend({
  * a customized backoff. normalizeJobPatch merges this onto the existing
  * retry value field-by-field, the same way it merges action patches.
  */
-export const RetryPatchSchema = z.object({
+const RetryPatchSchema = z.object({
   max: z.number().int().min(0).optional(),
   backoffSec: z.number().positive().optional(),
 });
@@ -152,6 +156,7 @@ export interface JobCreateCliOptions {
   retry?: number;
   desc?: string;
   enabled?: boolean;
+  force?: boolean;
 }
 
 export type JobPatchCliOptions = Omit<JobCreateCliOptions, 'id'>;
@@ -194,9 +199,12 @@ export function normalizeJobPatch(
   patch: JobPatchInput,
   options: NormalizeJobInputOptions = {},
 ): Job {
-  let normalizedPatch: JobPatchInput = patch;
+  const parsedPatch = JobPatchInputSchema.safeParse(patch);
+  if (!parsedPatch.success) throw new CrontickError('VALIDATION_ERROR', 'Invalid job patch', parsedPatch.error.format());
+
+  let normalizedPatch: JobPatchInput = parsedPatch.data;
   if (patch.action) {
-    const merged = mergeActionPatch(existing.action, normalizeActionInput(patch.action, options, false));
+    const merged = mergeActionPatch(existing.action, normalizeActionInput(patch.action as ActionInput, options, false));
     normalizedPatch = { ...normalizedPatch, action: withEngineDefaultForNewPromptAction(existing.action, merged, options) as ActionInput };
   }
   if (patch.retry) {
@@ -297,8 +305,11 @@ export function buildJobFromCreateOptions(
   if (input.file) {
     assertFileModeExclusive(input, resolvedArgs);
     const filePath = resolve(options.cwd ?? process.cwd(), input.file);
-    const raw = readFileSync(filePath, 'utf-8');
-    return normalizeJobInput(JSON.parse(raw) as JobCreateInput, {
+    return normalizeJobInput(readJsonFile(filePath, {
+      errorCode: 'VALIDATION_ERROR',
+      subject: 'job definition file',
+      expectedShape: 'expected a JSON object matching the crontick job schema',
+    }) as JobCreateInput, {
       ...options,
       fileBaseDir: dirname(filePath),
     });
@@ -324,20 +335,23 @@ export function buildJobPatchFromUpdateOptions(
   if (input.file) {
     assertFileModeExclusive(input, resolvedArgs);
     const filePath = resolve(options.cwd ?? process.cwd(), input.file);
-    const raw = readFileSync(filePath, 'utf-8');
-    const parsed = JobPatchInputSchema.safeParse(JSON.parse(raw));
+    const parsed = JobPatchInputSchema.safeParse(readJsonFile(filePath, {
+      errorCode: 'VALIDATION_ERROR',
+      subject: 'job patch file',
+      expectedShape: 'expected a JSON object matching the crontick job patch schema',
+    }));
     if (!parsed.success) throw new CrontickError('VALIDATION_ERROR', 'Invalid job patch', parsed.error.format());
     return parsed.data.action
-      ? { ...parsed.data, action: normalizeActionInput(parsed.data.action, { ...options, fileBaseDir: dirname(filePath) }, false) as ActionInput }
+      ? { ...parsed.data, action: normalizeActionInput(parsed.data.action as ActionInput, { ...options, fileBaseDir: dirname(filePath) }, false) as ActionInput }
       : parsed.data;
   }
 
   const patch: JobPatchInput = {};
   if (input.desc !== undefined) patch.description = input.desc;
   if (input.enabled !== undefined) patch.enabled = input.enabled;
-  const schedule = maybeBuildSchedule(input);
+  const schedule = maybeBuildSchedule(input, true);
   if (schedule !== undefined) patch.schedule = schedule;
-  const action = maybeBuildAction(input, resolvedArgs);
+  const action = maybeBuildAction(input, resolvedArgs, true);
   if (action !== undefined) patch.action = normalizeActionInput(action, options, false) as ActionInput;
   // Commander no longer supplies a hardcoded default for --overlap (see
   // commonJobOptions in cli/index.ts), so `undefined` unambiguously means
@@ -370,6 +384,30 @@ function normalizeActionInput(action: ActionInput, options: NormalizeJobInputOpt
 
   const prompt = typeof action.prompt === 'string' ? action.prompt : undefined;
   const promptFile = typeof action.promptFile === 'string' ? action.promptFile : undefined;
+  // On a patch (isCreate=false) with no prompt/promptFile, the source is preserved
+  // by mergeActionPatch — skip the full normalization path that requires exactly one source.
+  // However, some invariants still apply to source-free patches: clear reuseSession when a
+  // sessionId is patched in (B-2 invariant), and validate args if present (C-1).
+  if (!isCreate && prompt === undefined && promptFile === undefined) {
+    let result = action as unknown as Record<string, unknown>;
+    if (typeof result['sessionId'] === 'string') {
+      // Always include reuseSession:false in the patch result so that mergeDefinedFields
+      // propagates it to the merged job even when the existing job has reuseSession:true
+      // (the invariant: a job cannot have both sessionId and reuseSession:true).
+      if (result['reuseSession'] !== false) {
+        options.onNotice?.(
+          'reuseSession was ignored because an explicit sessionId was provided; crontick will reuse the explicit session id.',
+        );
+        result = { ...result, reuseSession: false };
+      }
+    }
+    // Route args-only patches through runtime arg validation so reserved-arg / cmdline-length
+    // errors are caught at patch time rather than deferred to execution.
+    if (Array.isArray(result['args'])) {
+      validatePromptActionRuntimeArgs(result);
+    }
+    return result;
+  }
   if ((prompt ? 1 : 0) + (promptFile ? 1 : 0) !== 1) {
     throw new CrontickError(
       'VALIDATION_ERROR',
@@ -413,14 +451,34 @@ function validatePromptActionRuntimeArgs(action: Record<string, unknown>): void 
   if (message) throw new CrontickError('VALIDATION_ERROR', message);
 }
 
+function standaloneActionModifierFlags(input: JobPatchCliOptions): string[] {
+  const flags: string[] = [];
+  if (input.shell !== undefined) flags.push('--shell');
+  if (input.envFile !== undefined) flags.push(`--job-env-file ${JSON.stringify(input.envFile)}`);
+  if (input.timeout !== undefined) flags.push('--timeout');
+  return flags;
+}
+
+function formatCliFlagList(flags: readonly string[]): string {
+  if (flags.length === 1) return flags[0]!;
+  if (flags.length === 2) return `${flags[0]} and ${flags[1]}`;
+  return `${flags.slice(0, -1).join(', ')}, and ${flags.at(-1)}`;
+}
+
 function buildSchedule(input: JobCreateCliOptions): JobCreateInput['schedule'] {
   const schedule = maybeBuildSchedule(input);
   if (!schedule) throw new CrontickError('MISSING_ARG', 'Provide --cron, --every <sec>, or --at <iso>');
   return schedule;
 }
 
-function maybeBuildSchedule(input: JobPatchCliOptions): JobCreateInput['schedule'] | undefined {
+function maybeBuildSchedule(input: JobPatchCliOptions, strictUpdate = false): JobCreateInput['schedule'] | undefined {
   const count = [input.cron, input.every, input.at].filter((value) => value !== undefined).length;
+  if (strictUpdate && input.tz !== undefined && input.cron === undefined) {
+    throw new CrontickError(
+      'VALIDATION_ERROR',
+      '--tz requires --cron on update. Repeat the cron schedule with --cron <expr> when changing its timezone, or remove --tz.',
+    );
+  }
   if (count === 0) return undefined;
   if (count > 1) throw new CrontickError('VALIDATION_ERROR', 'Provide only one schedule source: --cron, --every, or --at');
   if (input.cron !== undefined) return { kind: 'cron', cron: input.cron, tz: input.tz };
@@ -435,12 +493,25 @@ function buildAction(input: JobCreateCliOptions, rawArgs: string[]): ActionInput
   return action;
 }
 
-function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[]): ActionInput | undefined {
+function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[], strictUpdate = false): ActionInput | undefined {
   const actionSourceCount = [input.script, input.exec, input.prompt, input.promptFile].filter(
     (value) => value !== undefined,
   ).length;
   if (actionSourceCount === 0) {
-    if (rawArgs.length > 0 || input.engine !== undefined || input.sessionId !== undefined || input.reuseSession) {
+    const modifierFlags = standaloneActionModifierFlags(input);
+    if (strictUpdate && modifierFlags.length > 0) {
+      throw new CrontickError(
+        'VALIDATION_ERROR',
+        `${formatCliFlagList(modifierFlags)} ${modifierFlags.length === 1 ? 'requires' : 'require'} an action source on update. Repeat the existing action with one of --script, --exec, --prompt, or --prompt-file, or remove ${formatCliFlagList(modifierFlags)}.`,
+      );
+    }
+    if (rawArgs.length > 0) {
+      throw new CrontickError(
+        'VALIDATION_ERROR',
+        'Arguments (via --arg or --) are valid only with --exec, --prompt, or --prompt-file. Remove them or use one of those action sources.',
+      );
+    }
+    if (input.engine !== undefined || input.sessionId !== undefined || input.reuseSession) {
       throw new CrontickError(
         'VALIDATION_ERROR',
         'Prompt engine/session flags are valid only with prompt mode. Use --prompt or --prompt-file, or remove --engine/--session-id/--reuse-session.',

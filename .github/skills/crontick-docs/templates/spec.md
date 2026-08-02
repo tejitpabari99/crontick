@@ -1,6 +1,6 @@
 # Spec template
 
-The authoritative spec template lives at `specs/TEMPLATE.md`.
+The authoritative spec template lives at `docs/specs/TEMPLATE.md`.
 Use that file directly when creating new specs. This file exists only as a pointer.
 
 ## Quick reference

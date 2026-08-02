@@ -23,7 +23,7 @@ const DOCS_README = join(repoRoot, 'docs', 'README.md');
 // Directories that docs/README.md should index
 const INDEXED_DIRS = [
   { dir: 'docs', prefix: '' },
-  { dir: 'specs', prefix: '../specs/' },
+  { dir: 'docs/specs', prefix: 'specs/' },
   { dir: 'examples', prefix: '../examples/' },
 ];
 
@@ -119,7 +119,7 @@ async function main() {
     if (!indexedPaths.has(diskFile)) {
       // Skip files that are not expected to be in docs/README.md index
       // (root-level files, tsconfig, etc.)
-      if (!diskFile.startsWith('docs/') && !diskFile.startsWith('specs/') && !diskFile.startsWith('examples/')) continue;
+      if (!diskFile.startsWith('docs/') && !diskFile.startsWith('examples/')) continue;
       // Skip the README itself
       if (diskFile === 'docs/README.md') continue;
       // Skip tsconfig files in examples
@@ -133,7 +133,7 @@ async function main() {
   // Find phantom entries (in docs/README.md but not on disk)
   const phantoms = [];
   for (const indexed of indexedPaths) {
-    if (indexed.startsWith('docs/') || indexed.startsWith('specs/') || indexed.startsWith('examples/')) {
+    if (indexed.startsWith('docs/') || indexed.startsWith('examples/')) {
       if (!diskFiles.has(indexed)) {
         // Check if it is a directory link (e.g. docs/concepts/ linked as concepts/)
         const fullPath = join(repoRoot, indexed);

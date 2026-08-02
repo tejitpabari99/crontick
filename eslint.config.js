@@ -6,7 +6,7 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**'],
+    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '.crontick/**', '.e2e-scratch/**'],
   },
   // Plain JavaScript plugin scripts need Node.js globals
   {
@@ -19,6 +19,27 @@ export default tseslint.config(
     files: ['scripts/**/*.mjs', '.github/skills/**/*.mjs'],
     languageOptions: {
       globals: globals.node,
+    },
+  },
+  // Integration harness: plain Node.js ESM (.mjs) and CJS (.cjs) files
+  {
+    files: ['tests/integration/**/*.mjs'],
+    languageOptions: {
+      globals: globals.node,
+      sourceType: 'module',
+    },
+    rules: {
+      'no-console': 'off',
+    },
+  },
+  {
+    files: ['tests/integration/**/*.cjs'],
+    languageOptions: {
+      globals: globals.node,
+      sourceType: 'commonjs',
+    },
+    rules: {
+      'no-console': 'off',
     },
   },
   {

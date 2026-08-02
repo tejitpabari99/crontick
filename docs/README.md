@@ -16,8 +16,8 @@ where new content belongs.
 | [docs/reference/](reference/) | "What exactly is supported?" -- precise, lookup-oriented facts | Users |
 | [docs/decisions/](decisions/) | "Why is it like this?" -- architecture decision records | Contributors |
 | [docs/testing.md](testing.md) | How to test and what to verify before a release | Contributors |
-| [specs/](../specs/) | Normative behavior contracts with acceptance criteria | Contributors and coding agents |
-| [examples/](../examples/) | Runnable public-API usage examples | Users |
+| [specs/](specs/) | Normative behavior contracts with acceptance criteria | Contributors and coding agents |
+| [examples/](examples/) | Runnable public-API usage examples | Users |
 
 ---
 
@@ -27,8 +27,8 @@ where new content belongs.
 - **A mental model** (how scheduling works, job lifecycle, surface parity) -> `docs/concepts/`
 - **An implementation detail** (how the scheduler loop works, storage format internals) -> `docs/internals/`
 - **A design choice with trade-offs** -> a new ADR in `docs/decisions/` (copy `0000-template.md`)
-- **A behavior contract with acceptance criteria** -> a new spec in `specs/`
-- **A runnable code sample** -> `examples/`
+- **A behavior contract with acceptance criteria** -> a new spec in `docs/specs/`
+- **A runnable code sample** -> `docs/examples/`
 
 ---
 
@@ -47,6 +47,7 @@ observable behavior without updating relevant docs is incomplete.
 |------|-------------|
 | [architecture.md](architecture.md) | System architecture: daemon, client, shims, state, IPC |
 | [testing.md](testing.md) | Test layers, running tests, pre-release checklist |
+| [e2e-testing.md](e2e-testing.md) | How to run the end-to-end integration harness |
 | [troubleshooting.md](troubleshooting.md) | Common issues and diagnostics |
 
 ### docs/concepts/
@@ -94,33 +95,33 @@ observable behavior without updating relevant docs is incomplete.
 | [README.md](decisions/README.md) | ADR index and process |
 | [0000-template.md](decisions/0000-template.md) | Template for new ADRs |
 
-See [decisions/README.md](decisions/README.md) for the full list of architecture decision records (ADRs 0001-0013).
+See [decisions/README.md](decisions/README.md) for the full list of architecture decision records (ADRs 0001-0023).
 
 ### specs/
 
 | File | Description |
 |------|-------------|
-| [README.md](../specs/README.md) | Specs overview and conventions |
-| [TEMPLATE.md](../specs/TEMPLATE.md) | Template for new specs |
-| [001-job-definition.md](../specs/001-job-definition.md) | Job definition schema and semantics |
-| [002-scheduling.md](../specs/002-scheduling.md) | Scheduling behavior contract |
-| [003-execution.md](../specs/003-execution.md) | Execution guarantees and failure modes |
-| [004-daemon.md](../specs/004-daemon.md) | Daemon process lifecycle contract |
-| [005-surface-parity.md](../specs/005-surface-parity.md) | Surface parity requirements |
-| [006-state-and-persistence.md](../specs/006-state-and-persistence.md) | State format and durability guarantees |
-| [007-prompt-jobs.md](../specs/007-prompt-jobs.md) | Prompt job behavior specification |
+| [README.md](specs/README.md) | Specs overview and conventions |
+| [TEMPLATE.md](specs/TEMPLATE.md) | Template for new specs |
+| [001-job-definition.md](specs/001-job-definition.md) | Job definition schema and semantics |
+| [002-scheduling.md](specs/002-scheduling.md) | Scheduling behavior contract |
+| [003-execution.md](specs/003-execution.md) | Execution guarantees and failure modes |
+| [004-daemon.md](specs/004-daemon.md) | Daemon process lifecycle contract |
+| [005-surface-parity.md](specs/005-surface-parity.md) | Surface parity requirements |
+| [006-state-and-persistence.md](specs/006-state-and-persistence.md) | State format and durability guarantees |
+| [007-prompt-jobs.md](specs/007-prompt-jobs.md) | Prompt job behavior specification |
 
 ### examples/
 
 | File | Description |
 |------|-------------|
-| [README.md](../examples/README.md) | Examples overview and how to run them |
-| [01-quick-start.ts](../examples/01-quick-start.ts) | Create, list, and delete a job |
-| [02-cron-schedule.ts](../examples/02-cron-schedule.ts) | Cron-scheduled job |
-| [03-exec-job.ts](../examples/03-exec-job.ts) | Direct command execution job |
-| [04-prompt-job.ts](../examples/04-prompt-job.ts) | LLM prompt job |
-| [05-one-shot.ts](../examples/05-one-shot.ts) | One-shot scheduled job |
-| [06-run-history.ts](../examples/06-run-history.ts) | Querying run history and logs |
-| [07-lifecycle.ts](../examples/07-lifecycle.ts) | Daemon lifecycle management |
-| [cli/README.md](../examples/cli/README.md) | CLI usage examples |
-| [mcp/README.md](../examples/mcp/README.md) | MCP integration examples |
+| [README.md](examples/README.md) | Examples overview and how to run them |
+| [01-quick-start.ts](examples/01-quick-start.ts) | Create, list, and delete a job |
+| [02-cron-schedule.ts](examples/02-cron-schedule.ts) | Cron-scheduled job |
+| [03-exec-job.ts](examples/03-exec-job.ts) | Direct command execution job |
+| [04-prompt-job.ts](examples/04-prompt-job.ts) | LLM prompt job |
+| [05-one-shot.ts](examples/05-one-shot.ts) | One-shot scheduled job |
+| [06-run-history.ts](examples/06-run-history.ts) | Querying run history and logs |
+| [07-lifecycle.ts](examples/07-lifecycle.ts) | Daemon lifecycle management |
+| [cli/README.md](examples/cli/README.md) | CLI usage examples |
+| [mcp/README.md](examples/mcp/README.md) | MCP integration examples |

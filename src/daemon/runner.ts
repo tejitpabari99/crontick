@@ -2,17 +2,19 @@
 // retry with backoff, timeout, and stream capture with secret redaction.
 // See docs/internals/executors.md
 import { spawn } from 'node:child_process';
-import { writeFileSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { tmpdir, platform } from 'node:os';
-import { join, isAbsolute, basename } from 'node:path';
+import { writeFileSync, unlinkSync, existsSync, mkdirSync, statSync } from 'node:fs';
+import { platform } from 'node:os';
+import { join, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Job, PromptAction } from '../schemas/job.js';
 import type { Store, RunStatus } from './store.js';
 import { CrontickError } from '../errors.js';
 import { extractSessionId } from './prompt-session.js';
 import { buildPromptRunCommand, loadConfig } from '../config.js';
-import { nullLogger, redactText, type Logger } from '../logger.js';
+import { createStreamingTextRedactor, nullLogger, redactText, type Logger, type StreamingTextRedactor } from '../logger.js';
+import { tempScriptsDir } from '../paths.js';
 import { isProcessAlive, isSameRunProcess } from '../process-liveness.js';
+import { readEnvFileForAction } from './env-file.js';
 
 // ── Output cap (L5) ───────────────────────────────────────────────────────────
 
@@ -64,18 +66,28 @@ interface RunResult {
 
 type QueueEntry = () => Promise<void>;
 
+interface SafeRedactResult {
+  chunk: Buffer;
+  textLike: boolean;
+}
+
 /**
  * Redact secrets from a chunk only when it is valid UTF-8 text.
  * Binary data (NUL bytes or lossy UTF-8 round-trip) is stored as-is.
  */
-function safeRedact(chunk: Buffer): Buffer {
+function safeRedact(chunk: Buffer, redactor?: StreamingTextRedactor): SafeRedactResult {
   // NUL byte → likely binary, skip redaction
-  if (chunk.includes(0)) return chunk;
+  if (chunk.includes(0)) return { chunk, textLike: false };
   const str = chunk.toString('utf8');
   // Lossy round-trip → binary or non-UTF-8, skip redaction
-  if (!Buffer.from(str, 'utf8').equals(chunk)) return chunk;
-  const cleaned = redactText(str);
-  return Buffer.from(cleaned, 'utf8');
+  if (!Buffer.from(str, 'utf8').equals(chunk)) return { chunk, textLike: false };
+  const cleaned = redactor ? redactor.write(str) : redactText(str);
+  return { chunk: Buffer.from(cleaned, 'utf8'), textLike: true };
+}
+
+function flushSafeRedactor(redactor: StreamingTextRedactor): Buffer {
+  const cleaned = redactor.flush();
+  return cleaned.length === 0 ? Buffer.alloc(0) : Buffer.from(cleaned, 'utf8');
 }
 
 /**
@@ -107,30 +119,57 @@ export function truncateToUtf8Boundary(buf: Buffer): Buffer {
   return buf;
 }
 
-// ── Env-file loader ───────────────────────────────────────────────────────────
+const EMPTY_BUFFER = Buffer.alloc(0);
 
-/**
- * Parse a .env-style file (KEY=VALUE, # comments, quoted values).
- * Returns a record of KEY → VALUE.
- */
-export function parseEnvFile(contents: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const raw of contents.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith('#')) continue;
-    const eq = line.indexOf('=');
-    if (eq === -1) continue;
-    const key = line.slice(0, eq).trim();
-    let value = line.slice(eq + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"'))
-      || (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
+interface BufferedUtf8Chunk {
+  complete: Buffer;
+  pending: Buffer;
+}
+
+function splitBufferedUtf8Chunk(chunk: Buffer): BufferedUtf8Chunk {
+  const complete = truncateToUtf8Boundary(chunk);
+  if (complete.length === chunk.length) return { complete, pending: EMPTY_BUFFER };
+  return {
+    complete,
+    pending: Buffer.from(chunk.subarray(complete.length)),
+  };
+}
+
+function appendBufferedUtf8Chunk(pending: Buffer, chunk: Buffer): BufferedUtf8Chunk {
+  return splitBufferedUtf8Chunk(pending.length === 0 ? chunk : Buffer.concat([pending, chunk]));
+}
+
+const ACTION_CWD_INVALID_ERROR_CODE = 'ACTION_CWD_INVALID';
+
+function buildActionCwdError(
+  actionKind: Job['action']['kind'],
+  cwd: string,
+  reason: 'missing' | 'not-directory',
+): CrontickError {
+  const detail = reason === 'missing' ? 'does not exist' : 'is not a directory';
+  return new CrontickError(
+    ACTION_CWD_INVALID_ERROR_CODE,
+    `${ACTION_CWD_INVALID_ERROR_CODE}: ${actionKind} action cwd ${detail}: "${cwd}". Update action.cwd to an existing directory before the next run.`,
+  );
+}
+
+function validateActionCwd(action: Job['action']): void {
+  const cwd = action.cwd;
+  if (!cwd) return;
+
+  let cwdStats;
+  try {
+    cwdStats = statSync(cwd);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw buildActionCwdError(action.kind, cwd, 'missing');
     }
-    if (key) result[key] = value;
+    throw err;
   }
-  return result;
+
+  if (!cwdStats.isDirectory()) {
+    throw buildActionCwdError(action.kind, cwd, 'not-directory');
+  }
 }
 
 // ── Runner ────────────────────────────────────────────────────────────────────
@@ -311,7 +350,23 @@ export class Runner {
           lastResult = { status: 'canceled', error: 'canceled before retry' };
           break;
         }
-        lastResult = await this.spawn(job, runId, store, ctrl.signal);
+        try {
+          lastResult = await this.spawn(job, runId, store, ctrl.signal);
+        } catch (err) {
+          lastResult = this.runResultFromError(err, ctrl.signal);
+          this.logger.error('Run attempt failed before child completion', {
+            jobId: job.id,
+            runId,
+            attempt,
+            status: lastResult.status,
+            error: lastResult.error,
+          });
+          this.appendDiagnosticLog(store, runId, 'attempt failed before child completion', {
+            attempt,
+            status: lastResult.status,
+            error: lastResult.error,
+          });
+        }
         this.logger.debug('Run attempt completed', { jobId: job.id, runId, attempt, status: lastResult.status, exitCode: lastResult.exitCode });
         this.appendDiagnosticLog(store, runId, 'attempt completed', { attempt, status: lastResult.status, exitCode: lastResult.exitCode });
         if (lastResult.status === 'success') break;
@@ -334,6 +389,8 @@ export class Runner {
     signal: AbortSignal,
   ): Promise<RunResult> {
     const { action } = job;
+    validateActionCwd(action);
+    const tempFiles: string[] = [];
     let tmpFile: string | undefined;
 
     try {
@@ -345,23 +402,38 @@ export class Runner {
       let promptSessionJob = job;
       let promptEngineBinary: string | undefined;
       let promptEnv: Record<string, string> = {};
+      let bufferPowerShellUtf8 = false;
 
       if (action.kind === 'script') {
-        // Write script to temp file
+        // Write transient script wrappers under the managed data root so
+        // crontick owns their full lifecycle instead of relying on the OS temp
+        // directory's cleanup policy.
         const ext = resolveShellExt(action.shell ?? 'auto');
-        const tmpDir = join(tmpdir(), 'crontick');
-        mkdirSync(tmpDir, { recursive: true });
-        tmpFile = join(tmpDir, `${randomUUID()}${ext}`);
-        writeFileSync(tmpFile, action.script, { encoding: 'utf-8', mode: 0o700 });
+        const tmpDir = tempScriptsDir();
+        mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
 
         const resolved = resolveShell(action.shell ?? 'auto');
         if (resolved === 'pwsh') {
+          const userScriptFile = join(tmpDir, `${randomUUID()}.user.ps1`);
+          tmpFile = join(tmpDir, `${randomUUID()}${ext}`);
+          tempFiles.push(userScriptFile, tmpFile);
+          bufferPowerShellUtf8 = true;
+          writeFileSync(userScriptFile, action.script, { encoding: 'utf-8', mode: 0o700 });
+          // Deliberately invoke the user's script from a wrapper file so pwsh can
+          // report truthful failures while an explicit user `exit N` still wins.
+          writeFileSync(tmpFile, buildPowerShellScriptWrapper(userScriptFile), { encoding: 'utf-8', mode: 0o700 });
           cmd = 'pwsh';
           args = ['-NoProfile', '-NonInteractive', '-File', tmpFile];
         } else if (resolved === 'cmd') {
+          tmpFile = join(tmpDir, `${randomUUID()}${ext}`);
+          tempFiles.push(tmpFile);
+          writeFileSync(tmpFile, action.script, { encoding: 'utf-8', mode: 0o700 });
           cmd = 'cmd';
           args = ['/c', tmpFile];
         } else {
+          tmpFile = join(tmpDir, `${randomUUID()}${ext}`);
+          tempFiles.push(tmpFile);
+          writeFileSync(tmpFile, action.script, { encoding: 'utf-8', mode: 0o700 });
           cmd = 'bash';
           args = [tmpFile];
         }
@@ -432,23 +504,15 @@ export class Runner {
       }
 
       // Merge envFile variables (lower priority than action.env, higher than process.env).
-      if (action.envFile) {
-        const envFilePath = isAbsolute(action.envFile)
-          ? action.envFile
-          : join(action.cwd ?? process.cwd(), action.envFile);
-        try {
-          const fileContents = readFileSync(envFilePath, 'utf-8');
-          const envFileVars = parseEnvFile(fileContents);
-          spawnOpts.env = {
-            ...process.env,
-            ...promptEnv,
-            ...envFileVars,
-            ...(action.env ?? {}),
-          } as NodeJS.ProcessEnv;
-          this.logger.debug('Loaded env file for run', { jobId: job.id, runId, envFile: envFilePath, envKeys: Object.keys(envFileVars) });
-        } catch (err) {
-          throw new CrontickError('ENV_FILE_ERROR', `Failed to load envFile: ${String(err)}`);
-        }
+      const envFile = readEnvFileForAction(action);
+      if (envFile) {
+        spawnOpts.env = {
+          ...process.env,
+          ...promptEnv,
+          ...envFile.vars,
+          ...(action.env ?? {}),
+        } as NodeJS.ProcessEnv;
+        this.logger.debug('Loaded env file for run', { jobId: job.id, runId, envFile: envFile.path, envKeys: Object.keys(envFile.vars) });
       }
 
       // Timeout enforcement (L-timeout): tracked manually rather than via spawn()'s
@@ -482,14 +546,32 @@ export class Runner {
       const maxOutputBytes = this.maxOutputBytesPerRunOverride ?? resolveMaxOutputBytesPerRun();
       let capturedBytes = 0;
       let outputTruncated = false;
+      const bufferedChunks: Record<'stdout' | 'stderr', Buffer> = {
+        stdout: EMPTY_BUFFER,
+        stderr: EMPTY_BUFFER,
+      };
+      const streamRedactors: Record<'stdout' | 'stderr', StreamingTextRedactor> = {
+        stdout: createStreamingTextRedactor(),
+        stderr: createStreamingTextRedactor(),
+      };
+      const flushRedactor = (stream: 'stdout' | 'stderr'): void => {
+        const flushed = flushSafeRedactor(streamRedactors[stream]);
+        if (flushed.length > 0) store.appendLog(runId, stream, flushed);
+      };
       const captureChunk = (stream: 'stdout' | 'stderr', chunk: Buffer): void => {
         if (outputTruncated) return; // marker already emitted; drop silently, child keeps running
+        const redactor = streamRedactors[stream];
         if (capturedBytes + chunk.length > maxOutputBytes) {
           const room = Math.max(0, maxOutputBytes - capturedBytes);
           // truncateToUtf8Boundary (L5 fix): the cap cuts at an arbitrary byte
           // offset — trim back to a full character so the last stored bytes
           // before the marker are never an invalid, split UTF-8 sequence.
-          if (room > 0) store.appendLog(runId, stream, safeRedact(truncateToUtf8Boundary(chunk.subarray(0, room))));
+          if (room > 0) {
+            const redacted = safeRedact(truncateToUtf8Boundary(chunk.subarray(0, room)), redactor);
+            if (!redacted.textLike) flushRedactor(stream);
+            if (redacted.chunk.length > 0) store.appendLog(runId, stream, redacted.chunk);
+          }
+          flushRedactor(stream);
           store.appendLog(runId, stream, Buffer.from(truncationMarker(maxOutputBytes), 'utf-8'));
           try {
             store.updateRun(runId, { outputTruncated: true });
@@ -500,7 +582,25 @@ export class Runner {
           return;
         }
         capturedBytes += chunk.length;
-        store.appendLog(runId, stream, safeRedact(chunk));
+        const redacted = safeRedact(chunk, redactor);
+        if (!redacted.textLike) flushRedactor(stream);
+        if (redacted.chunk.length > 0) store.appendLog(runId, stream, redacted.chunk);
+      };
+      const captureBufferedChunk = (stream: 'stdout' | 'stderr', chunk: Buffer): void => {
+        if (!bufferPowerShellUtf8) {
+          captureChunk(stream, chunk);
+          return;
+        }
+        const { complete, pending } = appendBufferedUtf8Chunk(bufferedChunks[stream], chunk);
+        bufferedChunks[stream] = pending;
+        if (complete.length > 0) captureChunk(stream, complete);
+      };
+      const flushBufferedChunk = (stream: 'stdout' | 'stderr'): void => {
+        if (!bufferPowerShellUtf8) return;
+        const pending = bufferedChunks[stream];
+        if (pending.length === 0) return;
+        bufferedChunks[stream] = EMPTY_BUFFER;
+        captureChunk(stream, pending);
       };
 
       const result = await new Promise<RunResult>((resolve) => {
@@ -551,7 +651,7 @@ export class Runner {
         child.stdout?.on('data', (chunk: Buffer) => {
           try {
             appendTranscript(chunk);
-            captureChunk('stdout', chunk);
+            captureBufferedChunk('stdout', chunk);
           } catch (err) {
             failFromCallback(err);
           }
@@ -560,13 +660,22 @@ export class Runner {
         child.stderr?.on('data', (chunk: Buffer) => {
           try {
             appendTranscript(chunk);
-            captureChunk('stderr', chunk);
+            captureBufferedChunk('stderr', chunk);
           } catch (err) {
             failFromCallback(err);
           }
         });
 
         child.on('close', (code, sig) => {
+          try {
+            flushBufferedChunk('stdout');
+            flushBufferedChunk('stderr');
+            flushRedactor('stdout');
+            flushRedactor('stderr');
+          } catch (err) {
+            finish({ status: 'failed', error: `RUNNER_CALLBACK_FAILED: ${errorMessage(err)}` });
+            return;
+          }
           const durationMs = Date.now() - startedAt;
           this.logger.debug('Child process closed', { jobId: job.id, runId, code, signal: sig, durationMs });
           this.appendDiagnosticLog(store, runId, 'child closed', { code, signal: sig, durationMs });
@@ -647,14 +756,23 @@ export class Runner {
 
       return result;
     } finally {
-      if (tmpFile && existsSync(tmpFile)) {
+      for (const tempFile of tempFiles) {
+        if (!existsSync(tempFile)) continue;
         try {
-          unlinkSync(tmpFile);
+          unlinkSync(tempFile);
         } catch {
           // ignore cleanup failure
         }
       }
     }
+  }
+
+
+  private runResultFromError(err: unknown, signal: AbortSignal): RunResult {
+    if ((err as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal.aborted) {
+      return { status: 'canceled', error: 'aborted' };
+    }
+    return { status: 'failed', error: errorMessage(err) };
   }
 
   private async finalizeRun(store: Store, runId: string, result: RunResult): Promise<void> {
@@ -717,6 +835,37 @@ function resolveShellExt(shell: string): string {
   return '.sh';
 }
 
+function buildPowerShellScriptWrapper(userScriptPath: string): string {
+  const escapedUserScriptPath = escapePowerShellSingleQuotedString(userScriptPath);
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    '$utf8NoBom = [System.Text.UTF8Encoding]::new($false)',
+    '[Console]::OutputEncoding = $utf8NoBom',
+    '$OutputEncoding = $utf8NoBom',
+    'if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {',
+    '  $PSNativeCommandUseErrorActionPreference = $true',
+    '}',
+    '$global:LASTEXITCODE = 0',
+    'trap {',
+    '  [Console]::Error.WriteLine($_.ToString())',
+    '  if ($global:LASTEXITCODE -is [int] -and $global:LASTEXITCODE -ne 0) {',
+    '    exit $global:LASTEXITCODE',
+    '  }',
+    '  exit 1',
+    '}',
+    `& '${escapedUserScriptPath}'`,
+    'if ($global:LASTEXITCODE -is [int] -and $global:LASTEXITCODE -ne 0) {',
+    '  exit $global:LASTEXITCODE',
+    '}',
+    'exit 0',
+    '',
+  ].join('\n');
+}
+
+function escapePowerShellSingleQuotedString(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
 /**
  * True if `cmd` invokes PowerShell (Core `pwsh` or Windows PowerShell
  * `powershell`), by executable basename, case-insensitively and with/without
@@ -736,3 +885,4 @@ function sleep(ms: number): Promise<void> {
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
+

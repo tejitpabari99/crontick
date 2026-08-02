@@ -6,11 +6,12 @@
  * Precedence for engine resolution: file config > BUILT_IN_CONFIG.
  * Writes use atomic rename (write-to-tmp, rename) for crash safety.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
 import { CrontickError } from './errors.js';
 import { configPath as defaultConfigPath, ensureDirs } from './paths.js';
+import { readJsonFile } from './json-file.js';
 import {
   ConfigKeySchema,
   ConfigSchema,
@@ -23,7 +24,7 @@ import {
   type RetentionConfig,
 } from './schemas/config.js';
 import type { PromptAction } from './schemas/job.js';
-import { nullLogger, type Logger } from './logger.js';
+import { nullLogger, redactValue, type Logger } from './logger.js';
 
 export { ConfigSchema, EngineConfigSchema, RetentionConfigSchema, type CrontickConfig, type EngineConfig, type RetentionConfig };
 
@@ -55,10 +56,14 @@ export interface PromptRunCommand {
 export const BUILT_IN_CONFIG: CrontickConfig = Object.freeze({
   defaultEngine: 'copilot',
   engines: {
-    copilot: Object.freeze({ command: 'copilot', args: [], env: {} }),
+    copilot: Object.freeze({ command: 'copilot', args: ['--allow-all-tools', '-p'], env: {} }),
   },
   retention: Object.freeze({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 }),
 });
+
+export function redactConfigForRead(config: CrontickConfig): CrontickConfig {
+  return redactValue(config) as CrontickConfig;
+}
 
 /** Resolves config file path: explicit `options.path` > `<dataDir>/config.json`. */
 export function configFilePath(options: ConfigOptions = {}): string {
@@ -119,11 +124,11 @@ export function validateConfigFile(options: ConfigOptions = {}): ConfigValidatio
   const logger = (options.logger ?? nullLogger).child('config');
   logger.debug('Validating config file', { path: filePath });
   if (!existsSync(filePath)) {
-    return { ok: true, path: filePath, config: cloneConfig(BUILT_IN_CONFIG), problems: [] };
+    return { ok: true, path: filePath, config: redactConfigForRead(cloneConfig(BUILT_IN_CONFIG)), problems: [] };
   }
   try {
     const config = parseConfig(readConfigJson(filePath), filePath);
-    return { ok: true, path: filePath, config, problems: [] };
+    return { ok: true, path: filePath, config: redactConfigForRead(config), problems: [] };
   } catch (err) {
     return {
       ok: false,
@@ -134,27 +139,27 @@ export function validateConfigFile(options: ConfigOptions = {}): ConfigValidatio
 }
 
 export function getConfigValue(path: string | undefined, options: ConfigOptions = {}): unknown {
-  const config = loadConfig(options);
-  if (!path) return config;
-  return readPath(config, parseKeyPath(path));
+  const config = redactConfigForRead(loadConfig(options));
+  const keyPath = path ? parseKeyPath(path) : undefined;
+  return keyPath ? readPath(config, keyPath) : config;
 }
 
 export function setConfigValue(path: string, value: unknown, options: ConfigOptions = {}): CrontickConfig {
   const keyPath = parseKeyPath(path);
   const updated = cloneRaw(readRawStoredConfig(options));
   writePath(updated as unknown as Record<string, unknown>, keyPath, value);
-  return persistRawConfig(updated, options);
+  return redactConfigForRead(persistRawConfig(updated, options));
 }
 
 export function removeConfigValue(path: string, options: ConfigOptions = {}): CrontickConfig {
   const keyPath = parseKeyPath(path);
   const updated = cloneRaw(readRawStoredConfig(options));
   removePath(updated as unknown as Record<string, unknown>, keyPath);
-  return persistRawConfig(updated, options);
+  return redactConfigForRead(persistRawConfig(updated, options));
 }
 
 export function listEngines(options: ConfigOptions = {}): Record<string, EngineConfig> {
-  return loadConfig(options).engines;
+  return redactConfigForRead(loadConfig(options)).engines;
 }
 
 export function addEngine(name: string, engine: unknown, options: ConfigOptions = {}): CrontickConfig {
@@ -194,7 +199,7 @@ export function removeEngine(name: string, options: ConfigOptions = {}): Crontic
   if (isRecord(engines) && Object.prototype.hasOwnProperty.call(engines, key)) {
     delete engines[key];
   }
-  return persistRawConfig(updated, options);
+  return redactConfigForRead(persistRawConfig(updated, options));
 }
 
 /**
@@ -258,7 +263,7 @@ function setEngine(name: string, engine: unknown, mustExist: boolean, options: C
   const updated = cloneRaw(readRawStoredConfig(options));
   if (!isRecord(updated.engines)) updated.engines = {};
   (updated.engines as Record<string, unknown>)[key] = parsed.data;
-  return persistRawConfig(updated, options);
+  return redactConfigForRead(persistRawConfig(updated, options));
 }
 
 /** Deep-merges file config over BUILT_IN_CONFIG then validates via ConfigSchema. */
@@ -271,13 +276,20 @@ function parseConfig(input: unknown, filePath: string): CrontickConfig {
 
 function readConfigJson(filePath: string): unknown {
   try {
-    return JSON.parse(readFileSync(filePath, 'utf-8'));
+    return readJsonFile(filePath, {
+      errorCode: 'CONFIG_READ_ERROR',
+      subject: 'config file',
+      expectedShape: 'expected a JSON object matching the crontick config schema',
+    });
   } catch (err) {
-    throw new CrontickError(
-      'CONFIG_READ_ERROR',
-      `Failed to read config file ${filePath}: ${errorMessage(err)}. Fix the JSON syntax or run "crontick config init --force" to recreate the default config.`,
-      { path: filePath },
-    );
+    if (err instanceof CrontickError && err.code === 'CONFIG_READ_ERROR') {
+      throw new CrontickError(
+        err.code,
+        `${err.message}. Fix the JSON syntax or run "crontick config init --force" to recreate the default config.`,
+        err.details,
+      );
+    }
+    throw err;
   }
 }
 

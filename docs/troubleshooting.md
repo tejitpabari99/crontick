@@ -200,7 +200,7 @@ from the data directory (`daemon.ensure.lock`) and retry.
 
 ### ENV_FILE_ERROR
 
-The `--env-file` path does not exist or cannot be read. Verify the path is correct and the
+The `--job-env-file` path does not exist or cannot be read. Verify the path is correct and the
 file is readable. Relative paths resolve against the job's `cwd` (or the daemon's working
 directory if no `cwd` is set).
 

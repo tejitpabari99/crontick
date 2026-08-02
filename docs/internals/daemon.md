@@ -97,7 +97,7 @@ All routes enforce localhost-only via `LOOPBACK` set check on
 | POST | `/api/schedules/preview` | Preview next N fire times | 200 |
 | GET | `/api/stats/summary` | Aggregate stats | 200 |
 | GET | `/api/stats/jobs/:id` | Per-job stats | 200/404 |
-| GET | `/api/daemon/status` | Daemon PID, version, uptime, job count, `missedFires` summary | 200 |
+| GET | `/api/daemon/status` | Daemon PID, loopback `port`/`baseUrl`, version, uptime, job count, `missedFires` summary | 200 |
 | POST | `/api/daemon/reload` | Reload jobs from disk | 200 |
 | POST | `/api/daemon/stop` | Graceful in-process shutdown; responds with any `activeRuns` before exiting | 200/501 |
 | GET | `/api/export` | Export all jobs (optionally `?includeRuns=1`) | 200 |

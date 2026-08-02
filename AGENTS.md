@@ -14,7 +14,7 @@ Read the relevant docs before modifying the corresponding area:
 | Concepts (jobs, scheduling, execution, parity) | `docs/concepts/` |
 | Internal module design | `docs/internals/` |
 | CLI / MCP / Library reference | `docs/reference/` |
-| Feature specifications | `specs/` |
+| Feature specifications | `docs/specs/` |
 | Design decisions and rationale | `docs/decisions/` |
 | Testing strategy and layers | `docs/testing.md` |
 | Full documentation index | `docs/README.md` |
@@ -50,7 +50,7 @@ Do not import from `src/daemon/`, `src/cli/`, or `src/mcp/` internals outside th
 1. No new runtime dependencies without explicit approval in the PR description.
 2. No deep imports across module boundaries; consume via each module's public barrel.
 3. No new public symbol without corresponding documentation (`docs/reference/`) and tests.
-4. Preserve backward compatibility unless a spec (`specs/`) explicitly identifies a breaking change.
+4. Preserve backward compatibility unless a spec (`docs/specs/`) explicitly identifies a breaking change.
 5. Prefer Node.js platform APIs (`node:fs`, `node:sqlite`, `node:crypto`, etc.) over third-party packages.
 6. Keep filesystem, network, and timing side effects behind injectable interfaces.
 7. Shims contain zero business logic -- all behavior lives in the core client and daemon modules.
@@ -82,7 +82,7 @@ When public behavior changes:
 
 1. Update `README.md` or the relevant guide in `docs/`.
 2. Update the affected file in `docs/reference/`.
-3. Update the corresponding `specs/` file if one exists.
+3. Update the corresponding `docs/specs/` file if one exists.
 4. Add a changeset entry (`npx changeset`).
 5. Add an ADR in `docs/decisions/` when the change is a lasting design decision.
 

@@ -13,10 +13,11 @@ export interface SurfaceCapability {
   clientMethod: string;
   cliCommand: string[];
   mcpTool: string;
+  optionNames?: readonly string[];
 }
 
 export const SURFACE_CAPABILITIES = [
-  { capability: 'create-job', clientMethod: 'createJob', cliCommand: ['new'], mcpTool: 'crontick_job_create' },
+  { capability: 'create-job', clientMethod: 'createJob', cliCommand: ['new'], mcpTool: 'crontick_job_create', optionNames: ['force'] },
   { capability: 'list-jobs', clientMethod: 'listJobs', cliCommand: ['list'], mcpTool: 'crontick_job_list' },
   { capability: 'get-job', clientMethod: 'getJob', cliCommand: ['get'], mcpTool: 'crontick_job_get' },
   { capability: 'update-job', clientMethod: 'updateJob', cliCommand: ['update'], mcpTool: 'crontick_job_update' },
@@ -54,9 +55,6 @@ export const SURFACE_CAPABILITIES = [
   { capability: 'config-init', clientMethod: 'initConfig', cliCommand: ['config', 'init'], mcpTool: 'crontick_config_init' },
   { capability: 'config-validate', clientMethod: 'validateConfig', cliCommand: ['config', 'validate'], mcpTool: 'crontick_config_validate' },
 ] as const satisfies readonly SurfaceCapability[];
-
-/** All client method names covered by the parity contract. */
-export const CLIENT_METHODS = SURFACE_CAPABILITIES.map((capability) => capability.clientMethod);
 
 /** All MCP tool names covered by the parity contract. */
 export const MCP_TOOLS = SURFACE_CAPABILITIES.map((capability) => capability.mcpTool);

@@ -17,6 +17,20 @@ Complete reference for the `crontick` command-line interface.
 | `0` | Success |
 | `1` | Error (any `CrontickError`, failed `doctor`, or failed `config validate`) |
 
+Unless otherwise noted, read commands that surface config values, run errors, captured
+output, or dashboard data redact common secret shapes before printing. The same shared
+redaction contract applies on CLI, library, MCP, and HTTP read surfaces.
+
+## Error Output
+
+In text mode, command failures print `Error [CODE]: message` (or `Error: message` for non-
+`CrontickError` exceptions). When an error includes structured `details` data, the CLI now prints
+an additional `Details:` block with readable field-level lines such as `id: ...` or
+`schedule.everySec: ...`.
+
+In `--json` mode, failures still exit with code `1`, but stderr contains the full structured error
+payload as JSON, including `code`, `message`, and `details` when present.
+
 ---
 
 ## Commands
@@ -53,8 +67,9 @@ crontick new <id> [engineArgs...]
 | `--session-id <id>` | string | — | Reuse this prompt engine session every run |
 | `--reuse-session` | boolean | `false` | Capture first successful run session id and reuse it |
 | `--file <path>` | string | — | Load job JSON from a file |
+| `--force` | boolean | `false` | Replace an existing job when the same id already exists |
 | `--shell <shell>` | string | `auto` (create only) | Shell: `auto`\|`bash`\|`pwsh`\|`cmd`\* |
-| `--env-file <path>` | string | — | Load extra environment variables from a `.env` file |
+| `--job-env-file <path>` | string | — | Load extra environment variables from a `.env` file |
 | `--timeout <sec>` | integer | — | Timeout in seconds |
 | `--overlap <policy>` | string | `skip` (create only) | Overlap policy: `skip`\|`queue`\|`cancel-previous`\* |
 | `--retry <max>` | integer | `0` | Retry count |
@@ -65,6 +80,17 @@ crontick new <id> [engineArgs...]
 unchanged — there is no update-time default, so a partial update never silently resets these
 fields. See [job-schema.md](job-schema.md#update-vs-create-semantics) and
 [jobs.md](../concepts/jobs.md).
+
+On `crontick update`, `--shell`, `--job-env-file`, and `--timeout` are action modifiers, not
+standalone changes. Pass them together with the action source you are updating (`--script`,
+`--exec`, `--prompt`, or `--prompt-file`). If you pass one of those flags without an action source,
+crontick now fails with `VALIDATION_ERROR` and leaves the stored job unchanged instead of
+silently succeeding with no effect.
+
+On `crontick update`, `--tz` must be paired with `--cron`. To change a cron job's timezone, repeat
+the cron expression and timezone together (for example `crontick update job --cron "0 10 * * *"
+--tz UTC`). Passing `--tz` by itself, or with `--every` / `--at`, now fails loudly instead of
+being silently ignored.
 
 `--exec` takes `<cmd>` verbatim: it is never split on whitespace, so a command string containing
 a space (e.g. a path) is passed through unchanged as one argv element. Pass its arguments with
@@ -96,6 +122,13 @@ shell. Need to set `action.args` directly without going through argv parsing at 
 with an explicit `action.args` array. See [job-schema.md](job-schema.md#kind-exec) for the `exec`
 action's JSON shape.
 
+On Windows, a PowerShell-backed `--script` job (`shell: auto` resolving to `pwsh`, or an
+explicit `--shell pwsh` / `powershell`) is wrapped so uncaught terminating errors,
+non-terminating `Write-Error`, command-not-found, missing-module errors, and native
+non-zero exits all fail the run with a non-zero exit status instead of a false success.
+An explicit `exit N` still wins. Captured stdout/stderr is emitted and stored as UTF-8,
+independent of the console's OEM code page.
+
 #### Windows shells: `--arg` vs `--`
 
 `--arg` works correctly on every real entry point. `--` is a convenience that is not reliable
@@ -120,6 +153,24 @@ quotes before Node ever sees them.
 
 Exactly one schedule source (`--cron`, `--every`, `--at`) and one action source (`--script`, `--exec`, `--prompt`, `--prompt-file`) are required unless `--file` is used.
 
+When `--file` is used for create or update, crontick accepts UTF-8 JSON with an optional leading
+BOM. Malformed JSON fails with `VALIDATION_ERROR` that names the file, reports line/column/position,
+and states the expected job or job-patch shape.
+
+Creating a job is no longer a silent upsert. If `<id>` already exists, `crontick new`
+fails with `JOB_ALREADY_EXISTS` and leaves the existing definition unchanged. Use
+`crontick update <id>` for in-place edits, or pass `--force` when you intentionally want
+create to replace the existing job. Schedule validation also happens before any
+persistence, so an invalid `--cron` / `--every` / `--at` value never leaves a broken job
+behind.
+
+`--job-env-file` loads extra environment variables from a `.env` file. In persisted job
+JSON and the library/MCP/HTTP JSON surfaces, the same setting is stored as `action.envFile`
+/ `envFile`. `crontick new` and `crontick update` preflight that file before persistence: if it is
+missing or unreadable, the command fails with `ENV_FILE_ERROR`, resolves relative paths against
+`action.cwd` when set (otherwise the current working directory), and leaves existing job state
+unchanged.
+
 ```bash
 crontick new daily-backup --cron "0 2 * * *" --script "pg_dump mydb > /backups/db.sql"
 ```
@@ -143,6 +194,14 @@ Accepts all options from `crontick new` plus:
 
 `--enable` and `--disable` are mutually exclusive.
 
+`crontick update` shares `crontick new`'s `--file`, `--job-env-file`, and read-surface redaction
+semantics. Its JSON result redacts secret-like `action.env` values with the same contract
+used by `crontick new`, `crontick list`, and `crontick get`. Missing or unreadable
+`--job-env-file` still fails before persistence with `ENV_FILE_ERROR` when an action update is
+actually being applied, so the stored job remains unchanged. If `--job-env-file` is passed without
+an action source, the command now fails earlier with `VALIDATION_ERROR` instead of silently doing
+nothing.
+
 ```bash
 crontick update daily-backup --cron "30 3 * * *"
 ```
@@ -151,7 +210,7 @@ crontick update daily-backup --cron "30 3 * * *"
 
 ### crontick list
 
-List all jobs.
+List all jobs. Returned job JSON redacts secret-like `action.env` values while preserving benign trap names such as `NON_SECRET`.
 
 ```bash
 crontick list
@@ -163,7 +222,7 @@ No additional options.
 
 ### crontick get
 
-Get a job by ID.
+Get a job by ID. Returned job JSON redacts secret-like `action.env` values while preserving benign trap names such as `NON_SECRET`.
 
 ```bash
 crontick get <id>
@@ -199,8 +258,10 @@ Delete a job.
 crontick delete <id>
 ```
 
-Cancels the job's in-flight run, if any, before removing the job — a deleted job never leaves an
-orphaned process running against a definition that no longer exists. See
+Cancels the job's in-flight run, if any, before removing the job -- a deleted job never leaves an
+orphaned process running against a definition that no longer exists. Deleting a job removes only the
+job definition; archived run and log history remain available via `crontick runs get <runId>` and
+`crontick logs <runId>`, but those archived rows are excluded from live aggregates. See
 [jobs.md](../concepts/jobs.md#lifecycle-create-update-remove).
 
 ---
@@ -262,7 +323,7 @@ crontick logs <runId>
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--tail <n>` | integer | — | Show last N lines |
+| `--tail <n>` | integer | — | Show the last N text lines after reconstructing newline-delimited output from stored log chunks |
 
 ---
 
@@ -311,6 +372,10 @@ Show aggregate statistics.
 crontick stats summary
 ```
 
+Only runs whose parent job still exists are counted. Deleting a job keeps its historical runs
+archived for direct `crontick runs get <runId>` / `crontick logs <runId>` access, but those
+archived rows are excluded from live aggregate totals.
+
 ---
 
 ### crontick stats job
@@ -335,23 +400,29 @@ crontick config get [path]
 |------------|------|-------------|
 | `path` | string (optional) | Dot-separated config path (e.g. `engines.copilot.command`) |
 
+Returns the effective config with secret-like values redacted. The shared contract masks
+common provider tokens, `token=`/`password=`-style assignments, contextual or nearby-access-key-paired AWS
+secret-access-key values, and private keys (including lone PEM begin/end markers) while avoiding
+broad substring matches such as `NON_SECRET`. The underlying `config.json` file on disk is not
+rewritten; read it directly if you need the literal stored bytes.
+
 ---
 
 ### crontick config set
 
-Set one config value.
+Set one config value. The printed updated config uses the same secret-redaction contract as `config get`.
 
 ```bash
 crontick config set <path> <value>
 ```
 
-`value` is parsed as JSON when possible; otherwise treated as a string.
+`value` is parsed as JSON when possible; otherwise treated as a string. Benign trap names such as `NON_SECRET` remain visible in the returned config.
 
 ---
 
 ### crontick config unset
 
-Remove one config value.
+Remove one config value. The printed updated config uses the same secret-redaction contract as `config get`.
 
 ```bash
 crontick config unset <path>
@@ -390,13 +461,15 @@ crontick config validate [path]
 |------------|------|-------------|
 | `path` | string (optional) | File path to validate (defaults to the standard config path) |
 
-Exits with code `1` if validation fails.
+Exits with code `1` if validation fails. A leading UTF-8 BOM is accepted. Malformed JSON now
+reports the file path, line, column, position, and the expected config shape instead of surfacing
+a raw `SyntaxError`.
 
 ---
 
 ### crontick config engines
 
-List configured engines.
+List configured engines. Add/update commands return the updated config with secret-like engine `env` values redacted while preserving benign trap names such as `NON_SECRET`.
 
 ```bash
 crontick config engines
@@ -478,7 +551,10 @@ crontick import <file>
 Jobs are upserted (existing jobs with the same ID are updated). If the file was produced with
 `--include-runs`, its `runs` array is restored archivally into `runs.db` (`INSERT OR IGNORE`,
 keyed by run id; rows for a job that no longer exists are skipped) -- this is a plain data
-restore, not re-execution, and does not touch the scheduler.
+restore, not re-execution, and does not touch the scheduler. A leading UTF-8 BOM is accepted.
+Malformed import JSON fails with `VALIDATION_ERROR` that names the file, reports line/column/position,
+and states that crontick expected either a JSON array of jobs or an export object with jobs and
+optional runs.
 
 ---
 
@@ -505,6 +581,10 @@ crontick daemon start
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--foreground` | boolean | `false` | Run in foreground (blocking) |
+
+In `--json` mode, background starts print the structured daemon-start result (`ok`, `started`,
+`pid`, `port`, `baseUrl`). `--foreground --json` is rejected up front because foreground mode
+streams daemon logs to stdout instead of producing a single JSON object.
 
 ---
 
@@ -537,9 +617,11 @@ Show daemon status.
 crontick daemon status
 ```
 
-Includes a `missedFires` summary: `{ jobsWithMissedFires, missedRunsRecorded, jobsCapped,
-capPerJob }`, describing fires the schedule would have produced while the daemon was not running,
-recorded on the most recent daemon start (`capPerJob` is 500). See
+The result includes the daemon's loopback discovery fields (`port`, `baseUrl`) plus a
+`missedFires` summary: `{ jobsWithMissedFires, missedRunsRecorded, jobsCapped, capPerJob }`,
+describing fires the schedule would have produced while the daemon was not running, recorded on
+the most recent daemon start (`capPerJob` is 500). In text mode these fields print as `key: value`
+lines; with `--json` they are part of the structured status object. See
 [daemon-lifecycle.md](../concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down).
 
 ---
@@ -561,6 +643,9 @@ Restart the daemon.
 ```bash
 crontick daemon restart
 ```
+
+In `--json` mode, restart prints the structured daemon-restart result (`ok`, `started`, `stopped`,
+`previousPid`, `pid`, `port`, `baseUrl`) instead of only human text.
 
 ---
 
@@ -600,6 +685,10 @@ crontick dashboard data
 |------|------|---------|-------------|
 | `--job <id>` | string | — | Filter runs by job ID |
 | `--runs-limit <n>` | integer | — | Maximum recent runs to return |
+
+Aggregate run counts and the recent-runs list include only runs whose parent job still exists.
+Deleting a job keeps its historical runs directly queryable by run id, but removes them from
+these live dashboard views.
 
 ---
 

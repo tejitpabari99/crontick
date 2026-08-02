@@ -85,6 +85,14 @@ class CrontickError extends Error {
 | **Message shape** | Includes the requested ID |
 | **Details** | — |
 
+### JOB_ALREADY_EXISTS
+
+| | |
+|---|---|
+| **When** | `createJob`, `crontick new`, MCP `crontick_job_create`, or HTTP `POST /api/jobs` attempts to create an ID that already exists without explicit overwrite intent |
+| **Message shape** | `Job "<id>" already exists. Use "crontick update <id>" ... or re-run create with --force / force: true ...` |
+| **Details** | — |
+
 ### PARSE_ERROR
 
 | | |
@@ -121,9 +129,22 @@ class CrontickError extends Error {
 
 | | |
 |---|---|
-| **When** | `--env-file` path does not exist or cannot be read |
+| **When** | Job `action.envFile` / CLI `--job-env-file` path does not exist or cannot be read **at job-creation time** (the daemon `env-file.ts` loader tries to read the file immediately on `POST /api/jobs`). |
 | **Message shape** | Includes file path |
 | **Details** | — |
+
+> **Why `update --job-env-file` alone gives `VALIDATION_ERROR` instead:** On update, the CLI requires
+> at least one action-source flag (`--script`, `--exec`, `--prompt`) alongside modifier flags such as
+> `--job-env-file`. If no action-source is present, the CLI `maybeBuildAction()` gate raises
+> `VALIDATION_ERROR: "--job-env-file … requires an action source on update"` **before** reaching the
+> file-existence check. These two error codes answer different questions and the distinct messages are
+> intentional: `ENV_FILE_ERROR` = "the file was reached and is missing/unreadable"; `VALIDATION_ERROR`
+> here = "insufficient patch context — the file path was never inspected".
+>
+> **Known limitation (PLAN-001):** `envFile` stores a **file path only** in the job record. The
+> file's content is loaded exclusively at run time by the daemon runner and is never persisted, echoed,
+> or returned on any read surface (job-get, list, dashboard). Assertions against env-file content via
+> read surfaces are not possible by design.
 
 ### CONFIG_EXISTS
 

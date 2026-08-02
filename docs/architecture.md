@@ -275,7 +275,7 @@ Rendering per surface:
 
 The config file (`<dataDir>/config.json`) defines named engines with `{ command: string, args: string[], env: Record<string, string> }`. Users manage engines via `config engines add/update/remove` (CLI), `crontick_config_engine_*` (MCP), or `addEngine`/`updateEngine`/`removeEngine` (library). The Runner resolves the engine at execution time via `buildPromptRunCommand()` from `src/config.ts`, which merges per-engine config with per-job `action.args` and optional `sessionId`.
 
-The built-in default engine is `copilot` (`{ command: "copilot", args: [], env: {} }`), defined in `BUILT_IN_CONFIG`. Any CLI binary that accepts a prompt via arguments can be registered as an engine (the engine binary is invoked via `spawn` with the resolved args array).
+The built-in default engine is `copilot` (`{ command: "copilot", args: ["--allow-all-tools", "-p"], env: {} }`), defined in `BUILT_IN_CONFIG`. Any CLI binary that accepts a prompt via arguments can be registered as an engine, but if it needs an explicit prompt-taking flag that flag must be the final configured engine arg because `buildPromptRunCommand()` appends the prompt text after `engine.args`.
 
 ### Executors (action kinds)
 

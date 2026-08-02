@@ -31,11 +31,15 @@ Add `action.kind: "prompt"` as a first-class job action. The schema
 Engine resolution uses the config system (ADR-0007):
 
 ```json
-{ "engines": { "copilot": { "command": "copilot", "args": [], "env": {} } } }
+{ "engines": { "copilot": { "command": "copilot", "args": ["--allow-all-tools", "-p"], "env": {} } } }
 ```
 
 `buildPromptRunCommand()` in `src/config.ts` assembles the final command line from
-engine config + job-level overrides.
+engine config + job-level overrides. Because it appends `action.prompt` immediately
+after `engine.args`, any engine that requires an explicit prompt-taking flag must
+place that flag last in `engine.args`; the built-in Copilot default therefore uses
+`["--allow-all-tools", "-p"]` so the appended prompt becomes the `-p` value while
+remaining non-interactive.
 
 Prompt-file normalization (`src/job-input.ts`) reads `--prompt-file` at creation time
 and stores the resolved text as `prompt`, ensuring jobs are self-contained.

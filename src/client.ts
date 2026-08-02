@@ -8,6 +8,7 @@
  * Transport failures are converted to structured `CrontickError` instances with
  * machine-readable codes; see `src/errors.ts`.
  */
+import http from 'node:http';
 import { CrontickError } from './errors.js';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,6 +45,7 @@ import {
   initConfig,
   listEngines,
   loadConfig,
+  redactConfigForRead,
   removeConfigValue,
   removeEngine,
   setConfigValue,
@@ -63,6 +65,10 @@ export interface CrontickClientOptions extends Omit<EnsureDaemonOptions, 'startD
   verbose?: boolean;
   onLog?: LogSink;
   logger?: Logger;
+}
+
+export interface CreateJobOptions extends NormalizeJobInputOptions {
+  force?: boolean;
 }
 
 // Bundled layout: client.ts's compiled chunk and index.js both live directly
@@ -112,6 +118,29 @@ export interface JobStats {
   lastRunAt: number | null;
 }
 
+interface DaemonMissedFiresSummary {
+  jobsWithMissedFires: number;
+  missedRunsRecorded: number;
+  jobsCapped: number;
+  capPerJob: number;
+}
+
+export interface DaemonStatus {
+  pid: number;
+  version: string;
+  port: number;
+  baseUrl: string;
+  uptimeSec: number;
+  jobs: number;
+  missedFires: DaemonMissedFiresSummary;
+}
+
+interface HttpTextResponse {
+  status: number;
+  ok: boolean;
+  text: string;
+}
+
 export class CrontickClient {
   private readonly options: CrontickClientOptions;
   private readonly verbose: boolean;
@@ -158,14 +187,18 @@ export class CrontickClient {
     return this.request('GET', '/health', undefined, { ensure: options.ensure ?? false });
   }
 
-  async createJob(input: Job | JobCreateInput, options: NormalizeJobInputOptions = {}): Promise<Job> {
-    const job = normalizeJobInput(input as JobCreateInput, this.normalizeOptions(options));
-    return this.request<Job>('POST', '/api/jobs', job);
+  async createJob(input: Job | JobCreateInput, options: CreateJobOptions = {}): Promise<Job> {
+    const { force, ...normalizeInputOptions } = options;
+    const job = normalizeJobInput(input as JobCreateInput, this.normalizeOptions(normalizeInputOptions));
+    return this.request<Job>('POST', force ? '/api/jobs?force=1' : '/api/jobs', job);
   }
 
   /** CLI convenience: builds a Job from raw CLI flags before delegating to createJob. Library-only. */
   async createJobFromCliOptions(input: JobCreateCliOptions): Promise<Job> {
-    return this.createJob(buildJobFromCreateOptions(input, this.normalizeOptions({ cwd: this.options.cwd ?? process.cwd() })));
+    return this.createJob(
+      buildJobFromCreateOptions(input, this.normalizeOptions({ cwd: this.options.cwd ?? process.cwd() })),
+      { force: input.force },
+    );
   }
 
   async listJobs(): Promise<Job[]> {
@@ -219,7 +252,8 @@ export class CrontickClient {
 
   async getLogs(runId: string, options: { lines?: number } = {}): Promise<LogsResult> {
     const logs = await this.request<LogEntry[]>('GET', `/api/runs/${encodeURIComponent(runId)}/logs`);
-    const lines = options.lines !== undefined ? logs.slice(-options.lines) : logs;
+    const logicalLines = reconstructLogicalLogLines(logs);
+    const lines = options.lines !== undefined ? logicalLines.slice(-options.lines) : logicalLines;
     return { runId, lines };
   }
 
@@ -273,8 +307,8 @@ export class CrontickClient {
     return this.request<{ ok: true }>('POST', '/api/daemon/reload');
   }
 
-  async daemonStatus(): Promise<unknown> {
-    return this.request('GET', '/api/daemon/status', undefined, { ensure: false });
+  async daemonStatus(): Promise<DaemonStatus> {
+    return this.request<DaemonStatus>('GET', '/api/daemon/status', undefined, { ensure: false });
   }
 
   async doctor(options: DoctorOptions = {}): Promise<DoctorResult> {
@@ -325,7 +359,7 @@ export class CrontickClient {
 
   /** Library-only: loads config without daemon (local-only operation). */
   getConfig(): CrontickConfig {
-    return loadConfig({ env: this.effectiveEnv(), logger: this.logger.child('config') });
+    return redactConfigForRead(loadConfig({ env: this.effectiveEnv(), logger: this.logger.child('config') }));
   }
 
   getConfigValue(path?: string): unknown {
@@ -390,7 +424,7 @@ export class CrontickClient {
   ): Promise<T> {
     const ensure = options.ensure ?? true;
     const baseUrl = await this.baseUrl({ ensure });
-    let res: Response;
+    let res: HttpTextResponse;
     const startedAt = Date.now();
     this.logger.debug('HTTP request', { method, path, baseUrl, ensure });
     try {
@@ -412,7 +446,7 @@ export class CrontickClient {
         throw this.daemonRequestError(restarted.baseUrl, method, path, retryErr);
       }
     }
-    const text = await res.text();
+    const text = res.text;
     let data: unknown;
     try {
       data = text ? JSON.parse(text) : {};
@@ -474,12 +508,52 @@ export class CrontickClient {
     method: string,
     path: string,
     body: unknown,
-  ): Promise<Response> {
-    return fetch(`${baseUrl}${path}`, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(this.options.requestTimeoutMs ?? 30_000),
+  ): Promise<HttpTextResponse> {
+    return new Promise((resolve, reject) => {
+      const url = new URL(path, baseUrl);
+      const timeoutMs = this.options.requestTimeoutMs ?? 30_000;
+      const payload = body !== undefined ? JSON.stringify(body) : undefined;
+      const headers: Record<string, string> = {
+        Accept: 'application/json',
+        Connection: 'close',
+      };
+      if (payload !== undefined) {
+        headers['Content-Type'] = 'application/json';
+        headers['Content-Length'] = String(Buffer.byteLength(payload));
+      }
+
+      let settled = false;
+      const finish = <T>(action: (value: T) => void, value: T): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        action(value);
+      };
+
+      const req = http.request(url, { method, headers, agent: false }, (res) => {
+        res.setEncoding('utf8');
+        const chunks: string[] = [];
+        res.on('data', (chunk) => chunks.push(chunk));
+        res.on('end', () => {
+          const status = res.statusCode ?? 0;
+          finish(resolve, {
+            status,
+            ok: status >= 200 && status < 300,
+            text: chunks.join(''),
+          });
+        });
+        res.on('aborted', () => finish(reject, new Error('Response aborted before completion')));
+        res.on('error', (err) => finish(reject, err));
+      });
+
+      const timeout = setTimeout(() => {
+        req.destroy(new Error(`Request timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      timeout.unref?.();
+
+      req.on('error', (err) => finish(reject, err));
+      if (payload !== undefined) req.write(payload);
+      req.end();
     });
   }
 
@@ -500,6 +574,57 @@ export function createClient(options?: CrontickClientOptions): CrontickClient {
 /** Fixed 100 ms backoff between demand-start and first retry — enough for port file flush. */
 async function boundedBackoff(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 100));
+}
+
+function reconstructLogicalLogLines(entries: LogEntry[]): LogEntry[] {
+  const linesByEntry: LogEntry[][] = entries.map(() => []);
+  const remainders = new Map<string, {
+    data: string;
+    runId?: string;
+    lastTs: number;
+    lastIndex: number;
+  }>();
+
+  entries.forEach((entry, index) => {
+    const previous = remainders.get(entry.stream);
+    const buffer = `${previous?.data ?? ''}${entry.data}`;
+    let cursor = 0;
+
+    while (cursor < buffer.length) {
+      const newlineIndex = buffer.indexOf('\n', cursor);
+      if (newlineIndex === -1) break;
+      linesByEntry[index]!.push({
+        runId: entry.runId ?? previous?.runId,
+        stream: entry.stream,
+        ts: entry.ts,
+        data: buffer.slice(cursor, newlineIndex + 1),
+      });
+      cursor = newlineIndex + 1;
+    }
+
+    const remainder = buffer.slice(cursor);
+    if (remainder) {
+      remainders.set(entry.stream, {
+        data: remainder,
+        runId: entry.runId ?? previous?.runId,
+        lastTs: entry.ts,
+        lastIndex: index,
+      });
+    } else {
+      remainders.delete(entry.stream);
+    }
+  });
+
+  for (const [stream, remainder] of remainders) {
+    linesByEntry[remainder.lastIndex]!.push({
+      runId: remainder.runId,
+      stream,
+      ts: remainder.lastTs,
+      data: remainder.data,
+    });
+  }
+
+  return linesByEntry.flat();
 }
 
 function errorMessage(err: unknown): string {

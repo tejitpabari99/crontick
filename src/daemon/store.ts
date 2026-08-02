@@ -430,29 +430,49 @@ export class Store {
     return row ? rowToRun(row) : undefined;
   }
 
-  listRuns(opts: ListRunsOptions = {}): Run[] {
+  private queryRuns(opts: ListRunsOptions = {}, existingJobsOnly = false): Run[] {
     const conditions: string[] = [];
     const params: (string | number)[] = [];
 
     if (opts.jobId) {
-      conditions.push('job_id = ?');
+      conditions.push('runs.job_id = ?');
       params.push(opts.jobId);
     }
     if (opts.since !== undefined) {
-      conditions.push('started_at >= ?');
+      conditions.push('runs.started_at >= ?');
       params.push(opts.since);
     }
     if (opts.status !== undefined) {
-      conditions.push('status = ?');
+      conditions.push('runs.status = ?');
       params.push(opts.status);
     }
 
+    const join = existingJobsOnly ? 'INNER JOIN jobs ON jobs.id = runs.job_id' : '';
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const limit = opts.limit !== undefined ? `LIMIT ${opts.limit}` : '';
-    const rows = this.db.prepare(`SELECT * FROM runs ${where} ORDER BY started_at DESC ${limit}`)
+    const rows = this.db.prepare(`SELECT runs.* FROM runs ${join} ${where} ORDER BY runs.started_at DESC ${limit}`)
       .all(...params) as unknown as DbRunRow[];
-    this.logger.debug('Listed runs', { count: rows.length, jobId: opts.jobId, limit: opts.limit, since: opts.since, status: opts.status });
+    this.logger.debug('Listed runs', {
+      count: rows.length,
+      jobId: opts.jobId,
+      limit: opts.limit,
+      since: opts.since,
+      status: opts.status,
+      existingJobsOnly,
+    });
     return rows.map(rowToRun);
+  }
+
+  listRuns(opts: ListRunsOptions = {}): Run[] {
+    return this.queryRuns(opts, false);
+  }
+
+  /**
+   * Current-job aggregate views exclude archived runs whose parent job row was
+   * deleted, but direct run/log lookups by run id still use listRuns()/getRun().
+   */
+  listRunsForExistingJobs(opts: ListRunsOptions = {}): Run[] {
+    return this.queryRuns(opts, true);
   }
 
   /**

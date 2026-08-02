@@ -52,6 +52,11 @@ function windowsStartTime(pid: number): number | undefined {
   // PowerShell ships with every supported Windows version; Get-Process
   // exposes StartTime directly, avoiding wmic (deprecated/removed on newer
   // Windows) and avoiding any shell-quoting hazard (args array, shell:false).
+  // The timeout is deliberately generous: powershell.exe cold-start can take
+  // several seconds on a loaded machine/CI runner, and returning a definitive
+  // start time (even a little late) is far better for reconciliation than
+  // spuriously reporting "inconclusive" just because the shell was slow to
+  // launch. This is a one-shot startup-path query, not a hot loop.
   const result = spawnSync(
     'powershell.exe',
     [
@@ -60,7 +65,7 @@ function windowsStartTime(pid: number): number | undefined {
       '-Command',
       `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if ($p) { $p.StartTime.ToUniversalTime().ToString('o') }`,
     ],
-    { encoding: 'utf-8', timeout: 5_000, windowsHide: true },
+    { encoding: 'utf-8', timeout: 20_000, windowsHide: true },
   );
   if (result.error || result.status !== 0) return undefined;
   const out = (result.stdout ?? '').trim();
@@ -104,7 +109,7 @@ function bulkWindowsStartTimes(): Map<number, number> {
       '-Command',
       "Get-Process | ForEach-Object { try { \"$($_.Id)|$($_.StartTime.ToUniversalTime().ToString('o'))\" } catch {} }",
     ],
-    { encoding: 'utf-8', timeout: 10_000, windowsHide: true },
+    { encoding: 'utf-8', timeout: 30_000, windowsHide: true },
   );
   if (result.error || result.status !== 0) return map;
   for (const line of (result.stdout ?? '').split(/\r?\n/)) {

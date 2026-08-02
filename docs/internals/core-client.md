@@ -21,7 +21,7 @@ Defined as `CrontickClientOptions` in `src/client.ts`:
 | `startupTimeoutMs` | `number` | 10000 | Max time to wait for daemon to become healthy |
 | `healthTimeoutMs` | `number` | 2000 | Timeout for individual health probes |
 | `lockTimeoutMs` | `number` | 15000 | Timeout waiting for daemon start lock |
-| `requestTimeoutMs` | `number` | 30000 | Per-HTTP-request timeout (AbortSignal.timeout) |
+| `requestTimeoutMs` | `number` | 30000 | Per-HTTP-request timeout |
 | `cwd` | `string` | - | Working directory for job normalization |
 | `mcpScript` | `string` | - | MCP binary path (passed to doctor checks) |
 | `verbose` | `boolean` | false | Enable debug logging; also reads `CRONTICK_VERBOSE` |
@@ -70,7 +70,9 @@ async daemonReload(): Promise<{ ok: true }>
 `request<T>(method, path, body?, options?)` in `src/client.ts` line 331:
 
 1. Resolves `baseUrl` -- calls `ensure()` when `options.ensure` is true (default).
-2. Sends `fetch()` with JSON body and `AbortSignal.timeout(requestTimeoutMs)`.
+2. Sends a one-shot `node:http.request()` loopback call with JSON encoding, `Connection: close`,
+   and a per-request timeout. This intentionally avoids `fetch()`/undici keep-alive teardown so
+   Windows library consumers can exit cleanly even after daemon-backed requests.
 3. On network error with auto-start allowed: clears cached URL, re-ensures daemon,
    waits 100 ms (`boundedBackoff`), retries once.
 4. Parses JSON response. Non-2xx responses are translated to `CrontickError` using
@@ -112,3 +114,4 @@ optional `details: unknown`.
 `normalizeJobInput()` may emit notices (e.g., prompt-file read). These are
 collected via `this.notices` and drained with `drainNotices()` so CLI/MCP can
 display them after the operation succeeds.
+

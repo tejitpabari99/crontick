@@ -86,18 +86,21 @@ are only cleared if they still point to the completing run (prevents races when
 
 ## Spawn Details
 
+Before any child process is spawned, the runner pre-validates `action.cwd` for **all** action kinds. When `action.cwd` is set but the path does not exist, or resolves to something other than a directory, the runner fails the run immediately with `ACTION_CWD_INVALID: <kind> action cwd ...`, names the rejected path, and suggests updating `action.cwd` before the next run. This happens before prompt-engine command resolution, so a missing directory cannot masquerade as a prompt-engine PATH failure.
+
 ### Script actions (`action.kind === 'script'`)
 
 1. Resolve shell: `resolveShell(action.shell ?? 'auto')` -> `'pwsh'` on Windows,
    `'bash'` elsewhere, or explicit `'cmd'`.
-2. Write script to a temp file in `os.tmpdir()/crontick/<uuid><ext>`:
+2. Write script to a managed temp file in `<dataDir>/tmp/scripts/<uuid><ext>` (`CRONTICK_HOME`-scoped):
    - `.ps1` for pwsh, `.bat` for cmd, `.sh` for bash.
+   - PowerShell also writes a sibling `<uuid>.user.ps1` file there, then runs a wrapper `.ps1`.
    - Mode `0o700`.
 3. Build command:
    - pwsh: `pwsh -NoProfile -NonInteractive -File <tmpFile>`
    - cmd: `cmd /c <tmpFile>`
    - bash: `bash <tmpFile>`
-4. Temp file is deleted in `finally` block.
+4. Every wrapper/user-script file is deleted in the runner's `finally` block (best-effort, regardless of run outcome).
 
 ### Exec actions (`action.kind === 'exec'`)
 
@@ -131,7 +134,9 @@ Priority (highest wins):
 4. `process.env` (inherited)
 
 `spawn` options: `{ cwd: action.cwd ?? process.cwd(), shell: false, signal, detached:
-!isWindowsPowerShellHost, windowsHide: true }`. `detached` is always set except for the one
+!isWindowsPowerShellHost, windowsHide: true }`. The runner reaches this point only after the
+shared `action.cwd` preflight above succeeds; otherwise the run finalizes `failed` before any
+spawn attempt occurs. `detached` is always set except for the one
 `pwsh`/`powershell.exe`-on-Windows exception — see
 [Detached Child Processes](#detached-child-processes) below. `windowsHide` is always set,
 regardless. `child.pid` is written to the run's `pid` column via `store.updateRun()` as soon as

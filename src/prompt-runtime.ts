@@ -4,11 +4,11 @@
  * 1. User-supplied args must not include crontick-managed flags (--prompt, --session-id, etc.)
  * 2. Estimated Windows command-line length must stay under the safe limit (30K of 32K max)
  */
-export const WINDOWS_COMMAND_LINE_LIMIT = 32_767;
-export const SAFE_PROMPT_COMMAND_LINE_LIMIT = 30_000;
+const WINDOWS_COMMAND_LINE_LIMIT = 32_767;
+const SAFE_PROMPT_COMMAND_LINE_LIMIT = 30_000;
 
 /** Args that crontick manages internally; users cannot pass these as raw engine args. */
-export const RESERVED_PROMPT_ARGS = new Set([
+const RESERVED_PROMPT_ARGS = new Set([
   '-p',
   '--prompt',
   '--session-id',
@@ -18,7 +18,7 @@ export const RESERVED_PROMPT_ARGS = new Set([
   '--connect',
 ]);
 
-export interface PromptRuntimeValidationInput {
+interface PromptRuntimeValidationInput {
   prompt: string;
   engine?: string;
   args?: string[];
@@ -40,14 +40,14 @@ export function promptRuntimeValidationMessage(action: PromptRuntimeValidationIn
   return undefined;
 }
 
-export function promptRuntimeArgv(action: PromptRuntimeValidationInput): string[] {
+function promptRuntimeArgv(action: PromptRuntimeValidationInput): string[] {
   const args = action.args ?? [];
   const argv = [action.engine ?? 'copilot', action.prompt, ...args];
   if (action.sessionId) argv.push(`--session-id=${action.sessionId}`);
   return argv;
 }
 
-export function isReservedPromptArg(arg: string): boolean {
+function isReservedPromptArg(arg: string): boolean {
   return RESERVED_PROMPT_ARGS.has(arg)
     || arg.startsWith('--prompt=')
     || arg.startsWith('--session-id=')
@@ -55,7 +55,7 @@ export function isReservedPromptArg(arg: string): boolean {
     || arg.startsWith('--connect=');
 }
 
-export function estimateWindowsCommandLineLength(argv: string[]): number {
+function estimateWindowsCommandLineLength(argv: string[]): number {
   return argv.reduce((total, arg, index) => total + (index === 0 ? 0 : 1) + quoteForWindowsEstimate(arg).length, 0);
 }
 

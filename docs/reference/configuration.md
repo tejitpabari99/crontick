@@ -43,7 +43,7 @@ The data directory is resolved by (in order):
 | Field | Type | Required | Default | Constraints |
 |-------|------|----------|---------|-------------|
 | `defaultEngine` | `string` | no | `"copilot"` | Must match a key in `engines`; regex `^[A-Za-z0-9_.-]+$` |
-| `engines` | `Record<string, EngineConfig>` | no | `{ copilot: { command: "copilot", args: [], env: {} } }` | At least one engine must be defined |
+| `engines` | `Record<string, EngineConfig>` | no | `{ copilot: { command: "copilot", args: ["--allow-all-tools", "-p"], env: {} } }` | At least one engine must be defined |
 | `retention` | `RetentionConfig` | no | `{ maxRunsPerJob: 100, maxOutputBytesPerRun: 2000000, maxLogFiles: 30 }` | See below |
 
 ### RetentionConfig
@@ -91,7 +91,7 @@ Schema is `.strict()` — no extra fields allowed.
 {
   "defaultEngine": "copilot",
   "engines": {
-    "copilot": { "command": "copilot", "args": [], "env": {} }
+    "copilot": { "command": "copilot", "args": ["--allow-all-tools", "-p"], "env": {} }
   },
   "retention": {
     "maxRunsPerJob": 100,
@@ -102,6 +102,25 @@ Schema is `.strict()` — no extra fields allowed.
 ```
 
 If `config.json` does not exist, crontick uses this built-in config. The file config is deep-merged over the built-in defaults.
+
+### JSON parsing behavior
+
+Config file reads accept UTF-8 JSON with an optional leading BOM. When the file cannot be parsed,
+`crontick config validate`, `CrontickClient.validateConfig()`, and `crontick_config_validate`
+report `CONFIG_READ_ERROR` with the file path, line, column, position, and the expected config
+shape.
+
+### Prompt-engine argv ordering
+
+`buildPromptRunCommand()` always emits prompt-engine argv as `[..., ...engine.args, prompt, ...action.args]`.
+If an engine requires an explicit prompt-taking flag for non-interactive use, that flag must be
+the final entry in `engine.args` so the appended prompt text becomes its value. Put any other
+non-interactive/setup flags before it.
+
+For the built-in Copilot engine, the working default is `['--allow-all-tools', '-p']`, which
+produces `copilot --allow-all-tools -p <prompt>`. If you override `engines.copilot.args`, keep the
+prompt-taking flag last; `['-p', '--allow-all-tools']` is incorrect because `buildPromptRunCommand()`
+would pass `--allow-all-tools` as the prompt text.
 
 ### Set vs. Inherited Values
 
@@ -114,6 +133,22 @@ built-in default change, or restoring `config.json` from an older version, no lo
 touching that key. To see exactly what's explicitly set (as opposed to inherited), read
 `config.json` directly: any key absent from the file is inherited from the built-in default.
 
+### Redaction on read surfaces
+
+`crontick config get`, `CrontickClient.getConfigValue()`, and the MCP
+`crontick_config_get` tool return effective config values with secret-like material
+redacted. This uses the same shared redaction contract as run reads, log tails, and
+dashboard data: GitHub/OpenAI/Anthropic/Stripe/Slack-style tokens, JWT-like blobs,
+key/value assignments such as `token=...`, connection-string passwords, contextual or
+nearby-access-key-paired AWS secret-access-key values, and private keys (including lone `BEGIN`/`END
+... PRIVATE KEY` markers) are masked before they are printed or serialized. Structured
+key-hint redaction is intentionally narrow: names such as `OPENAI_API_KEY`,
+`clientSecret`, and `AWS_SECRET_ACCESS_KEY` redact, while benign names such as
+`NON_SECRET` do not.
+
+This is presentation-only redaction. The underlying `config.json` file on disk is not
+rewritten; read the file directly if you need the literal stored bytes.
+
 ### Multi-Engine Example
 
 ```json
@@ -122,7 +157,7 @@ touching that key. To see exactly what's explicitly set (as opposed to inherited
   "engines": {
     "copilot": {
       "command": "copilot",
-      "args": ["-p"],
+      "args": ["--allow-all-tools", "-p"],
       "env": {}
     },
     "agency": {
@@ -134,7 +169,7 @@ touching that key. To see exactly what's explicitly set (as opposed to inherited
 }
 ```
 
-Custom engines (like `agency` above) are just configurable entries; only the `command` must be on PATH.
+Custom engines (like `agency` above) are just configurable entries; only the `command` must be on PATH. If a custom engine needs an explicit prompt-taking flag, keep that flag last in `args` for the same ordering reason described above.
 
 ### Config Key Path
 

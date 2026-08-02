@@ -66,3 +66,4 @@ NNNN-kebab-case-title.md
 | 0018 | `--exec` takes command and args verbatim, separated by `--` | Superseded by ADR-0019 | 2026-07-26 |
 | 0019 | `--arg` is the primary way to pass arguments to `--exec`/`--prompt` | Accepted | 2026-07-27 |
 | 0020 | Do not detach pwsh/powershell.exe script jobs on Windows | Accepted | 2026-07-27 |
+| 0021 | Duplicate job create requires explicit force | Accepted | 2026-07-28 |

@@ -2,7 +2,7 @@
 
 ## Claude Code
 
-- Read the relevant `specs/` file before editing any feature implementation.
+- Read the relevant `docs/specs/` file before editing any feature implementation.
 - Use plan mode for changes that affect the public API or `SURFACE_CAPABILITIES`.
 - Do not modify release workflows (`.github/workflows/release.yml`) unless explicitly requested.
 - Prefer reading `docs/internals/` for module design over re-reading the full source tree.

@@ -7,6 +7,7 @@ import { existsSync, statSync } from 'node:fs';
 import { extname, join as pathJoin, normalize, resolve as pathResolve, sep as pathSep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CrontickError } from './errors.js';
+import { redactValue } from './logger.js';
 import { VERSION } from './version.js';
 import type { Job, Schedule } from './schemas/job.js';
 import type { Store, Run } from './daemon/store.js';
@@ -121,18 +122,18 @@ const MIME_TYPES: Record<string, string> = {
 export function buildDashboardData(ctx: DashboardContext, options: DashboardOptions = {}): DashboardData {
   const runsLimit = normalizeLimit(options.runsLimit, 100);
   const jobs = ctx.store.listJobs();
-  const runs = ctx.store.listRuns({ jobId: options.jobId, limit: runsLimit });
-  const allRuns = ctx.store.listRuns({ limit: 1000 });
+  const recentRuns = ctx.store.listRunsForExistingJobs({ jobId: options.jobId, limit: runsLimit });
+  const allRuns = ctx.store.listRunsForExistingJobs({ limit: 1000 });
   const since24h = Date.now() - 24 * 60 * 60 * 1000;
-  const runs24h = ctx.store.listRuns({ since: since24h });
+  const runs24h = ctx.store.listRunsForExistingJobs({ since: since24h });
 
-  return {
+  return redactValue({
     generatedAt: Date.now(),
     health: buildDashboardHealth(ctx, jobs, runs24h),
     stats: buildDashboardStats(jobs, allRuns),
     jobs: jobs.map((job) => buildDashboardJob(ctx, job)),
-    runs: runs.map(toDashboardRun),
-  };
+    runs: recentRuns.map(toDashboardRun),
+  }) as DashboardData;
 }
 
 export function buildDashboardHealth(ctx: DashboardContext, jobs: Job[], runs24h: Run[]): DashboardHealth {
@@ -191,7 +192,7 @@ export function dashboardStatusFromDaemon(ctx: DashboardContext, baseUrl: string
   };
 }
 
-export function dashboardUrl(baseUrl: string): string {
+function dashboardUrl(baseUrl: string): string {
   return `${baseUrl.replace(/\/+$/, '')}/dashboard`;
 }
 

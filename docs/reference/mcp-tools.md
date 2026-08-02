@@ -60,6 +60,12 @@ Error:
 
 Error messages are redacted via `redactForLlm()`: loopback addresses become `<daemon-addr>`, filesystem paths become `<path>`.
 
+Tools that expose config values, run rows, log text, or dashboard payloads also apply
+the shared redaction contract before serializing successful results. That contract
+redacts common provider tokens, `token=`/`password=`-style assignments, contextual or
+nearby-access-key-paired AWS secret-access-key values, and private keys (including lone PEM markers)
+while avoiding broad substring matches such as `NON_SECRET`.
+
 ---
 
 ## Tools
@@ -77,9 +83,15 @@ Create and schedule a new cron job.
 | `action` | `ActionInput` | yes | — | Action with `kind` discriminator; prompt actions accept `promptFile` instead of `prompt` |
 | `overlap` | `"skip"\|"queue"\|"cancel-previous"` | no | `"skip"` | Overlap policy |
 | `retry` | `{ max: number, backoffSec: number }` | no | `{ max: 0, backoffSec: 30 }` | Retry config |
+| `force` | `boolean` | no | `false` | Replace an existing job with the same id |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** The created `Job` object.
+**Result:** The created `Job` object, with secret-like `action.env` values redacted. Duplicate ids are rejected with
+`JOB_ALREADY_EXISTS` unless `force=true` is supplied. Schedule validation runs before
+any existing job is replaced. If `action.envFile` is set, the daemon also preflights that
+file before persistence; a missing or unreadable file returns `ENV_FILE_ERROR`, resolves
+relative paths against `action.cwd` when set (otherwise the daemon process cwd), and
+leaves existing job state unchanged.
 
 ---
 
@@ -91,7 +103,7 @@ List all scheduled jobs with their current status and next run time.
 |-----------|------|----------|---------|-------------|
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Array of `Job` objects.
+**Result:** Array of `Job` objects, with secret-like `action.env` values redacted.
 
 ---
 
@@ -104,7 +116,7 @@ Get the full definition and status of a specific job by ID.
 | `id` | `string` | yes | — | Job ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `Job` object.
+**Result:** `Job` object, with secret-like `action.env` values redacted.
 
 ---
 
@@ -123,20 +135,22 @@ Update an existing job (partial update merged with existing definition).
 | `retry` | `{ max: number, backoffSec: number }` | no | — | Retry config |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Updated `Job` object.
+**Result:** Updated `Job` object. If the patch leaves `action.envFile` pointing at a
+missing or unreadable file, the update returns `ENV_FILE_ERROR` before persistence and
+keeps the previously stored job unchanged.
 
 ---
 
 ### crontick_job_delete
 
-Permanently delete a job and all its run history.
+Permanently delete a job definition. Archived runs and logs remain directly queryable by run ID, but live aggregates exclude them.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Job ID |
+| `id` | `string` | yes | - | Job ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ ok: true, canceledRun: boolean }` — `canceledRun` is `true` when the job had an
+**Result:** `{ ok: true, canceledRun: boolean }` - `canceledRun` is `true` when the job had an
 in-flight run that was canceled as part of the delete (see
 [jobs.md](../concepts/jobs.md#lifecycle-create-update-remove)).
 
@@ -148,7 +162,7 @@ Enable a disabled job.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Job ID |
+| `id` | `string` | yes | - | Job ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Updated `Job` object.
@@ -161,7 +175,7 @@ Disable a job.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Job ID |
+| `id` | `string` | yes | - | Job ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Updated `Job` object.
@@ -174,7 +188,7 @@ Trigger an immediate run of a job, bypassing its schedule.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Job ID |
+| `id` | `string` | yes | - | Job ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `{ runId: string }`
@@ -187,10 +201,11 @@ Cancel an in-progress run by its run ID.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `runId` | `string` | yes | — | Run ID |
+| `id` | `string` | yes | - | Run ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `{ ok: true, canceled: boolean }`
+
 
 ---
 
@@ -200,10 +215,10 @@ List recent runs, optionally filtered by job ID.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `jobId` | `string` | no | — | Filter by job ID |
-| `status` | `enum` | no | — | Filter by run status: `queued`, `running`, `success`, `failed`, `canceled`, `timeout`, `missed` |
-| `limit` | `integer` (positive) | no | — | Maximum runs to return |
-| `since` | `integer` | no | — | Only runs since epoch ms |
+| `jobId` | `string` | no | - | Filter by job ID |
+| `status` | `enum` | no | - | Filter by run status: `queued`, `running`, `success`, `failed`, `canceled`, `timeout`, `missed` |
+| `limit` | `integer` (positive) | no | - | Maximum runs to return |
+| `since` | `integer` | no | - | Only runs since epoch ms |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Array of run objects.
@@ -217,11 +232,12 @@ and whether its captured output was truncated by the retention output cap.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `runId` | `string` | yes | — | Run ID |
+| `id` | `string` | yes | - | Run ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Run object, including `pid` (number, absent for `missed` runs) and `outputTruncated`
-(boolean).
+(boolean). Secret-like text fields are redacted before serialization.
+
 
 ---
 
@@ -231,14 +247,17 @@ Get the last N lines of output for a run.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `runId` | `string` | yes | — | Run ID |
-| `lines` | `integer` (positive) | no | `50` | Number of lines to return |
+| `id` | `string` | yes | - | Run ID |
+| `lines` | `integer` (positive) | no | `50` | Number of text lines to return after reconstructing newline-delimited output from stored log chunks |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ runId: string, lines: LogEntry[] }`
+**Result:** `{ runId: string, lines: LogEntry[] }` with log text redacted for common
+secret shapes.
+
 
 ---
 
+### crontick_schedule_validate
 ### crontick_schedule_validate
 
 Validate a schedule definition.
@@ -277,7 +296,8 @@ Get aggregate summary of all jobs.
 
 **Result:** `{ totalJobs, enabledJobs, totalRuns, succeeded, failed, avgDurationMs }` --
 `avgDurationMs` excludes `missed`/`queued`/`running`/`canceled` runs, averaging only runs that
-actually finished executing (see [library-api.md](./library-api.md#statssummary)).
+actually finished executing, and all summary counts exclude archived runs whose parent job was
+deleted (see [library-api.md](./library-api.md#statssummary)).
 
 ---
 
@@ -325,15 +345,15 @@ runs still in progress that the stop did not cancel. See
 
 ### crontick_daemon_status
 
-Get daemon process status: PID, version, uptime, job counts, and a `missedFires` summary.
+Get daemon process status: PID, version, loopback `port`/`baseUrl`, uptime, job counts, and a `missedFires` summary.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Health object (including `missedFires: { jobsWithMissedFires, missedRunsRecorded,
-jobsCapped, capPerJob }`, report-only — see `crontick_run_list` with `status: "missed"`) or
-`{ running: false, error: string }` if not running.
+**Result:** Health object including `port`, `baseUrl`, and `missedFires: { jobsWithMissedFires,
+missedRunsRecorded, jobsCapped, capPerJob }` (report-only — see `crontick_run_list` with
+`status: "missed"`) or `{ running: false, error: string }` if not running.
 
 ---
 
@@ -428,7 +448,9 @@ Return the core dashboard data model.
 | `runsLimit` | `integer` (positive) | no | — | Maximum recent runs |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `DashboardData` object (health, stats, jobs, runs).
+**Result:** `DashboardData` object (health, stats, jobs, runs), with secret-like text
+fields redacted. Aggregate counts and the recent-runs list exclude archived runs whose parent job
+was deleted, even though those runs remain directly queryable by run id.
 
 ---
 
@@ -465,7 +487,7 @@ Get effective crontick config, or a single value by dot-separated path.
 | `path` | `string` | no | — | Dot-separated config path |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** The config value or full config object.
+**Result:** The config value or full config object, with secret-like values redacted.
 
 ---
 
@@ -479,7 +501,7 @@ Set one config value by dot-separated path.
 | `value` | `unknown` | yes | — | Value to set |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Updated `CrontickConfig`.
+**Result:** Updated `CrontickConfig`, with secret-like values redacted.
 
 ---
 
@@ -492,7 +514,7 @@ Remove one config value by dot-separated path.
 | `path` | `string` | yes | — | Dot-separated config path |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Updated `CrontickConfig`.
+**Result:** Updated `CrontickConfig`, with secret-like values redacted.
 
 ---
 
@@ -518,7 +540,7 @@ Add a prompt engine.
 | `engine` | `EngineConfig` | yes | — | `{ command, args, env }` |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Updated `CrontickConfig`.
+**Result:** Updated `CrontickConfig`, with secret-like values redacted.
 
 ---
 
@@ -532,7 +554,7 @@ Update a prompt engine (provided fields replace existing values).
 | `engine` | `Partial<EngineConfig>` | yes | — | Fields to update |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Updated `CrontickConfig`.
+**Result:** Updated `CrontickConfig`, with secret-like values redacted.
 
 ---
 
@@ -572,6 +594,10 @@ Validate the current crontick config file.
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `{ ok: boolean, path: string, config?: CrontickConfig, problems: string[] }`
+
+A leading UTF-8 BOM is accepted. Malformed config JSON returns the same friendly
+`CONFIG_READ_ERROR` problem text as the CLI/library surfaces: file path,
+line/column/position, and the expected config shape.
 
 ---
 

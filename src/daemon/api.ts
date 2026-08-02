@@ -17,7 +17,8 @@ import {
   dashboardStatusFromDaemon,
   resolveDashboardAsset,
 } from '../dashboard.js';
-import { nullLogger, type Logger } from '../logger.js';
+import { nullLogger, redactValue, type Logger } from '../logger.js';
+import { readEnvFileForAction } from './env-file.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -89,7 +90,7 @@ async function handleRequest(
 
     // ── Jobs ─────────────────────────────────────────────────────────────────
     if (method === 'GET' && path === '/api/jobs') {
-      return sendJson(res, 200, ctx.store.listJobs());
+      return sendJson(res, 200, redactValue(ctx.store.listJobs()));
     }
 
     if (method === 'POST' && path === '/api/jobs') {
@@ -99,13 +100,19 @@ async function handleRequest(
         return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid job', parsed.error.format());
       }
       const job = applyConfigDefaults(parsed.data);
+      const force = forceParam(url);
+      if (!force && ctx.store.getJob(job.id)) {
+        return sendDuplicateCreateError(res, job.id);
+      }
+      if (!validateJobSchedule(res, ctx.scheduler, job.schedule)) return;
+      readEnvFileForAction(job.action);
       ctx.store.upsertJob(job);
       const stored = ctx.store.getJob(job.id) ?? job;
       ctx.scheduler.schedule(stored);
       // L2: seed the missed-fire watermark so a restart computes forward from
       // "job just created/updated", not from some earlier (or absent) state.
       ctx.store.recordTick(stored.id);
-      return sendJson(res, 201, stored);
+      return sendJson(res, 201, redactValue(stored));
     }
 
     // /api/jobs/:id/*
@@ -117,7 +124,7 @@ async function handleRequest(
       if (method === 'GET' && sub === '') {
         const job = ctx.store.getJob(id);
         if (!job) return sendError(res, 404, 'NOT_FOUND', `Job ${id} not found`);
-        return sendJson(res, 200, job);
+        return sendJson(res, 200, redactValue(job));
       }
 
       if (method === 'PUT' && sub === '') {
@@ -129,6 +136,8 @@ async function handleRequest(
           return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid job', parsed.error.format());
         }
         const job = applyConfigDefaults(parsed.data);
+        if (!validateJobSchedule(res, ctx.scheduler, job.schedule)) return;
+        readEnvFileForAction(job.action);
         ctx.store.upsertJob(job);
         const stored = ctx.store.getJob(id) ?? job;
         ctx.scheduler.schedule(stored);
@@ -136,7 +145,7 @@ async function handleRequest(
         // job or change its schedule, both of which should compute missed
         // fires forward from now, not from a stale pre-update state.
         ctx.store.recordTick(stored.id);
-        return sendJson(res, 200, stored);
+        return sendJson(res, 200, redactValue(stored));
       }
 
       if (method === 'DELETE' && sub === '') {
@@ -161,7 +170,7 @@ async function handleRequest(
         ctx.scheduler.schedule(updated);
         // L2: re-enabling starts a fresh watermark, same reasoning as create/update.
         ctx.store.recordTick(id);
-        return sendJson(res, 200, updated);
+        return sendJson(res, 200, redactValue(updated));
       }
 
       if (method === 'POST' && sub === '/disable') {
@@ -170,15 +179,23 @@ async function handleRequest(
         const updated = { ...job, enabled: false };
         ctx.store.upsertJob(updated);
         ctx.scheduler.unschedule(id);
-        return sendJson(res, 200, updated);
+        return sendJson(res, 200, redactValue(updated));
       }
 
       if (method === 'POST' && sub === '/run') {
         const job = ctx.store.getJob(id);
         if (!job) return sendError(res, 404, 'NOT_FOUND', `Job ${id} not found`);
         const run = ctx.store.insertRun(id);
-        // Fire-and-forget: return 202 immediately while the run executes async
-        ctx.runner.run(job, run.id, ctx.store).catch(() => {});
+        // Fire-and-forget: return 202 immediately while the run executes async.
+        // Any rejection here is an invariant violation: Runner.run() should
+        // always totalize the run row itself before resolving.
+        ctx.runner.run(job, run.id, ctx.store).catch((err: unknown) => {
+          logger.error('Runner.run rejected after POST /api/jobs/:id/run returned 202', {
+            jobId: id,
+            runId: run.id,
+            error: err instanceof Error ? (err.stack ?? err.message) : String(err),
+          });
+        });
         return sendJson(res, 202, { runId: run.id });
       }
     }
@@ -193,7 +210,7 @@ async function handleRequest(
         ? parseInt(url.searchParams.get('since')!, 10)
         : undefined;
       const status = (url.searchParams.get('status') ?? undefined) as RunStatus | undefined;
-      return sendJson(res, 200, ctx.store.listRuns({ jobId, limit, since, status }));
+      return sendJson(res, 200, redactValue(ctx.store.listRuns({ jobId, limit, since, status })));
     }
 
     // /api/runs/:id/*
@@ -205,7 +222,7 @@ async function handleRequest(
       if (method === 'GET' && sub === '') {
         const run = ctx.store.getRun(id);
         if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
-        return sendJson(res, 200, run);
+        return sendJson(res, 200, redactValue(run));
       }
 
       if (method === 'POST' && sub === '/cancel') {
@@ -219,12 +236,12 @@ async function handleRequest(
         const run = ctx.store.getRun(id);
         if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
         const logs = ctx.store.getLogs(id);
-        return sendJson(res, 200, logs.map((l) => ({
+        return sendJson(res, 200, redactValue(logs.map((l) => ({
           runId: l.runId,
           stream: l.stream,
           ts: l.ts,
           data: l.chunk.toString('utf-8'),
-        })));
+        }))));
       }
 
       if (method === 'GET' && sub === '/logs/stream') {
@@ -262,7 +279,7 @@ async function handleRequest(
     // ── Stats ─────────────────────────────────────────────────────────────────
     if (method === 'GET' && path === '/api/stats/summary') {
       const jobs = ctx.store.listJobs();
-      const runs = ctx.store.listRuns({ limit: 1000 });
+      const runs = ctx.store.listRunsForExistingJobs({ limit: 1000 });
       return sendJson(res, 200, buildDashboardStats(jobs, runs));
     }
 
@@ -287,6 +304,8 @@ async function handleRequest(
       return sendJson(res, 200, {
         pid: process.pid,
         version: VERSION,
+        port: ctx.port,
+        baseUrl: `http://127.0.0.1:${ctx.port}`,
         uptimeSec: Math.floor((Date.now() - ctx.startedAt.getTime()) / 1000),
         jobs: ctx.store.listJobs().length,
         // L2: report-only missed-fire summary computed once at startup.
@@ -335,7 +354,7 @@ async function handleRequest(
       const includeRuns = url.searchParams.get('includeRuns') === '1';
       const payload: { jobs: ReturnType<Store['listJobs']>; runs?: Run[] } = { jobs: ctx.store.listJobs() };
       if (includeRuns) payload.runs = ctx.store.listRuns({});
-      return sendJson(res, 200, payload);
+      return sendJson(res, 200, redactValue(payload));
     }
 
     if (method === 'POST' && path === '/api/import') {
@@ -406,6 +425,33 @@ async function handleRequest(
   }
 }
 
+function forceParam(url: URL): boolean {
+  const raw = (url.searchParams.get('force') ?? '').toLowerCase();
+  return raw === '1' || raw === 'true';
+}
+
+function sendDuplicateCreateError(res: http.ServerResponse, jobId: string): void {
+  sendError(
+    res,
+    409,
+    'JOB_ALREADY_EXISTS',
+    `Job "${jobId}" already exists. Use "crontick update ${jobId}" to change it, or re-run create with --force (CLI) or force: true (library/MCP) to intentionally replace it.`,
+  );
+}
+
+function validateJobSchedule(
+  res: http.ServerResponse,
+  scheduler: Scheduler,
+  schedule: Parameters<Scheduler['validateSchedule']>[0],
+): boolean {
+  const result = scheduler.validateSchedule(schedule);
+  if (!result.ok) {
+    sendError(res, 400, 'VALIDATION_ERROR', 'Invalid schedule', result.error);
+    return false;
+  }
+  return true;
+}
+
 // ── SSE log streaming ─────────────────────────────────────────────────────────
 // Sends existing log entries immediately, then polls for new entries every
 // SSE_POLL_MS until the run reaches a terminal status or the client disconnects.
@@ -427,7 +473,7 @@ function streamLogs(
   // Send existing logs first
   const existing = ctx.store.getLogs(runId);
   for (const log of existing) {
-    sseEvent(res, { stream: log.stream, ts: log.ts, data: log.chunk.toString('utf-8') });
+    sseEvent(res, redactValue({ stream: log.stream, ts: log.ts, data: log.chunk.toString('utf-8') }));
     if (log.ts > lastTs) lastTs = log.ts;
   }
 
@@ -436,7 +482,7 @@ function streamLogs(
     const run = ctx.store.getRun(runId);
     const newLogs = ctx.store.tailLogs(runId, lastTs);
     for (const log of newLogs) {
-      sseEvent(res, { stream: log.stream, ts: log.ts, data: log.chunk.toString('utf-8') });
+      sseEvent(res, redactValue({ stream: log.stream, ts: log.ts, data: log.chunk.toString('utf-8') }));
       if (log.ts > lastTs) lastTs = log.ts;
     }
 

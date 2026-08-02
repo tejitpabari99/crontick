@@ -15,8 +15,8 @@ AI agent over MCP. A demand-started daemon handles scheduling and execution; thr
 | Architecture | [docs/architecture.md](docs/architecture.md) |
 | Reference (API, CLI, MCP, schemas) | [docs/reference/](docs/reference/) |
 | Testing guide | [docs/testing.md](docs/testing.md) |
-| Runnable examples | [examples/](examples/) |
-| Behavior specs | [specs/](specs/) |
+| Runnable examples | [docs/examples/](docs/examples/) |
+| Behavior specs | [docs/specs/](docs/specs/) |
 | Design decisions (ADRs) | [docs/decisions/](docs/decisions/) |
 
 ---
@@ -65,6 +65,13 @@ crontick daemon status
 > `crontick.ps1`, `npx crontick`) and round-trips spaces, quotes, and leading dashes verbatim. See
 > [CLI reference](docs/reference/cli.md#windows-shells---arg-vs---) for the full behavior matrix,
 > including why the `--` convenience form is unreliable on `crontick.ps1`.
+>
+> Create is no longer an upsert: reusing an existing job id with `crontick new` or `createJob()`
+> now fails with `JOB_ALREADY_EXISTS`. Use `crontick update <id>` to mutate an existing job, or
+> pass `--force` / `force: true` when you intentionally want replacement.
+
+`--job-env-file <path>` loads extra environment variables from a `.env` file; persisted job
+definitions store that setting in `action.envFile`.
 
 ### Library (ESM)
 
@@ -82,6 +89,11 @@ await client.createJob({
 const jobs = await client.listJobs();
 console.log(jobs.map(j => j.id));
 ```
+
+> Library exit guidance: after daemon-backed calls, prefer `process.exitCode = n` and let Node exit
+> naturally instead of calling `process.exit(n)` immediately. crontick's client now uses a
+> short-lived `node:http` loopback transport to avoid the historical Windows native crash, but
+> natural exit remains the safest pattern for library consumers.
 
 ---
 
@@ -122,6 +134,11 @@ crontick new healthcheck --every 30 --exec curl --arg -sf --arg http://localhost
 ```sh
 crontick new daily-summary --cron "0 9 * * *" --prompt "Summarize yesterday's git log" --engine copilot
 ```
+
+The built-in `copilot` engine is preconfigured for unattended prompt jobs with
+`--allow-all-tools -p`. If you override `engines.copilot.args`, keep the prompt-taking flag
+(`-p` / `--prompt`) last because crontick appends the prompt text immediately after the
+configured engine args.
 
 ### Wire into an MCP client
 
@@ -234,16 +251,6 @@ See [docs/reference/errors.md](docs/reference/errors.md) for all error codes and
 | CJS import | Not supported; use dynamic `import()` from CJS if needed |
 | TypeScript | Full `.d.ts` declarations shipped |
 
----
-
-## Migration and breaking changes
-
-crontick uses [changesets](https://github.com/changesets/changesets) for versioning and
-follows semver strictly. On-disk state format compatibility is covered by
-[specs/006-state-and-persistence.md](specs/006-state-and-persistence.md).
-
-The pending 1.0.0 release consumes the changesets in `.changeset/`; see them for the
-behavior it introduces.
 
 ---
 

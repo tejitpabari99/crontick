@@ -98,6 +98,7 @@ function errResult(err: unknown, diagnostics: LogEvent[] = [], verbose = false):
 
 function redactedErrorMessage(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
+  if (err instanceof Error && 'code' in err && err.code === 'ENV_FILE_ERROR') return msg;
   return redactForLlm(msg);
 }
 
@@ -140,11 +141,16 @@ export function createMcpServer(): McpServer {
       description:
         'Create and schedule a new cron job. This executes arbitrary commands, scripts, or prompts on the user\'s machine on a recurring or future schedule that persists and outlives this session -- confirm the job definition (schedule and action) with the user before calling. Provide the full job definition including id, schedule (kind: cron|interval|one-shot), and action (kind: script|exec|prompt). Prompt actions use prompt, optional configured engine name, args, sessionId, or reuseSession. Validate the schedule first with crontick_schedule_validate.',
       inputSchema: withVerbose({
-...JobCreateInputSchema.shape,
+        ...JobCreateInputSchema.shape,
+        force: z.boolean().optional(),
       }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.createJob(withoutVerbose(args))),
+    async (args) => {
+      const { force, verbose: _verbose, ...input } = args;
+      void _verbose;
+      return toolWrap(args, (client) => client.createJob(input, { force }));
+    },
   );
 
   server.registerTool(
@@ -180,6 +186,17 @@ id: z.string(),
     },
     async (args) => {
       const { id, ...patch } = args;
+      const action = args.action;
+      if (action) {
+        if (action.kind === 'script' && action.script === undefined &&
+            (action.shell !== undefined || action.envFile !== undefined || action.timeoutSec !== undefined)) {
+          return errResult(new Error('Invalid action patch: shell, envFile, and timeoutSec require a script source on update'));
+        }
+        if (action.kind === 'exec' && action.command === undefined &&
+            (action.envFile !== undefined || action.timeoutSec !== undefined)) {
+          return errResult(new Error('Invalid action patch: envFile and timeoutSec require a command source on update'));
+        }
+      }
 return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     },
   );
@@ -188,7 +205,7 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     'crontick_job_delete',
     {
       description:
-        'Permanently delete a job and all its run history. This cannot be undone — confirm with the user first.',
+        'Permanently delete a job definition. Archived runs and logs remain directly queryable by run ID, but live aggregates exclude them. This may cancel an in-flight run and cannot be undone -- confirm with the user first.',
       inputSchema: withVerbose({ id: z.string() }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
@@ -230,10 +247,10 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     'crontick_job_cancel_run',
     {
       description: 'Cancel an in-progress run by its run ID.',
-      inputSchema: withVerbose({ runId: z.string() }),
+      inputSchema: withVerbose({ id: z.string() }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.cancelRun(args.runId)),
+    async (args) => toolWrap(args, (client) => client.cancelRun(args.id)),
   );
 
   // ── Runs ───────────────────────────────────────────────────────────────────
@@ -256,11 +273,11 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
   server.registerTool(
     'crontick_run_get',
     {
-      description: 'Get the details and current status of a specific run by run ID, including its pid (if it was spawned) and whether its output was truncated by the retention output cap.',
-      inputSchema: withVerbose({ runId: z.string() }),
+      description: 'Get the details and current status of a specific run. Includes the run pid (if it was spawned) and whether its output was truncated by the retention output cap.',
+      inputSchema: withVerbose({ id: z.string() }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.getRun(args.runId)),
+    async (args) => toolWrap(args, (client) => client.getRun(args.id)),
   );
 
   server.registerTool(
@@ -269,12 +286,12 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
       description:
         'Get the last N lines of output for a run. Useful for diagnosing failures.',
       inputSchema: withVerbose({
-        runId: z.string(),
+        id: z.string(),
         lines: z.number().int().positive().default(50),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.getLogs(args.runId, { lines: args.lines })),
+    async (args) => toolWrap(args, (client) => client.getLogs(args.id, { lines: args.lines })),
   );
 
   // ── Schedules ─────────────────────────────────────────────────────────────
@@ -358,7 +375,7 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     'crontick_daemon_status',
     {
       description:
-        'Get the daemon process status: PID, version, uptime, job counts, and a missedFires summary (jobs whose schedule missed fires while the daemon was down since the last start — report-only, never auto-executed; see crontick_run_list with status "missed").',
+        'Get the daemon process status: PID, version, loopback baseUrl/port, uptime, job counts, and a missedFires summary (jobs whose schedule missed fires while the daemon was down since the last start — report-only, never auto-executed; see crontick_run_list with status "missed").',
       inputSchema: withVerbose({}),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },

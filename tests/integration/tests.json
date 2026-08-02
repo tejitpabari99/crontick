@@ -1,0 +1,2675 @@
+{
+  "version": 1,
+  "tests": [
+    {
+      "id": "CT-INSTALL-001",
+      "seq": 10,
+      "title": "--help prints top-level usage",
+      "area": "install",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "smoke",
+      "slow": false,
+      "tags": ["help"],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "help",
+          "command": ["--help"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "help",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutContains",
+          "invocationRef": "help",
+          "params": { "substring": "Usage:" }
+        },
+        {
+          "type": "stdoutContains",
+          "invocationRef": "help",
+          "params": { "substring": "daemon" }
+        },
+        {
+          "type": "stdoutContains",
+          "invocationRef": "help",
+          "params": { "substring": "new" }
+        }
+      ]
+    },
+    {
+      "id": "CT-INSTALL-003",
+      "seq": 30,
+      "title": "--version / -V prints package version",
+      "area": "install",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "smoke",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "version",
+          "command": ["--version"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "version",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutContains",
+          "invocationRef": "version",
+          "params": { "substring": "${PACKAGE_VERSION}" }
+        }
+      ]
+    },
+    {
+      "id": "CT-INSTALL-004",
+      "seq": 40,
+      "title": "crontick-daemon bin launches and stays up",
+      "area": "install",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "daemon-start",
+          "command": ["daemon", "start", "--json"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "daemon-start",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "daemonHealthOk",
+          "params": {}
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "stop", "command": ["daemon", "stop"] }
+      ]
+    },
+    {
+      "id": "CT-INSTALL-005",
+      "seq": 50,
+      "title": "crontick-mcp bin launches and stays up",
+      "area": "install",
+      "surface": ["mcp"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "mcp",
+          "ref": "status",
+          "tool": "crontick_daemon_status",
+          "args": {}
+        }
+      ],
+      "checks": [
+        {
+          "type": "mcpToolResultJsonPath",
+          "invocationRef": "status",
+          "params": { "jsonPath": "running", "expectedValue": true }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "stop", "command": ["daemon", "stop"] }
+      ]
+    },
+    {
+      "id": "CT-INSTALL-006",
+      "seq": 60,
+      "title": "Library import resolves the public API surface",
+      "area": "install",
+      "surface": ["api"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "api",
+          "ref": "surface",
+          "script": "return { version: crontick.VERSION, hasCreateClient: typeof crontick.createClient === 'function', capCount: crontick.SURFACE_CAPABILITIES.length };"
+        }
+      ],
+      "checks": [
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "surface",
+          "params": { "jsonPath": "version", "expectedValue": "${PACKAGE_VERSION}" }
+        },
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "surface",
+          "params": { "jsonPath": "hasCreateClient", "expectedValue": true }
+        }
+      ]
+    },
+    {
+      "id": "CT-INSTALL-007",
+      "seq": 70,
+      "title": "npm pack --dry-run includes only allowlisted files",
+      "area": "install",
+      "surface": ["raw"],
+      "priority": "P1",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "raw",
+          "ref": "pack",
+          "command": "npm",
+          "args": ["pack", "--dry-run", "--json"],
+          "cwd": "${REPO_ROOT}"
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "pack",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutContains",
+          "invocationRef": "pack",
+          "params": { "substring": "dist/" }
+        },
+        {
+          "type": "stdoutContains",
+          "invocationRef": "pack",
+          "params": { "substring": "README.md" }
+        },
+        {
+          "type": "stdoutNotContains",
+          "invocationRef": "pack",
+          "params": { "forbidden": "tests/" }
+        },
+        {
+          "type": "stdoutNotContains",
+          "invocationRef": "pack",
+          "params": { "forbidden": "docs/" }
+        }
+      ]
+    },
+    {
+      "id": "CT-DAEMON-001",
+      "seq": 100,
+      "title": "daemon start from cold empty CRONTICK_HOME",
+      "area": "daemon",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "smoke",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "start",
+          "command": ["daemon", "start", "--json"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "start",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutJsonPathEquals",
+          "invocationRef": "start",
+          "params": { "jsonPath": "started", "expectedValue": true }
+        },
+        {
+          "type": "fileExists",
+          "params": { "pathTemplate": "${SCRATCH_HOME}/daemon.pid" }
+        },
+        {
+          "type": "fileExists",
+          "params": { "pathTemplate": "${SCRATCH_HOME}/daemon.port" }
+        },
+        {
+          "type": "fileNotExists",
+          "params": { "pathTemplate": "${SCRATCH_HOME}/config.json" }
+        },
+        {
+          "type": "daemonHealthOk",
+          "params": {}
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "stop", "command": ["daemon", "stop"] }
+      ]
+    },
+    {
+      "id": "CT-DAEMON-002",
+      "seq": 110,
+      "title": "daemon status parity across CLI/API/MCP",
+      "area": "daemon",
+      "surface": ["cli", "api", "mcp"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": ["parity"],
+      "knownDefect": null,
+      "setup": [
+        { "surface": "cli", "ref": "start", "command": ["daemon", "start"] }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "cli-status",
+          "command": ["daemon", "status", "--json"]
+        },
+        {
+          "surface": "api",
+          "ref": "api-status",
+          "script": "const c = crontick.createClient(); return await c.daemonStatus();"
+        },
+        {
+          "surface": "mcp",
+          "ref": "mcp-status",
+          "tool": "crontick_daemon_status",
+          "args": {}
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "cli-status",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutJsonPathEquals",
+          "invocationRef": "cli-status",
+          "params": { "jsonPath": "version", "expectedValue": "${PACKAGE_VERSION}" }
+        },
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "api-status",
+          "params": { "jsonPath": "version", "expectedValue": "${PACKAGE_VERSION}" }
+        },
+        {
+          "type": "mcpToolResultJsonPath",
+          "invocationRef": "mcp-status",
+          "params": { "jsonPath": "version", "expectedValue": "${PACKAGE_VERSION}" }
+        },
+        {
+          "type": "crossSurfaceFieldEquals",
+          "params": {
+            "refs": ["cli-status", "api-status", "mcp-status"],
+            "jsonPath": "pid",
+            "description": "All three surfaces report the same daemon PID"
+          }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "stop", "command": ["daemon", "stop"] }
+      ]
+    },
+    {
+      "id": "CT-DAEMON-003",
+      "seq": 120,
+      "title": "daemon stop reports mode: graceful",
+      "area": "daemon",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "smoke",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        { "surface": "cli", "ref": "start", "command": ["daemon", "start"] }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "stop",
+          "command": ["daemon", "stop", "--json"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "stop",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutJsonPathEquals",
+          "invocationRef": "stop",
+          "params": { "jsonPath": "mode", "expectedValue": "graceful" }
+        },
+        {
+          "type": "stdoutJsonPathEquals",
+          "invocationRef": "stop",
+          "params": { "jsonPath": "stopped", "expectedValue": true }
+        }
+      ]
+    },
+    {
+      "id": "CT-DAEMON-004",
+      "seq": 130,
+      "title": "Double daemon start is idempotent",
+      "area": "daemon",
+      "surface": ["cli", "api"],
+      "priority": "P1",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        { "surface": "cli", "ref": "start1", "command": ["daemon", "start", "--json"] }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "start2",
+          "command": ["daemon", "start", "--json"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "start2",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutJsonPathEquals",
+          "invocationRef": "start2",
+          "params": { "jsonPath": "running", "expectedValue": true }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "stop", "command": ["daemon", "stop"] }
+      ]
+    },
+    {
+      "id": "CT-DAEMON-005",
+      "seq": 140,
+      "title": "daemon stop when not running → already-stopped",
+      "area": "daemon",
+      "surface": ["cli"],
+      "priority": "P1",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "stop",
+          "command": ["daemon", "stop", "--json"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "stop",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutJsonPathEquals",
+          "invocationRef": "stop",
+          "params": { "jsonPath": "mode", "expectedValue": "already-stopped" }
+        }
+      ]
+    },
+    {
+      "id": "CT-DAEMON-013",
+      "seq": 150,
+      "title": "doctor reports all green with healthy daemon",
+      "area": "daemon",
+      "surface": ["cli", "api", "mcp"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        { "surface": "cli", "ref": "start", "command": ["daemon", "start"] }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "cli-doctor",
+          "command": ["doctor", "--json"]
+        },
+        {
+          "surface": "api",
+          "ref": "api-doctor",
+          "script": "const c = crontick.createClient(); return await c.doctor();"
+        },
+        {
+          "surface": "mcp",
+          "ref": "mcp-doctor",
+          "tool": "crontick_doctor",
+          "args": {}
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "cli-doctor",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutJsonPathEquals",
+          "invocationRef": "cli-doctor",
+          "params": { "jsonPath": "ok", "expectedValue": true }
+        },
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "api-doctor",
+          "params": { "jsonPath": "ok", "expectedValue": true }
+        },
+        {
+          "type": "mcpToolResultJsonPath",
+          "invocationRef": "mcp-doctor",
+          "params": { "jsonPath": "ok", "expectedValue": true }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "stop", "command": ["daemon", "stop"] }
+      ]
+    },
+    {
+      "id": "CT-DAEMON-014",
+      "seq": 160,
+      "title": "Plain read command demand-starts from fully stopped",
+      "area": "daemon",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "list",
+          "command": ["list", "--json"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "list",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "fileExists",
+          "params": { "pathTemplate": "${SCRATCH_HOME}/daemon.pid" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "stop", "command": ["daemon", "stop"] }
+      ]
+    },
+    {
+      "id": "CT-SCRIPT-001",
+      "seq": 250,
+      "title": "Inline PowerShell via --script (auto shell) — CLI",
+      "area": "script",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "smoke",
+      "slow": false,
+      "tags": ["script", "pwsh"],
+      "knownDefect": null,
+      "skipOn": ["linux", "darwin"],
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": [
+            "new", "ct-script-001",
+            "--every", "3600",
+            "--script", "Set-Content -Path \"${SCRATCH_WORK}\\ct-script-001.txt\" -Value 'hello from pwsh'; exit 0"
+          ]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "run",
+          "command": ["run-now", "ct-script-001"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-script-001", "timeoutSec": 30 },
+      "checks": [
+        {
+          "type": "runStatusEquals",
+          "params": { "jobId": "ct-script-001", "runIndex": 0, "expectedStatus": "success" }
+        },
+        {
+          "type": "runExitCodeEquals",
+          "params": { "jobId": "ct-script-001", "runIndex": 0, "expectedExitCode": 0 }
+        },
+        {
+          "type": "fileContentEquals",
+          "params": {
+            "pathTemplate": "${SCRATCH_WORK}\\ct-script-001.txt",
+            "expected": "hello from pwsh"
+          }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-script-001"] }
+      ]
+    },
+    {
+      "id": "CT-SCRIPT-002",
+      "seq": 260,
+      "title": "Same PowerShell script via library API",
+      "area": "script",
+      "surface": ["api"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": ["script", "pwsh"],
+      "knownDefect": null,
+      "skipOn": ["linux", "darwin"],
+      "invocations": [
+        {
+          "surface": "api",
+          "ref": "create",
+          "script": "const c = crontick.createClient(); return await c.createJob({ id: 'ct-script-002', schedule: { kind: 'interval', everySec: 3600 }, action: { kind: 'script', script: 'Set-Content -Path \"${SCRATCH_WORK}\\\\ct-script-002.txt\" -Value \"hello from api\"; exit 0', shell: 'auto' } });"
+        }
+      ],
+      "checks": [
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "create",
+          "params": { "jsonPath": "id", "expectedValue": "ct-script-002" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-script-002"] }
+      ]
+    },
+    {
+      "id": "CT-SCRIPT-003",
+      "seq": 270,
+      "title": "Same PowerShell script via MCP",
+      "area": "script",
+      "surface": ["mcp"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": ["script", "pwsh"],
+      "knownDefect": null,
+      "skipOn": ["linux", "darwin"],
+      "invocations": [
+        {
+          "surface": "mcp",
+          "ref": "create",
+          "tool": "crontick_job_create",
+          "args": {
+            "id": "ct-script-003",
+            "schedule": { "kind": "interval", "everySec": 3600 },
+            "action": { "kind": "script", "script": "exit 0", "shell": "auto" }
+          }
+        }
+      ],
+      "checks": [
+        {
+          "type": "mcpToolResultJsonPath",
+          "invocationRef": "create",
+          "params": { "jsonPath": "id", "expectedValue": "ct-script-003" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-script-003"] }
+      ]
+    },
+    {
+      "id": "CT-SCRIPT-013",
+      "seq": 280,
+      "title": "Script exits non-zero → failed with exitCode",
+      "area": "script",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": ["script", "pwsh"],
+      "knownDefect": null,
+      "skipOn": ["linux", "darwin"],
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": [
+            "new", "ct-script-013",
+            "--every", "3600",
+            "--script", "Write-Error 'boom'; exit 17"
+          ]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "run",
+          "command": ["run-now", "ct-script-013"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-script-013", "timeoutSec": 30 },
+      "checks": [
+        {
+          "type": "runStatusEquals",
+          "params": { "jobId": "ct-script-013", "runIndex": 0, "expectedStatus": "failed" }
+        },
+        {
+          "type": "runExitCodeEquals",
+          "params": { "jobId": "ct-script-013", "runIndex": 0, "expectedExitCode": 17 }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-script-013"] }
+      ]
+    },
+    {
+      "id": "CT-SCRIPT-026",
+      "seq": 290,
+      "title": "shell: auto resolves to pwsh on Windows (ADR 0020)",
+      "area": "script",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": ["script", "pwsh"],
+      "knownDefect": null,
+      "skipOn": ["linux", "darwin"],
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": [
+            "new", "ct-script-026",
+            "--every", "3600",
+            "--script", "$PSVersionTable.PSEdition"
+          ]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "run",
+          "command": ["run-now", "ct-script-026"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-script-026", "timeoutSec": 30 },
+      "checks": [
+        {
+          "type": "runStatusEquals",
+          "params": { "jobId": "ct-script-026", "runIndex": 0, "expectedStatus": "success" }
+        },
+        {
+          "type": "runLogContains",
+          "params": { "jobId": "ct-script-026", "runId": null, "substring": "Core" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-script-026"] }
+      ]
+    },
+    {
+      "id": "CT-EXEC-001",
+      "seq": 310,
+      "title": "Inline exec command with --arg — CLI",
+      "area": "exec",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "smoke",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": [
+            "new", "ct-exec-001",
+            "--every", "3600",
+            "--exec", "node",
+            "--arg", "--version"
+          ]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "run",
+          "command": ["run-now", "ct-exec-001"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-exec-001", "timeoutSec": 30 },
+      "checks": [
+        {
+          "type": "runStatusEquals",
+          "params": { "jobId": "ct-exec-001", "runIndex": 0, "expectedStatus": "success" }
+        },
+        {
+          "type": "runExitCodeEquals",
+          "params": { "jobId": "ct-exec-001", "runIndex": 0, "expectedExitCode": 0 }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-exec-001"] }
+      ]
+    },
+    {
+      "id": "CT-EXEC-002",
+      "seq": 320,
+      "title": "Inline exec command via library API",
+      "area": "exec",
+      "surface": ["api"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "api",
+          "ref": "create",
+          "script": "const c = crontick.createClient(); return await c.createJob({ id: 'ct-exec-002', schedule: { kind: 'interval', everySec: 3600 }, action: { kind: 'exec', command: 'node', args: ['--version'] } });"
+        }
+      ],
+      "checks": [
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "create",
+          "params": { "jsonPath": "id", "expectedValue": "ct-exec-002" }
+        },
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "create",
+          "params": { "jsonPath": "action.kind", "expectedValue": "exec" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-exec-002"] }
+      ]
+    },
+    {
+      "id": "CT-EXEC-003",
+      "seq": 330,
+      "title": "Inline exec command via MCP",
+      "area": "exec",
+      "surface": ["mcp"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "mcp",
+          "ref": "create",
+          "tool": "crontick_job_create",
+          "args": {
+            "id": "ct-exec-003",
+            "schedule": { "kind": "interval", "everySec": 3600 },
+            "action": { "kind": "exec", "command": "node", "args": ["--version"] }
+          }
+        }
+      ],
+      "checks": [
+        {
+          "type": "mcpToolResultJsonPath",
+          "invocationRef": "create",
+          "params": { "jsonPath": "id", "expectedValue": "ct-exec-003" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-exec-003"] }
+      ]
+    },
+    {
+      "id": "CT-EXEC-004",
+      "seq": 340,
+      "title": "Shell metacharacters in --arg passed literally (no injection)",
+      "area": "exec",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": [
+            "new", "ct-exec-004",
+            "--every", "3600",
+            "--exec", "node",
+            "--arg", "-e",
+            "--arg", "process.stdout.write('&&malicious')"
+          ]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "run",
+          "command": ["run-now", "ct-exec-004"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-exec-004", "timeoutSec": 30 },
+      "checks": [
+        {
+          "type": "runStatusEquals",
+          "params": { "jobId": "ct-exec-004", "runIndex": 0, "expectedStatus": "success" }
+        },
+        {
+          "type": "runLogContains",
+          "params": { "jobId": "ct-exec-004", "runId": null, "substring": "&&malicious" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-exec-004"] }
+      ]
+    },
+    {
+      "id": "CT-EXEC-007",
+      "seq": 350,
+      "title": "Exec exits non-zero → failed",
+      "area": "exec",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": [
+            "new", "ct-exec-007",
+            "--every", "3600",
+            "--exec", "node",
+            "--arg", "-e",
+            "--arg", "process.exit(5)"
+          ]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "run",
+          "command": ["run-now", "ct-exec-007"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-exec-007", "timeoutSec": 30 },
+      "checks": [
+        {
+          "type": "runStatusEquals",
+          "params": { "jobId": "ct-exec-007", "runIndex": 0, "expectedStatus": "failed" }
+        },
+        {
+          "type": "runExitCodeEquals",
+          "params": { "jobId": "ct-exec-007", "runIndex": 0, "expectedExitCode": 5 }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-exec-007"] }
+      ]
+    },
+    {
+      "id": "CT-PROMPT-001",
+      "seq": 410,
+      "title": "Register the deterministic mock prompt engine",
+      "area": "prompt",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": ["mock-engine"],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "engine-add",
+          "command": ["config", "engines", "add", "qa-mock", "--command", "node", "--arg", "${MOCK_ENGINE_PATH}"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "engine-add",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutContains",
+          "invocationRef": "engine-add",
+          "params": { "substring": "qa-mock" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "engine-remove", "command": ["config", "engines", "remove", "qa-mock"] }
+      ]
+    },
+    {
+      "id": "CT-PROMPT-002",
+      "seq": 420,
+      "title": "Simple one-line prompt job via mock engine — CLI",
+      "area": "prompt",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": ["mock-engine"],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "engine-add",
+          "command": ["config", "engines", "add", "qa-mock", "--command", "node", "--arg", "${MOCK_ENGINE_PATH}"]
+        },
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": [
+            "new", "ct-prompt-002",
+            "--every", "3600",
+            "--engine", "qa-mock",
+            "--prompt", "WRITE_FILE:${SCRATCH_WORK}/ct-prompt-002.txt say hello"
+          ]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "run",
+          "command": ["run-now", "ct-prompt-002"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-prompt-002", "timeoutSec": 30 },
+      "checks": [
+        {
+          "type": "runStatusEquals",
+          "params": { "jobId": "ct-prompt-002", "runIndex": 0, "expectedStatus": "success" }
+        },
+        {
+          "type": "fileExists",
+          "params": { "pathTemplate": "${SCRATCH_WORK}/ct-prompt-002.txt" }
+        },
+        {
+          "type": "runLogContains",
+          "params": { "jobId": "ct-prompt-002", "runId": null, "substring": "[mock-engine] prompt=" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-prompt-002"] },
+        { "surface": "cli", "ref": "engine-remove", "command": ["config", "engines", "remove", "qa-mock"] }
+      ]
+    },
+    {
+      "id": "CT-PROMPT-003",
+      "seq": 430,
+      "title": "Same prompt job via library API",
+      "area": "prompt",
+      "surface": ["api"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": ["mock-engine"],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "engine-add",
+          "command": ["config", "engines", "add", "qa-mock", "--command", "node", "--arg", "${MOCK_ENGINE_PATH}"]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "api",
+          "ref": "create",
+          "script": "const c = crontick.createClient(); return await c.createJob({ id: 'ct-prompt-003', schedule: { kind: 'interval', everySec: 3600 }, action: { kind: 'prompt', prompt: 'hello from api', engine: 'qa-mock' } });"
+        }
+      ],
+      "checks": [
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "create",
+          "params": { "jsonPath": "id", "expectedValue": "ct-prompt-003" }
+        },
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "create",
+          "params": { "jsonPath": "action.kind", "expectedValue": "prompt" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-prompt-003"] },
+        { "surface": "cli", "ref": "engine-remove", "command": ["config", "engines", "remove", "qa-mock"] }
+      ]
+    },
+    {
+      "id": "CT-PROMPT-004",
+      "seq": 440,
+      "title": "Same prompt job via MCP",
+      "area": "prompt",
+      "surface": ["mcp"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": ["mock-engine"],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "engine-add",
+          "command": ["config", "engines", "add", "qa-mock", "--command", "node", "--arg", "${MOCK_ENGINE_PATH}"]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "mcp",
+          "ref": "create",
+          "tool": "crontick_job_create",
+          "args": {
+            "id": "ct-prompt-004",
+            "schedule": { "kind": "interval", "everySec": 3600 },
+            "action": { "kind": "prompt", "prompt": "hello from mcp", "engine": "qa-mock" }
+          }
+        }
+      ],
+      "checks": [
+        {
+          "type": "mcpToolResultJsonPath",
+          "invocationRef": "create",
+          "params": { "jsonPath": "id", "expectedValue": "ct-prompt-004" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-prompt-004"] },
+        { "surface": "cli", "ref": "engine-remove", "command": ["config", "engines", "remove", "qa-mock"] }
+      ]
+    },
+    {
+      "id": "CT-PROMPT-009",
+      "seq": 450,
+      "title": "Prompt job that produces a file artifact",
+      "area": "prompt",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": ["mock-engine"],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "engine-add",
+          "command": ["config", "engines", "add", "qa-mock", "--command", "node", "--arg", "${MOCK_ENGINE_PATH}"]
+        },
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": [
+            "new", "ct-prompt-009",
+            "--every", "3600",
+            "--engine", "qa-mock",
+            "--prompt", "WRITE_FILE:${SCRATCH_WORK}/ct-prompt-009-artifact.txt artifact content"
+          ]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "run",
+          "command": ["run-now", "ct-prompt-009"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-prompt-009", "timeoutSec": 30 },
+      "checks": [
+        {
+          "type": "runStatusEquals",
+          "params": { "jobId": "ct-prompt-009", "runIndex": 0, "expectedStatus": "success" }
+        },
+        {
+          "type": "fileExists",
+          "params": { "pathTemplate": "${SCRATCH_WORK}/ct-prompt-009-artifact.txt" }
+        },
+        {
+          "type": "fileContentContains",
+          "params": {
+            "pathTemplate": "${SCRATCH_WORK}/ct-prompt-009-artifact.txt",
+            "substring": "artifact content"
+          }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-prompt-009"] },
+        { "surface": "cli", "ref": "engine-remove", "command": ["config", "engines", "remove", "qa-mock"] }
+      ]
+    },
+    {
+      "id": "CT-PROMPT-012",
+      "seq": 460,
+      "title": "Reserved prompt arg in --arg rejected at validation",
+      "area": "prompt",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": ["mock-engine"],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "engine-add",
+          "command": ["config", "engines", "add", "qa-mock", "--command", "node", "--arg", "${MOCK_ENGINE_PATH}"]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "create-reserved",
+          "command": [
+            "new", "ct-prompt-012",
+            "--every", "3600",
+            "--engine", "qa-mock",
+            "--prompt", "test",
+            "--arg", "--session-id=hijack"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "create-reserved",
+          "params": { "expectedCode": 1 }
+        },
+        {
+          "type": "stderrContains",
+          "invocationRef": "create-reserved",
+          "params": { "substring": "session-id" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "engine-remove", "command": ["config", "engines", "remove", "qa-mock"] }
+      ]
+    },
+    {
+      "id": "CT-PROMPT-016",
+      "seq": 470,
+      "title": "Engine name not in config → CONFIG_ENGINE_NOT_FOUND",
+      "area": "prompt",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": [
+            "new", "ct-prompt-016",
+            "--every", "3600",
+            "--engine", "nonexistent-engine-xyz",
+            "--prompt", "test"
+          ]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "run",
+          "command": ["run-now", "ct-prompt-016"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-prompt-016", "timeoutSec": 30 },
+      "checks": [
+        {
+          "type": "runStatusEquals",
+          "params": { "jobId": "ct-prompt-016", "runIndex": 0, "expectedStatus": "failed" }
+        },
+        {
+          "type": "runErrorMatches",
+          "params": { "jobId": "ct-prompt-016", "runIndex": 0, "pattern": "CONFIG_ENGINE_NOT_FOUND|nonexistent-engine-xyz" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-prompt-016"] }
+      ]
+    },
+    {
+      "id": "CT-PROMPT-017",
+      "seq": 480,
+      "title": "Engine exits non-zero → failed with exitCode: 7",
+      "area": "prompt",
+      "surface": ["cli"],
+      "priority": "P1",
+      "tier": "tier1",
+      "slow": false,
+      "tags": ["mock-engine"],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "engine-add",
+          "command": ["config", "engines", "add", "qa-mock", "--command", "node", "--arg", "${MOCK_ENGINE_PATH}"]
+        },
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": [
+            "new", "ct-prompt-017",
+            "--every", "3600",
+            "--engine", "qa-mock",
+            "--prompt", "FAIL_NONZERO"
+          ]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "run",
+          "command": ["run-now", "ct-prompt-017"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-prompt-017", "timeoutSec": 30 },
+      "checks": [
+        {
+          "type": "runStatusEquals",
+          "params": { "jobId": "ct-prompt-017", "runIndex": 0, "expectedStatus": "failed" }
+        },
+        {
+          "type": "runExitCodeEquals",
+          "params": { "jobId": "ct-prompt-017", "runIndex": 0, "expectedExitCode": 7 }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-prompt-017"] },
+        { "surface": "cli", "ref": "engine-remove", "command": ["config", "engines", "remove", "qa-mock"] }
+      ]
+    },
+    {
+      "id": "CT-SCHED-003",
+      "seq": 510,
+      "title": "schedule preview for range expression",
+      "area": "sched",
+      "surface": ["cli", "mcp"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "cli-preview",
+          "command": ["schedule", "preview", "0 9 * * 1-5", "--count", "3", "--json"]
+        },
+        {
+          "surface": "mcp",
+          "ref": "mcp-preview",
+          "tool": "crontick_schedule_preview",
+          "args": { "expression": "0 9 * * 1-5", "count": 3 }
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "cli-preview",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutJsonArrayLength",
+          "invocationRef": "cli-preview",
+          "params": { "expectedLength": 3 }
+        },
+        {
+          "type": "mcpToolResultJsonPath",
+          "invocationRef": "mcp-preview",
+          "params": { "jsonPath": "count", "expectedValue": 3 }
+        }
+      ]
+    },
+    {
+      "id": "CT-SCHED-009",
+      "seq": 520,
+      "title": "One-shot with runAt in past never fires",
+      "area": "sched",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": [
+            "new", "ct-sched-009",
+            "--at", "2020-01-01T00:00:00Z",
+            "--exec", "node",
+            "--arg", "--version"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "create",
+          "params": { "expectedCode": 0 }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-sched-009"] }
+      ]
+    },
+    {
+      "id": "CT-SCHED-012",
+      "seq": 530,
+      "title": "Invalid cron rejected at job-creation time",
+      "area": "sched",
+      "surface": ["cli", "mcp"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "create-bad",
+          "command": [
+            "new", "ct-sched-012",
+            "--cron", "99 99 99 99 99",
+            "--exec", "node",
+            "--arg", "--version"
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "create-bad",
+          "params": { "expectedCode": 1 }
+        }
+      ]
+    },
+    {
+      "id": "CT-SCHED-013",
+      "seq": 540,
+      "title": "schedule validate matrix — valid kinds + malformed variants",
+      "area": "sched",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "valid-cron",
+          "command": ["schedule", "validate", "0 * * * *", "--json"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "valid-cron",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutJsonPathEquals",
+          "invocationRef": "valid-cron",
+          "params": { "jsonPath": "valid", "expectedValue": true }
+        }
+      ]
+    },
+    {
+      "id": "CT-JOB-001",
+      "seq": 610,
+      "title": "list shows all created jobs across kinds",
+      "area": "job",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create-exec",
+          "command": ["new", "ct-job-001-exec", "--every", "3600", "--exec", "node", "--arg", "--version"]
+        },
+        {
+          "surface": "cli",
+          "ref": "create-script",
+          "command": ["new", "ct-job-001-script", "--every", "7200", "--script", "exit 0"]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "list",
+          "command": ["list", "--json"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "list",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutContains",
+          "invocationRef": "list",
+          "params": { "substring": "ct-job-001-exec" }
+        },
+        {
+          "type": "stdoutContains",
+          "invocationRef": "list",
+          "params": { "substring": "ct-job-001-script" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "del1", "command": ["delete", "ct-job-001-exec"] },
+        { "surface": "cli", "ref": "del2", "command": ["delete", "ct-job-001-script"] }
+      ]
+    },
+    {
+      "id": "CT-JOB-002",
+      "seq": 620,
+      "title": "get returns full definition; missing id fails cleanly",
+      "area": "job",
+      "surface": ["cli", "api", "mcp"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": ["new", "ct-job-002", "--every", "3600", "--exec", "node", "--arg", "--version"]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "cli-get",
+          "command": ["get", "ct-job-002", "--json"]
+        },
+        {
+          "surface": "api",
+          "ref": "api-get",
+          "script": "const c = crontick.createClient(); return await c.getJob('ct-job-002');"
+        },
+        {
+          "surface": "mcp",
+          "ref": "mcp-get",
+          "tool": "crontick_job_get",
+          "args": { "id": "ct-job-002" }
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "cli-get",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutJsonPathEquals",
+          "invocationRef": "cli-get",
+          "params": { "jsonPath": "id", "expectedValue": "ct-job-002" }
+        },
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "api-get",
+          "params": { "jsonPath": "id", "expectedValue": "ct-job-002" }
+        },
+        {
+          "type": "mcpToolResultJsonPath",
+          "invocationRef": "mcp-get",
+          "params": { "jsonPath": "id", "expectedValue": "ct-job-002" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-job-002"] }
+      ]
+    },
+    {
+      "id": "CT-JOB-004",
+      "seq": 630,
+      "title": "update partial merge — omitted fields preserved",
+      "area": "job",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": [
+            "new", "ct-job-004",
+            "--every", "3600",
+            "--exec", "node",
+            "--arg", "--version",
+            "--overlap", "queue",
+            "--timeout", "30"
+          ]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "update",
+          "command": ["update", "ct-job-004", "--exec", "node", "--arg", "-e", "--arg", "1+1"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "update",
+          "params": { "expectedCode": 0 }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-job-004"] }
+      ]
+    },
+    {
+      "id": "CT-JOB-007",
+      "seq": 640,
+      "title": "run-now on non-existent id fails cleanly on every surface",
+      "area": "job",
+      "surface": ["cli", "api", "mcp"],
+      "priority": "P1",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "cli-run",
+          "command": ["run-now", "nonexistent-job-xyz-007"]
+        },
+        {
+          "surface": "api",
+          "ref": "api-run",
+          "script": "try { const c = crontick.createClient(); await c.runNow('nonexistent-job-xyz-007'); return { threw: false }; } catch(e) { return { threw: true, code: e.code }; }"
+        },
+        {
+          "surface": "mcp",
+          "ref": "mcp-run",
+          "tool": "crontick_job_run_now",
+          "args": { "id": "nonexistent-job-xyz-007" }
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "cli-run",
+          "params": { "expectedCode": 1 }
+        },
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "api-run",
+          "params": { "jsonPath": "threw", "expectedValue": true }
+        }
+      ]
+    },
+    {
+      "id": "CT-JOB-010",
+      "seq": 650,
+      "title": "Duplicate id rejected",
+      "area": "job",
+      "surface": ["cli"],
+      "priority": "P1",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": ["new", "ct-job-010", "--every", "3600", "--exec", "node", "--arg", "--version"]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "create-dup",
+          "command": ["new", "ct-job-010", "--every", "7200", "--exec", "node", "--arg", "--version"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "create-dup",
+          "params": { "expectedCode": 1 }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-job-010"] }
+      ]
+    },
+    {
+      "id": "CT-JOB-014",
+      "seq": 660,
+      "title": "Missing required flags on new fails with precise error",
+      "area": "job",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "no-schedule-no-action",
+          "command": ["new", "ct-job-014-a"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "no-schedule-no-action",
+          "params": { "expectedCode": 1 }
+        }
+      ]
+    },
+    {
+      "id": "CT-JOB-016",
+      "seq": 670,
+      "title": "run-now under overlap: skip cancels second run",
+      "area": "job",
+      "surface": ["cli"],
+      "priority": "P2",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": [
+            "new", "ct-job-016",
+            "--every", "3600",
+            "--exec", "node",
+            "--arg", "-e",
+            "--arg", "setTimeout(()=>{},5000)",
+            "--overlap", "skip"
+          ]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "run1",
+          "command": ["run-now", "ct-job-016"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-job-016", "timeoutSec": 30 },
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "run1",
+          "params": { "expectedCode": 0 }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-job-016"] }
+      ]
+    },
+    {
+      "id": "CT-JOB-018",
+      "seq": 680,
+      "title": "Forced duplicate create replaces existing job",
+      "area": "job",
+      "surface": ["cli", "api", "mcp"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": ["new", "ct-job-018", "--every", "3600", "--exec", "node", "--arg", "--version"]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "force-create",
+          "command": ["new", "ct-job-018", "--every", "7200", "--exec", "node", "--arg", "-e", "--arg", "1", "--force"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "force-create",
+          "params": { "expectedCode": 0 }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-job-018"] }
+      ]
+    },
+    {
+      "id": "CT-JOB-019",
+      "seq": 690,
+      "title": "Single-field action patch: accepted on library/HTTP, rejected (fail-loud) on MCP (CTD-026)",
+      "area": "job",
+      "surface": ["api", "mcp"],
+      "priority": "P1",
+      "tier": "tier1",
+      "slow": false,
+      "tags": ["update", "patch", "parity"],
+      "knownDefect": null,
+      "skipOn": [],
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": ["new", "ct-job-019", "--every", "3600", "--script", "echo original", "--shell", "auto"]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "api",
+          "ref": "update-api",
+          "script": "const c = crontick.createClient(); return await c.updateJob('ct-job-019', { action: { kind: 'script', shell: 'pwsh' } });"
+        },
+        {
+          "surface": "mcp",
+          "ref": "update-mcp",
+          "tool": "crontick_job_update",
+          "args": { "id": "ct-job-019", "action": { "kind": "script", "shell": "pwsh" } }
+        }
+      ],
+      "checks": [
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "update-api",
+          "params": { "jsonPath": "action.shell", "expectedValue": "pwsh" }
+        },
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "update-api",
+          "params": { "jsonPath": "action.script", "expectedValue": "echo original" }
+        },
+        {
+          "type": "mcpToolResultJsonPath",
+          "invocationRef": "update-mcp",
+          "params": { "jsonPath": "isError", "expectedValue": true }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-job-019"] }
+      ]
+    },
+    {
+      "id": "CT-RUN-001",
+      "seq": 710,
+      "title": "runs list (no filters) returns all recent, newest first",
+      "area": "run",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": ["new", "ct-run-001", "--every", "3600", "--exec", "node", "--arg", "--version"]
+        },
+        {
+          "surface": "cli",
+          "ref": "run",
+          "command": ["run-now", "ct-run-001"]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "list",
+          "command": ["runs", "list", "--json"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-run-001", "timeoutSec": 30 },
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "list",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutContains",
+          "invocationRef": "list",
+          "params": { "substring": "ct-run-001" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-run-001"] }
+      ]
+    },
+    {
+      "id": "CT-RUN-002",
+      "seq": 720,
+      "title": "runs list --job filters to single job",
+      "area": "run",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": ["new", "ct-run-002", "--every", "3600", "--exec", "node", "--arg", "--version"]
+        },
+        {
+          "surface": "cli",
+          "ref": "run",
+          "command": ["run-now", "ct-run-002"]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "list-filtered",
+          "command": ["runs", "list", "--job", "ct-run-002", "--json"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-run-002", "timeoutSec": 30 },
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "list-filtered",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutJsonPathEquals",
+          "invocationRef": "list-filtered",
+          "params": { "jsonPath": "[0].jobId", "expectedValue": "ct-run-002" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-run-002"] }
+      ]
+    },
+    {
+      "id": "CT-RUN-006",
+      "seq": 730,
+      "title": "runs get returns full detail incl. timestamps/exitCode",
+      "area": "run",
+      "surface": ["cli", "api", "mcp"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": ["new", "ct-run-006", "--every", "3600", "--exec", "node", "--arg", "--version"]
+        },
+        {
+          "surface": "cli",
+          "ref": "run",
+          "command": ["run-now", "ct-run-006"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-run-006", "timeoutSec": 30 },
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "cli-get",
+          "command": ["runs", "list", "--job", "ct-run-006", "--json"]
+        },
+        {
+          "surface": "api",
+          "ref": "api-get",
+          "script": "const c = crontick.createClient(); const runs = await c.listRuns({ jobId: 'ct-run-006' }); return runs[0];"
+        },
+        {
+          "surface": "mcp",
+          "ref": "mcp-get",
+          "tool": "crontick_run_list",
+          "args": { "jobId": "ct-run-006" }
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "cli-get",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutJsonPathEquals",
+          "invocationRef": "cli-get",
+          "params": { "jsonPath": "[0].jobId", "expectedValue": "ct-run-006" }
+        },
+        {
+          "type": "stdoutJsonPathEquals",
+          "invocationRef": "cli-get",
+          "params": { "jsonPath": "[0].status", "expectedValue": "success" }
+        },
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "api-get",
+          "params": { "jsonPath": "jobId", "expectedValue": "ct-run-006" }
+        },
+        {
+          "type": "mcpToolResultJsonPath",
+          "invocationRef": "mcp-get",
+          "params": { "jsonPath": "[0].jobId", "expectedValue": "ct-run-006" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-run-006"] }
+      ]
+    },
+    {
+      "id": "CT-RUN-010",
+      "seq": 740,
+      "title": "runs list for new job with zero runs → empty array, not error",
+      "area": "run",
+      "surface": ["cli", "api", "mcp"],
+      "priority": "P1",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": ["new", "ct-run-010", "--every", "3600", "--exec", "node", "--arg", "--version"]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "cli-list",
+          "command": ["runs", "list", "--job", "ct-run-010", "--json"]
+        },
+        {
+          "surface": "api",
+          "ref": "api-list",
+          "script": "const c = crontick.createClient(); return await c.listRuns({ jobId: 'ct-run-010' });"
+        },
+        {
+          "surface": "mcp",
+          "ref": "mcp-list",
+          "tool": "crontick_run_list",
+          "args": { "jobId": "ct-run-010" }
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "cli-list",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutJsonArrayLength",
+          "invocationRef": "cli-list",
+          "params": { "expectedLength": 0 }
+        },
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "api-list",
+          "params": { "jsonPath": "length", "expectedValue": 0 }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-run-010"] }
+      ]
+    },
+    {
+      "id": "CT-LOG-001",
+      "seq": 810,
+      "title": "logs <runId> returns full captured stdout",
+      "area": "log",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": [
+            "new", "ct-log-001",
+            "--every", "3600",
+            "--exec", "node",
+            "--arg", "-e",
+            "--arg", "console.log('line-a'); console.log('line-b'); console.log('line-c')"
+          ]
+        },
+        {
+          "surface": "cli",
+          "ref": "run",
+          "command": ["run-now", "ct-log-001"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-log-001", "timeoutSec": 30 },
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "logs",
+          "command": ["runs", "list", "--job", "ct-log-001", "--json"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "logs",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "runLogContains",
+          "params": { "jobId": "ct-log-001", "runId": null, "substring": "line-a" }
+        },
+        {
+          "type": "runLogContains",
+          "params": { "jobId": "ct-log-001", "runId": null, "substring": "line-c" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-log-001"] }
+      ]
+    },
+    {
+      "id": "CT-LOG-002",
+      "seq": 820,
+      "title": "logs --tail N returns only last N lines",
+      "area": "log",
+      "surface": ["cli"],
+      "priority": "P1",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": [
+            "new", "ct-log-002",
+            "--every", "3600",
+            "--exec", "node",
+            "--arg", "-e",
+            "--arg", "for(let i=1;i<=10;i++) console.log('line-'+i)"
+          ]
+        },
+        {
+          "surface": "cli",
+          "ref": "run",
+          "command": ["run-now", "ct-log-002"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-log-002", "timeoutSec": 30 },
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "runs-list",
+          "command": ["runs", "list", "--job", "ct-log-002", "--json"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "runs-list",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "runLogContains",
+          "params": { "jobId": "ct-log-002", "runId": null, "substring": "line-10" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-log-002"] }
+      ]
+    },
+    {
+      "id": "CT-LOG-007",
+      "seq": 830,
+      "title": "logs on zero-output run → empty result, not error",
+      "area": "log",
+      "surface": ["cli", "mcp"],
+      "priority": "P1",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": [
+            "new", "ct-log-007",
+            "--every", "3600",
+            "--exec", "node",
+            "--arg", "-e",
+            "--arg", "process.exit(0)"
+          ]
+        },
+        {
+          "surface": "cli",
+          "ref": "run",
+          "command": ["run-now", "ct-log-007"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-log-007", "timeoutSec": 30 },
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "runs-list",
+          "command": ["runs", "list", "--job", "ct-log-007", "--json"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "runs-list",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "runStatusEquals",
+          "params": { "jobId": "ct-log-007", "runIndex": 0, "expectedStatus": "success" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-log-007"] }
+      ]
+    },
+    {
+      "id": "CT-ERR-008",
+      "seq": 910,
+      "title": "Malformed JSON to MCP tool → structured error, not server crash",
+      "area": "err",
+      "surface": ["mcp"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "mcp",
+          "ref": "bad-create",
+          "tool": "crontick_job_create",
+          "args": { "id": 12345, "schedule": null }
+        }
+      ],
+      "checks": [
+        {
+          "type": "mcpToolResultJsonPath",
+          "invocationRef": "bad-create",
+          "params": { "jsonPath": "isError", "expectedValue": true }
+        }
+      ]
+    },
+    {
+      "id": "CT-ERR-013",
+      "seq": 920,
+      "title": "CLI text + JSON error both surface structured details",
+      "area": "err",
+      "surface": ["cli", "api"],
+      "priority": "P1",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "cli-err",
+          "command": ["new", "ct-err-013", "--every", "3600", "--json"]
+        },
+        {
+          "surface": "api",
+          "ref": "api-err",
+          "script": "try { const c = crontick.createClient(); await c.createJob({ id: 'ct-err-013-api', schedule: { kind: 'interval', everySec: 3600 } }); return { threw: false }; } catch(e) { return { threw: true, code: e.code }; }"
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "cli-err",
+          "params": { "expectedCode": 1 }
+        },
+        {
+          "type": "stdoutJsonPathEquals",
+          "invocationRef": "cli-err",
+          "params": { "jsonPath": "code", "expectedValue": "VALIDATION_ERROR" }
+        },
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "api-err",
+          "params": { "jsonPath": "threw", "expectedValue": true }
+        }
+      ]
+    },
+    {
+      "id": "CT-SECURITY-001",
+      "seq": 950,
+      "title": "Authorization: Bearer token is fully redacted on the run-log streaming path (CTD-025 regression)",
+      "area": "security",
+      "surface": ["cli"],
+      "priority": "P1",
+      "tier": "tier1",
+      "slow": false,
+      "tags": ["security", "redact", "bearer"],
+      "knownDefect": null,
+      "skipOn": ["linux", "darwin"],
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": ["new", "ct-security-001", "--every", "3600", "--script", "Write-Output 'Authorization: Bearer zzverifytoken998877'"]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "run",
+          "command": ["run-now", "ct-security-001"]
+        }
+      ],
+      "pollJobUntilTerminal": { "jobId": "ct-security-001", "timeoutSec": 30 },
+      "checks": [
+        {
+          "type": "runStatusEquals",
+          "params": { "jobId": "ct-security-001", "runIndex": 0, "expectedStatus": "success" }
+        },
+        {
+          "type": "runLogNotContains",
+          "params": { "jobId": "ct-security-001", "runId": null, "forbidden": "zzverifytoken998877" }
+        },
+        {
+          "type": "runLogContains",
+          "params": { "jobId": "ct-security-001", "runId": null, "substring": "[REDACTED]" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-security-001"] }
+      ]
+    },
+    {
+      "id": "CT-CFG-001",
+      "seq": 1010,
+      "title": "CRONTICK_HOME fully isolates one instance from another",
+      "area": "cfg",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": ["new", "ct-cfg-001-isolate", "--every", "3600", "--exec", "node", "--arg", "--version"]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "list-own",
+          "command": ["list", "--json"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "list-own",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutContains",
+          "invocationRef": "list-own",
+          "params": { "substring": "ct-cfg-001-isolate" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-cfg-001-isolate"] }
+      ]
+    },
+    {
+      "id": "CT-CFG-002",
+      "seq": 1020,
+      "title": "config set/get/unset round-trip; unset falls back to built-in default",
+      "area": "cfg",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "setup": [
+        { "surface": "cli", "ref": "start", "command": ["daemon", "start"] }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "set",
+          "command": ["config", "set", "retention.maxRunsPerJob", "99"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "set",
+          "params": { "expectedCode": 0 }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "unset", "command": ["config", "unset", "retention.maxRunsPerJob"] },
+        { "surface": "cli", "ref": "stop", "command": ["daemon", "stop"] }
+      ]
+    },
+    {
+      "id": "CT-CFG-004",
+      "seq": 1030,
+      "title": "config engines add/update/remove full lifecycle",
+      "area": "cfg",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "add",
+          "command": ["config", "engines", "add", "qa-test-cfg", "--command", "foo", "--arg", "bar"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "add",
+          "params": { "expectedCode": 0 }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "remove", "command": ["config", "engines", "remove", "qa-test-cfg"] }
+      ]
+    },
+    {
+      "id": "CT-PARITY-001",
+      "seq": 1110,
+      "title": "list-jobs identical across CLI/API/MCP",
+      "area": "parity",
+      "surface": ["cli", "api", "mcp"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": ["parity"],
+      "knownDefect": null,
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create-a",
+          "command": ["new", "ct-parity-001-a", "--every", "3600", "--exec", "node", "--arg", "--version"]
+        },
+        {
+          "surface": "cli",
+          "ref": "create-b",
+          "command": ["new", "ct-parity-001-b", "--every", "7200", "--exec", "node", "--arg", "--version"]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "cli-list",
+          "command": ["list", "--json"]
+        },
+        {
+          "surface": "api",
+          "ref": "api-list",
+          "script": "const c = crontick.createClient(); return await c.listJobs();"
+        },
+        {
+          "surface": "mcp",
+          "ref": "mcp-list",
+          "tool": "crontick_job_list",
+          "args": {}
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "cli-list",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutContains",
+          "invocationRef": "cli-list",
+          "params": { "substring": "ct-parity-001-a" }
+        },
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "api-list",
+          "params": { "jsonPath": "length", "expectedValue": 2 }
+        },
+        {
+          "type": "mcpToolResultJsonPath",
+          "invocationRef": "mcp-list",
+          "params": { "jsonPath": "length", "expectedValue": 2 }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "del-a", "command": ["delete", "ct-parity-001-a"] },
+        { "surface": "cli", "ref": "del-b", "command": ["delete", "ct-parity-001-b"] }
+      ]
+    },
+    {
+      "id": "CT-PARITY-009",
+      "seq": 1120,
+      "title": "doctor identical health-check results",
+      "area": "parity",
+      "surface": ["cli", "api", "mcp"],
+      "priority": "P1",
+      "tier": "tier1",
+      "slow": false,
+      "tags": ["parity"],
+      "knownDefect": null,
+      "setup": [
+        { "surface": "cli", "ref": "start", "command": ["daemon", "start"] }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "cli-doctor",
+          "command": ["doctor", "--json"]
+        },
+        {
+          "surface": "api",
+          "ref": "api-doctor",
+          "script": "const c = crontick.createClient(); return await c.doctor();"
+        },
+        {
+          "surface": "mcp",
+          "ref": "mcp-doctor",
+          "tool": "crontick_doctor",
+          "args": {}
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "cli-doctor",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "stdoutJsonPathEquals",
+          "invocationRef": "cli-doctor",
+          "params": { "jsonPath": "ok", "expectedValue": true }
+        },
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "api-doctor",
+          "params": { "jsonPath": "ok", "expectedValue": true }
+        },
+        {
+          "type": "mcpToolResultJsonPath",
+          "invocationRef": "mcp-doctor",
+          "params": { "jsonPath": "ok", "expectedValue": true }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "stop", "command": ["daemon", "stop"] }
+      ]
+    },
+    {
+      "id": "CT-CLEAN-001",
+      "seq": 1210,
+      "title": "No daemon/dashboard/MCP process left running under any scratch CRONTICK_HOME",
+      "area": "clean",
+      "surface": ["cli"],
+      "priority": "P0",
+      "tier": "tier1",
+      "slow": false,
+      "tags": [],
+      "knownDefect": null,
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "status",
+          "command": ["daemon", "status", "--json"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "stdoutJsonPathEquals",
+          "invocationRef": "status",
+          "params": { "jsonPath": "running", "expectedValue": false }
+        },
+        {
+          "type": "fileNotExists",
+          "params": { "pathTemplate": "${SCRATCH_HOME}/daemon.pid" }
+        }
+      ]
+    },
+    {
+      "id": "CT-CONC-009",
+      "seq": 4500,
+      "title": "Cross-surface rapid sequential mutations of same job — SQLite ground-truth consistency (deferred parallel, sequential best-effort)",
+      "area": "concurrency",
+      "surface": ["cli", "api", "mcp"],
+      "priority": "P2",
+      "tier": "tier3",
+      "slow": true,
+      "tags": ["concurrency", "sqlite", "parity"],
+      "knownDefect": null,
+      "skipOn": [],
+      "setup": [
+        {
+          "surface": "cli",
+          "ref": "create",
+          "command": ["new", "ct-conc-009", "--every", "3600", "--script", "echo base"]
+        }
+      ],
+      "invocations": [
+        {
+          "surface": "cli",
+          "ref": "update-cli",
+          "command": ["update", "ct-conc-009", "--script", "echo from-cli"]
+        },
+        {
+          "surface": "api",
+          "ref": "update-api",
+          "script": "const c = crontick.createClient(); return await c.updateJob('ct-conc-009', { action: { kind: 'script', script: 'echo from-api' } });"
+        },
+        {
+          "surface": "mcp",
+          "ref": "update-mcp",
+          "tool": "crontick_job_update",
+          "args": { "id": "ct-conc-009", "action": { "kind": "script", "script": "echo from-mcp" } }
+        },
+        {
+          "surface": "cli",
+          "ref": "final-get",
+          "command": ["get", "ct-conc-009", "--json"]
+        }
+      ],
+      "checks": [
+        {
+          "type": "exitCodeEquals",
+          "invocationRef": "update-cli",
+          "params": { "expectedCode": 0 }
+        },
+        {
+          "type": "apiResultJsonPathEquals",
+          "invocationRef": "update-api",
+          "params": { "jsonPath": "action.script", "expectedValue": "echo from-api" }
+        },
+        {
+          "type": "mcpToolResultJsonPath",
+          "invocationRef": "update-mcp",
+          "params": { "jsonPath": "action.script", "expectedValue": "echo from-mcp" }
+        },
+        {
+          "type": "stdoutJsonPathEquals",
+          "invocationRef": "final-get",
+          "params": { "jsonPath": "action.script", "expectedValue": "echo from-mcp" }
+        }
+      ],
+      "cleanup": [
+        { "surface": "cli", "ref": "delete", "command": ["delete", "ct-conc-009"] }
+      ]
+    }
+  ]
+}

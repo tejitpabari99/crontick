@@ -13,7 +13,9 @@ export { VERSION } from './version.js';
 export { CrontickError, ORPHAN_RUN_ERROR_CODE, ORPHAN_RUN_ERROR_MESSAGE } from './errors.js';
 export { CrontickClient, createClient } from './client.js';
 export type {
+  CreateJobOptions,
   CrontickClientOptions,
+  DaemonStatus,
   JobStats,
   LogEntry,
   LogsResult,
