@@ -18,7 +18,7 @@ const __dirname = dirname(__filename);
 const repoRoot = resolve(__dirname, '..', '..', '..', '..');
 
 // Directories to scan for markdown files
-const SCAN_DIRS = ['docs', 'specs', 'examples', '.github'];
+const SCAN_DIRS = ['docs', 'examples', '.github'];
 const ROOT_FILES = ['README.md', 'AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md', 'SECURITY.md'];
 
 // Regex to match markdown links: [text](path) -- excludes URLs and anchors-only

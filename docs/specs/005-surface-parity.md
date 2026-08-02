@@ -101,5 +101,5 @@ None.
 ## Related
 
 - [001-job-definition.md](001-job-definition.md)
-- `../docs/reference/`
-- `../docs/architecture.md`
+- `../reference/`
+- `../architecture.md`

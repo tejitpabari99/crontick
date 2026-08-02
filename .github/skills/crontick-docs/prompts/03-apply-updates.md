@@ -15,7 +15,7 @@ Each fact lives in EXACTLY ONE place. Never duplicate across layers.
 | `docs/internals/*.md` | "How is this implemented?" | Private implementation, for maintainers and coding agents. Cite `src/` paths. |
 | `docs/reference/*.md` | "What exactly is supported?" | Precise, factual, lookup-oriented. Exact inputs, outputs, defaults, errors, supported values. No storytelling, no philosophy. |
 | `docs/decisions/*.md` | "Why is it like this?" | ADRs, one decision per file, `NNNN-kebab-title.md`, contiguous numbering. Template: `docs/decisions/0000-template.md`. Statuses: Proposed / Accepted / Superseded by ADR-NNNN / Deprecated. Consequences must include real downsides. |
-| `specs/*.md` | Normative behavior contract | Numbered requirements with RFC 2119 keywords and stable IDs; acceptance criteria as a checklist citing real test files. Template: `specs/TEMPLATE.md`. |
+| `docs/specs/*.md` | Normative behavior contract | Numbered requirements with RFC 2119 keywords and stable IDs; acceptance criteria as a checklist citing real test files. Template: `docs/specs/TEMPLATE.md`. |
 | `docs/testing.md` | How to test | Includes manual pre-release checklist. |
 | `examples/` | Runnable public-API usage | Public imports only; must pass `npm run typecheck:examples` and `npm run lint`. |
 | `README.md` | User entry point | Fixed section order; answers within a minute: problem, install, example, environments, public API, issues. |
@@ -54,7 +54,7 @@ For each item in the update plan:
 
 - **New ADR**: Use `docs/decisions/0000-template.md` as the template. Assign the next
   contiguous number. Set status to "Accepted" (or "Proposed" if not yet merged).
-- **New spec**: Use `specs/TEMPLATE.md` as the template. Assign the next contiguous number.
+- **New spec**: Use `docs/specs/TEMPLATE.md` as the template. Assign the next contiguous number.
 - **New concept doc**: Use `templates/concept.md` as skeleton guidance, but the canonical
   structure comes from existing `docs/concepts/*.md` files.
 - **New internals doc**: Use `templates/internals.md` as skeleton guidance.

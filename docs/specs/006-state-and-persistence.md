@@ -157,6 +157,6 @@ None.
 
 - [001-job-definition.md](001-job-definition.md)
 - [004-daemon.md](004-daemon.md)
-- `../docs/reference/`
-- `../docs/architecture.md`
-- `../docs/decisions/0017-no-migrations-for-first-release.md`
+- `../reference/`
+- `../architecture.md`
+- `../decisions/0017-no-migrations-for-first-release.md`

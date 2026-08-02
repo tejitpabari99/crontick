@@ -118,5 +118,5 @@ None.
 - [002-scheduling.md](002-scheduling.md)
 - [003-execution.md](003-execution.md)
 - [007-prompt-jobs.md](007-prompt-jobs.md)
-- `../docs/reference/`
-- `../docs/concepts/`
+- `../reference/`
+- `../concepts/`

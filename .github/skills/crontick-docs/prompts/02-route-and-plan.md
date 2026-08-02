@@ -17,10 +17,10 @@ Apply this table to every classified change from Step 1:
 | New capability (any user-facing operation) | `src/surface.ts` + all three shims + `docs/reference/*` + capability count wherever stated + relevant spec |
 | Zod schema change | `docs/reference/job-schema.md` or `docs/reference/configuration.md` + relevant spec |
 | New error code | `docs/reference/errors.md`, `docs/concepts/error-model.md` if model changed |
-| Daemon/scheduler/runner/store behavior | matching `docs/internals/*.md` + matching `docs/concepts/*.md` + matching `specs/*.md` |
+| Daemon/scheduler/runner/store behavior | matching `docs/internals/*.md` + matching `docs/concepts/*.md` + matching `docs/specs/*.md` |
 | Config or env var change | `docs/reference/configuration.md` |
 | Build, packaging, or CI change | `docs/internals/build-and-package.md`, `docs/testing.md`, `AGENTS.md` if a command changed |
-| New test or coverage change | acceptance-criteria checkboxes in relevant `specs/*.md`, `docs/testing.md` |
+| New test or coverage change | acceptance-criteria checkboxes in relevant `docs/specs/*.md`, `docs/testing.md` |
 | A lasting design choice | NEW ADR in `docs/decisions/` + supersede old one if reversing |
 | Dependency added or removed | `docs/architecture.md` Dependency policy + ADR if architectural |
 
@@ -48,7 +48,7 @@ Group the planned updates:
 | A: Architecture + Concepts | `docs/architecture.md`, `docs/concepts/*.md` |
 | B: Reference | `docs/reference/*.md` |
 | C: Internals | `docs/internals/*.md` |
-| D: Specs + Decisions | `specs/*.md`, `docs/decisions/*.md` |
+| D: Specs + Decisions | `docs/specs/*.md`, `docs/decisions/*.md` |
 | E: Root-level + Testing | `README.md`, `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `SECURITY.md`, `CONTRIBUTING.md`, `docs/README.md`, `docs/testing.md`, `docs/troubleshooting.md` |
 | F: Examples | `examples/**` |
 
@@ -69,7 +69,7 @@ Group the planned updates:
 (none)
 
 ### Group D: Specs + Decisions
-- [ ] `specs/005-surface-parity.md`: add acceptance criterion for stats (verify against tests/cli.test.ts)
+- [ ] `docs/specs/005-surface-parity.md`: add acceptance criterion for stats (verify against tests/cli.test.ts)
 
 ### Group E: Root-level + Testing
 - [ ] `README.md`: update capability count from 36 to 37

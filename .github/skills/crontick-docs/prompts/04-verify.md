@@ -66,7 +66,7 @@ This runs: lint, typecheck, typecheck:examples, test, build. All must pass.
 ### 7. Removed-content sweep
 
 If any feature, command, or flag was removed in the diff:
-- Grep for its name across `docs/`, `specs/`, `examples/`, `README.md`, `AGENTS.md`.
+- Grep for its name across `docs/`, `docs/specs/`, `examples/`, `README.md`, `AGENTS.md`.
 - Remove any remaining references.
 
 ## Output

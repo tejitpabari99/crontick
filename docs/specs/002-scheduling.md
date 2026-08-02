@@ -110,5 +110,5 @@ None.
 
 - [001-job-definition.md](001-job-definition.md)
 - [003-execution.md](003-execution.md)
-- `../docs/reference/`
-- `../docs/concepts/`
+- `../reference/`
+- `../concepts/`

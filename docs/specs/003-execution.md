@@ -52,7 +52,7 @@ preserving observability through captured logs and structured run records.
 - **R-003-20**: `safeRedact` MUST only redact text-like chunks; binary data (containing NUL bytes or failing UTF-8 round-trip) MUST be stored as-is.
 - **R-003-21**: For `script` actions, every temp wrapper/user-script file MUST be deleted after the process exits (best-effort), regardless of whether the run succeeded, failed, timed out, or was canceled.
 - **R-003-22**: `cancelRun(runId)` MUST abort the active run by its run ID and return true; if no such active run exists, it MUST return false.
-- **R-003-25**: Every spawn (script, exec, and prompt actions alike) MUST pass `windowsHide: true` and `detached: true` to the child process, with exactly one exception: a `script` action on Windows whose resolved shell is `pwsh`/`powershell.exe` MUST be spawned with `detached: false`, because a detached PowerShell host on Windows receives no console and writes nothing to its (even redirected) stdio. A daemon restart or graceful stop MUST NOT kill in-flight work as a side effect for any other combination of platform/action/shell; the pwsh-on-Windows exception trades that survival guarantee for non-empty output capture (see `../docs/decisions/0020-no-detach-powershell-script-jobs-windows.md`).
+- **R-003-25**: Every spawn (script, exec, and prompt actions alike) MUST pass `windowsHide: true` and `detached: true` to the child process, with exactly one exception: a `script` action on Windows whose resolved shell is `pwsh`/`powershell.exe` MUST be spawned with `detached: false`, because a detached PowerShell host on Windows receives no console and writes nothing to its (even redirected) stdio. A daemon restart or graceful stop MUST NOT kill in-flight work as a side effect for any other combination of platform/action/shell; the pwsh-on-Windows exception trades that survival guarantee for non-empty output capture (see `../decisions/0020-no-detach-powershell-script-jobs-windows.md`).
 - **R-003-26**: The child process's `pid` MUST be persisted to the run record (`Store.updateRun()`) as soon as the process spawns, before any output arrives; `missed` runs (spec 004 R-004-28) never spawn a process and so never get a `pid`.
 - **R-003-27**: Captured stdout/stderr for a single run MUST be capped at `retention.maxOutputBytesPerRun` (default 2,000,000; configurable range 1024..1,000,000,000). Once the cap is reached, the runner MUST trim the trailing bytes to a UTF-8 character boundary (never splitting a multi-byte character), append a single truncation marker, set the run's `outputTruncated` field, and drop all further output for that run without persisting it. Hitting the cap MUST NOT kill, signal, or otherwise affect the child process itself; only capture stops.
 - **R-003-28**: `Runner.adoptRun(jobId, runId, pid, store)` MUST re-attach a run that survived a daemon restart (per spec 004 R-004-8) into this daemon's overlap tracking (`activeRunIds`), so that `overlap: 'skip'` and `overlap: 'cancel-previous'` hold for a subsequent tick of the same job exactly as they would for a run spawned by this daemon process. Since no `ChildProcess` handle exists for an adopted run, the runner MUST poll process liveness periodically instead of listening for a native `'exit'` event, and MUST finalize the run once the poll observes the process has exited.
@@ -140,9 +140,9 @@ None.
 - [004-daemon.md](004-daemon.md)
 - [006-state-and-persistence.md](006-state-and-persistence.md)
 - [007-prompt-jobs.md](007-prompt-jobs.md)
-- `../docs/reference/`
-- `../docs/concepts/`
-- `../docs/decisions/0016-detached-children-cross-platform.md` (superseded by 0020)
-- `../docs/decisions/0018-exec-dash-dash-args.md` (superseded by 0019)
-- `../docs/decisions/0019-arg-flag-primary-for-exec-and-prompt-args.md`
-- `../docs/decisions/0020-no-detach-powershell-script-jobs-windows.md`
+- `../reference/`
+- `../concepts/`
+- `../decisions/0016-detached-children-cross-platform.md` (superseded by 0020)
+- `../decisions/0018-exec-dash-dash-args.md` (superseded by 0019)
+- `../decisions/0019-arg-flag-primary-for-exec-and-prompt-args.md`
+- `../decisions/0020-no-detach-powershell-script-jobs-windows.md`

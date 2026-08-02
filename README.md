@@ -16,7 +16,7 @@ AI agent over MCP. A demand-started daemon handles scheduling and execution; thr
 | Reference (API, CLI, MCP, schemas) | [docs/reference/](docs/reference/) |
 | Testing guide | [docs/testing.md](docs/testing.md) |
 | Runnable examples | [examples/](examples/) |
-| Behavior specs | [specs/](specs/) |
+| Behavior specs | [docs/specs/](docs/specs/) |
 | Design decisions (ADRs) | [docs/decisions/](docs/decisions/) |
 
 ---

@@ -166,5 +166,5 @@ None.
 
 - [003-execution.md](003-execution.md)
 - [006-state-and-persistence.md](006-state-and-persistence.md)
-- `../docs/reference/`
-- `../docs/concepts/`
+- `../reference/`
+- `../concepts/`

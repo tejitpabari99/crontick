@@ -55,5 +55,5 @@ None.
 
 ## Related
 
-- `../docs/reference/`
-- `../docs/concepts/`
+- `../reference/`
+- `../concepts/`

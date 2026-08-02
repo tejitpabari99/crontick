@@ -37,7 +37,7 @@ Determine the change set and produce a structured classification of what changed
 | Config/Env | Files touching env vars, config parsing, or `src/config*` |
 | Build/CI | `package.json`, `tsconfig*`, `tsup.config*`, `.github/workflows/**`, `scripts/**` |
 | Test | `tests/**` |
-| Docs | `docs/**`, `specs/**`, `examples/**`, `README.md`, `AGENTS.md`, `CLAUDE.md` |
+| Docs | `docs/**`, `docs/specs/**`, `examples/**`, `README.md`, `AGENTS.md`, `CLAUDE.md` |
 | Plugin/Skill | `plugin/**`, `src/skill/**`, `.github/skills/**` |
 | Other | Anything not matching above |
 

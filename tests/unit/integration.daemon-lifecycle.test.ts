@@ -326,7 +326,7 @@ describe('Integration: daemon lifecycle', () => {
   }, 25_000);
 
   // ── T-RETENTION-RELOAD ───────────────────────────────────────────────────
-  // specs/006-state-and-persistence.md R-006-20: a running daemon MUST apply
+  // docs/specs/006-state-and-persistence.md R-006-20: a running daemon MUST apply
   // an updated retention cap without a restart.
 
   it('reload applies a newly-lowered retention.maxRunsPerJob without a daemon restart', async () => {
@@ -463,7 +463,7 @@ describe('Integration: daemon lifecycle', () => {
   // ── T-FRESH-INSTALL ───────────────────────────────────────────────────────
 
   // ── T-GRACEFUL-STOP (L1 + L8) ────────────────────────────────────────────
-  // specs/004 previously documented POST /api/daemon/stop without it
+  // docs/specs/004 previously documented POST /api/daemon/stop without it
   // existing; this proves the route now performs an in-process graceful
   // shutdown (works identically on Windows and POSIX, unlike signal-based
   // stopDaemon()) and that an in-flight child survives the daemon's own

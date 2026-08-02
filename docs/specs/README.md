@@ -51,6 +51,6 @@ See [TEMPLATE.md](TEMPLATE.md) for the blank spec structure.
 
 ## Related
 
-- `../docs/reference/` -- user-facing reference material (exact facts).
-- `../docs/internals/` -- implementation explanations.
-- `../docs/concepts/` -- conceptual guides.
+- `../reference/` -- user-facing reference material (exact facts).
+- `../internals/` -- implementation explanations.
+- `../concepts/` -- conceptual guides.

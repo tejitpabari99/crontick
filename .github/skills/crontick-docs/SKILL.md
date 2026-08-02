@@ -75,7 +75,7 @@ same file. The disjoint groupings are:
 | A: Architecture + Concepts | `docs/architecture.md`, `docs/concepts/*.md` | High-level design and mental models |
 | B: Reference | `docs/reference/*.md` | Precise lookup-oriented facts |
 | C: Internals | `docs/internals/*.md` | Private implementation docs |
-| D: Specs + Decisions | `specs/*.md`, `docs/decisions/*.md` | Normative contracts and ADRs |
+| D: Specs + Decisions | `docs/specs/*.md`, `docs/decisions/*.md` | Normative contracts and ADRs |
 | E: Root-level + Testing | `README.md`, `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `SECURITY.md`, `CONTRIBUTING.md`, `docs/README.md`, `docs/testing.md`, `docs/troubleshooting.md` | Top-level entry points and guides |
 | F: Examples | `examples/**` | Runnable code samples |
 
@@ -106,5 +106,5 @@ All of the following must be true before the skill reports success:
 - Documentation layering contract: `prompts/03-apply-updates.md`
 - Change-to-doc routing table: `prompts/02-route-and-plan.md`
 - ADR template: `docs/decisions/0000-template.md` (source of truth)
-- Spec template: `specs/TEMPLATE.md` (source of truth)
+- Spec template: `docs/specs/TEMPLATE.md` (source of truth)
 - Architecture review skill: `.github/skills/review-crontick/SKILL.md`
