@@ -222,7 +222,7 @@ Workflow file: `.github/workflows/ci.yml`
 | `ubuntu-latest` | 24 | same |
 
 A second job `verify-package` (ubuntu-latest, Node 22) runs after the matrix, in this order:
-`npm run build` -> `npm run typecheck:examples:dist` (type-checks `examples/` against the
+`npm run build` -> `npm run typecheck:examples:dist` (type-checks `docs/examples/` against the
 *built* `dist/index.d.ts`, not source — see [build-and-package.md](internals/build-and-package.md))
 -> `npm pack --dry-run` + `scripts/verify-tarball.mjs` (tarball contents) ->
 `npm run verify-package-install` (packs a real tarball, installs it into a scratch directory,

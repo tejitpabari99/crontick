@@ -167,8 +167,8 @@ and dist example type-checking, full test suite, and a full build — see the
    `npm pack --dry-run` against expectations. Run in CI to catch accidental
    inclusion of dev files.
 6. **Example type-checking against source vs. against published types**:
-   `examples/tsconfig.json` maps the `crontick` import specifier to
-   `../src/index.ts`, so `npm run typecheck:examples` (part of `validate`)
+   `docs/examples/tsconfig.json` maps the `crontick` import specifier to
+   `../../src/index.ts`, so `npm run typecheck:examples` (part of `validate`)
    validates examples against the *source* type surface rather than the
    published declaration output (`dist/index.d.ts`). If the declaration
    rollup ever diverged from source, an example could type-check locally
@@ -180,9 +180,9 @@ and dist example type-checking, full test suite, and a full build — see the
      `scripts/check-dist-built.mjs` first asserts `dist/index.d.ts` exists
      (giving an actionable "run `npm run build` first" error instead of a
      confusing TypeScript "project root is ambiguous" failure), then
-     `tsc --project examples/tsconfig.dist.json` type-checks every example
+     `tsc --project docs/examples/tsconfig.dist.json` type-checks every example
      against the *built* declaration file via a separate tsconfig that remaps
-     the `crontick` specifier to `../dist/index.d.ts`.
+     the `crontick` specifier to `../../dist/index.d.ts`.
    - **`npm run verify-package-install`** (`scripts/verify-package-install.mjs`,
      CI-only, not part of `validate`): packs a real tarball with `npm pack`
      (not `--dry-run`), installs it into a scratch directory, imports the

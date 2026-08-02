@@ -2,7 +2,7 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "paths": {
-      "crontick": ["../dist/index.d.ts"]
+      "crontick": ["../../dist/index.d.ts"]
     }
   }
 }

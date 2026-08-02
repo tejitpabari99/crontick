@@ -43,8 +43,8 @@
   "scripts": {
     "build": "tsup && node scripts/fix-node-sqlite.mjs",
     "typecheck": "tsc --noEmit",
-    "typecheck:examples": "tsc --project examples/tsconfig.json",
-    "typecheck:examples:dist": "node scripts/check-dist-built.mjs && tsc --project examples/tsconfig.dist.json",
+    "typecheck:examples": "tsc --project docs/examples/tsconfig.json",
+    "typecheck:examples:dist": "node scripts/check-dist-built.mjs && tsc --project docs/examples/tsconfig.dist.json",
     "verify-package-install": "node scripts/verify-package-install.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",

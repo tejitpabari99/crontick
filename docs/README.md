@@ -17,7 +17,7 @@ where new content belongs.
 | [docs/decisions/](decisions/) | "Why is it like this?" -- architecture decision records | Contributors |
 | [docs/testing.md](testing.md) | How to test and what to verify before a release | Contributors |
 | [specs/](specs/) | Normative behavior contracts with acceptance criteria | Contributors and coding agents |
-| [examples/](../examples/) | Runnable public-API usage examples | Users |
+| [examples/](examples/) | Runnable public-API usage examples | Users |
 
 ---
 
@@ -28,7 +28,7 @@ where new content belongs.
 - **An implementation detail** (how the scheduler loop works, storage format internals) -> `docs/internals/`
 - **A design choice with trade-offs** -> a new ADR in `docs/decisions/` (copy `0000-template.md`)
 - **A behavior contract with acceptance criteria** -> a new spec in `docs/specs/`
-- **A runnable code sample** -> `examples/`
+- **A runnable code sample** -> `docs/examples/`
 
 ---
 
@@ -115,13 +115,13 @@ See [decisions/README.md](decisions/README.md) for the full list of architecture
 
 | File | Description |
 |------|-------------|
-| [README.md](../examples/README.md) | Examples overview and how to run them |
-| [01-quick-start.ts](../examples/01-quick-start.ts) | Create, list, and delete a job |
-| [02-cron-schedule.ts](../examples/02-cron-schedule.ts) | Cron-scheduled job |
-| [03-exec-job.ts](../examples/03-exec-job.ts) | Direct command execution job |
-| [04-prompt-job.ts](../examples/04-prompt-job.ts) | LLM prompt job |
-| [05-one-shot.ts](../examples/05-one-shot.ts) | One-shot scheduled job |
-| [06-run-history.ts](../examples/06-run-history.ts) | Querying run history and logs |
-| [07-lifecycle.ts](../examples/07-lifecycle.ts) | Daemon lifecycle management |
-| [cli/README.md](../examples/cli/README.md) | CLI usage examples |
-| [mcp/README.md](../examples/mcp/README.md) | MCP integration examples |
+| [README.md](examples/README.md) | Examples overview and how to run them |
+| [01-quick-start.ts](examples/01-quick-start.ts) | Create, list, and delete a job |
+| [02-cron-schedule.ts](examples/02-cron-schedule.ts) | Cron-scheduled job |
+| [03-exec-job.ts](examples/03-exec-job.ts) | Direct command execution job |
+| [04-prompt-job.ts](examples/04-prompt-job.ts) | LLM prompt job |
+| [05-one-shot.ts](examples/05-one-shot.ts) | One-shot scheduled job |
+| [06-run-history.ts](examples/06-run-history.ts) | Querying run history and logs |
+| [07-lifecycle.ts](examples/07-lifecycle.ts) | Daemon lifecycle management |
+| [cli/README.md](examples/cli/README.md) | CLI usage examples |
+| [mcp/README.md](examples/mcp/README.md) | MCP integration examples |
