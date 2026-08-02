@@ -140,6 +140,47 @@ async function spawnDaemon(dir: string, previousPort?: number): Promise<{ proc: 
   return { proc, port };
 }
 
+// Readiness that does NOT assume the (re)started daemon binds a *different*
+// ephemeral port than a previous instance. After a SIGKILL crash the stale
+// daemon.port is left behind, and the restarted daemon may legitimately rebind
+// the same freed port — in which case waitForPortFileChange would spin until it
+// times out even though the daemon is perfectly healthy. Instead, poll the
+// current port file and confirm the daemon actually answers /health. Generous
+// timeout because a heavily-loaded CI runner can be slow to relaunch node.
+async function waitForHealthyPort(dir: string, maxMs = 45_000, getStderr?: () => string): Promise<number> {
+  const portFile = join(dir, 'daemon.port');
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    if (existsSync(portFile)) {
+      const raw = readFileSync(portFile, 'utf-8').trim();
+      const port = parseInt(raw, 10);
+      if (!isNaN(port) && port > 0) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/health`);
+          await res.text().catch(() => undefined);
+          if (res.status === 200) return port;
+        } catch {
+          // daemon not accepting connections yet; keep polling
+        }
+      }
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  const stderr = getStderr?.() ?? '';
+  throw new Error(`Timed out waiting for daemon health${stderr ? `\nDaemon stderr:\n${stderr}` : ''}`);
+}
+
+async function spawnDaemonAwaitHealthy(dir: string): Promise<{ proc: ChildProcess; port: number }> {
+  const stderrChunks: string[] = [];
+  const proc = spawn(node, [DAEMON_SCRIPT], {
+    env: { ...process.env, CRONTICK_HOME: dir },
+    stdio: 'pipe',
+  });
+  proc.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk.toString()));
+  const port = await waitForHealthyPort(dir, 45_000, () => stderrChunks.join(''));
+  return { proc, port };
+}
+
 describe('Integration: daemon lifecycle', () => {
   // Track every daemon process spawned in this file so a failed assertion
   // can never leak a live daemon; force-killed unconditionally in afterEach.
@@ -694,7 +735,7 @@ describe('Integration: daemon lifecycle', () => {
   // Report-only: missed fires while the daemon was down are recorded as
   // 'missed' runs and surfaced in /api/daemon/status, but never replayed.
 
-  it('records missed fires across a crash/restart and surfaces them in status (L2)', { timeout: 45_000, retry: 2 }, async () => {
+  it('records missed fires across a crash/restart and surfaces them in status (L2)', { timeout: 90_000, retry: 1 }, async () => {
     const dir = makeTmpDir('crontick-missed-');
     liveDirs.add(dir);
     const first = await spawnDaemon(dir);
@@ -734,7 +775,7 @@ describe('Integration: daemon lifecycle', () => {
     // actually elapses past several 0.5s ticks while nothing is running.
     await new Promise((r) => setTimeout(r, 2500));
 
-    const second = await spawnDaemon(dir, first.port);
+    const second = await spawnDaemonAwaitHealthy(dir);
     liveProcs.add(second.proc);
 
     const status = await apiCall(second.port, 'GET', '/api/daemon/status');
