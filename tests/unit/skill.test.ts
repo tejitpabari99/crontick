@@ -34,8 +34,8 @@ describe('src/skill/SKILL.md content', () => {
   it('lists crontick_* tools', () => {
     expect(content).toContain('crontick_job_create');
     expect(content).toContain('crontick_job_list');
-    expect(content).toContain('crontick_schedule_validate');
-    expect(content).toContain('crontick_schedule_preview');
+    expect(content).toContain('crontick_job_schedule');
+    expect(content).toContain('crontick_run_logs_tail');
     expect(content).not.toContain('crontick_' + 'auto' + 'start');
   });
 

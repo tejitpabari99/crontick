@@ -102,4 +102,4 @@ for (const step of steps) {
 }
 console.log('\nGet started:');
 console.log('  crontick --help');
-console.log('  crontick new my-job --cron "0 9 * * *" --script "echo hello"');
+console.log('  crontick jobs new --cron "0 9 * * *" --prompt "Summarize my open GitHub PRs"');

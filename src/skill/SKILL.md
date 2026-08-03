@@ -6,6 +6,10 @@ allowed-tools: shell
 
 # crontick — run AI cron jobs from the CLI
 
+## Purpose / when to use
+
+This **crontick** skill lets you schedule and manage AI cron jobs on the local machine from the shell. Use it when asked to run a Copilot/AI prompt on a cron, interval, or one-shot schedule, or to inspect, trigger, or clean up those scheduled jobs and their run history.
+
 crontick is **AI-native local cron**: a demand-started local daemon plus a `crontick` CLI (and MCP server). The default job is a **prompt job** — a natural-language prompt scheduled to run against an AI **engine** (`copilot` by default, i.e. `copilot --allow-all-tools -p "<prompt>"`). Everything runs on one machine; the daemon auto-starts on first use.
 
 **Identity:** every job has an immutable GUID `id` (assigned by crontick — never invent it) plus an optional human `alias` (kebab-case, auto-generated when omitted, e.g. `fern-270`). Pass **either** the `id` or the `alias` anywhere an identifier is expected.
@@ -14,7 +18,7 @@ Drive crontick by running the `crontick` CLI in the shell. All commands below ar
 
 ## Core workflow
 
-### 1. Create a prompt job
+### Step 1 — Create a prompt job
 
 The prompt MUST be passed with `--prompt`. Positional text is treated as engine passthrough args, **not** the prompt, and the job will fail with no prompt. Pick exactly one schedule flag.
 
@@ -39,7 +43,7 @@ No `id` is needed — crontick assigns the GUID and auto-generates an `alias`. O
 - `--force` — replace an existing job with the same alias.
 - Anything after the flags (`engineArgs...`) is passed verbatim to the engine, e.g. `crontick jobs new --cron "0 9 * * *" --prompt "…" --allow-all-tools --add-dir Q:\Repos\crontick`.
 
-### 2. Inspect
+### Step 2 — Inspect
 
 ```sh
 crontick jobs list                 # all jobs with status and next run
@@ -47,7 +51,7 @@ crontick jobs get <id|alias>       # full definition of one job
 crontick jobs schedule <id|alias> -n 5   # preview the next N fire times (default 5)
 ```
 
-### 3. Run and observe
+### Step 3 — Run and observe
 
 ```sh
 crontick jobs run-now <id|alias>   # trigger an immediate run
@@ -59,7 +63,7 @@ crontick runs logs <runId> engine  # only the AI engine stdout/stderr
 crontick runs logs <runId> crontick  # only crontick lifecycle events (start, timeout, retry, exit)
 ```
 
-### 4. Manage
+### Step 4 — Manage
 
 ```sh
 crontick jobs update <id|alias> --disable   # also --enable, or any create flag to change fields
@@ -69,7 +73,7 @@ crontick runs cancel <runId>       # cancel an in-progress run
 crontick runs delete <runId>       # delete one run and its logs (use --all --force to clear all)
 ```
 
-### 5. Environment / troubleshooting
+### Step 5 — Environment / troubleshooting
 
 ```sh
 crontick info      # version, runtime, storage paths, daemon status, dashboard URL
@@ -141,6 +145,63 @@ crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident qu
     "action": { "kind": "script", "script": "pg_dump mydb > /backups/db.sql" } }
   ```
 
+## Prompt action shape / session continuity
+
+Under the hood a prompt job stores its behavior as JSON with `action.kind: "prompt"`. The CLI writes this for you, but MCP hosts and `--file` jobs use it directly:
+
+```json
+{ "alias": "triage",
+  "schedule": { "kind": "cron", "cron": "0 * * * *" },
+  "action": { "kind": "prompt", "prompt": "Continue triaging the incident queue", "reuseSession": true } }
+```
+
+- `reuseSession: true` captures the engine `sessionId` from the first successful run and reuses it on every later run, so the AI carries context across runs (equivalent to `--reuse-session`).
+- The captured `sessionId` is visible in `crontick runs get <runId>`; a fixed id can be pinned instead via `--session-id`.
+
+## Example
+
+A daily standup summary at 9am local time:
+
+```sh
+crontick jobs new --desc "daily standup" --cron "0 9 * * *" \
+  --prompt "Summarize my open GitHub PRs and today's calendar" --reuse-session
+```
+
+Then inspect and trigger it:
+
+```sh
+crontick jobs schedule daily-standup -n 5   # preview the next 5 fire times
+crontick jobs run-now daily-standup         # run it immediately once
+```
+
+## Safe shell invocation
+
+When wrapping a crontick call (or a job's own `script`/`exec` body) in a shell script, make the shell fail fast so errors surface as run failures:
+
+```sh
+#!/usr/bin/env bash
+set -euo pipefail
+crontick jobs run-now daily-standup
+```
+
+```powershell
+$ErrorActionPreference = 'Stop'
+crontick jobs run-now daily-standup
+```
+
 ## Use from an MCP host
 
-crontick also ships an MCP server that mirrors these commands one-to-one (tool prefix `crontick_`, e.g. `crontick_job_create`, `crontick_run_logs_tail`). Start it with `crontick mcp` over stdio and wire it into an MCP host (Copilot, Claude Desktop, Cursor). Prefer the CLI when you can run a shell; use MCP tools when operating through an MCP host.
+crontick also ships an MCP server that mirrors these commands one-to-one (tool prefix `crontick_`). Start it with `crontick mcp` over stdio and wire it into an MCP host (Copilot, Claude Desktop, Cursor). Prefer the CLI when you can run a shell; use MCP tools when operating through an MCP host.
+
+| MCP tool | CLI equivalent |
+|----------|----------------|
+| `crontick_job_create` | `jobs new` |
+| `crontick_job_list` | `jobs list` |
+| `crontick_job_schedule` | `jobs schedule` |
+| `crontick_job_run_now` | `jobs run-now` |
+| `crontick_run_list` | `runs list` |
+| `crontick_run_logs_tail` | `runs logs` |
+| `crontick_run_delete` | `runs delete` |
+| `crontick_info` | `info` |
+
+MCP hosts can also read the job JSON schema from the resource `crontick://schemas/job` to validate job definitions before calling `crontick_job_create`.
