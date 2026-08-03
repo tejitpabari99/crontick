@@ -963,18 +963,6 @@ describe('MCP server — full contract', () => {
     expect(typeof (json as { totalJobs: number }).totalJobs).toBe('number');
   });
 
-  // ── Dashboard tools ─────────────────────────────────────────────────────────
-
-  it('dashboard tools expose start/status through the same response shapes', async () => {
-    const start = await callTool(client, 'crontick_dashboard_start');
-    expect(start.isError).toBe(false);
-    expect(start.json).toMatchObject({ ok: true, running: true, url: expect.stringContaining('/dashboard') });
-
-    const status = await callTool(client, 'crontick_dashboard_status');
-    expect(status.isError).toBe(false);
-    expect(status.json).toMatchObject({ ok: true, running: true, url: expect.stringContaining('/dashboard') });
-  });
-
   // ── Admin tools ──────────────────────────────────────────────────────────────
 
   it('crontick_export returns jobs array', async () => {
@@ -1057,6 +1045,9 @@ describe('MCP server — full contract', () => {
       },
       daemon: { running: expect.any(Boolean) },
     });
+    // The dashboard is always served by the daemon; info surfaces its URL.
+    const { dashboardUrl } = json as { dashboardUrl: unknown };
+    expect(dashboardUrl === null || (typeof dashboardUrl === 'string' && dashboardUrl.endsWith('/dashboard'))).toBe(true);
   });
 
   it('tool verbose option returns MCP diagnostics without stderr protocol pollution', async () => {
@@ -1103,14 +1094,6 @@ describe('MCP server — full contract', () => {
       // Protocol-level error is also acceptable
       expect(err).toBeDefined();
     }
-  });
-
-  it('crontick_dashboard_stop stops the daemon-backed dashboard server', async () => {
-    const { json, isError } = await callTool(client, 'crontick_dashboard_stop');
-    expect(isError).toBe(false);
-    // dashboardStop delegates to daemonStop(); mode surfaces the L1 HTTP-first
-    // shutdown handshake result (see src/daemon/lifecycle.ts DaemonStopResult).
-    expect(json).toMatchObject({ ok: true, stopped: expect.any(Boolean), mode: expect.stringMatching(/^(graceful|hard-kill|already-stopped)$/) });
   });
 });
 

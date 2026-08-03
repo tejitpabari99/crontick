@@ -64,10 +64,8 @@ Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `daemonReload` | `(): Promise<{ ok: true }>` | `{ ok: true }` | `CrontickError` |
 | `daemonStatus` | `(): Promise<DaemonStatus>` | `DaemonStatus` | `CrontickError` |
 | `doctor` | `(options?: DoctorOptions): Promise<DoctorResult>` | `DoctorResult` | `CrontickError` |
-| `dashboardStart` | `(): Promise<DashboardStartResult>` | `DashboardStartResult` | `CrontickError` |
-| `dashboardStop` | `(): Promise<DashboardStopResult>` | Stop result | `CrontickError` |
-| `dashboardStatus` | `(): Promise<DashboardStatus>` | `DashboardStatus` | `CrontickError` |
-| `dashboardData` | `(options?: DashboardOptions): Promise<DashboardData>` | `DashboardData` | `CrontickError` |
+| `dashboardStatus` | `(): Promise<DashboardStatus>` | `DashboardStatus` — library-only; the dashboard is served by the daemon | `CrontickError` |
+| `dashboardData` | `(options?: DashboardOptions): Promise<DashboardData>` | `DashboardData` — library-only; the dashboard is served by the daemon | `CrontickError` |
 | `jobJsonSchema` | `(): unknown` | JSON Schema object | — |
 | `getConfig` | `(): CrontickConfig` | `CrontickConfig` | `CrontickError` |
 | `getConfigValue` | `(path?: string): unknown` | Config value | `CrontickError` (`CONFIG_KEY_NOT_FOUND`) |
@@ -80,11 +78,11 @@ Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `initConfig` | `(options?: { force?: boolean }): { path: string; config: CrontickConfig; created: boolean }` | Init result | `CrontickError` (`CONFIG_EXISTS`) |
 | `validateConfig` | `(path?: string): ConfigValidationResult` | Validation result | `CrontickError` |
 | `configPath` | `(): ConfigPathInfo` | `{ path, note }` — powers `crontick config` and `crontick_config_path` | — |
-| `info` | `(): Promise<CrontickInfo>` | `{ version, node, platform, paths, daemon }` — powers `crontick info` and `crontick_info` | `CrontickError` |
+| `info` | `(): Promise<CrontickInfo>` | `{ version, node, platform, paths, daemon, dashboardUrl }` — powers `crontick info` and `crontick_info`; `dashboardUrl` is the daemon-served dashboard URL or `null` | `CrontickError` |
 | `drainNotices` | `(): string[]` | Accumulated notices | — |
 | `isVerbose` | `(): boolean` | Verbose flag | — |
 
-**Library-only methods (retained in the client but no longer part of `SURFACE_CAPABILITIES`, so they have no CLI/MCP equivalent):** `ensure`, `health`, `createJobFromCliOptions`, `jobJsonSchema`, `getConfig`, `drainNotices`, `isVerbose`, `validateSchedule`, `previewSchedule`, `dashboardData`, and the config/engine helpers (`getConfigValue`, `setConfigValue`, `removeConfigValue`, `listEngines`, `addEngine`, `updateEngine`, `removeEngine`, `initConfig`, `validateConfig`). These are intentionally excluded from the parity contract because they serve internal wiring, direct-use library scenarios, or launch infrastructure rather than proxying a daemon operation exposed on every surface.
+**Library-only methods (retained in the client but no longer part of `SURFACE_CAPABILITIES`, so they have no CLI/MCP equivalent):** `ensure`, `health`, `createJobFromCliOptions`, `jobJsonSchema`, `getConfig`, `drainNotices`, `isVerbose`, `validateSchedule`, `previewSchedule`, `dashboardStatus`, `dashboardData`, and the config/engine helpers (`getConfigValue`, `setConfigValue`, `removeConfigValue`, `listEngines`, `addEngine`, `updateEngine`, `removeEngine`, `initConfig`, `validateConfig`). These are intentionally excluded from the parity contract because they serve internal wiring, direct-use library scenarios, or launch infrastructure rather than proxying a daemon operation exposed on every surface. The `dashboard` command group and MCP tools were removed because the dashboard is always served by the daemon; `dashboardStart`/`dashboardStop` were removed entirely (they only made sense as commands), while `dashboardStatus`/`dashboardData` remain for direct library use.
 
 Read methods that surface config values or captured text (`getConfigValue`, `getRun`,
 `listRuns`, `getLogs`, and `dashboardData`) apply the shared redaction contract before
@@ -443,6 +441,8 @@ interface DashboardStatus {
 
 ### DashboardStartResult
 
+Retained as an exported type for backward compatibility. The `dashboardStart`/`dashboardStop` client methods were removed (the dashboard is served by the daemon), but the result types stay exported so existing imports keep compiling.
+
 ```ts
 interface DashboardStartResult extends DashboardStatus {
   startedDaemon: boolean;
@@ -725,7 +725,7 @@ const BUILT_IN_CONFIG: CrontickConfig;
 const SURFACE_CAPABILITIES: readonly SurfaceCapability[];
 ```
 
-29-element array mapping every capability to its client method, CLI command path, and
+26-element array mapping every capability to its client method, CLI command path, and
 MCP tool name. The existing `create-job` capability row also records its parity-coupled
 `force` option via `optionNames: ['force']`.
 

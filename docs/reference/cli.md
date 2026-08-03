@@ -57,9 +57,6 @@ crontick daemon stop
 crontick daemon status
 crontick daemon reload
 crontick daemon restart
-crontick dashboard start [--open]
-crontick dashboard status
-crontick dashboard stop
 crontick mcp [--no-start-daemon] [--daemon-url <url>]
 ```
 
@@ -353,6 +350,7 @@ The output includes:
 - platform
 - `paths` block: `dataDir`, `jobsDir`, `runsDb`, `logsDir`, `configFile`, `portFile`, `pidFile`
 - daemon running status, including PID and port when available
+- `dashboardUrl`: the URL of the daemon-served dashboard (for example `http://127.0.0.1:<port>/dashboard`), or `null` when it cannot be resolved (no running daemon and no readable port file). Open this URL in a browser. `info` never starts the daemon; the dashboard is served automatically whenever the daemon is up.
 
 ### crontick doctor
 
@@ -418,37 +416,21 @@ Required after changing `retention.maxRunsPerJob`.
 
 ---
 
-## Dashboard Commands
+## Dashboard
 
-### crontick dashboard start
+crontick has **no `dashboard` command group**. The dashboard is always served by the
+daemon on its loopback origin whenever the daemon is running — there is nothing to start
+or stop separately. To open it:
 
-Start the dashboard server.
+1. Run `crontick info` and copy the `dashboardUrl` line (for example
+   `http://127.0.0.1:<port>/dashboard`).
+2. Open that URL in a browser.
 
-```bash
-crontick dashboard start
-```
+If the daemon is not running yet, run any daemon-backed command (or `crontick daemon
+start`) and it will start automatically; then `crontick info` will report the URL.
 
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--open` | boolean | `false` | Open in the default browser |
-
-### crontick dashboard status
-
-Show dashboard status.
-
-```bash
-crontick dashboard status
-```
-
-### crontick dashboard stop
-
-Stop the dashboard server.
-
-```bash
-crontick dashboard stop
-```
-
-The former `crontick dashboard data` CLI command is no longer exposed.
+The former `crontick dashboard start`, `crontick dashboard status`, `crontick dashboard
+stop`, and `crontick dashboard data` CLI commands have been removed.
 
 ### Dashboard web UI
 

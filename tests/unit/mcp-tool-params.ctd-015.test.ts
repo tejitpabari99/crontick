@@ -35,9 +35,6 @@ const EXPECTED_TOOL_PARAMS = {
   crontick_daemon_restart: [],
   crontick_export: ['includeRuns'],
   crontick_import: ['jobs', 'runs'],
-  crontick_dashboard_start: [],
-  crontick_dashboard_status: [],
-  crontick_dashboard_stop: [],
   crontick_doctor: [],
   crontick_config_path: [],
   crontick_info: [],
@@ -152,7 +149,7 @@ describe('CTD-015 MCP parameter naming', () => {
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
 
     expect(tools.map((tool) => tool.name).sort()).toEqual([...MCP_TOOLS].sort());
-    expect(tools).toHaveLength(29);
+    expect(tools).toHaveLength(26);
 
     for (const [name, expectedParams] of Object.entries(EXPECTED_TOOL_PARAMS)) {
       const tool = byName.get(name);

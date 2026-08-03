@@ -66,9 +66,9 @@ Tools that expose run rows or log text apply the shared redaction contract befor
 
 ## Tool Inventory
 
-The MCP server exposes 29 `crontick_*` tools, matching `SURFACE_CAPABILITIES`.
+The MCP server exposes 26 `crontick_*` tools, matching `SURFACE_CAPABILITIES`.
 
-Removed tools are not present: the `crontick_config_*` get/set/unset/init/validate/engine tools, `crontick_schedule_validate`, `crontick_schedule_preview`, and `crontick_dashboard_data`. Use `crontick_config_path` to find the config file, edit config by hand, and use `crontick_job_schedule` to preview an existing job's upcoming fire times.
+Removed tools are not present: the `crontick_config_*` get/set/unset/init/validate/engine tools, `crontick_schedule_validate`, `crontick_schedule_preview`, `crontick_dashboard_data`, and the `crontick_dashboard_start`/`crontick_dashboard_status`/`crontick_dashboard_stop` tools. The dashboard is always served by the daemon; call `crontick_info` and open its `dashboardUrl`. Use `crontick_config_path` to find the config file, edit config by hand, and use `crontick_job_schedule` to preview an existing job's upcoming fire times.
 
 ---
 
@@ -402,42 +402,6 @@ Run health checks.
 
 ---
 
-### crontick_dashboard_start
-
-Start the dashboard server.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `verbose` | `boolean` | no | `false` | Include diagnostics |
-
-**Result:** `{ ok: true, running: true, url: string, startedDaemon: boolean }`.
-
----
-
-### crontick_dashboard_status
-
-Return dashboard server status without starting it.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `verbose` | `boolean` | no | `false` | Include diagnostics |
-
-**Result:** `{ ok: true, running: boolean, url: string }`.
-
----
-
-### crontick_dashboard_stop
-
-Stop the daemon-backed dashboard server.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `verbose` | `boolean` | no | `false` | Include diagnostics |
-
-**Result:** `{ message: string }`.
-
----
-
 ### crontick_config_path
 
 Return the config file path and note explaining how edits take effect.
@@ -458,7 +422,7 @@ Return crontick environment info.
 |-----------|------|----------|---------|-------------|
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ version, node, platform, paths, daemon }`, where `paths` includes `dataDir`, `jobsDir`, `runsDb`, `logsDir`, `configFile`, `portFile`, and `pidFile`.
+**Result:** `{ version, node, platform, paths, daemon, dashboardUrl }`, where `paths` includes `dataDir`, `jobsDir`, `runsDb`, `logsDir`, `configFile`, `portFile`, and `pidFile`. `dashboardUrl` is the daemon-served dashboard URL (for example `http://127.0.0.1:<port>/dashboard`), or `null` when it cannot be resolved. The dashboard is always served by the daemon; open `dashboardUrl` in a browser.
 
 ---
 

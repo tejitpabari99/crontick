@@ -35,9 +35,7 @@ import {
   dashboardDaemonDownError,
   type DashboardData,
   type DashboardOptions,
-  type DashboardStartResult,
   type DashboardStatus,
-  type DashboardStopResult,
 } from './dashboard.js';
 import {
   addEngine,
@@ -154,6 +152,12 @@ export interface CrontickInfo {
   platform: string;
   paths: CrontickInfoPaths;
   daemon: { running: boolean; pid?: number; port?: number };
+  /**
+   * URL of the daemon-served dashboard, or null when it cannot be resolved
+   * (no running daemon and no readable port file). The dashboard is always
+   * served by the daemon whenever it is up; `info` never starts the daemon.
+   */
+  dashboardUrl: string | null;
 }
 
 export interface ConfigPathInfo {
@@ -383,16 +387,6 @@ export class CrontickClient {
     });
   }
 
-  async dashboardStart(): Promise<DashboardStartResult> {
-    const info = await this.ensure();
-    const status = await this.request<DashboardStatus>('GET', '/api/dashboard/status', undefined, { ensure: false });
-    return { ...status, startedDaemon: info.started };
-  }
-
-  async dashboardStop(): Promise<DashboardStopResult> {
-    return this.daemonStop();
-  }
-
   async dashboardStatus(): Promise<DashboardStatus> {
     try {
       return await this.request<DashboardStatus>('GET', '/api/dashboard/status', undefined, { ensure: false });
@@ -428,11 +422,25 @@ export class CrontickClient {
   async info(): Promise<CrontickInfo> {
     const env = this.effectiveEnv() ?? process.env;
     let daemon: CrontickInfo['daemon'] = { running: false };
+    let dashboardUrl: string | null = null;
     try {
       const status = await this.request<DaemonStatus>('GET', '/api/daemon/status', undefined, { ensure: false });
       daemon = { running: true, pid: status.pid, port: status.port };
+      dashboardUrl = status.port ? `http://127.0.0.1:${String(status.port)}/dashboard` : null;
     } catch {
       daemon = { running: false };
+      // Best-effort: the dashboard is served by the daemon whenever it is up.
+      // Resolve the base URL from the port file (if any) without starting it.
+      try {
+        const baseUrl = await resolveDaemonBaseUrl({
+          daemonUrl: this.options.daemonUrl,
+          env,
+          logger: this.logger.child('info'),
+        });
+        dashboardUrl = `${baseUrl.replace(/\/+$/, '')}/dashboard`;
+      } catch {
+        dashboardUrl = null;
+      }
     }
     return {
       version: VERSION,
@@ -448,6 +456,7 @@ export class CrontickClient {
         pidFile: pidFilePath(env),
       },
       daemon,
+      dashboardUrl,
     };
   }
 

@@ -193,8 +193,8 @@ Command groups:
 - `crontick stats summary|job <id>` — statistics.
 - `crontick share export|import` — export/import jobs (top-level `export`/`import` are gone).
 - `crontick config` — prints the config file path (edit `config.json` by hand). No `config get/set/unset/init/validate/engines` subcommands.
-- `crontick info` — version, runtime, storage paths, daemon status.
-- `crontick doctor`, `crontick daemon ...`, `crontick dashboard ...`, `crontick mcp`.
+- `crontick info` — version, runtime, storage paths, daemon status, and the dashboard URL (`dashboardUrl`).
+- `crontick doctor`, `crontick daemon ...`, `crontick mcp`. There is no `dashboard` command group: the dashboard is always served by the daemon; open the `dashboardUrl` from `crontick info` in a browser.
 
 Enable/disable are folded into update: `crontick jobs update <id> --enable` / `--disable`.
 
@@ -264,12 +264,11 @@ For Copilot, `crontick jobs new --alias daily-copilot-check ... --engine copilot
 | `crontick_export` | Export job definitions (optional run history) |
 | `crontick_import` | Import normalized jobs from JSON |
 | `crontick_daemon_start` / `crontick_daemon_stop` / `crontick_daemon_status` / `crontick_daemon_reload` / `crontick_daemon_restart` | Manage the daemon |
-| `crontick_dashboard_start` / `crontick_dashboard_status` / `crontick_dashboard_stop` | Manage the local dashboard |
 | `crontick_config_path` | Return the config file path and how edits apply |
-| `crontick_info` | Version, runtime, storage paths, daemon status |
+| `crontick_info` | Version, runtime, storage paths, daemon status, and dashboard URL (`dashboardUrl`) |
 | `crontick_doctor` | Health check for Node.js, SQLite, data dir, and daemon |
 
-Removed tools (do not call): `crontick_schedule_validate`, `crontick_schedule_preview` (use `crontick_job_schedule` after create), `crontick_dashboard_data`, and every `crontick_config_*` get/set/unset/init/validate/engine tool (use `crontick_config_path` and edit `config.json`).
+Removed tools (do not call): `crontick_schedule_validate`, `crontick_schedule_preview` (use `crontick_job_schedule` after create), `crontick_dashboard_data`, `crontick_dashboard_start` / `crontick_dashboard_status` / `crontick_dashboard_stop` (the dashboard is served by the daemon — get its URL from `crontick_info`), and every `crontick_config_*` get/set/unset/init/validate/engine tool (use `crontick_config_path` and edit `config.json`).
 
 
 ## Rules
@@ -298,7 +297,7 @@ Removed tools (do not call): `crontick_schedule_validate`, `crontick_schedule_pr
 - ❌ Do NOT supply a job `id`; it is a server-assigned GUID. Use `--alias` / `alias` instead.
 - ❌ Do NOT wrap prompt jobs in script bodies that call `copilot --allow-all-tools -p` or `agency cp -p`.
 - ❌ Do NOT pass both `--session-id` and `--reuse-session`.
-- ❌ Do NOT call `crontick_schedule_validate`, `crontick_schedule_preview`, `crontick_dashboard_data`, or any `crontick_config_*` mutation tool — they no longer exist.
+- ❌ Do NOT call `crontick_schedule_validate`, `crontick_schedule_preview`, `crontick_dashboard_data`, `crontick_dashboard_start` / `crontick_dashboard_status` / `crontick_dashboard_stop`, or any `crontick_config_*` mutation tool — they no longer exist.
 - ❌ Do NOT call delete or disable tools without explicit confirmation.
 - ❌ Do NOT edit crontick job JSON, run databases, or daemon state files directly.
 - ❌ Do NOT add daemon setup or OS login instructions.

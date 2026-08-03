@@ -41,9 +41,6 @@ export const SURFACE_CAPABILITIES = [
   { capability: 'daemon-reload', clientMethod: 'daemonReload', cliCommand: ['daemon', 'reload'], mcpTool: 'crontick_daemon_reload' },
   { capability: 'daemon-restart', clientMethod: 'daemonRestart', cliCommand: ['daemon', 'restart'], mcpTool: 'crontick_daemon_restart' },
   { capability: 'doctor', clientMethod: 'doctor', cliCommand: ['doctor'], mcpTool: 'crontick_doctor' },
-  { capability: 'dashboard-start', clientMethod: 'dashboardStart', cliCommand: ['dashboard', 'start'], mcpTool: 'crontick_dashboard_start' },
-  { capability: 'dashboard-status', clientMethod: 'dashboardStatus', cliCommand: ['dashboard', 'status'], mcpTool: 'crontick_dashboard_status' },
-  { capability: 'dashboard-stop', clientMethod: 'dashboardStop', cliCommand: ['dashboard', 'stop'], mcpTool: 'crontick_dashboard_stop' },
   { capability: 'config-path', clientMethod: 'configPath', cliCommand: ['config'], mcpTool: 'crontick_config_path' },
   { capability: 'info', clientMethod: 'info', cliCommand: ['info'], mcpTool: 'crontick_info' },
 ] as const satisfies readonly SurfaceCapability[];

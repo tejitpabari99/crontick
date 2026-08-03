@@ -6,7 +6,7 @@
  * in the client and daemon.
  */
 import { Command } from 'commander';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -138,16 +138,6 @@ function formatErrorDetails(details: unknown, path: string[] = []): string[] {
     return [path.length > 0 ? `${path.join('.')}: ${JSON.stringify(details)}` : JSON.stringify(details)];
   }
   return [path.length > 0 ? `${path.join('.')}: ${String(details)}` : String(details)];
-}
-
-function openDashboardUrl(url: string): void {
-  if (process.platform === 'win32') {
-    spawn('cmd', ['/c', 'start', url], { detached: true, stdio: 'ignore' }).unref();
-  } else if (process.platform === 'darwin') {
-    spawn('open', [url], { detached: true, stdio: 'ignore' }).unref();
-  } else {
-    spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
-  }
 }
 
 /**
@@ -567,6 +557,9 @@ program.command('info')
       stdout(info.daemon.running
         ? `daemon     running (pid ${String(info.daemon.pid ?? '?')}, port ${String(info.daemon.port ?? '?')})`
         : 'daemon     not running');
+      stdout(info.dashboardUrl
+        ? `dashboard  ${info.dashboardUrl}${info.daemon.running ? '' : ' (available once the daemon is running; it starts automatically on first use)'}`
+        : 'dashboard  available once the daemon is running (it starts automatically on first use)');
     } catch (err) { handleError(err); }
   });
 
@@ -614,29 +607,9 @@ daemon.command('restart').description('Restart the daemon').action(async () => {
 });
 
 // ── dashboard ────────────────────────────────────────────────────────────────
-const dashboard = groupHelp(program.command('dashboard').description('Manage the crontick dashboard'));
-dashboard.command('start')
-  .description('Start the dashboard server')
-  .option('--open', 'Open in the default browser')
-  .action(async (opts) => {
-    try {
-      const result = await client().dashboardStart();
-      if (opts.open as boolean) openDashboardUrl(result.url);
-      stdout(`Dashboard ${opts.open ? 'opened' : 'running'}: ${result.url}`);
-    } catch (err) { handleError(err); }
-  });
-dashboard.command('status').description('Show dashboard status').action(async () => {
-  try {
-    const result = await client(false).dashboardStatus();
-    stdout(`Dashboard ${result.running ? 'running' : 'stopped'}: ${result.url}`);
-  } catch (err) { handleError(err); }
-});
-dashboard.command('stop').description('Stop the dashboard server').action(async () => {
-  try {
-    const result = await client(false).dashboardStop();
-    stdout(result.message);
-  } catch (err) { handleError(err); }
-});
+// The dashboard has no dedicated command group: it is always served by the
+// daemon on its loopback port (routes '/', '/dashboard', '/dashboard/*'). Run
+// `crontick info` to get the dashboard URL and open it in a browser.
 
 // The `mcp` subcommand launches the MCP server process directly via spawnSync
 // (inheriting stdio for JSON-RPC). It is NOT listed in SURFACE_CAPABILITIES

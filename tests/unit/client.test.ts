@@ -260,11 +260,11 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
 
     await expect(client.dashboardStatus()).rejects.toMatchObject({
       code: 'DAEMON_NOT_RUNNING',
-      message: expect.stringContaining('crontick dashboard start'),
+      message: expect.stringContaining('crontick daemon start'),
     });
     await expect(client.dashboardData()).rejects.toMatchObject({
       code: 'DAEMON_NOT_RUNNING',
-      message: expect.stringContaining('crontick dashboard start'),
+      message: expect.stringContaining('crontick daemon start'),
     });
     expect(existsSync(join(home, 'daemon.port'))).toBe(false);
   });
@@ -417,7 +417,6 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     await expect(client.validateSchedule(testJob.schedule)).resolves.toMatchObject({ ok: true });
     await expect(client.previewSchedule({ schedule: testJob.schedule, n: 1 })).resolves.toMatchObject({ next: [] });
     await expect(client.daemonReload()).resolves.toMatchObject({ ok: true });
-    await expect(client.dashboardStart()).resolves.toMatchObject({ ok: true, running: true, startedDaemon: false });
     await expect(client.dashboardStatus()).resolves.toMatchObject({ ok: true, running: true });
     await expect(client.dashboardData({ runsLimit: 5 })).resolves.toMatchObject({ stats: { totalJobs: expect.any(Number) } });
     await expect(client.deleteJob(jobId)).resolves.toMatchObject({ ok: true });

@@ -90,20 +90,15 @@ All tools accept an optional `verbose: boolean` parameter for diagnostics.
 | `crontick_daemon_reload` | - | Reload job definitions from disk |
 | `crontick_daemon_restart` | - | Restart the daemon |
 
-### Dashboard
-
-| Tool | Parameters | Description |
-|------|------------|-------------|
-| `crontick_dashboard_start` | - | Start dashboard serving |
-| `crontick_dashboard_status` | - | Get dashboard status |
-| `crontick_dashboard_stop` | - | Stop dashboard |
-
 ### Config and info
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
 | `crontick_config_path` | - | Return config file path and edit/restart note |
-| `crontick_info` | - | Return version, runtime, paths, and daemon status |
+| `crontick_info` | - | Return version, runtime, paths, daemon status, and dashboard URL (`dashboardUrl`) |
+
+> The dashboard has no dedicated MCP tools: it is always served by the daemon on its
+> loopback origin. Call `crontick_info` and open the returned `dashboardUrl` in a browser.
 
 ### Share
 

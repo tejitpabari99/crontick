@@ -135,7 +135,7 @@ describe('CLI binary (dist/cli/index.js)', () => {
     expect(help.stdout).toContain('runs');
     expect(help.stdout).toContain('share');
     expect(help.stdout.toLowerCase()).not.toContain('auto' + 'start');
-    for (const args of [[], ['jobs'], ['runs'], ['share'], ['stats'], ['daemon'], ['dashboard']]) {
+    for (const args of [[], ['jobs'], ['runs'], ['share'], ['stats'], ['daemon']]) {
       const result = cli(args);
       expect(result.status, `${args.join(' ')} stderr: ${result.stderr}`).toBe(0);
       expect(result.stdout).toContain('Usage: crontick');
@@ -203,6 +203,9 @@ describe('CLI binary (dist/cli/index.js)', () => {
       const info = cli(['info'], { CRONTICK_HOME: tmp });
       expect(info.stdout).toContain('paths');
       expect(info.stdout).toContain('daemon     not running');
+      // The dashboard is always served by the daemon; info surfaces it. With no
+      // daemon and no port file, the URL is unresolved and info notes that.
+      expect(info.stdout).toContain('dashboard  available once the daemon is running');
       expect(existsSync(join(tmp, 'daemon.port'))).toBe(false);
       expect(existsSync(join(tmp, 'daemon.pid'))).toBe(false);
       expect(existsSync(join(tmp, 'daemon.ensure.lock'))).toBe(false);
@@ -538,7 +541,7 @@ describe('CLI e2e with daemon', () => {
     expectCleanError(cli(['schedule', 'validate', '{"kind":"cron","cron":"0 9 * * *"}'], env()));
   });
 
-  it('daemon, doctor, dashboard, and runs delete-all render new human outputs', async () => {
+  it('daemon, doctor, and runs delete-all render new human outputs', async () => {
     const status = cli(['daemon', 'status'], env());
     expect(status.status, status.stderr).toBe(0);
     expect(typeof parseCliObject(status.stdout).pid).toBe('number');
@@ -546,11 +549,11 @@ describe('CLI e2e with daemon', () => {
     const doctor = cli(['doctor'], env());
     expect([0, 1]).toContain(doctor.status);
     expect(doctor.stdout).toContain('daemon reachable');
-    const start = cli(['dashboard', 'start'], env());
-    expect(start.status, start.stderr).toBe(0);
-    expect(start.stdout).toContain('Dashboard running:');
-    expect(cli(['dashboard', 'status'], env()).stdout).toContain('Dashboard running:');
-    expect(cli(['dashboard', 'stop'], env()).stdout.trim()).toBeTruthy();
+    // The dashboard has no command group; its URL is surfaced by `info` and it
+    // is served by the daemon whenever it is up.
+    const info = cli(['info'], env());
+    expect(info.status, info.stderr).toBe(0);
+    expect(info.stdout).toMatch(/dashboard\s+http:\/\/127\.0\.0\.1:\d+\/dashboard/);
 
     const { file } = writeJobFile(dir, 'runs-delete-all-job');
     expect(cli(['jobs', 'new', '--file', file], env()).status).toBe(0);

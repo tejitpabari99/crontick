@@ -450,39 +450,6 @@ export function createMcpServer(): McpServer {
   );
 
   server.registerTool(
-    'crontick_dashboard_start',
-    {
-      description:
-        'Start the crontick dashboard server and return its URL. The dashboard is served by the local daemon.',
-      inputSchema: withVerbose({}),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => client.dashboardStart()),
-  );
-
-  server.registerTool(
-    'crontick_dashboard_status',
-    {
-      description:
-        'Return dashboard server status without starting it. If it is down, start it with crontick_dashboard_start.',
-      inputSchema: withVerbose({}),
-      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => client.dashboardStatus(), false),
-  );
-
-  server.registerTool(
-    'crontick_dashboard_stop',
-    {
-      description:
-        'Stop the daemon-backed dashboard server. This also stops the local daemon because the dashboard is served by it.',
-      inputSchema: withVerbose({}),
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => client.dashboardStop(), false),
-  );
-
-  server.registerTool(
     'crontick_doctor',
     {
       description:
@@ -510,7 +477,7 @@ export function createMcpServer(): McpServer {
     'crontick_info',
     {
       description:
-        'Return crontick environment info: crontick and Node versions, all on-disk file locations (data dir, state dir, logs dir, config file, port file, daemon pid file), and daemon running status.',
+        'Return crontick environment info: crontick and Node versions, all on-disk file locations (data dir, state dir, logs dir, config file, port file, daemon pid file), the dashboard URL (dashboardUrl), and daemon running status. The dashboard is always served by the daemon; open dashboardUrl in a browser.',
       inputSchema: withVerbose({}),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },

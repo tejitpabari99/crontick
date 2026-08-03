@@ -62,3 +62,11 @@ The library API remains backward-compatible and additive: existing client helper
 ## Revisit when
 
 Revisit if usage shows that the JSON-file path is too cumbersome for script/exec jobs, or if a future automation use case requires a structured CLI output contract that cannot be met by the library or MCP surfaces.
+
+## Amendment (2026-08-03): Remove the `dashboard` command group; surface the URL in `info`
+
+Following the reorganization above, the `dashboard start`/`status`/`stop` CLI commands and the matching `crontick_dashboard_start`/`crontick_dashboard_status`/`crontick_dashboard_stop` MCP tools were removed. The dashboard is **always** served by the daemon on its loopback origin (routes `/`, `/dashboard`, `/dashboard/*`, `/api/dashboard`) whenever the daemon is running. A dedicated command group implied the dashboard was a separately startable/stoppable service, which it is not: `dashboard start` just demand-started the daemon, and `dashboard stop` was an alias for `daemon stop`.
+
+Instead, `crontick info` (and `crontick_info`) now include a `dashboardUrl` field — the daemon-served dashboard URL (for example `http://127.0.0.1:<port>/dashboard`), or `null` when it cannot be resolved (no running daemon and no readable port file). `info` remains strictly read-only and never starts the daemon. Users open the URL in a browser; the daemon (and thus the dashboard) starts automatically on first use of any daemon-backed command.
+
+This drops the surface parity table from 29 to 26 capabilities (removing `dashboard-start`, `dashboard-status`, `dashboard-stop`). The dashboard itself — assets, `buildDashboardData`, and the `/api/dashboard` routes — is unchanged and still fully served by the daemon. The `dashboardStart`/`dashboardStop` client methods were removed (they only made sense as commands), while `dashboardStatus`/`dashboardData` are retained as library-only helpers (excluded from parity). Exported dashboard result types (`DashboardStartResult`, `DashboardStopResult`, etc.) remain exported for backward compatibility.

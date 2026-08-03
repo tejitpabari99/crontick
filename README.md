@@ -2,7 +2,7 @@
 
 A standalone cron daemon, CLI, and MCP server for local scheduled jobs.
 
-crontick lets you define periodic and one-shot jobs (shell scripts, direct commands, or LLM prompt invocations) and manage them from a terminal, a Node.js program, or an AI agent over MCP. A demand-started daemon handles scheduling and execution; three thin shims (CLI, library client, stdio MCP server) expose the same 29 parity capabilities with no drift.
+crontick lets you define periodic and one-shot jobs (shell scripts, direct commands, or LLM prompt invocations) and manage them from a terminal, a Node.js program, or an AI agent over MCP. A demand-started daemon handles scheduling and execution; three thin shims (CLI, library client, stdio MCP server) expose the same 26 parity capabilities with no drift.
 
 ### Documentation
 
@@ -139,7 +139,7 @@ Add to your MCP client configuration:
 }
 ```
 
-The MCP server exposes all 29 parity capabilities as tools, including `crontick_job_create`, `crontick_job_schedule`, `crontick_run_delete`, `crontick_config_path`, and `crontick_info`.
+The MCP server exposes all 26 parity capabilities as tools, including `crontick_job_create`, `crontick_job_schedule`, `crontick_run_delete`, `crontick_config_path`, and `crontick_info`.
 
 ---
 

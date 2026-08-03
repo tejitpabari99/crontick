@@ -14,7 +14,7 @@ All three are thin adapters over `CrontickClient`, which communicates with the d
 
 ## The `SURFACE_CAPABILITIES` constant
 
-`src/surface.ts` exports a single constant that canonically enumerates the 29 parity capabilities:
+`src/surface.ts` exports a single constant that canonically enumerates the 26 parity capabilities:
 
 ```typescript
 export const SURFACE_CAPABILITIES = [
@@ -61,9 +61,6 @@ Each entry maps:
 | `daemon-reload` | `daemonReload` | `crontick daemon reload` | `crontick_daemon_reload` |
 | `daemon-restart` | `daemonRestart` | `crontick daemon restart` | `crontick_daemon_restart` |
 | `doctor` | `doctor` | `crontick doctor` | `crontick_doctor` |
-| `dashboard-start` | `dashboardStart` | `crontick dashboard start` | `crontick_dashboard_start` |
-| `dashboard-status` | `dashboardStatus` | `crontick dashboard status` | `crontick_dashboard_status` |
-| `dashboard-stop` | `dashboardStop` | `crontick dashboard stop` | `crontick_dashboard_stop` |
 | `config-path` | `configPath` | `crontick config` | `crontick_config_path` |
 | `info` | `info` | `crontick info` | `crontick_info` |
 
@@ -109,7 +106,7 @@ Some `CrontickClient` methods are intentionally excluded from the parity table b
 
 - daemon/client plumbing: `ensure`, `health`, `request`, `baseUrl`, `normalizeOptions`, `shouldStartDaemon`, `effectiveEnv`, `fetchRequest`, `daemonRequestError`
 - CLI/resource helpers: `createJobFromCliOptions`, `jobJsonSchema`, `drainNotices`, `isVerbose`
-- library-only helpers retained after CLI/MCP narrowing: raw schedule validation/preview, dashboard data, and direct config mutation/engine helpers
+- library-only helpers retained after CLI/MCP narrowing: raw schedule validation/preview, dashboard status/data, and direct config mutation/engine helpers
 
 These are tracked in the test's `NON_PARITY_CLIENT_METHODS` set.
 

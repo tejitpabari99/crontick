@@ -224,8 +224,8 @@ export function resolveDashboardAsset(reqPath: string): DashboardAsset {
     if (decodedSub.split('/').includes('..')) {
       throw new CrontickError(
         'BAD_DASHBOARD_ASSET',
-        `Dashboard asset path is outside the dashboard directory. Request a path under /dashboard, then retry: crontick dashboard start`,
-        { requestedPath: reqPath, action: 'crontick dashboard start' },
+        `Dashboard asset path is outside the dashboard directory. Request a path under /dashboard.`,
+        { requestedPath: reqPath },
       );
     }
     const normalizedSub = normalize(sub).replace(/^[/\\]+/, '');
@@ -235,8 +235,8 @@ export function resolveDashboardAsset(reqPath: string): DashboardAsset {
   if (filePath !== indexFile && !filePath.startsWith(`${dashDir}${pathSep}`)) {
     throw new CrontickError(
       'BAD_DASHBOARD_ASSET',
-      `Dashboard asset path is outside the dashboard directory. Request a path under /dashboard, then retry: crontick dashboard start`,
-      { requestedPath: reqPath, action: 'crontick dashboard start' },
+      `Dashboard asset path is outside the dashboard directory. Request a path under /dashboard.`,
+      { requestedPath: reqPath },
     );
   }
 
@@ -253,8 +253,8 @@ export function resolveDashboardAsset(reqPath: string): DashboardAsset {
   if (!stat.isFile()) {
     throw new CrontickError(
       'BAD_DASHBOARD_ASSET',
-      `Dashboard asset path is not a file. Request a file under /dashboard, then retry: crontick dashboard start`,
-      { requestedPath: reqPath, action: 'crontick dashboard start' },
+      `Dashboard asset path is not a file. Request a file under /dashboard.`,
+      { requestedPath: reqPath },
     );
   }
 
@@ -268,8 +268,8 @@ export function resolveDashboardAsset(reqPath: string): DashboardAsset {
 export function dashboardDaemonDownError(operation: string): CrontickError {
   return new CrontickError(
     'DAEMON_NOT_RUNNING',
-    `Dashboard daemon is not running while attempting ${operation}. Start it with: crontick dashboard start`,
-    { action: 'crontick dashboard start', operation },
+    `Dashboard daemon is not running while attempting ${operation}. Start it with: crontick daemon start`,
+    { action: 'crontick daemon start', operation },
   );
 }
 

@@ -29,6 +29,7 @@ const NON_PARITY_CLIENT_METHODS = new Set([
   // (their surface was narrowed, but the client methods stay for library use).
   'validateSchedule',
   'previewSchedule',
+  'dashboardStatus',
   'dashboardData',
   'getConfigValue',
   'setConfigValue',

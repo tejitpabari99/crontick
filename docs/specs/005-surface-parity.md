@@ -6,7 +6,7 @@
 
 ## Summary
 
-Every user-facing capability in crontick MUST be available on all three parity surfaces: CLI, MCP server, and library API (`CrontickClient`). A canonical table (`SURFACE_CAPABILITIES` in `src/surface.ts`) encodes this mapping and an automated drift test enforces it. The current table contains 29 capabilities.
+Every user-facing capability in crontick MUST be available on all three parity surfaces: CLI, MCP server, and library API (`CrontickClient`). A canonical table (`SURFACE_CAPABILITIES` in `src/surface.ts`) encodes this mapping and an automated drift test enforces it. The current table contains 26 capabilities.
 
 When a change extends an existing capability rather than adding a new one (for example the `create-job` capability's `force` option), the same table MAY annotate the parity-coupled option names.
 
@@ -14,7 +14,7 @@ When a change extends an existing capability rather than adding a new one (for e
 
 Surface parity prevents feature fragmentation. Users and agents MUST be able to accomplish any parity-scoped task regardless of their chosen interface. The drift test catches regressions early: if a new parity capability is added to one surface without the others, CI fails.
 
-The command-tree reorganization intentionally narrowed some exposure without removing library/core behavior. Raw schedule validation/preview, dashboard data, and direct config mutation/engine helpers remain library-only and are excluded from parity. Script and exec actions remain supported through the job schema and library, while the CLI creates them through `jobs new --file <job.json>` instead of dedicated flags.
+The command-tree reorganization intentionally narrowed some exposure without removing library/core behavior. Raw schedule validation/preview, dashboard status/data, and direct config mutation/engine helpers remain library-only and are excluded from parity. The dashboard itself is always served by the daemon on its loopback origin; the `dashboard` command group and MCP tools were removed and `crontick info` surfaces the `dashboardUrl` instead. Script and exec actions remain supported through the job schema and library, while the CLI creates them through `jobs new --file <job.json>` instead of dedicated flags.
 
 ## Terminology
 
@@ -75,13 +75,10 @@ The command-tree reorganization intentionally narrowed some exposure without rem
 | `daemon-reload` | `daemonReload` | `crontick daemon reload` | `crontick_daemon_reload` |
 | `daemon-restart` | `daemonRestart` | `crontick daemon restart` | `crontick_daemon_restart` |
 | `doctor` | `doctor` | `crontick doctor` | `crontick_doctor` |
-| `dashboard-start` | `dashboardStart` | `crontick dashboard start` | `crontick_dashboard_start` |
-| `dashboard-status` | `dashboardStatus` | `crontick dashboard status` | `crontick_dashboard_status` |
-| `dashboard-stop` | `dashboardStop` | `crontick dashboard stop` | `crontick_dashboard_stop` |
 | `config-path` | `configPath` | `crontick config` | `crontick_config_path` |
 | `info` | `info` | `crontick info` | `crontick_info` |
 
-Removed parity rows from the previous 37-capability surface include raw schedule validate/preview, dashboard data, and config get/set/unset/init/validate/engine management. Added rows include `job-schedule`, `delete-run`, `config-path`, and `info`.
+Removed parity rows from the previous 37-capability surface include raw schedule validate/preview, dashboard data, dashboard start/status/stop, and config get/set/unset/init/validate/engine management. Added rows include `job-schedule`, `delete-run`, `config-path`, and `info`. The dashboard is always served by the daemon; `crontick info` (and `crontick_info`) surface its `dashboardUrl`.
 
 ## Behavior
 
