@@ -315,8 +315,8 @@ function normalizeLimit(limit: number | undefined, fallback: number): number {
   if (!Number.isInteger(limit) || limit <= 0) {
     throw new CrontickError(
       'VALIDATION_ERROR',
-      `Invalid dashboard runsLimit ${String(limit)}. Provide a positive integer, then retry: crontick dashboard data --runs-limit <n>`,
-      { runsLimit: limit, action: 'crontick dashboard data --runs-limit <n>' },
+      `Invalid dashboard runsLimit ${String(limit)}. Provide a positive integer for runsLimit, then retry the request.`,
+      { runsLimit: limit, action: 'Provide a positive integer for runsLimit' },
     );
   }
   return limit;

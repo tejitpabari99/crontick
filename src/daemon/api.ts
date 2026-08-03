@@ -618,8 +618,8 @@ function optionalPositiveInt(raw: string | null, field: string): number | undefi
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new CrontickError(
       'VALIDATION_ERROR',
-      `Invalid ${field} ${raw}. Provide a positive integer, then retry: crontick dashboard data --runs-limit <n>`,
-      { field, value: raw, action: 'crontick dashboard data --runs-limit <n>' },
+      `Invalid ${field} ${raw}. Provide a positive integer for ${field}, then retry the request.`,
+      { field, value: raw, action: `Provide a positive integer for ${field}` },
     );
   }
   return parsed;

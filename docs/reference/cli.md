@@ -450,6 +450,31 @@ crontick dashboard stop
 
 The former `crontick dashboard data` CLI command is no longer exposed.
 
+### Dashboard web UI
+
+The dashboard is a dependency-free web page served on the daemon's loopback origin
+(`/` and `/dashboard`). It renders live snapshots from `GET /api/dashboard` and drives
+job/run actions through the existing `/api/*` routes.
+
+- **Header** — shows the real daemon `version`, pid, node version and job count, plus an
+  uptime badge (hover for a "daemon uptime" tooltip).
+- **Jobs table** — columns are `Alias` (falls back to `—`), `ID` (shortened GUID with a
+  copy icon for the full id), `Description`, `Schedule`, `Action`, `Last status`,
+  `Next run`, and an `Actions` cell. Actions are icon buttons: enable (`▶`) / disable
+  (`⏹`, prompts for confirmation) and delete (`🗑`, prompts for confirmation). Clicking a
+  job row (outside the action buttons) sets the runs "Filter Job" control to that job and
+  reloads the filtered snapshot.
+- **Recent runs toolbar** — beside the heading: a **Filter Job** dropdown (server-side
+  filter via `jobId`, so it reflects all of a job's runs), a client-side **Filter Status**
+  dropdown, a **Sort** control (Time / Duration, ascending or descending; default Time ↓),
+  and the runs-limit input in the top toolbar.
+- **Runs table** — shows the full run id and session id, each with a copy icon, plus Job
+  (`jobAlias || jobId`), Status, Started and Duration. Clicking a run row opens a log modal.
+- **Run log modal** — fetches `GET /api/runs/:id/logs?source=all` and renders two stacked,
+  independently scrollable panes: **Output** (stdout + crontick streams) and **Error**
+  (stderr plus the run's recorded `error`). Close with the ✕ button, a backdrop click, or
+  `Esc`.
+
 ---
 
 ## MCP Command
