@@ -66,9 +66,9 @@ Tools that expose run rows or log text apply the shared redaction contract befor
 
 ## Tool Inventory
 
-The MCP server exposes 26 `crontick_*` tools, matching `SURFACE_CAPABILITIES`.
+The MCP server exposes 21 `crontick_*` tools, matching `SURFACE_CAPABILITIES`.
 
-Removed tools are not present: the `crontick_config_*` get/set/unset/init/validate/engine tools, `crontick_schedule_validate`, `crontick_schedule_preview`, `crontick_dashboard_data`, and the `crontick_dashboard_start`/`crontick_dashboard_status`/`crontick_dashboard_stop` tools. The dashboard is always served by the daemon; call `crontick_info` and open its `dashboardUrl`. Use `crontick_config_path` to find the config file, edit config by hand, and use `crontick_job_schedule` to preview an existing job's upcoming fire times.
+Removed tools are not present: the `crontick_config_*` get/set/unset/init/validate/engine tools, `crontick_schedule_validate`, `crontick_schedule_preview`, `crontick_dashboard_data`, `crontick_run_delete`, and the `crontick_daemon_start`/`crontick_daemon_status`/`crontick_daemon_restart` plus `crontick_dashboard_start`/`crontick_dashboard_status`/`crontick_dashboard_stop` tools. The dashboard is always served by the daemon; call `crontick_info`, read `configPath`, and open its `dashboardUrl`. Use `crontick_job_schedule` to preview an existing job's upcoming fire times.
 
 ---
 
@@ -168,14 +168,16 @@ Disable a job.
 
 ### crontick_job_delete
 
-Permanently delete a job definition by GUID or alias.
+Permanently delete one job definition by GUID or alias, or delete every job with explicit confirmation.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Job GUID or alias |
+| `id` | `string` | no | — | Job GUID or alias for a single delete |
+| `all` | `boolean` | no | `false` | Delete every job |
+| `force` | `boolean` | no | `false` | Required when `all: true` |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ ok: true }`. Deleting a job cancels its in-flight run, if any.
+**Result:** `{ ok: true }` for a single delete, or `{ ok: true, deleted: number }` when `all: true`. The literal CLI keyword `all` is only reserved on the CLI; MCP callers may still delete an alias `all` job by passing `id: "all"`.
 
 ---
 
@@ -263,21 +265,6 @@ Get the last N logical lines of output for a run.
 
 ---
 
-### crontick_run_delete
-
-Delete a run and its crontick-side log rows, or delete every run with explicit confirmation.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `id` | `string` | no | — | Run ID to delete. Omit only when `all: true` |
-| `all` | `boolean` | no | `false` | Delete every run |
-| `force` | `boolean` | no | `false` | Required when `all: true` |
-| `verbose` | `boolean` | no | `false` | Include diagnostics |
-
-**Result:** `{ ok: true, deleted: number }`.
-
----
-
 ### crontick_stats_summary
 
 Get aggregate summary of all jobs.
@@ -330,18 +317,6 @@ Import job definitions. An optional `runs` array from `crontick_export` is resto
 
 ---
 
-### crontick_daemon_start
-
-Start the local crontick daemon.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `verbose` | `boolean` | no | `false` | Include diagnostics |
-
-**Result:** `DaemonStartResult`.
-
----
-
 ### crontick_daemon_stop
 
 Stop the local crontick daemon.
@@ -351,18 +326,6 @@ Stop the local crontick daemon.
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `DaemonStopResult`.
-
----
-
-### crontick_daemon_status
-
-Get daemon process status: PID, version, loopback `port`/`baseUrl`, uptime, job counts, and `missedFires`.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `verbose` | `boolean` | no | `false` | Include diagnostics |
-
-**Result:** Daemon status, or `{ running: false, error: string }` if not running.
 
 ---
 
@@ -378,18 +341,6 @@ Reload job definitions from disk without restarting.
 
 ---
 
-### crontick_daemon_restart
-
-Restart the daemon.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `verbose` | `boolean` | no | `false` | Include diagnostics |
-
-**Result:** `DaemonRestartResult`.
-
----
-
 ### crontick_doctor
 
 Run health checks.
@@ -402,18 +353,6 @@ Run health checks.
 
 ---
 
-### crontick_config_path
-
-Return the config file path and note explaining how edits take effect.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `verbose` | `boolean` | no | `false` | Include diagnostics |
-
-**Result:** `{ path: string, note: string }`.
-
----
-
 ### crontick_info
 
 Return crontick environment info.
@@ -422,7 +361,7 @@ Return crontick environment info.
 |-----------|------|----------|---------|-------------|
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ version, node, platform, paths, daemon, dashboardUrl }`, where `paths` includes `dataDir`, `jobsDir`, `runsDb`, `logsDir`, `configFile`, `portFile`, and `pidFile`. `dashboardUrl` is the daemon-served dashboard URL (for example `http://127.0.0.1:<port>/dashboard`), or `null` when it cannot be resolved. The dashboard is always served by the daemon; open `dashboardUrl` in a browser.
+**Result:** `{ version, node, platform, configPath, paths, daemon, dashboardUrl }`, where `configPath` repeats `paths.configFile` for convenience, `paths` includes `dataDir`, `jobsDir`, `runsDb`, `logsDir`, `configFile`, `portFile`, and `pidFile`, `daemon` reports `{ running, pid?, port? }`, and `dashboardUrl` is the daemon-served dashboard URL when the daemon is running (otherwise `null`).
 
 ---
 

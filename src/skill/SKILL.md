@@ -70,15 +70,15 @@ crontick jobs update <id|alias> --disable   # also --enable, or any create flag 
 crontick jobs update <id|alias> --cron "0 8 * * *" --tz America/Los_Angeles
 crontick jobs delete <id|alias>    # delete one job (confirm with the user first)
 crontick runs cancel <runId>       # cancel an in-progress run
-crontick runs delete <runId>       # delete one run and its logs (use --all --force to clear all)
 ```
 
 ### Step 5 — Environment / troubleshooting
 
 ```sh
-crontick info      # version, runtime, storage paths, daemon status, dashboard URL
-crontick config    # prints the config file path (edit config.json directly)
-crontick doctor    # health check: Node.js, SQLite, data dir, daemon
+crontick info      # version, runtime, config path, storage paths, daemon status, dashboard URL
+crontick info doctor    # health check: Node.js, SQLite, data dir, daemon
+crontick info daemon stop   # stop the daemon when you really need a restart cycle
+crontick info daemon reload # reload jobs from disk after manual edits
 ```
 
 The dashboard (job/run browser) is served by the daemon; open the `dashboardUrl` from `crontick info` (`http://127.0.0.1:<port>/dashboard`).
@@ -94,7 +94,7 @@ A prompt engine is the AI CLI crontick invokes. The built-in default is `copilot
 At run time crontick appends the prompt after the engine args → `copilot --allow-all-tools -p "<prompt>"`, then any `engineArgs...`, then a package-owned `--session-id=<id>` when session continuity is on.
 
 - Select a configured engine per job with `--engine <name>` (default `copilot`).
-- Add or edit engines (e.g. `claude`) by editing the `config.json` whose path `crontick config` prints. The prompt-taking flag (`-p`) must stay **last** in an engine's `args`.
+- Add or edit engines (e.g. `claude`) by editing the `config.json` whose path `crontick info` prints. The prompt-taking flag (`-p`) must stay **last** in an engine's `args`.
 
 **Multi-turn continuity** (carry the AI session across runs) — use at most one:
 
@@ -115,18 +115,17 @@ crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident qu
 | | `jobs update <id\|alias> [--enable\|--disable\|…]` | Update fields / enable / disable |
 | | `jobs schedule <id\|alias> -n <count>` | Preview upcoming fire times |
 | | `jobs run-now <id\|alias>` | Trigger an immediate run |
-| | `jobs delete <id\|alias>` | Delete a job (`--all --force` for all) |
+| | `jobs delete <id\|alias>` | Delete one job |
+| | `jobs delete all --force` | Delete every job (CLI reserves the literal `all` keyword) |
 | **runs** | `runs list [--job <id\|alias>] [--status …] [--limit …] [--since <ms>]` | List runs |
 | | `runs get <runId>` | Run details + session id |
 | | `runs logs <runId> [engine\|crontick] [--tail <n>]` | Run logs |
 | | `runs cancel <runId>` | Cancel an in-progress run |
-| | `runs delete <runId>` | Delete a run (`--all --force` for all) |
 | **share** | `share export` / `share import <file>` | Export / import jobs |
 | **stats** | `stats summary` / `stats job <id\|alias>` | Aggregate / per-job stats |
-| **config** | `config` | Print config file path |
-| **info** | `info` | Version, paths, daemon status, dashboard URL |
-| **doctor** | `doctor` | System health check |
-| **daemon** | `daemon start\|stop\|status\|reload\|restart` | Manage the daemon (rarely needed; auto-starts) |
+| **info** | `info` | Version, config path, paths, daemon status, dashboard URL |
+| | `info doctor` | System health check |
+| | `info daemon stop\|reload` | Stop or reload the daemon from the info group |
 | **mcp** | `mcp` | Start the MCP server on stdio |
 
 ## Gotchas for the agent
@@ -134,10 +133,10 @@ crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident qu
 - The prompt goes in `--prompt` (or `--prompt-file`). Bare positional text is engine passthrough, not the prompt.
 - Always quote cron expressions: `--cron "0 9 * * *"`.
 - Exactly one schedule source per job: `--cron`, `--every <sec>`, or `--at <iso>`.
-- The daemon auto-starts on first use — do not run setup, install services, or register OS login; `daemon` subcommands are rarely needed.
+- The daemon auto-starts on first use — do not run setup, install services, or register OS login; the only remaining CLI admin helpers are `info daemon stop` and `info daemon reload`.
 - Each run captures engine stdout/stderr, a separate `crontick` lifecycle log stream, and the engine session id (visible in `runs get`).
-- Confirm before `jobs delete`, `jobs update --disable`, or any `--all --force` clear.
-- `config` only prints the path — there are no `config get/set/engines` subcommands; edit `config.json` by hand.
+- Confirm before `jobs delete`, `jobs update --disable`, or any `jobs delete all --force` clear.
+- `info` prints the config path — there are no `config get/set/engines` subcommands; edit `config.json` by hand.
 - Advanced `script`/`exec` jobs (shell commands, raw executables) have **no** CLI flags. Create them only via `crontick jobs new --file <job.json>` or the Node.js library:
 
   ```json
@@ -201,7 +200,8 @@ crontick also ships an MCP server that mirrors these commands one-to-one (tool p
 | `crontick_job_run_now` | `jobs run-now` |
 | `crontick_run_list` | `runs list` |
 | `crontick_run_logs_tail` | `runs logs` |
-| `crontick_run_delete` | `runs delete` |
 | `crontick_info` | `info` |
+| `crontick_daemon_stop` | `info daemon stop` |
+| `crontick_daemon_reload` | `info daemon reload` |
 
 MCP hosts can also read the job JSON schema from the resource `crontick://schemas/job` to validate job definitions before calling `crontick_job_create`.

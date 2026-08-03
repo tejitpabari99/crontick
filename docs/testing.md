@@ -140,8 +140,8 @@ Expected: `health` shows `{ status: 'ok', ... }`, job appears in list, then disa
 **Manual end-to-end:**
 
 ```powershell
-# Start daemon
-crontick daemon start
+# Any daemon-backed command demand-starts the daemon
+crontick jobs list
 
 # Create an exec job on a 5-second interval
 crontick jobs new --every 5 --prompt "say hello" --alias my-test
@@ -158,14 +158,14 @@ crontick runs logs <run-id>
 
 # Clean up
 crontick jobs delete my-test
-crontick daemon stop
+crontick info daemon stop
 ```
 
 Expected: `list` shows the job enabled, `runs list` shows at least one `success` run after the interval fires, `logs` prints `hello`.
 
 ### MCP server
 
-**Automated coverage:** `tests/mcp.test.ts` (starts real daemon + MCP server, drives all 26 tools via `@modelcontextprotocol/sdk` client over stdio). `tests/surface-drift.test.ts` verifies every tool is registered.
+**Automated coverage:** `tests/mcp.test.ts` (starts real daemon + MCP server, drives all 21 tools via `@modelcontextprotocol/sdk` client over stdio). `tests/surface-drift.test.ts` verifies every tool is registered.
 
 **Launch command:**
 
@@ -190,12 +190,12 @@ npx @modelcontextprotocol/inspector node dist/mcp/index.js
 ```json
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"manual","version":"0.0.0"}}}
 {"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
-{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"crontick_daemon_status","arguments":{}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"crontick_info","arguments":{}}}
 ```
 
-Expected: `tools/list` returns all 26 `crontick_*` tools; `crontick_daemon_status` returns a JSON text content block.
+Expected: `tools/list` returns all 21 `crontick_*` tools; `crontick_info` returns a JSON text content block.
 
-**Key tools to smoke-test:** `crontick_job_create`, `crontick_job_list`, `crontick_daemon_status`, `crontick_job_schedule`, `crontick_doctor`.
+**Key tools to smoke-test:** `crontick_job_create`, `crontick_job_list`, `crontick_info`, `crontick_job_schedule`, `crontick_doctor`.
 
 ## Surface parity checks
 
@@ -266,15 +266,15 @@ publishing.
 
 ### Daemon lifecycle
 
-- [ ] `crontick daemon start` / `crontick daemon status` shows running
-- [ ] `crontick daemon stop` stops it; status confirms
-- [ ] `crontick daemon restart` returns to running
+- [ ] `crontick jobs list` demand-starts the daemon, and `crontick info` shows it running
+- [ ] `crontick info daemon stop` stops it; status confirms
+- [ ] `crontick info daemon stop`, then any daemon-backed command returns it to running
 - [ ] Kill daemon process externally, then run any command: daemon demand-starts
-- [ ] Create a job while daemon is down; start daemon; job fires at next scheduled time
+- [ ] Create a job while daemon is down; run any daemon-backed command to start it; job fires at next scheduled time
 
 ### State directory
 
-- [ ] Delete `CRONTICK_HOME` entirely; `crontick daemon start` recreates it
+- [ ] Delete `CRONTICK_HOME` entirely; `crontick jobs list` recreates it via demand-start
 - [ ] With an existing populated state directory, reinstall/upgrade to a new 1.x patch or minor version; jobs and runs survive (a `runs.db` from before 1.0.0 is not a supported input -- see ADR 0017)
 
 ### Three surfaces

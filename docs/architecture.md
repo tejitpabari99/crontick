@@ -16,7 +16,7 @@ crontick is:
 
 crontick is NOT:
 
-- A supervised always-on service. It does not install an OS service, launchd agent, systemd unit, or Windows Service. If the daemon dies, schedules pause until the next client interaction or explicit `daemon start`.
+- A supervised always-on service. It does not install an OS service, launchd agent, systemd unit, or Windows Service. If the daemon dies, schedules pause until the next client interaction or an explicit library `daemonStart()` call.
 - A distributed or multi-node scheduler. There is no clustering, leader election, or shared state.
 - A job queue with external brokers (Redis, RabbitMQ, etc.).
 - A container orchestrator or process supervisor.
@@ -42,7 +42,7 @@ Key public symbols:
 | Version | `VERSION` |
 | Types | `Job`, `JobInput`, `Schedule`, `Action`, `PromptAction`, `PromptEngine`, `CrontickConfig`, `EngineConfig`, `RetentionConfig`, `LogEvent`, `Logger`, `LogLevel`, `LogSink`, `SurfaceCapability`, `DashboardData`, `DashboardStatus`, etc. |
 
-The three binaries (`crontick`, `crontick-daemon`, `crontick-mcp`) are CLI entry points, not importable APIs. Internal modules (everything under `src/daemon/`, `src/cli/`, `src/mcp/`, `src/schemas/`, and non-exported source files like `src/paths.ts`, `src/prompt-runtime.ts`) are implementation details and may change without notice. The `SURFACE_CAPABILITIES` export enumerates all 26 public operations; it is itself public so consumers can introspect available functionality.
+The three binaries (`crontick`, `crontick-daemon`, `crontick-mcp`) are CLI entry points, not importable APIs. Internal modules (everything under `src/daemon/`, `src/cli/`, `src/mcp/`, `src/schemas/`, and non-exported source files like `src/paths.ts`, `src/prompt-runtime.ts`) are implementation details and may change without notice. The `SURFACE_CAPABILITIES` export enumerates all 21 public operations; it is itself public so consumers can introspect available functionality.
 
 ## Major components
 
@@ -56,7 +56,7 @@ The three binaries (`crontick`, `crontick-daemon`, `crontick-mcp`) are CLI entry
 
 ### MCP server shim
 
-`src/mcp/index.ts`. A stdio-transport MCP server (`@modelcontextprotocol/sdk`) that registers 26 tools and one resource (`crontick://schemas/job`). Each tool handler instantiates `CrontickClient`, delegates to the matching method, and returns a JSON text content block. Errors are returned with `isError: true`. The `redactForLlm()` helper strips loopback addresses and filesystem paths from error messages before returning them to the host.
+`src/mcp/index.ts`. A stdio-transport MCP server (`@modelcontextprotocol/sdk`) that registers 21 tools and one resource (`crontick://schemas/job`). Each tool handler instantiates `CrontickClient`, delegates to the matching method, and returns a JSON text content block. Errors are returned with `isError: true`. The `redactForLlm()` helper strips loopback addresses and filesystem paths from error messages before returning them to the host.
 
 ### Library API shim
 
@@ -127,15 +127,15 @@ The Store class uses `node:sqlite` `DatabaseSync` for synchronous operations wit
 | POST | `/api/import` | Import jobs, optionally with a `runs` array to restore |
 | GET/POST/DELETE | `/api/dashboard[/data\|status]` | Dashboard management |
 
-`crontick daemon stop` and `crontick daemon restart` prefer the `POST /api/daemon/stop` route
+`crontick info daemon stop` and the library-only `daemonRestart()` helper prefer the `POST /api/daemon/stop` route
 above (`src/daemon/lifecycle.ts`'s `stopDaemon()`): it works in-process and identically on every
 platform, unlike an OS signal. If that route stalls (accepted but the process never exits) or is
 unreachable at all (older daemon build, stale/missing port file, connection refused), `stopDaemon`
 escalates to `SIGTERM` then `SIGKILL` and reports `mode: 'hard-kill'` -- see
 [internals/daemon.md](internals/daemon.md#shutdown)
 and [concepts/daemon-lifecycle.md](concepts/daemon-lifecycle.md). `GET /api/doctor` and
-`/api/config*` are also not implemented as HTTP routes -- `crontick doctor` and
-`crontick config *` run their checks/reads directly against the filesystem and (for daemon
+`/api/config*` are also not implemented as HTTP routes -- `crontick info doctor` and
+`crontick info` run their checks/reads directly against the filesystem and (for daemon
 reachability) the routes above, not via a dedicated config or doctor HTTP endpoint.
 
 All routes enforce loopback-only access. Request/response bodies are JSON.
@@ -219,13 +219,13 @@ These are architectural rules enforced by code, tests, or review policy. Violati
 
 | Invariant | Enforcement mechanism |
 |-----------|----------------------|
-| Surface parity: every capability exists identically in client, CLI, and MCP | `SURFACE_CAPABILITIES` constant in `src/surface.ts` defines a 26-row mapping of `{ capability, clientMethod, cliCommand, mcpTool }`; `tests/surface-drift.test.ts` asserts: (a) every capability maps to a real `CrontickClient.prototype` method, (b) every client method is accounted for in the table or in the explicit `NON_PARITY_CLIENT_METHODS` set, (c) every MCP tool is registered, (d) every CLI command exists |
+| Surface parity: every capability exists identically in client, CLI, and MCP | `SURFACE_CAPABILITIES` constant in `src/surface.ts` defines a 21-row mapping of `{ capability, clientMethod, cliCommand, mcpTool }`; `tests/surface-drift.test.ts` asserts: (a) every capability maps to a real `CrontickClient.prototype` method, (b) every client method is accounted for in the table or in the explicit `NON_PARITY_CLIENT_METHODS` set, (c) every MCP tool is registered, (d) every CLI command exists |
 | Shims contain no business logic | Architecture review rubric (`.github/skills/review-crontick/SKILL.md`); scheduling, validation, persistence, error construction, schema generation live exclusively in core (client + daemon modules) |
 | Loopback-only binding | `createApiServer` in `src/daemon/api.ts` checks `req.socket.remoteAddress` against `Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])`; non-loopback requests receive HTTP 403 with code `FORBIDDEN`; `tests/security.test.ts` verifies this |
 | Single daemon instance per data directory | PID file (`daemon.pid`) written on startup; liveness probe via `process.kill(pid, 0)`; exclusive startup lock via `openSync('wx')` on `daemon.ensure.lock` with polling + timeout |
 | Single writer to SQLite | Only the daemon process opens `runs.db` with `DatabaseSync`; all client surfaces access run/log data exclusively through daemon HTTP endpoints |
 | Orphan run reconciliation on restart | `Store.reconcileOrphanRuns(check)` called at daemon startup; `queued` runs (never spawned) are always transitioned to `canceled` with `error` set to the stored value `ORPHAN_RUN_ERROR_MESSAGE`; `running` runs are liveness-checked against their recorded `pid` (`src/process-liveness.ts`) and either adopted back into the `Runner` (alive, or inconclusive) or canceled the same way (confirmed dead) -- see [internals/storage.md](internals/storage.md#orphan-reconciliation) |
-| Per-job run retention cap | `Store.insertRun()` prunes each job's terminal runs down to `retention.maxRunsPerJob` (default 100) on every insert, in transactional batches of 500; a reload-triggered sweep (`pruneAllJobsRunHistory()`) reconciles a cap lowered via `crontick daemon reload`; both are best-effort and never fail a run or block startup -- see [internals/storage.md](internals/storage.md) |
+| Per-job run retention cap | `Store.insertRun()` prunes each job's terminal runs down to `retention.maxRunsPerJob` (default 100) on every insert, in transactional batches of 500; a reload-triggered sweep (`pruneAllJobsRunHistory()`) reconciles a cap lowered via `crontick info daemon reload`; both are best-effort and never fail a run or block startup -- see [internals/storage.md](internals/storage.md) |
 | Core stays transport-agnostic | No `console.*`, `process.exit`, Commander types, or `@modelcontextprotocol/sdk` types in `src/client.ts`, `src/daemon/`, or shared modules (errors.ts, schemas/, logger.ts, paths.ts, etc.) |
 | Job JSON files are source of truth | On daemon startup, `Store.loadJobsFromDisk()` reads all `<dataDir>/jobs/*.json` files; the SQLite `jobs` table is a cache mirror, not authoritative |
 | Run status lifecycle | A run progresses: `queued` -> `running` -> terminal (`success` | `failed` | `canceled` | `timeout`). `missed` is a distinct terminal status inserted directly by startup missed-fire reporting -- it never passes through `queued`/`running`, since no process is spawned for it. Once terminal, a run's status is never mutated again |
@@ -273,7 +273,7 @@ Rendering per surface:
 
 ### Prompt engines
 
-The config file (`<dataDir>/config.json`) defines named engines with `{ command: string, args: string[], env: Record<string, string> }`. Users manage engines by editing `config.json` directly (find it with `crontick config`) or programmatically via `addEngine`/`updateEngine`/`removeEngine` (library-only helpers). The Runner resolves the engine at execution time via `buildPromptRunCommand()` from `src/config.ts`, which merges per-engine config with per-job `action.args` and optional `sessionId`.
+The config file (`<dataDir>/config.json`) defines named engines with `{ command: string, args: string[], env: Record<string, string> }`. Users manage engines by editing `config.json` directly (find it with `crontick info`) or programmatically via `addEngine`/`updateEngine`/`removeEngine` (library-only helpers). The Runner resolves the engine at execution time via `buildPromptRunCommand()` from `src/config.ts`, which merges per-engine config with per-job `action.args` and optional `sessionId`.
 
 The built-in default engine is `copilot` (`{ command: "copilot", args: ["--allow-all-tools", "-p"], env: {} }`), defined in `BUILT_IN_CONFIG`. Any CLI binary that accepts a prompt via arguments can be registered as an engine, but if it needs an explicit prompt-taking flag that flag must be the final configured engine arg because `buildPromptRunCommand()` appends the prompt text after `engine.args`.
 
@@ -404,7 +404,7 @@ Two aspects of crontick's design are sometimes mistaken for gaps; they are delib
   omission: see [ADR 0003](decisions/0003-demand-started-daemon.md) for why, and
   [concepts/daemon-lifecycle.md](concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down)
   for the mechanism (a per-job tick watermark and startup-time missed-fire reporting) that makes
-  any gap in daemon uptime visible in `crontick daemon status` and `crontick runs list`, even
+  any gap in daemon uptime visible in `crontick info` and `crontick runs list`, even
   though nothing runs to fill it.
 - **Run-history retention is a bounded cache, not an archive.** Each job keeps at most
   `retention.maxRunsPerJob` runs (default 100); eviction is a hard delete with no automatic

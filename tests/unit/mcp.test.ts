@@ -180,14 +180,13 @@ describe('MCP server — full contract', () => {
       'crontick_run_logs_tail',
       'crontick_stats_summary',
       'crontick_doctor',
-      'crontick_config_path',
       'crontick_info',
     ];
     for (const name of readOnlyTools) {
       expect(byName.get(name)?.annotations?.readOnlyHint, `${name} should be readOnlyHint`).toBe(true);
     }
 
-    const destructiveTools = ['crontick_job_create', 'crontick_job_update', 'crontick_job_run_now', 'crontick_job_delete', 'crontick_run_delete', 'crontick_import'];
+    const destructiveTools = ['crontick_job_create', 'crontick_job_update', 'crontick_job_run_now', 'crontick_job_delete', 'crontick_import', 'crontick_daemon_stop'];
     for (const name of destructiveTools) {
       const annotations = byName.get(name)?.annotations;
       expect(annotations?.readOnlyHint === true, `${name} should not be readOnlyHint`).toBe(false);
@@ -839,37 +838,6 @@ describe('MCP server — full contract', () => {
     expect(Array.isArray(logsData.lines)).toBe(true);
   }, 10_000);
 
-  it('crontick_run_delete deletes one run and requires force for bulk deletion', async () => {
-    const jobId = 'mcp-run-delete-job';
-    const created = await callTool(client, 'crontick_job_create', {
-      id: jobId,
-      schedule: { kind: 'cron', cron: '0 0 * * *' },
-      action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
-    });
-    expect(created.isError).toBe(false);
-
-    const { json: runNowJson, isError: runNowErr } = await callTool(client, 'crontick_job_run_now', { id: jobId });
-    expect(runNowErr).toBe(false);
-    const { runId } = runNowJson as { runId: string };
-    await new Promise((resolve) => setTimeout(resolve, 500));
-
-    const missingForce = await callTool(client, 'crontick_run_delete', { all: true });
-    expect(missingForce.isError).toBe(true);
-    expect(String((missingForce.json as { error?: string }).error ?? '')).toContain('requires force:true');
-
-    const deleted = await callTool(client, 'crontick_run_delete', { id: runId });
-    expect(deleted.isError).toBe(false);
-    expect(deleted.json).toMatchObject({ ok: true, deleted: 1 });
-
-    const fetched = await callTool(client, 'crontick_run_get', { id: runId });
-    expect(fetched.isError).toBe(true);
-
-    const listed = await callTool(client, 'crontick_run_list', { jobId });
-    expect(listed.isError).toBe(false);
-    expect((listed.json as Array<{ id: string }>).some((run) => run.id === runId)).toBe(false);
-
-    await callTool(client, 'crontick_job_delete', { id: jobId });
-  }, 10_000);
 
   it('crontick_run_list filters by status', async () => {
     // A dedicated node-exec job so the run deterministically succeeds, unlike
@@ -933,21 +901,6 @@ describe('MCP server — full contract', () => {
 
   // ── Daemon tools ─────────────────────────────────────────────────────────────
 
-  it('crontick_daemon_status returns healthy', async () => {
-    const { json, isError } = await callTool(client, 'crontick_daemon_status');
-    expect(isError).toBe(false);
-    const data = json as { pid: number; version: string; missedFires: Record<string, number> };
-    expect(typeof data.pid).toBe('number');
-    expect(data.pid).toBeGreaterThan(0);
-    expect(typeof data.version).toBe('string');
-    // L2: missedFires mirrors the CLI's daemon status output (see tests/cli.test.ts).
-    expect(data.missedFires).toMatchObject({
-      jobsWithMissedFires: expect.any(Number),
-      missedRunsRecorded: expect.any(Number),
-      jobsCapped: expect.any(Number),
-      capPerJob: expect.any(Number),
-    });
-  });
 
   it('crontick_daemon_reload returns ok', async () => {
     const { json, isError } = await callTool(client, 'crontick_daemon_reload');
@@ -1018,14 +971,39 @@ describe('MCP server — full contract', () => {
     expect(data.checks.length).toBeGreaterThan(0);
   });
 
-  it('crontick_config_path returns the config file location', async () => {
-    const { json, isError } = await callTool(client, 'crontick_config_path');
-    expect(isError).toBe(false);
-    expect(json).toMatchObject({
-      path: expect.stringContaining('config'),
-      note: expect.any(String),
-    });
+  it('crontick_job_delete deletes one job or every job with all:true plus force:true', async () => {
+    const singleId = 'mcp-job-delete-single';
+    const bulkIds = ['mcp-job-delete-all-a', 'mcp-job-delete-all-b'] as const;
+
+    for (const id of [singleId, ...bulkIds]) {
+      const created = await callTool(client, 'crontick_job_create', {
+        id,
+        schedule: { kind: 'cron', cron: '0 0 * * *' },
+        action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
+      });
+      expect(created.isError).toBe(false);
+    }
+
+    const singleDeleted = await callTool(client, 'crontick_job_delete', { id: singleId });
+    expect(singleDeleted.isError).toBe(false);
+    expect(singleDeleted.json).toMatchObject({ ok: true });
+
+    const missingForce = await callTool(client, 'crontick_job_delete', { all: true });
+    expect(missingForce.isError).toBe(true);
+    expect(String((missingForce.json as { error?: string }).error ?? '')).toContain('force:true');
+
+    const bulkDeleted = await callTool(client, 'crontick_job_delete', { all: true, force: true });
+    expect(bulkDeleted.isError).toBe(false);
+    expect(bulkDeleted.json).toMatchObject({ ok: true, deleted: expect.any(Number) });
+
+    const listed = await callTool(client, 'crontick_job_list');
+    expect(listed.isError).toBe(false);
+    const aliases = new Set((listed.json as Array<{ alias?: string | null }>).map((job) => job.alias ?? null));
+    expect(aliases.has(singleId)).toBe(false);
+    expect(aliases.has(bulkIds[0])).toBe(false);
+    expect(aliases.has(bulkIds[1])).toBe(false);
   });
+
 
   it('crontick_info returns environment and daemon information', async () => {
     const { json, isError } = await callTool(client, 'crontick_info');
@@ -1034,6 +1012,7 @@ describe('MCP server — full contract', () => {
       version: expect.any(String),
       node: expect.stringMatching(/^v/),
       platform: expect.any(String),
+      configPath: expect.any(String),
       paths: {
         dataDir: expect.any(String),
         jobsDir: expect.any(String),
@@ -1100,7 +1079,7 @@ describe('MCP server — full contract', () => {
 // ── Daemon-start-off path ────────────────────────────────────────────────────
 
 describe('MCP server — CRONTICK_MCP_START_DAEMON path', () => {
-  it('daemon status reports not running without starting the daemon', async () => {
+  it('crontick_info reports not running without starting the daemon', async () => {
     const isolatedDir = makeTmpDir();
     let isolatedTransport: StdioClientTransport | undefined;
     let isolatedClient: Client | undefined;
@@ -1123,9 +1102,9 @@ describe('MCP server — CRONTICK_MCP_START_DAEMON path', () => {
       );
       await isolatedClient.connect(isolatedTransport);
 
-      const { json, text, isError } = await callTool(isolatedClient, 'crontick_daemon_status');
+      const { json, text, isError } = await callTool(isolatedClient, 'crontick_info');
       expect(isError).toBe(false);
-      expect((json as { running?: boolean }).running).toBe(false);
+      expect((json as { daemon?: { running?: boolean } }).daemon?.running).toBe(false);
       // Must NOT leak 127.0.0.1:port to the LLM
       expect(text).not.toMatch(/127\.0\.0\.1:\d+/);
       expect(existsSync(join(isolatedDir, 'daemon.port'))).toBe(false);

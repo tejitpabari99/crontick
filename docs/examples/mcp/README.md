@@ -69,7 +69,6 @@ All tools accept an optional `verbose: boolean` parameter for diagnostics.
 | `crontick_run_list` | `jobId?`, `limit?`, `since?`, `status?` | List run records |
 | `crontick_run_get` | `id` | Get a specific run |
 | `crontick_run_logs_tail` | `id`, `lines?` (default 50), `source?` (`all`, `engine`, `crontick`) | Tail run output logs |
-| `crontick_run_delete` | `id?`, `all?`, `force?` | Delete one run, or all runs with `all:true` and `force:true` |
 
 `status` accepts one of `queued`, `running`, `success`, `failed`, `canceled`, `timeout`, `missed` (`missed` marks a schedule fire recorded but never executed because the daemon was down).
 
@@ -84,18 +83,14 @@ All tools accept an optional `verbose: boolean` parameter for diagnostics.
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
-| `crontick_daemon_start` | - | Start the daemon |
 | `crontick_daemon_stop` | - | Stop the daemon |
-| `crontick_daemon_status` | - | Get daemon status |
 | `crontick_daemon_reload` | - | Reload job definitions from disk |
-| `crontick_daemon_restart` | - | Restart the daemon |
 
 ### Config and info
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
-| `crontick_config_path` | - | Return config file path and edit/restart note |
-| `crontick_info` | - | Return version, runtime, paths, daemon status, and dashboard URL (`dashboardUrl`) |
+| `crontick_info` | - | Return version, runtime, configPath, paths, daemon status, and dashboard URL (`dashboardUrl`) |
 
 > The dashboard has no dedicated MCP tools: it is always served by the daemon on its
 > loopback origin. Call `crontick_info` and open the returned `dashboardUrl` in a browser.

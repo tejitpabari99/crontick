@@ -637,50 +637,6 @@ export class Store {
     return row ? rowToRun(row) : undefined;
   }
 
-  /**
-   * Delete a single run and all crontick-side data associated with it: its
-   * `run_logs` rows and the `runs` row itself, in one transaction so a run can
-   * never be separated from its logs. Returns true if a run was deleted, false
-   * if no run with that id existed. Per-job log-file lines are not rewritten
-   * (they are an append-only best-effort mirror); the SQLite rows are the
-   * authoritative record and are removed here.
-   */
-  deleteRun(id: string): boolean {
-    const exists = this.db.prepare('SELECT 1 FROM runs WHERE id = ?').get(id);
-    if (!exists) return false;
-    this.db.exec('BEGIN;');
-    try {
-      this.db.prepare('DELETE FROM run_logs WHERE run_id = ?').run(id);
-      this.db.prepare('DELETE FROM runs WHERE id = ?').run(id);
-      this.db.exec('COMMIT;');
-    } catch (err) {
-      this.db.exec('ROLLBACK;');
-      throw err;
-    }
-    this.logger.debug('Deleted run', { runId: id });
-    return true;
-  }
-
-  /**
-   * Delete every run and all crontick-side run data (all `run_logs` and all
-   * `runs` rows), in one transaction. Returns the number of runs deleted. Used
-   * by the `--all` delete path; job definitions and schedule state are left
-   * intact.
-   */
-  deleteAllRuns(): number {
-    const count = (this.db.prepare('SELECT COUNT(*) AS n FROM runs').get() as { n: number }).n;
-    this.db.exec('BEGIN;');
-    try {
-      this.db.prepare('DELETE FROM run_logs').run();
-      this.db.prepare('DELETE FROM runs').run();
-      this.db.exec('COMMIT;');
-    } catch (err) {
-      this.db.exec('ROLLBACK;');
-      throw err;
-    }
-    if (count > 0) this.logger.info('Deleted all runs', { deleted: count });
-    return count;
-  }
 
   private queryRuns(opts: ListRunsOptions = {}, existingJobsOnly = false): Run[] {
     const conditions: string[] = [];

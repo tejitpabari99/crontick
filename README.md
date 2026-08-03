@@ -45,8 +45,8 @@ The default `copilot` engine needs the **GitHub Copilot CLI** on your `PATH`. In
 Verify your setup:
 
 ```sh
-crontick info      # version, runtime, storage paths, daemon status, dashboard URL
-crontick doctor    # system health check
+crontick info      # version, runtime, config path, storage paths, daemon status, dashboard URL
+crontick info doctor    # system health check
 ```
 
 ---
@@ -117,7 +117,7 @@ At run time crontick appends the prompt after the engine args, producing `copilo
 
 ### The config file
 
-`crontick config` prints the path to `config.json` (under the data dir). **Edit that file directly.** Engine, logging, and per-run retention changes apply on the next run; `retention.maxRunsPerJob` is read at daemon start, so changing it needs `crontick daemon restart`.
+`crontick info` prints the path to `config.json` (under the data dir). **Edit that file directly.** Engine, logging, and per-run retention changes apply on the next run; `retention.maxRunsPerJob` is read at daemon start, so changing it needs a daemon restart — from the CLI, run `crontick info daemon stop` and then any daemon-backed command to start it again.
 
 ```jsonc
 {
@@ -242,10 +242,9 @@ See [docs/reference/job-schema.md](docs/reference/job-schema.md) for all action 
 | **runs** | `list` · `get` · `logs` · `cancel` · `delete` |
 | **share** | `export` · `import` |
 | **stats** | `summary` · `job` |
-| **config** | `config` (prints the config file path) |
 | **info** | `info` (version, paths, daemon status, dashboard URL) |
-| **doctor** | `doctor` (system health check) |
-| **daemon** | `start` · `stop` · `status` · `reload` · `restart` |
+| **doctor** | `info doctor` (system health check) |
+| **daemon** | `info daemon stop` · `info daemon reload` |
 | **mcp** | `mcp` (start the MCP server on stdio) |
 
 Full CLI reference: [docs/reference/cli.md](docs/reference/cli.md).

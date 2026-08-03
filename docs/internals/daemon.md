@@ -24,7 +24,7 @@ client when needed.
 7. Open `Store` (SQLite WAL, schema created in one idempotent pass — no migrations, see
    [storage.md](./storage.md#schema)) with the retention cap from step 5.
 8. `pruneAllJobsRunHistory()` — reconcile any job whose retention cap was
-   lowered via `crontick daemon reload` while the daemon was down. Wrapped
+   lowered via `crontick info daemon reload` while the daemon was down. Wrapped
    in try/catch: a failure is logged but never blocks startup — see
    [storage.md](./storage.md#run-retention) for the retention algorithm.
 9. `loadJobsFromDisk()` -- reads `<dataDir>/jobs/*.json`, validates with
@@ -182,7 +182,7 @@ left running indefinitely by either code path.
 sequence above. This matters because Windows has no true signal delivery for another process to
 send: `process.kill(pid, 'SIGTERM')` from another process unconditionally terminates the target
 without invoking any registered handler on Windows, so a caller cannot rely on the signal path
-there at all. `crontick daemon stop` (`stopDaemon()` in `src/daemon/lifecycle.ts`) therefore
+there at all. `crontick info daemon stop` (`stopDaemon()` in `src/daemon/lifecycle.ts`) therefore
 tries the HTTP route first on every platform. If the route is unreachable at all (older daemon
 build, stale/missing port file, connection refused), it falls straight to the same
 `SIGTERM`-then-`SIGKILL` escalation described above. The result's `mode` field

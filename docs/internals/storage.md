@@ -148,7 +148,7 @@ class Store {
 
   // Maintenance
   reconcileOrphanRuns(check?: (pid: number, startedAt: number) => boolean | undefined): { canceled: number; adopted: number };
-  setRunRetentionCap(cap: number): void; // used by `crontick daemon reload` to apply a changed cap live
+  setRunRetentionCap(cap: number): void; // used by `crontick info daemon reload` to apply a changed cap live
   pruneAllJobsRunHistory(cap?: number): number; // reload-triggered cap-reconciliation sweep across every job_id in `runs`
 }
 ```
@@ -258,7 +258,7 @@ Every `insertRun()` call also prunes that job's history down to
 `retention.maxRunsPerJob` (default `100`, see
 [configuration.md](../reference/configuration.md)). `pruneAllJobsRunHistory()` additionally
 sweeps every job on daemon boot; its practical purpose is to reconcile a cap that was **lowered**
-via `crontick daemon reload` while the daemon was down or between ticks for a quiet job, catching
+via `crontick info daemon reload` while the daemon was down or between ticks for a quiet job, catching
 up rows the per-insert prune had no opportunity to evict yet. It is not an upgrade step or a
 schema migration — the schema itself needs no such step (see [Schema](#schema) above).
 
@@ -296,7 +296,7 @@ blocks daemon startup — see [daemon.md](./daemon.md) for the startup
 sequence. The sweep is also per-job try/catch, so one job's failure does
 not abort the sweep for every other job.
 
-**Reload.** `crontick daemon reload` re-reads `retention.maxRunsPerJob` from
+**Reload.** `crontick info daemon reload` re-reads `retention.maxRunsPerJob` from
 config and calls `setRunRetentionCap()`, so a changed cap takes effect
 immediately for both future inserts and the next sweep, without a daemon
 restart — see [daemon.md](./daemon.md).

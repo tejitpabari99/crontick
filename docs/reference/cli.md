@@ -18,7 +18,7 @@ Running `crontick` with no subcommand prints help and exits `0`. `crontick --hel
 | Code | Meaning |
 |------|---------|
 | `0` | Success |
-| `1` | Error, failed `doctor`, or validation/usage failure |
+| `1` | Error, failed `info doctor`, or validation/usage failure |
 
 Errors are rendered as a single clean line on stderr; see [errors.md](errors.md#cli).
 
@@ -32,16 +32,14 @@ crontick jobs update <id> [engineArgs...]
 crontick jobs list
 crontick jobs get <id>
 crontick jobs schedule <id> [-n <count>]
-crontick jobs delete <id>
-crontick jobs delete --all --force
+crontick jobs delete <idOrAlias>
+crontick jobs delete all --force
 crontick jobs run-now <id>
 
 crontick runs list [--job <id>] [--limit <n>] [--since <ms>] [--status <status>]
 crontick runs get <runId>
 crontick runs logs <runId> [engine|crontick] [--tail <n>]
 crontick runs cancel <runId>
-crontick runs delete <runId>
-crontick runs delete --all --force
 
 crontick stats summary
 crontick stats job <id>
@@ -49,14 +47,10 @@ crontick stats job <id>
 crontick share export [--out <file>] [--include-runs]
 crontick share import <file>
 
-crontick config
 crontick info
-crontick doctor
-crontick daemon start [--foreground]
-crontick daemon stop
-crontick daemon status
-crontick daemon reload
-crontick daemon restart
+crontick info doctor
+crontick info daemon stop
+crontick info daemon reload
 crontick mcp [--no-start-daemon] [--daemon-url <url>]
 ```
 
@@ -169,8 +163,8 @@ This replaces the old raw `schedule preview` command: schedules are previewed in
 Delete one job, or delete all jobs with explicit confirmation.
 
 ```bash
-crontick jobs delete <id>
-crontick jobs delete --all --force
+crontick jobs delete <idOrAlias>
+crontick jobs delete all --force
 ```
 
 | Flag | Type | Default | Description |
@@ -254,22 +248,6 @@ crontick runs cancel <runId>
 
 ---
 
-### crontick runs delete
-
-Delete one run and its crontick-side log rows, or delete all runs with explicit confirmation.
-
-```bash
-crontick runs delete <runId>
-crontick runs delete --all --force
-```
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--all` | boolean | `false` | Delete every run |
-| `--force` | boolean | `false` | Required with `--all` |
-
----
-
 ## Stats Commands
 
 ### crontick stats summary
@@ -321,98 +299,55 @@ Jobs are upserted. If the file includes exported run history, runs are restored 
 
 ---
 
-## Config and Info Commands
-
-### crontick config
-
-Print the config file path, a blank line, and the runtime-application note.
-
-```bash
-crontick config
-```
-
-Configuration is edited by hand in `config.json`. There are no `config get`, `config set`, `config unset`, `config init`, `config validate`, or `config engines` CLI subcommands.
-
-Most config is read fresh for each run and applies automatically on the next run: engine definitions, the resolved prompt command, logging settings, `retention.maxOutputBytesPerRun`, and other per-run settings. The exception is `retention.maxRunsPerJob`, which is cached by the daemon's Store at startup; changing it requires `crontick daemon restart`.
+## Info Commands
 
 ### crontick info
 
-Show version, runtime, storage locations, and daemon status.
+Show version, runtime, config path, storage locations, daemon status, and dashboard URL.
 
 ```bash
 crontick info
 ```
 
-The output includes:
+The default output includes:
 
 - crontick version
 - Node.js version
 - platform
-- `paths` block: `dataDir`, `jobsDir`, `runsDb`, `logsDir`, `configFile`, `portFile`, `pidFile`
 - daemon running status, including PID and port when available
-- `dashboardUrl`: the URL of the daemon-served dashboard (for example `http://127.0.0.1:<port>/dashboard`), or `null` when it cannot be resolved (no running daemon and no readable port file). Open this URL in a browser. `info` never starts the daemon; the dashboard is served automatically whenever the daemon is up.
+- config file path (`configPath`)
+- dashboard URL when the daemon is running
+- `paths` block: `dataDir`, `jobsDir`, `logsDir`, `runsDb`, `portFile`, `pidFile`
 
-### crontick doctor
+`info` never starts the daemon; when the daemon is stopped it prints that state and notes that the dashboard becomes available again on the next daemon-backed command.
+
+### crontick info doctor
 
 Check system health.
 
 ```bash
-crontick doctor
+crontick info doctor
 ```
 
 Exits with code `1` if any check fails. Checks include Node.js version, SQLite availability, data directory, daemon connectivity, dashboard reachability, and MCP server availability.
 
----
-
-## Daemon Commands
-
-### crontick daemon start
-
-Start the daemon.
-
-```bash
-crontick daemon start
-```
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--foreground` | boolean | `false` | Run in foreground (blocking) |
-
-### crontick daemon stop
+### crontick info daemon stop
 
 Stop the daemon.
 
 ```bash
-crontick daemon stop
+crontick info daemon stop
 ```
 
-### crontick daemon status
-
-Show daemon status.
-
-```bash
-crontick daemon status
-```
-
-### crontick daemon reload
+### crontick info daemon reload
 
 Reload job definitions from disk without restarting the daemon.
 
 ```bash
-crontick daemon reload
+crontick info daemon reload
 ```
 
-Config edits normally do not require reload; see [configuration.md](configuration.md#when-config-edits-take-effect).
-
-### crontick daemon restart
-
-Restart the daemon.
-
-```bash
-crontick daemon restart
-```
-
-Required after changing `retention.maxRunsPerJob`.
+Running `crontick info daemon` with no subcommand prints help. Config edits normally do not require reload; see [configuration.md](configuration.md#when-config-edits-take-effect).
 
 ---
 
@@ -426,8 +361,7 @@ or stop separately. To open it:
    `http://127.0.0.1:<port>/dashboard`).
 2. Open that URL in a browser.
 
-If the daemon is not running yet, run any daemon-backed command (or `crontick daemon
-start`) and it will start automatically; then `crontick info` will report the URL.
+If the daemon is not running yet, run any daemon-backed command (for example `crontick jobs list`) and it will start automatically; then `crontick info` will report the URL.
 
 The former `crontick dashboard start`, `crontick dashboard status`, `crontick dashboard
 stop`, and `crontick dashboard data` CLI commands have been removed.

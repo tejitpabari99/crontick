@@ -150,15 +150,6 @@ crontick runs logs <runId> crontick --tail 20
 crontick runs cancel <runId>
 ```
 
-### Delete run history
-
-```sh
-crontick runs delete <runId>
-crontick runs delete --all --force
-```
-
----
-
 ## Stats
 
 ```sh
@@ -168,31 +159,16 @@ crontick stats job hello-world
 
 ---
 
-## Daemon management
+## Info and lightweight admin
 
 ```sh
-crontick daemon start
-crontick daemon status
-crontick daemon reload
-crontick daemon restart
-crontick daemon stop
+crontick info
+crontick info doctor
+crontick info daemon reload
+crontick info daemon stop
 ```
 
----
-
-## Configuration
-
-Find the config file:
-
-```sh
-crontick config
-```
-
-Edit `config.json` by hand. Most settings apply automatically on the next run; changing `retention.maxRunsPerJob` requires:
-
-```sh
-crontick daemon restart
-```
+`info` prints version, runtime, config path, storage paths, daemon status, and dashboard URL. Edit `config.json` by hand; `info` tells you where it lives. If `retention.maxRunsPerJob` changes, stop the daemon with `crontick info daemon stop` and then run any daemon-backed command to start it again.
 
 ---
 
@@ -208,14 +184,6 @@ crontick share import jobs-backup.json
 
 ---
 
-## Info and Doctor
-
-```sh
-crontick info
-crontick doctor
-```
-
-`info` prints version, runtime, paths, and daemon status. `doctor` prints health checks and exits non-zero if any check fails.
 
 ---
 

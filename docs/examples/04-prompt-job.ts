@@ -5,7 +5,7 @@
 // By default, crontick ships with a built-in "copilot" engine definition
 // (command: "copilot", args: ["--allow-all-tools", "-p"], env: {}). You need
 // the `copilot` CLI available on your PATH, or edit config.json (see
-// `crontick config`) to point at a custom engine.
+// `crontick info`) to point at a custom engine.
 //
 // Run: npx tsx examples/04-prompt-job.ts
 

@@ -227,7 +227,7 @@ exceed `retention.maxOutputBytesPerRun` (default `2_000_000`, range `1024..1_000
 3. The run's `output_truncated` column is set to `1`, surfaced to callers as `outputTruncated:
    true` (see [cli.md](../reference/cli.md#logs) and [mcp-tools.md](../reference/mcp-tools.md)).
 4. All further `stdout`/`stderr` data for that run is dropped without being written to
-   `run_logs` — capture stops, but the cap is re-read live on `crontick daemon reload`, so a
+   `run_logs` — capture stops, but the cap is re-read live on `crontick info daemon reload`, so a
    config change takes effect for runs started after the reload.
 
 Capping output only stops *capture*; the child process itself is never signaled, killed, or

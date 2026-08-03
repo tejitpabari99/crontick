@@ -20,7 +20,7 @@ that needs the daemon will start it transparently via `ensureDaemon()` in
 - A PID file (`daemon.pid`) for single-instance guarding.
 - An exclusive file lock (`daemon.ensure.lock`) to serialize concurrent startup attempts.
 - Health polling after spawn before returning to the caller.
-- `crontick daemon start` for explicit manual lifecycle control.
+- Any daemon-backed command (for example `crontick jobs list`) for demand-started lifecycle control.
 
 No OS-level service registration, no init system integration, no elevated privileges.
 
@@ -51,7 +51,7 @@ because the user's terminal session would need to stay open.
 
 - `npm install -g crontick` is the only install step on any platform.
 - No privileged escalation, no platform packaging.
-- Users can kill the daemon with a simple `crontick daemon stop` or `kill <pid>`.
+- Users can stop the daemon with `crontick info daemon stop` or `kill <pid>`.
 - Testing is straightforward (spawn a process, probe health, tear down).
 
 **Harder:**

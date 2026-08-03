@@ -13,7 +13,7 @@ The data directory is resolved by (in order):
 1. `CRONTICK_HOME` environment variable (if set)
 2. `env-paths('crontick', { suffix: '' }).data` (platform default)
 
-`crontick config` prints the resolved config path and a short note. There are no config get/set/unset/init/validate or engine-management CLI/MCP commands; edit `config.json` by hand. If the file does not exist, crontick uses the built-in default config.
+`crontick info` prints the resolved config path (`configPath`) and daemon state. There are no config get/set/unset/init/validate or engine-management CLI/MCP commands; edit `config.json` by hand. If the file does not exist, crontick uses the built-in default config.
 
 ### Resolved Config File Paths by OS
 
@@ -79,7 +79,7 @@ The file config is deep-merged over the built-in defaults. `config.json` must be
 
 ## When Config Edits Take Effect
 
-Most config is read fresh for each run and applies automatically on the **next run** without `crontick daemon reload` or a restart:
+Most config is read fresh for each run and applies automatically on the **next run** without `crontick info daemon reload` or a restart:
 
 - engine definitions under `engines`
 - `defaultEngine`
@@ -91,10 +91,11 @@ Most config is read fresh for each run and applies automatically on the **next r
 The exception is `retention.maxRunsPerJob`. The daemon's Store reads and caches that value at daemon startup. Changing `retention.maxRunsPerJob` requires:
 
 ```bash
-crontick daemon restart
+crontick info daemon stop
+# then run any daemon-backed command (for example `crontick jobs list`) to start it again
 ```
 
-`crontick daemon reload` is for reloading job definitions from disk; it is not required for normal config edits and does not replace the restart requirement for `retention.maxRunsPerJob`.
+`crontick info daemon reload` is for reloading job definitions from disk; it is not required for normal config edits and does not replace the restart requirement for `retention.maxRunsPerJob`.
 
 ---
 
@@ -102,7 +103,7 @@ crontick daemon restart
 
 | Field | Type | Required | Default | Constraints | Runtime behavior |
 |-------|------|----------|---------|-------------|------------------|
-| `maxRunsPerJob` | `integer` | no | `100` | `min(1)`, `max(100_000)` | Cached by Store at daemon startup; changing requires `crontick daemon restart` |
+| `maxRunsPerJob` | `integer` | no | `100` | `min(1)`, `max(100_000)` | Cached by Store at daemon startup; changing requires a restart (CLI: `crontick info daemon stop`, then the next daemon-backed command) |
 | `maxOutputBytesPerRun` | `integer` | no | `2_000_000` | `min(1024)`, `max(1_000_000_000)` | Re-read per run; applies on the next run |
 | `maxLogFiles` | `integer` | no | `30` | `min(1)`, `max(3650)` | Applies the next time daemon log retention runs |
 

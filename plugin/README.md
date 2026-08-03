@@ -5,7 +5,7 @@ The `crontick` plugin installs the [crontick](https://www.npmjs.com/package/cron
 ## What It Does
 
 1. **Installs `crontick` globally** via `npm install -g crontick` (if not already present)
-2. **Runs `crontick doctor`** to verify Node.js, SQLite, and the data directory
+2. **Runs `crontick info doctor`** to verify Node.js, SQLite, and the data directory
 3. **Copies `SKILL.md`** to `~/.copilot/skills/crontick/` so Copilot learns to schedule jobs
 
 ## Manual Installation

@@ -209,11 +209,22 @@ export function createMcpServer(): McpServer {
     'crontick_job_delete',
     {
       description:
-        'Permanently delete a job definition (id or alias). Archived runs and logs remain directly queryable by run ID, but live aggregates exclude them. This may cancel an in-flight run and cannot be undone -- confirm with the user first.',
-      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
+        'Permanently delete one job definition by id/alias, or delete every job with all:true plus force:true. Archived runs and logs remain directly queryable by run ID, but live aggregates exclude deleted jobs. This may cancel an in-flight run and cannot be undone -- confirm with the user first.',
+      inputSchema: withVerbose({
+        id: z.string().describe('Job id (GUID) or alias to delete individually').optional(),
+        all: z.boolean().optional().describe('Delete every job. Requires force:true.'),
+        force: z.boolean().optional().describe('Confirm a bulk delete when all:true.'),
+      }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.deleteJob(args.id)),
+    async (args) => {
+      if (args.all) {
+        if (args.id) return errResult(new Error('Provide either id or all:true, not both'));
+        return toolWrap(args, (client) => client.deleteJob(undefined, { all: true, force: args.force }));
+      }
+      if (!args.id) return errResult(new Error('Provide id, or set all:true with force:true to delete every job'));
+      return toolWrap(args, (client) => client.deleteJob(args.id));
+    },
   );
 
   server.registerTool(
@@ -299,20 +310,6 @@ export function createMcpServer(): McpServer {
     async (args) => toolWrap(args, (client) => client.getLogs(args.id, { lines: args.lines, source: args.source })),
   );
 
-  server.registerTool(
-    'crontick_run_delete',
-    {
-      description:
-        'Delete a single run entry and all crontick-side data associated with it (log rows). Pass all:true with force:true to delete every run. Deleting all runs requires force.',
-      inputSchema: withVerbose({
-        id: z.string().optional().describe('Run id to delete. Omit and set all:true to delete every run.'),
-        all: z.boolean().optional().describe('Delete every run. Requires force:true.'),
-        force: z.boolean().optional().describe('Confirm a bulk delete when all:true.'),
-      }),
-      annotations: { destructiveHint: true, idempotentHint: false, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => client.deleteRun(args.id, { all: args.all, force: args.force })),
-  );
 
   server.registerTool(
     'crontick_job_schedule',
@@ -353,16 +350,6 @@ export function createMcpServer(): McpServer {
 
   // ── Daemon ─────────────────────────────────────────────────────────────────
 
-  server.registerTool(
-    'crontick_daemon_start',
-    {
-      description:
-        'Start the local crontick daemon. Returns the daemon port and whether this call started a new process.',
-      inputSchema: withVerbose({}),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => client.daemonStart()),
-  );
 
   server.registerTool(
     'crontick_daemon_stop',
@@ -375,28 +362,6 @@ export function createMcpServer(): McpServer {
     async (args) => toolWrap(args, (client) => client.daemonStop(), false),
   );
 
-  server.registerTool(
-    'crontick_daemon_status',
-    {
-      description:
-        'Get the daemon process status: PID, version, loopback baseUrl/port, uptime, job counts, and a missedFires summary (jobs whose schedule missed fires while the daemon was down since the last start — report-only, never auto-executed; see crontick_run_list with status "missed").',
-      inputSchema: withVerbose({}),
-      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    // daemon_status returns a soft error object instead of isError:true — the
-    // LLM should know the daemon is down without treating it as a tool failure.
-    async (args) => {
-      const diagnostics: LogEvent[] = [];
-      const verbose = mcpVerbose(args);
-      const client = mcpClient(false, { verbose, diagnostics });
-      try {
-        return okResult(await client.daemonStatus(), diagnostics, verbose);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return okResult({ running: false, error: redactForLlm(msg) }, diagnostics, verbose);
-      }
-    },
-  );
 
   server.registerTool(
     'crontick_daemon_reload',
@@ -409,16 +374,6 @@ export function createMcpServer(): McpServer {
     async (args) => toolWrap(args, (client) => client.daemonReload()),
   );
 
-  server.registerTool(
-    'crontick_daemon_restart',
-    {
-      description:
-        'Restart the crontick daemon (stop + start). Running jobs will be interrupted. Confirm with the user before calling.',
-      inputSchema: withVerbose({}),
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => client.daemonRestart()),
-  );
 
   // ── Admin ──────────────────────────────────────────────────────────────────
 
@@ -460,24 +415,12 @@ export function createMcpServer(): McpServer {
     async (args) => toolWrap(args, (client) => client.doctor({ mcpScript: mcpScript() }), false),
   );
 
-  // ── Config ─────────────────────────────────────────────────────────────────
-
-  server.registerTool(
-    'crontick_config_path',
-    {
-      description:
-        'Return the path to the crontick config file plus a note on how edits take effect. Edit that file directly to change config; most settings apply automatically on the next run.',
-      inputSchema: withVerbose({}),
-      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.configPath()), false),
-  );
 
   server.registerTool(
     'crontick_info',
     {
       description:
-        'Return crontick environment info: crontick and Node versions, all on-disk file locations (data dir, state dir, logs dir, config file, port file, daemon pid file), the dashboard URL (dashboardUrl), and daemon running status. The dashboard is always served by the daemon; open dashboardUrl in a browser.',
+        'Return crontick environment info: crontick and Node versions, configPath, all on-disk file locations (data dir, jobs dir, logs dir, runs DB, config file, port file, daemon pid file), the dashboard URL (dashboardUrl), and daemon running status. The dashboard is always served by the daemon; open dashboardUrl in a browser.',
       inputSchema: withVerbose({}),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },

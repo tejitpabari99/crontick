@@ -59,7 +59,7 @@ observable behavior without updating relevant docs is incomplete.
 | [execution.md](concepts/execution.md) | How actions run: shell rules, timeouts, cancellation |
 | [daemon-lifecycle.md](concepts/daemon-lifecycle.md) | Demand-start, shutdown, no supervision |
 | [state-and-storage.md](concepts/state-and-storage.md) | Where state lives, SQLite WAL, JSON files |
-| [surface-parity.md](concepts/surface-parity.md) | The 26-capability contract across CLI/MCP/library |
+| [surface-parity.md](concepts/surface-parity.md) | The 21-capability contract across CLI/MCP/library |
 | [error-model.md](concepts/error-model.md) | Error codes, structured errors, surface presentation |
 
 ### docs/internals/
@@ -95,7 +95,7 @@ observable behavior without updating relevant docs is incomplete.
 | [README.md](decisions/README.md) | ADR index and process |
 | [0000-template.md](decisions/0000-template.md) | Template for new ADRs |
 
-See [decisions/README.md](decisions/README.md) for the full list of architecture decision records (ADRs 0001-0025).
+See [decisions/README.md](decisions/README.md) for the full list of architecture decision records (ADRs 0001-0026).
 
 ### specs/
 

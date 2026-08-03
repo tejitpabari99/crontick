@@ -25,7 +25,7 @@ fire becomes a terminal run row with `status = 'missed'`, `error =
 MISSED_RUN_ERROR_MESSAGE`, and no `pid` (`Store.recordMissedRun()`) -- capped at
 `MISSED_FIRE_CAP_PER_JOB = 500` per job to bound startup cost after a very long gap. The
 summary is exposed as `missedFires: { jobsWithMissedFires, missedRunsRecorded, jobsCapped,
-capPerJob }` in `GET /api/daemon/status` and `crontick daemon status`.
+capPerJob }` in `GET /api/daemon/status` and `crontick info`.
 
 Missed fires are **reported, never replayed**. The daemon does not run the job's action for
 a missed fire, queue a catch-up execution, or attempt to compress multiple missed fires

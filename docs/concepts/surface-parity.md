@@ -14,12 +14,12 @@ All three are thin adapters over `CrontickClient`, which communicates with the d
 
 ## The `SURFACE_CAPABILITIES` constant
 
-`src/surface.ts` exports a single constant that canonically enumerates the 26 parity capabilities:
+`src/surface.ts` exports a single constant that canonically enumerates the 21 parity capabilities:
 
 ```typescript
 export const SURFACE_CAPABILITIES = [
   { capability: 'create-job', clientMethod: 'createJob', cliCommand: ['jobs', 'new'], mcpTool: 'crontick_job_create', optionNames: ['force'] },
-  // ... 28 more entries
+  // ... 20 more entries
 ] as const satisfies readonly SurfaceCapability[];
 ```
 
@@ -50,19 +50,16 @@ Each entry maps:
 | `list-runs` | `listRuns` | `crontick runs list` | `crontick_run_list` |
 | `get-run` | `getRun` | `crontick runs get` | `crontick_run_get` |
 | `logs` | `getLogs` | `crontick runs logs` | `crontick_run_logs_tail` |
-| `delete-run` | `deleteRun` | `crontick runs delete` | `crontick_run_delete` |
 | `stats-summary` | `statsSummary` | `crontick stats summary` | `crontick_stats_summary` |
 | `stats-job` | `statsJob` | `crontick stats job` | `crontick_stats_job` |
 | `export` | `exportJobs` | `crontick share export` | `crontick_export` |
 | `import` | `importJobs` | `crontick share import` | `crontick_import` |
-| `daemon-start` | `daemonStart` | `crontick daemon start` | `crontick_daemon_start` |
-| `daemon-stop` | `daemonStop` | `crontick daemon stop` | `crontick_daemon_stop` |
-| `daemon-status` | `daemonStatus` | `crontick daemon status` | `crontick_daemon_status` |
-| `daemon-reload` | `daemonReload` | `crontick daemon reload` | `crontick_daemon_reload` |
-| `daemon-restart` | `daemonRestart` | `crontick daemon restart` | `crontick_daemon_restart` |
-| `doctor` | `doctor` | `crontick doctor` | `crontick_doctor` |
-| `config-path` | `configPath` | `crontick config` | `crontick_config_path` |
+| `daemon-stop` | `daemonStop` | `crontick info daemon stop` | `crontick_daemon_stop` |
+| `daemon-reload` | `daemonReload` | `crontick info daemon reload` | `crontick_daemon_reload` |
+| `doctor` | `doctor` | `crontick info doctor` | `crontick_doctor` |
 | `info` | `info` | `crontick info` | `crontick_info` |
+
+The CLI may fold
 
 The CLI may fold multiple capabilities into one command path when the operation is an option on a shared command. For example, `enable-job` and `disable-job` are expressed as `crontick jobs update --enable` and `crontick jobs update --disable`.
 
@@ -106,7 +103,7 @@ Some `CrontickClient` methods are intentionally excluded from the parity table b
 
 - daemon/client plumbing: `ensure`, `health`, `request`, `baseUrl`, `normalizeOptions`, `shouldStartDaemon`, `effectiveEnv`, `fetchRequest`, `daemonRequestError`
 - CLI/resource helpers: `createJobFromCliOptions`, `jobJsonSchema`, `drainNotices`, `isVerbose`
-- library-only helpers retained after CLI/MCP narrowing: raw schedule validation/preview, dashboard status/data, and direct config mutation/engine helpers
+- library-only helpers retained after CLI/MCP narrowing: raw schedule validation/preview, daemon start/status/restart, dashboard status/data, config-path lookup, and direct config mutation/engine helpers
 
 These are tracked in the test's `NON_PARITY_CLIENT_METHODS` set.
 

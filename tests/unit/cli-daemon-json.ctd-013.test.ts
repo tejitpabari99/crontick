@@ -56,7 +56,7 @@ function waitForPidExit(pid: number, maxMs = 5_000): void {
 }
 
 function stopDaemon(): void {
-  try { cli(['daemon', 'stop']); } catch { /* ignore */ }
+  try { cli(['info', 'daemon', 'stop']); } catch { /* ignore */ }
   const pid = readPid();
   if (pid === undefined) return;
   try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
@@ -88,26 +88,23 @@ afterEach(() => {
 });
 
 describe('CTD-013 daemon lifecycle CLI human output', () => {
-  it('daemon start emits one human-readable result and records pid/port', () => {
-    const result = cli(['daemon', 'start']);
+  it('daemon-backed commands demand-start the daemon and emit human-readable output', () => {
+    const result = cli(['jobs', 'list']);
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe('');
-    const match = result.stdout.trim().match(/^Daemon started on port (\d+)$/);
-    expect(match).not.toBeNull();
-    const port = Number(match?.[1]);
-    expect(port).toBeGreaterThan(0);
+    expect(result.stdout.trim()).toBe('(no items)');
     expect(readPid()).toBeGreaterThan(0);
-    expect(readPort()).toBe(port);
+    expect(readPort()).toBeGreaterThan(0);
   }, 15_000);
 
-  it('daemon stop emits the stop message and mode', () => {
-    const started = cli(['daemon', 'start']);
+  it('info daemon stop emits the stop message and mode', () => {
+    const started = cli(['jobs', 'list']);
     expect(started.status, started.stderr).toBe(0);
     const previousPid = readPid();
     expect(previousPid).toBeGreaterThan(0);
 
-    const result = cli(['daemon', 'stop']);
+    const result = cli(['info', 'daemon', 'stop']);
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe('');
@@ -116,20 +113,18 @@ describe('CTD-013 daemon lifecycle CLI human output', () => {
     if (previousPid !== undefined) waitForPidExit(previousPid);
   }, 15_000);
 
-  it('daemon restart emits one human-readable result for the new daemon', () => {
-    const started = cli(['daemon', 'start']);
+  it('info daemon reload emits one human-readable result for the running daemon', () => {
+    const started = cli(['jobs', 'list']);
     expect(started.status, started.stderr).toBe(0);
     expect(readPid()).toBeGreaterThan(0);
+    const previousPort = readPort();
 
-    const result = cli(['daemon', 'restart']);
+    const result = cli(['info', 'daemon', 'reload']);
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe('');
-    const match = result.stdout.trim().match(/^Daemon restarted on port (\d+)$/);
-    expect(match).not.toBeNull();
-    const port = Number(match?.[1]);
-    expect(port).toBeGreaterThan(0);
+    expect(result.stdout.trim()).toBe('ok: true');
     expect(readPid()).toBeGreaterThan(0);
-    expect(readPort()).toBe(port);
+    expect(readPort()).toBe(previousPort);
   }, 20_000);
 });

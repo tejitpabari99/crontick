@@ -16,7 +16,7 @@ const EXPECTED_TOOL_PARAMS = {
   crontick_job_list: [],
   crontick_job_get: ['id'],
   crontick_job_update: ['id', 'alias', 'description', 'enabled', 'schedule', 'action', 'overlap', 'retry'],
-  crontick_job_delete: ['id'],
+  crontick_job_delete: ['id', 'all', 'force'],
   crontick_job_enable: ['id'],
   crontick_job_disable: ['id'],
   crontick_job_run_now: ['id'],
@@ -25,18 +25,13 @@ const EXPECTED_TOOL_PARAMS = {
   crontick_run_list: ['jobId', 'limit', 'since', 'status'],
   crontick_run_get: ['id'],
   crontick_run_logs_tail: ['id', 'lines', 'source'],
-  crontick_run_delete: ['id', 'all', 'force'],
   crontick_stats_summary: [],
   crontick_stats_job: ['id'],
-  crontick_daemon_start: [],
   crontick_daemon_stop: [],
-  crontick_daemon_status: [],
   crontick_daemon_reload: [],
-  crontick_daemon_restart: [],
   crontick_export: ['includeRuns'],
   crontick_import: ['jobs', 'runs'],
   crontick_doctor: [],
-  crontick_config_path: [],
   crontick_info: [],
 } as const;
 
@@ -149,7 +144,7 @@ describe('CTD-015 MCP parameter naming', () => {
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
 
     expect(tools.map((tool) => tool.name).sort()).toEqual([...MCP_TOOLS].sort());
-    expect(tools).toHaveLength(26);
+    expect(tools).toHaveLength(21);
 
     for (const [name, expectedParams] of Object.entries(EXPECTED_TOOL_PARAMS)) {
       const tool = byName.get(name);

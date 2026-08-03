@@ -71,3 +71,4 @@ NNNN-kebab-case-title.md
 | 0023 | Prefer precision over recall for AWS secret redaction | Accepted | 2026-07-31 |
 | 0024 | Reorganize CLI commands and narrow high-risk exposure | Accepted | 2026-08-02 |
 | 0025 | GUID job identity with an optional human-friendly alias | Accepted | 2026-08-02 |
+| 0026 | Simplify round-2 commands by folding admin reads into info | Accepted | 2026-08-03 |

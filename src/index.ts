@@ -4,9 +4,10 @@
  * re-exported from this file is internal and may change without notice.
  *
  * Some CrontickClient methods (getConfig, health, ensure, drainNotices,
- * isVerbose, jobJsonSchema, createJobFromCliOptions) are intentionally
- * library-only — they serve internal wiring or direct-use scenarios and are
- * outside the surface-parity contract enforced by tests/surface-drift.test.ts.
+ * isVerbose, jobJsonSchema, createJobFromCliOptions, configPath, daemonStart,
+ * daemonStatus, daemonRestart) are intentionally library-only — they serve
+ * internal wiring or direct-use scenarios and are outside the surface-parity
+ * contract enforced by tests/surface-drift.test.ts.
  */
 
 export { VERSION } from './version.js';
@@ -19,7 +20,6 @@ export type {
   CrontickInfo,
   CrontickInfoPaths,
   DaemonStatus,
-  DeleteRunResult,
   JobStats,
   LogEntry,
   LogsResult,

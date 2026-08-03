@@ -135,11 +135,14 @@ describe('CLI binary (dist/cli/index.js)', () => {
     expect(help.stdout).toContain('runs');
     expect(help.stdout).toContain('share');
     expect(help.stdout.toLowerCase()).not.toContain('auto' + 'start');
-    for (const args of [[], ['jobs'], ['runs'], ['share'], ['stats'], ['daemon']]) {
+    for (const args of [[], ['jobs'], ['runs'], ['share'], ['stats'], ['info', 'daemon']]) {
       const result = cli(args);
       expect(result.status, `${args.join(' ')} stderr: ${result.stderr}`).toBe(0);
       expect(result.stdout).toContain('Usage: crontick');
     }
+    const info = cli(['info']);
+    expect(info.status, info.stderr).toBe(0);
+    expect(info.stdout).toContain('crontick');
   });
 
   it('usage errors use normalized single-line stderr', () => {
@@ -158,6 +161,10 @@ describe('CLI binary (dist/cli/index.js)', () => {
     expect(logsHelp.stdout).toContain('--tail <n>');
     expect(logsHelp.stdout).not.toContain('--lines');
     expect(logsHelp.stdout).not.toContain('--follow');
+    expect(cli(['runs', 'delete']).stderr).toContain("unknown command 'delete'");
+    expect(cli(['doctor']).stderr).toContain("unknown command 'doctor'");
+    expect(cli(['config']).stderr).toContain("unknown command 'config'");
+    expect(cli(['daemon']).stderr).toContain("unknown command 'daemon'");
     const newHelp = cli(['jobs', 'new', '--help']);
     expect(newHelp.stdout).toContain('--prompt <text>');
     expect(newHelp.stdout).toContain('--file <path>');
@@ -198,11 +205,10 @@ describe('CLI binary (dist/cli/index.js)', () => {
     try {
       expect(cli(['--help'], { CRONTICK_HOME: tmp }).status).toBe(0);
       expect(cli(['--version'], { CRONTICK_HOME: tmp }).status).toBe(0);
-      expect(cli(['daemon', 'status'], { CRONTICK_HOME: tmp }).stdout).toContain('not running');
-      expect(cli(['config'], { CRONTICK_HOME: tmp }).stdout).toContain(join(tmp, 'config.json'));
       const info = cli(['info'], { CRONTICK_HOME: tmp });
+      expect(info.stdout).toContain(join(tmp, 'config.json'));
       expect(info.stdout).toContain('paths');
-      expect(info.stdout).toContain('daemon     not running');
+      expect(info.stdout).toContain('daemon     stopped');
       // The dashboard is always served by the daemon; info surfaces it. With no
       // daemon and no port file, the URL is unresolved and info notes that.
       expect(info.stdout).toContain('dashboard  available once the daemon is running');
@@ -214,23 +220,21 @@ describe('CLI binary (dist/cli/index.js)', () => {
     }
   }, 15_000);
 
-  it('daemon stop and config render human output only', async () => {
+  it('info daemon stop and info output render human output only', async () => {
     const tmp = makeTmpDir();
     try {
       expect(cli(['jobs', 'list'], { CRONTICK_HOME: tmp }).status).toBe(0);
       const pid = readPidFile(tmp);
-      const stop = cli(['daemon', 'stop'], { CRONTICK_HOME: tmp });
+      const stop = cli(['info', 'daemon', 'stop'], { CRONTICK_HOME: tmp });
       expect(stop.status, stop.stderr).toBe(0);
       expect(stop.stdout).toContain('mode: graceful');
       expect(stop.stdout).toContain(String(pid));
-      const again = cli(['daemon', 'stop'], { CRONTICK_HOME: tmp });
+      const again = cli(['info', 'daemon', 'stop'], { CRONTICK_HOME: tmp });
       expect(again.stdout).toContain('mode: already-stopped');
 
-      const config = cli(['config'], { CRONTICK_HOME: tmp });
-      const lines = config.stdout.split(/\r?\n/);
-      expect(lines[0]).toBe(join(tmp, 'config.json'));
-      expect(lines[1]).toBe('');
-      expect(lines.slice(2).join('\n').toLowerCase()).toContain('edit');
+      const info = cli(['info'], { CRONTICK_HOME: tmp });
+      expect(info.stdout).toContain(join(tmp, 'config.json'));
+      expect(info.stdout).toContain('config');
     } finally {
       stopDaemonInHome(tmp);
       await new Promise((r) => setTimeout(r, 300));
@@ -432,7 +436,6 @@ describe('CLI e2e with daemon', () => {
     expect(engineLogs.status, engineLogs.stderr).toBe(0);
     expect(engineLogs.stdout).not.toContain('[crontick]');
     expect(parseCliObject(cli(['runs', 'cancel', runId], env()).stdout)).toMatchObject({ ok: true });
-    expect(parseCliObject(cli(['runs', 'delete', runId], env()).stdout)).toMatchObject({ ok: true });
   }, 10_000);
 
   describe('daemon-backed errors exit cleanly (no libuv assertion crash)', () => {
@@ -446,16 +449,16 @@ describe('CLI e2e with daemon', () => {
     });
   });
 
-  it('jobs delete removes jobs and --all requires --force', () => {
+  it('jobs delete removes jobs and `all` requires --force', () => {
     const del = cli(['jobs', 'delete', 'e2e-job'], env());
     expect(del.status, del.stderr).toBe(0);
     expectCleanError(cli(['jobs', 'get', 'e2e-job'], env()), 'JOB_NOT_FOUND');
-    const withoutForce = cli(['jobs', 'delete', '--all'], env());
+    const withoutForce = cli(['jobs', 'delete', 'all'], env());
     expectCleanError(withoutForce, 'VALIDATION_ERROR');
     expect(withoutForce.stderr).toContain('requires --force');
-    const withForce = cli(['jobs', 'delete', '--all', '--force'], env());
+    const withForce = cli(['jobs', 'delete', 'all', '--force'], env());
     expect(withForce.status, withForce.stderr).toBe(0);
-    expect(parseCliObject(withForce.stdout)).toMatchObject({ ok: true });
+    expect(parseCliObject(withForce.stdout)).toMatchObject({ ok: true, deleted: expect.any(Number) });
   });
 
   it('share export/import handles stdout JSON, --out, include-runs, and BOM-prefixed imports', async () => {
@@ -541,25 +544,60 @@ describe('CLI e2e with daemon', () => {
     expectCleanError(cli(['schedule', 'validate', '{"kind":"cron","cron":"0 9 * * *"}'], env()));
   });
 
-  it('daemon, doctor, and runs delete-all render new human outputs', async () => {
-    const status = cli(['daemon', 'status'], env());
-    expect(status.status, status.stderr).toBe(0);
-    expect(typeof parseCliObject(status.stdout).pid).toBe('number');
-    expect(parseCliObject(status.stdout).missedFires).toMatchObject({ jobsWithMissedFires: expect.any(Number), missedRunsRecorded: expect.any(Number) });
-    const doctor = cli(['doctor'], env());
+  it('info default output and info subcommands reflect the simplified command tree', async () => {
+    const doctor = cli(['info', 'doctor'], env());
     expect([0, 1]).toContain(doctor.status);
     expect(doctor.stdout).toContain('daemon reachable');
-    // The dashboard has no command group; its URL is surfaced by `info` and it
-    // is served by the daemon whenever it is up.
+
     const info = cli(['info'], env());
     expect(info.status, info.stderr).toBe(0);
+    expect(info.stdout).toContain('daemon');
+    expect(info.stdout).toContain('config');
+    expect(info.stdout).toContain('paths');
     expect(info.stdout).toMatch(/dashboard\s+http:\/\/127\.0\.0\.1:\d+\/dashboard/);
 
-    const { file } = writeJobFile(dir, 'runs-delete-all-job');
-    expect(cli(['jobs', 'new', '--file', file], env()).status).toBe(0);
-    expect(cli(['jobs', 'run-now', 'runs-delete-all-job'], env()).status).toBe(0);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    const withoutForce = cli(['runs', 'delete', '--all'], env());
-    expectCleanError(withoutForce, 'VALIDATION_ERROR');
+    const infoHelp = cli(['info', '--help'], env());
+    expect(infoHelp.status, infoHelp.stderr).toBe(0);
+    expect(infoHelp.stdout).toContain('doctor');
+    expect(infoHelp.stdout).toContain('daemon');
+
+    const daemonHelp = cli(['info', 'daemon', '--help'], env());
+    expect(daemonHelp.status, daemonHelp.stderr).toBe(0);
+    expect(daemonHelp.stdout).toContain('stop');
+    expect(daemonHelp.stdout).toContain('reload');
+
+    const daemonBare = cli(['info', 'daemon'], env());
+    expect(daemonBare.status, daemonBare.stderr).toBe(0);
+    expect(daemonBare.stdout).toContain('Usage: crontick info daemon');
   }, 8000);
+
+  it('jobs delete all requires --force and deletes all when confirmed', async () => {
+    for (const alias of ['bulk-delete-a', 'bulk-delete-b']) {
+      const { file } = writeJobFile(dir, alias);
+      expect(cli(['jobs', 'new', '--file', file], env()).status).toBe(0);
+    }
+
+    const missingForce = cli(['jobs', 'delete', 'all'], env());
+    expectCleanError(missingForce, 'VALIDATION_ERROR');
+    expect(missingForce.stderr).toContain('requires --force');
+    expect(missingForce.stderr).toContain('alias of `all` cannot be targeted');
+
+    const deleted = cli(['jobs', 'delete', 'all', '--force'], env());
+    expect(deleted.status, deleted.stderr).toBe(0);
+    expect(parseCliObject(deleted.stdout)).toMatchObject({ ok: true, deleted: expect.any(Number) });
+
+    const jobs = parseCliTable(cli(['jobs', 'list'], env()).stdout);
+    const aliases = new Set(jobs.map((row) => String(row.alias ?? '')));
+    expect(aliases.has('bulk-delete-a')).toBe(false);
+    expect(aliases.has('bulk-delete-b')).toBe(false);
+  }, 8000);
+
+  it('jobs delete <alias> deletes one job', () => {
+    const { file } = writeJobFile(dir, 'single-delete-job');
+    expect(cli(['jobs', 'new', '--file', file], env()).status).toBe(0);
+    const deleted = cli(['jobs', 'delete', 'single-delete-job'], env());
+    expect(deleted.status, deleted.stderr).toBe(0);
+    expect(parseCliObject(deleted.stdout)).toMatchObject({ ok: true });
+    expect(parseCliTable(cli(['jobs', 'list'], env()).stdout).some((row) => row.alias === 'single-delete-job')).toBe(false);
+  });
 });

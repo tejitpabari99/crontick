@@ -150,6 +150,7 @@ export interface CrontickInfo {
   version: string;
   node: string;
   platform: string;
+  configPath: string;
   paths: CrontickInfoPaths;
   daemon: { running: boolean; pid?: number; port?: number };
   /**
@@ -165,10 +166,6 @@ export interface ConfigPathInfo {
   note: string;
 }
 
-export interface DeleteRunResult {
-  ok: true;
-  deleted: number;
-}
 
 interface HttpTextResponse {
   status: number;
@@ -253,7 +250,14 @@ export class CrontickClient {
   }
 
   /** `id` accepts either the job's GUID id or its alias. */
-  async deleteJob(id: string): Promise<{ ok: true }> {
+  async deleteJob(id?: string, options: { all?: boolean; force?: boolean } = {}): Promise<{ ok: true } | { ok: true; deleted: number }> {
+    if (options.all) {
+      if (!options.force) throw new CrontickError('VALIDATION_ERROR', 'Deleting all jobs requires force:true');
+      const jobs = await this.listJobs();
+      for (const job of jobs) await this.deleteJob(job.id);
+      return { ok: true, deleted: jobs.length };
+    }
+    if (!id) throw new CrontickError('VALIDATION_ERROR', 'Provide a job id or alias, or set all:true (with force:true) to delete every job');
     return this.request<{ ok: true }>('DELETE', `/api/jobs/${encodeURIComponent(id)}`);
   }
 
@@ -276,19 +280,6 @@ export class CrontickClient {
     return this.request<{ ok: true; canceled: boolean }>('POST', `/api/runs/${encodeURIComponent(runId)}/cancel`);
   }
 
-  /**
-   * Delete a run and all crontick-side data associated with it (its log rows).
-   * Pass `{ all: true }` to delete every run; `all` requires `force` as a
-   * safety confirmation (the surfaces enforce this — see CLI/MCP).
-   */
-  async deleteRun(runId?: string, options: { all?: boolean; force?: boolean } = {}): Promise<DeleteRunResult> {
-    if (options.all) {
-      if (!options.force) throw new CrontickError('VALIDATION_ERROR', 'Deleting all runs requires force:true');
-      return this.request<DeleteRunResult>('DELETE', '/api/runs?all=1');
-    }
-    if (!runId) throw new CrontickError('VALIDATION_ERROR', 'Provide a run id, or set all:true (with force:true) to delete every run');
-    return this.request<DeleteRunResult>('DELETE', `/api/runs/${encodeURIComponent(runId)}`);
-  }
 
   async getRun(runId: string): Promise<unknown> {
     return this.request('GET', `/api/runs/${encodeURIComponent(runId)}`);
@@ -421,6 +412,7 @@ export class CrontickClient {
    */
   async info(): Promise<CrontickInfo> {
     const env = this.effectiveEnv() ?? process.env;
+    const config = this.configPath();
     let daemon: CrontickInfo['daemon'] = { running: false };
     let dashboardUrl: string | null = null;
     try {
@@ -429,29 +421,19 @@ export class CrontickClient {
       dashboardUrl = status.port ? `http://127.0.0.1:${String(status.port)}/dashboard` : null;
     } catch {
       daemon = { running: false };
-      // Best-effort: the dashboard is served by the daemon whenever it is up.
-      // Resolve the base URL from the port file (if any) without starting it.
-      try {
-        const baseUrl = await resolveDaemonBaseUrl({
-          daemonUrl: this.options.daemonUrl,
-          env,
-          logger: this.logger.child('info'),
-        });
-        dashboardUrl = `${baseUrl.replace(/\/+$/, '')}/dashboard`;
-      } catch {
-        dashboardUrl = null;
-      }
+      dashboardUrl = null;
     }
     return {
       version: VERSION,
       node: process.version,
       platform: process.platform,
+      configPath: config.path,
       paths: {
         dataDir: dataDir(env),
         jobsDir: jobsDir(env),
         runsDb: runsDbPath(env),
         logsDir: logsDir(env),
-        configFile: configFilePath({ env }),
+        configFile: config.path,
         portFile: portFilePath(env),
         pidFile: pidFilePath(env),
       },
@@ -463,13 +445,14 @@ export class CrontickClient {
   /**
    * Returns the config file path plus a note on how edits take effect. The
    * config file is edited directly by the user; crontick has no set/unset
-   * commands. Library-friendly; used by the `config` surface.
+   * commands. Library-friendly; surfaced directly by `info` and kept as a
+   * library-only helper after the command simplification.
    */
   configPath(): ConfigPathInfo {
     return {
       path: configFilePath({ env: this.effectiveEnv() }),
       note:
-        'Edit this file to change the config. Engine, logging, and per-run retention settings apply automatically on the next run; the store retention cap (retention.maxRunsPerJob) is read at daemon start, so changing it requires `crontick daemon restart`.',
+        'Edit this file to change the config. Engine, logging, and per-run retention settings apply automatically on the next run; the store retention cap (retention.maxRunsPerJob) is read at daemon start, so changing it requires a daemon restart — from the CLI, run `crontick info daemon stop` and then any daemon-backed command to start it again.',
     };
   }
 

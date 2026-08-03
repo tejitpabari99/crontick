@@ -400,22 +400,19 @@ jobs.command('schedule <id>')
     try { print(await client().jobSchedule(id, { n: opts.count as number | undefined })); } catch (err) { handleError(err); }
   });
 
-jobs.command('delete [id]')
-  .description('Delete a job (id or alias), or all jobs with --all --force')
-  .option('--all', 'Delete every job (requires --force)')
-  .option('--force', 'Confirm a destructive --all delete')
-  .action(async (id: string | undefined, opts) => {
+jobs.command('delete <idOrAlias>')
+  .description('Delete a job (id or alias), or delete all jobs with the reserved `all` keyword and --force')
+  .option('--force', 'Confirm a destructive delete when deleting all jobs')
+  .action(async (idOrAlias: string, opts) => {
     try {
-      if (opts.all) {
-        if (!opts.force) throw new CrontickError('VALIDATION_ERROR', '`jobs delete --all` requires --force to confirm deleting every job');
-        const c = client();
-        const all = await c.listJobs();
-        for (const job of all) await c.deleteJob(job.id);
-        print({ ok: true, deleted: all.length });
+      if (idOrAlias === 'all') {
+        if (!opts.force) {
+          throw new CrontickError('VALIDATION_ERROR', '`jobs delete all` requires --force to confirm deleting every job. The literal token `all` is reserved for bulk deletion, so a job alias of `all` cannot be targeted from the CLI.');
+        }
+        print(await client().deleteJob(undefined, { all: true, force: true }));
         return;
       }
-      if (!id) throw new CrontickError('MISSING_ARG', 'Provide a job id or alias, or use --all --force to delete every job');
-      print(await client().deleteJob(id));
+      print(await client().deleteJob(idOrAlias));
     } catch (err) { handleError(err); }
   });
 
@@ -468,21 +465,6 @@ runs.command('cancel <runId>').description('Cancel an in-progress run').action(a
   try { print(await client().cancelRun(runId)); } catch (err) { handleError(err); }
 });
 
-runs.command('delete [runId]')
-  .description('Delete a run and its crontick-side data (logs), or all runs with --all --force')
-  .option('--all', 'Delete every run (requires --force)')
-  .option('--force', 'Confirm a destructive --all delete')
-  .action(async (runId: string | undefined, opts) => {
-    try {
-      if (opts.all) {
-        if (!opts.force) throw new CrontickError('VALIDATION_ERROR', '`runs delete --all` requires --force to confirm deleting every run');
-        print(await client().deleteRun(undefined, { all: true, force: true }));
-        return;
-      }
-      if (!runId) throw new CrontickError('MISSING_ARG', 'Provide a run id, or use --all --force to delete every run');
-      print(await client().deleteRun(runId));
-    } catch (err) { handleError(err); }
-  });
 
 // ── stats ────────────────────────────────────────────────────────────────────
 const stats = groupHelp(program.command('stats').description('Show job/run statistics'));
@@ -526,45 +508,32 @@ share.command('import <file>').description('Import jobs (and run history, if pre
   } catch (err) { handleError(err); }
 });
 
-// ── config ───────────────────────────────────────────────────────────────────
-// The config file is edited directly by the user; crontick has no get/set/unset
-// commands. This prints the path and how edits take effect. startDaemon=false —
-// it is a local, read-only operation.
-program.command('config')
-  .description('Show the config file path (edit that file directly to change config)')
-  .action(() => {
-    try {
-      const info = client(false).configPath();
-      stdout(info.path);
-      stdout('');
-      stdout(info.note);
-    } catch (err) { handleError(err); }
-  });
-
 // ── info ─────────────────────────────────────────────────────────────────────
-program.command('info')
-  .description('Show version, runtime, storage locations, and daemon status')
+const info = program.command('info')
+  .description('Show version, runtime, config path, storage locations, and daemon status')
   .action(async () => {
     try {
-      const info = await client(false).info();
-      stdout(`crontick   ${info.version}`);
-      stdout(`node       ${info.node}`);
-      stdout(`platform   ${info.platform}`);
+      const result = await client(false).info();
+      stdout(`crontick   ${result.version}`);
+      stdout(`node       ${result.node}`);
+      stdout(`platform   ${result.platform}`);
+      stdout('');
+      stdout(result.daemon.running
+        ? `daemon     running (pid ${String(result.daemon.pid ?? '?')}, port ${String(result.daemon.port ?? '?')})`
+        : 'daemon     stopped');
+      stdout(`config     ${result.configPath}`);
+      stdout(result.dashboardUrl
+        ? `dashboard  ${result.dashboardUrl}${result.daemon.running ? '' : ' (available once the daemon is running; it starts automatically on first use)'}`
+        : 'dashboard  available once the daemon is running (it starts automatically on first use)');
       stdout('');
       stdout('paths');
-      for (const [key, value] of Object.entries(info.paths)) stdout(`  ${key.padEnd(11)}${value}`);
-      stdout('');
-      stdout(info.daemon.running
-        ? `daemon     running (pid ${String(info.daemon.pid ?? '?')}, port ${String(info.daemon.port ?? '?')})`
-        : 'daemon     not running');
-      stdout(info.dashboardUrl
-        ? `dashboard  ${info.dashboardUrl}${info.daemon.running ? '' : ' (available once the daemon is running; it starts automatically on first use)'}`
-        : 'dashboard  available once the daemon is running (it starts automatically on first use)');
+      for (const key of ['dataDir', 'jobsDir', 'logsDir', 'runsDb', 'portFile', 'pidFile'] as const) {
+        stdout(`  ${key.padEnd(11)}${result.paths[key]}`);
+      }
     } catch (err) { handleError(err); }
   });
 
-// ── doctor ───────────────────────────────────────────────────────────────────
-program.command('doctor').description('Check system health').action(async () => {
+info.command('doctor').description('Check system health').action(async () => {
   try {
     const result = await client(false).doctor({ mcpScript: mcpScript() });
     for (const check of result.checks) {
@@ -574,36 +543,15 @@ program.command('doctor').description('Check system health').action(async () => 
   } catch (err) { handleError(err); }
 });
 
-// ── daemon ───────────────────────────────────────────────────────────────────
-const daemon = groupHelp(program.command('daemon').description('Manage the crontick daemon'));
-daemon.command('start')
-  .description('Start the daemon')
-  .option('--foreground', 'Run in foreground (blocking)')
-  .action(async (opts) => {
-    try {
-      const foreground = opts.foreground === true;
-      const result = await client().daemonStart({ foreground });
-      if (foreground) process.exit(result.foregroundExitCode ?? 0);
-      stdout(result.started ? `Daemon started on port ${String(result.port ?? '')}` : `Daemon already running on port ${String(result.port ?? '')}`);
-    } catch (err) { handleError(err); }
-  });
-daemon.command('stop').description('Stop the daemon').action(async () => {
+const infoDaemon = groupHelp(info.command('daemon').description('Manage daemon admin operations that remain on the CLI'));
+infoDaemon.command('stop').description('Stop the daemon').action(async () => {
   try {
     const result = await client(false).daemonStop();
     stdout(`${result.message} (mode: ${result.mode})`);
   } catch (err) { handleError(err); }
 });
-daemon.command('status').description('Show daemon status').action(async () => {
-  try { print(await client(false).daemonStatus()); } catch { stdout('Daemon is not running'); }
-});
-daemon.command('reload').description('Reload jobs from disk').action(async () => {
+infoDaemon.command('reload').description('Reload jobs from disk').action(async () => {
   try { print(await client().daemonReload()); } catch (err) { handleError(err); }
-});
-daemon.command('restart').description('Restart the daemon').action(async () => {
-  try {
-    const result = await client().daemonRestart();
-    stdout(`Daemon restarted on port ${String(result.port ?? '')}`);
-  } catch (err) { handleError(err); }
 });
 
 // ── dashboard ────────────────────────────────────────────────────────────────
