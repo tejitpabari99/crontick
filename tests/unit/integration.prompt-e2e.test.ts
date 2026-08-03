@@ -117,7 +117,7 @@ describe('Integration: prompt job session capture through a live daemon', () => 
     const jobId = 'prompt-e2e-job';
     const runAt = new Date(Date.now() + 500).toISOString();
     const created = await apiCall(port, 'POST', '/api/jobs', {
-      id: jobId,
+      alias: jobId,
       schedule: { kind: 'one-shot', runAt },
       action: { kind: 'prompt', prompt: 'hello', engine: 'stub', args: [], reuseSession: true },
     });

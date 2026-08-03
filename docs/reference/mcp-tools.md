@@ -80,7 +80,7 @@ Create and schedule a new job.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | no | generated | Legacy alias hint when non-GUID; omit for a generated GUID |
+| `id` | `string` (GUID) | no | generated | Immutable GUID; omit and let one be generated automatically |
 | `alias` | `string` | no | auto-generated | Human-friendly unique job alias |
 | `description` | `string` | no | — | Job description |
 | `enabled` | `boolean` | no | `true` | Whether job is active |

@@ -212,7 +212,7 @@ describe('Integration: daemon lifecycle', () => {
     // not fire inside the poll window below on its own.
     const farRunAt = new Date(Date.now() + 3_600_000).toISOString();
     const created = await apiCall(port, 'POST', '/api/jobs', {
-      id: jobId,
+      alias: jobId,
       schedule: { kind: 'one-shot', runAt: farRunAt },
       action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'] },
     });
@@ -272,7 +272,7 @@ describe('Integration: daemon lifecycle', () => {
     // reload attempt fails, without waiting on cron-minute granularity.
     const jobId = 'reload-fail-target';
     const created = await apiCall(port, 'POST', '/api/jobs', {
-      id: jobId,
+      alias: jobId,
       schedule: { kind: 'interval', everySec: 1 },
       action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'] },
     });
@@ -337,7 +337,7 @@ describe('Integration: daemon lifecycle', () => {
 
     const jobId = 'retention-reload-target';
     const created = await apiCall(port, 'POST', '/api/jobs', {
-      id: jobId,
+      alias: jobId,
       schedule: { kind: 'interval', everySec: 1 },
       action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'] },
     });
@@ -491,7 +491,7 @@ describe('Integration: daemon lifecycle', () => {
 
     const jobId = 'stop-survivor';
     const created = await apiCall(port, 'POST', '/api/jobs', {
-      id: jobId,
+      alias: jobId,
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: { kind: 'exec', command: node, args: ['-e', script] },
     });
@@ -556,7 +556,7 @@ describe('Integration: daemon lifecycle', () => {
 
     const jobId = 'stop-report-job';
     const created = await apiCall(port, 'POST', '/api/jobs', {
-      id: jobId,
+      alias: jobId,
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: { kind: 'exec', command: node, args: ['-e', script] },
     });
@@ -602,7 +602,7 @@ describe('Integration: daemon lifecycle', () => {
 
     const jobId = 'delete-cancel-job';
     const created = await apiCall(port, 'POST', '/api/jobs', {
-      id: jobId,
+      alias: jobId,
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: { kind: 'exec', command: node, args: ['-e', script] },
     });

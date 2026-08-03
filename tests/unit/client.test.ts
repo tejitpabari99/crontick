@@ -18,7 +18,7 @@ let currentHome: string | undefined;
 const cleanupFns: Array<() => Promise<void> | void> = [];
 
 const testJob = {
-  id: 'client-test-job',
+  alias: 'client-test-job',
   schedule: { kind: 'cron', cron: '0 0 * * *' },
   action: { kind: 'exec', command: 'echo', args: ['hello'] },
 } satisfies JobInput;
@@ -40,6 +40,7 @@ function writeFakeApiDaemon(home: string): string {
   const script = join(home, 'fake-api-daemon.mjs');
   writeFileSync(script, `
 import http from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const home = process.env.CRONTICK_HOME;
@@ -72,8 +73,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/jobs') return json(res, 200, [...jobs.values()]);
   if (req.method === 'POST' && url.pathname === '/api/jobs') {
     const body = await readBody(req);
-    jobs.set(body.id, body);
-    return json(res, 201, body);
+    const job = { ...body, id: body.id ?? randomUUID() };
+    jobs.set(job.id, job);
+    return json(res, 201, job);
   }
   const jobMatch = url.pathname.match(/^\\/api\\/jobs\\/([^/]+)(\\/.*)?$/);
   if (jobMatch) {
@@ -139,7 +141,10 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/export') return json(res, 200, { jobs: [...jobs.values()] });
   if (req.method === 'POST' && url.pathname === '/api/import') {
     const body = await readBody(req);
-    for (const job of body.jobs ?? []) jobs.set(job.id, job);
+    for (const incoming of body.jobs ?? []) {
+      const job = { ...incoming, id: incoming.id ?? randomUUID() };
+      jobs.set(job.id, job);
+    }
     return json(res, 200, { imported: (body.jobs ?? []).length });
   }
   if (req.method === 'POST' && url.pathname === '/api/schedules/validate') return json(res, 200, { ok: true });
@@ -231,7 +236,7 @@ describe('CrontickClient', () => {
 import { createClient } from ${JSON.stringify(distIndexUrl)};
 const client = createClient({ startupTimeoutMs: 10_000 });
 const created = await client.createJob({
-  id: 'bare-default-daemon-script-job',
+  alias: 'bare-default-daemon-script-job',
   schedule: { kind: 'cron', cron: '0 0 * * *' },
   action: { kind: 'exec', command: 'echo', args: ['hello'] },
 });
@@ -285,8 +290,8 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     const server = await startHealthOnlyServer();
     const client = createClient({ daemonUrl: server.baseUrl, startDaemon: false });
 
-    await expect(client.createJob({ ...testJob, id: 'not valid' })).rejects.toBeInstanceOf(Error);
-    await expect(client.importJobs([{ ...testJob, id: 'also invalid' }])).rejects.toBeInstanceOf(Error);
+    await expect(client.createJob({ ...testJob, alias: 'not valid' })).rejects.toBeInstanceOf(Error);
+    await expect(client.importJobs([{ ...testJob, alias: 'also invalid' }])).rejects.toBeInstanceOf(Error);
   });
 
   it('surfaces ENV_FILE_ERROR from createJob without persisting a broken job', async () => {
@@ -295,7 +300,7 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     const missingEnvFile = join(home, 'missing-client.env');
 
     await expect(client.createJob({
-      id: 'client-missing-env-job',
+      alias: 'client-missing-env-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: {
         kind: 'exec',
@@ -316,7 +321,7 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     const home = makeHome();
     const client = createClient({ daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 15_000 });
     const original = await client.createJob({
-      id: 'client-missing-env-update-job',
+      alias: 'client-missing-env-update-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: { kind: 'exec', command: 'echo', args: ['before'] },
     });
@@ -343,7 +348,7 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     const client = createClient({ daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 15_000 });
 
     await client.createJob({
-      id: 'client-cron-tz-update-job',
+      alias: 'client-cron-tz-update-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: { kind: 'exec', command: 'echo', args: ['before'] },
     });
@@ -362,7 +367,7 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     writeFileSync(envFilePath, 'FOO=bar\n', 'utf-8');
 
     await client.createJob({
-      id: 'client-action-modifier-update-job',
+      alias: 'client-action-modifier-update-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: {
         kind: 'script',
@@ -397,7 +402,7 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     const client = createClient({ daemonScript: writeFakeApiDaemon(home), startupTimeoutMs: 5_000 });
 
     const created = await client.createJob(testJob);
-    expect(created).toMatchObject({ alias: testJob.id });
+    expect(created).toMatchObject({ alias: testJob.alias });
     const jobId = created.id;
     await expect(client.listJobs()).resolves.toHaveLength(1);
     await expect(client.getJob(jobId)).resolves.toMatchObject({ id: jobId });
@@ -413,7 +418,7 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     await expect(client.statsSummary()).resolves.toMatchObject({ totalJobs: expect.any(Number) });
     await expect(client.statsJob(jobId)).resolves.toMatchObject({ jobId });
     await expect(client.exportJobs()).resolves.toMatchObject({ jobs: expect.any(Array) });
-    await expect(client.importJobs([{ ...testJob, id: 'imported-client-job' }])).resolves.toMatchObject({ imported: 1 });
+    await expect(client.importJobs([{ ...testJob, alias: 'imported-client-job' }])).resolves.toMatchObject({ imported: 1 });
     await expect(client.validateSchedule(testJob.schedule)).resolves.toMatchObject({ ok: true });
     await expect(client.previewSchedule({ schedule: testJob.schedule, n: 1 })).resolves.toMatchObject({ next: [] });
     await expect(client.daemonReload()).resolves.toMatchObject({ ok: true });
@@ -451,7 +456,7 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
       cwd: home,
     });
     const created = await client.createJob({
-      id: 'client-prompt-job',
+      alias: 'client-prompt-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'prompt', promptFile: 'prompt.txt', engine: 'agency', args: ['--silent'] },
     });
@@ -474,7 +479,7 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     await expect(
       client.importJobs([
         {
-          id: 'client-import-prompt-job',
+          alias: 'client-import-prompt-job',
           schedule: { kind: 'cron', cron: '0 10 * * *' },
           action: { kind: 'prompt', promptFile: promptPath },
         },
@@ -490,7 +495,7 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     });
 
     const created = await client.createJob({
-      id: 'client-session-precedence-job',
+      alias: 'client-session-precedence-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'prompt', prompt: 'hello', sessionId: 'sess-client1', reuseSession: true },
     });
@@ -507,7 +512,7 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     const home = makeHome();
     const client = createClient({ daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 10_000 });
 
-    const created = await client.createJob({ ...testJob, id: 'client-schema-job' });
+    const created = await client.createJob({ ...testJob, alias: 'client-schema-job' });
 
     expect(readFileSync(join(home, 'jobs', `${created.id}.schema.json`), 'utf-8')).toBe(jobJsonSchemaText());
   }, 15_000);

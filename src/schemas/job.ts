@@ -100,9 +100,8 @@ export const RetrySchema = z.object({
 // ── Job ───────────────────────────────────────────────────────────────────────
 
 /**
- * Kebab-case pattern shared by the (legacy/current) human-friendly `alias`
- * field. Exported so store.ts can recognize a pre-GUID on-disk job file
- * (whose `id` is a kebab-case string, not a UUID) during migration.
+ * Kebab-case pattern the human-friendly `alias` field must match (e.g.
+ * "my-job"). Exported so callers can validate an alias against the same rule.
  */
 export const JOB_ALIAS_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 

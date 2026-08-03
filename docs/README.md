@@ -95,7 +95,7 @@ observable behavior without updating relevant docs is incomplete.
 | [README.md](decisions/README.md) | ADR index and process |
 | [0000-template.md](decisions/0000-template.md) | Template for new ADRs |
 
-See [decisions/README.md](decisions/README.md) for the full list of architecture decision records (ADRs 0001-0026).
+See [decisions/README.md](decisions/README.md) for the full list of architecture decision records (ADRs 0001-0027).
 
 ### specs/
 

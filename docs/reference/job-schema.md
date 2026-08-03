@@ -29,9 +29,7 @@ auto-generated from a small built-in word list plus a random integer 1-1000
 (retried on collision -- see `generateAlias` below). Anywhere a job identifier
 is accepted (CLI, MCP, HTTP API), you may pass either the GUID `id` or the
 `alias`; an exact GUID match is tried first, falling back to an alias lookup,
-and an unresolved value returns `JOB_NOT_FOUND`. A legacy caller that still
-passes a human string as `id` (not a GUID) has it transparently coerced to
-`alias` instead (see `coerceLegacyIdToAlias` in [library-api.md](library-api.md)).
+and an unresolved value returns `JOB_NOT_FOUND`.
 
 ---
 
@@ -149,7 +147,7 @@ See [jobs.md](../concepts/jobs.md) for the conceptual explanation and [cli.md](c
 
 ```json
 {
-  "id": "daily-backup",
+  "alias": "daily-backup",
   "description": "Nightly database backup",
   "enabled": true,
   "schedule": {
@@ -171,7 +169,7 @@ See [jobs.md](../concepts/jobs.md) for the conceptual explanation and [cli.md](c
 
 ```json
 {
-  "id": "health-check",
+  "alias": "health-check",
   "enabled": true,
   "schedule": {
     "kind": "interval",
@@ -191,7 +189,7 @@ See [jobs.md](../concepts/jobs.md) for the conceptual explanation and [cli.md](c
 
 ```json
 {
-  "id": "morning-summary",
+  "alias": "morning-summary",
   "description": "Generate a daily summary via LLM",
   "enabled": true,
   "schedule": {
@@ -215,7 +213,7 @@ See [jobs.md](../concepts/jobs.md) for the conceptual explanation and [cli.md](c
 
 ```json
 {
-  "id": "migration-run",
+  "alias": "migration-run",
   "enabled": true,
   "schedule": {
     "kind": "one-shot",

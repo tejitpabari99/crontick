@@ -54,7 +54,8 @@ PRAGMA foreign_keys=ON;
 
 | Column | Type | Constraints |
 |--------|------|-------------|
-| `id` | TEXT | PRIMARY KEY |
+| `id` | TEXT | PRIMARY KEY (GUID) |
+| `alias` | TEXT | nullable (human-friendly identifier; unique among live jobs via `idx_jobs_alias`) |
 | `json` | TEXT | NOT NULL (full Job JSON) |
 | `updated_at` | INTEGER | NOT NULL (epoch ms) |
 
@@ -72,7 +73,8 @@ PRAGMA foreign_keys=ON;
 | `duration_ms` | INTEGER | nullable |
 | `pid` | INTEGER | nullable (set once the child process is spawned; absent for `missed` runs, which never spawn a process) |
 | `output_truncated` | INTEGER | NOT NULL DEFAULT 0 (0/1; set once captured output hits `retention.maxOutputBytesPerRun`) |
-| `session_id` | TEXT | nullable (prompt-engine session id captured for this run, or explicitly provided; added by a guarded backward-compatible migration for older DBs) |
+| `session_id` | TEXT | nullable (prompt-engine session id captured for this run, or explicitly provided; absent for non-prompt runs) |
+| `command` | TEXT | nullable (redacted resolved command line actually spawned for this run; absent for `queued`/`missed` runs) |
 
 #### `run_logs`
 
@@ -104,6 +106,11 @@ never been observed live, so no gap can be computed for it yet.
 | `idx_runs_job_id_started_at` | runs | `job_id, started_at` |
 | `idx_runs_started_at` | runs | `started_at` |
 | `idx_run_logs_run_id` | run_logs | `run_id` |
+| `idx_jobs_alias` | jobs | `alias` (UNIQUE, partial: `WHERE alias IS NOT NULL`) |
+
+`idx_jobs_alias` is a partial unique index enforcing alias uniqueness at the DB layer as a
+defense-in-depth backstop (app-level checks in `api.ts` via `generateAlias`/`getJob` are the
+primary enforcement); the `WHERE alias IS NOT NULL` clause keeps multiple aliasless jobs allowed.
 
 `idx_runs_job_id_started_at` is a composite `(job_id, started_at)` index; the single-column
 `idx_runs_job_id` it would otherwise shadow is deliberately never created, since every query the

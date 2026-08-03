@@ -98,7 +98,7 @@ describe('CTD-004 create/update schedule atomicity', () => {
 
     try {
       const result = await apiCall(port, 'POST', '/api/jobs', {
-        id: 'invalid-create',
+        alias: 'invalid-create',
         schedule: { kind: 'cron', cron: '61 * * * *' },
         action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
       });
@@ -168,7 +168,7 @@ describe('CTD-004 create/update schedule atomicity', () => {
 
     try {
       const result = await apiCall(port, 'POST', '/api/jobs', {
-        id: 'missing-env-create',
+        alias: 'missing-env-create',
         schedule: { kind: 'cron', cron: '0 0 * * *' },
         action: {
           kind: 'exec',

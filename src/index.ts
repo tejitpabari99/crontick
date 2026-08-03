@@ -29,7 +29,6 @@ export {
   buildJobFromCreateOptions,
   buildJobPatchFromUpdateOptions,
   applyConfigDefaults,
-  coerceLegacyIdToAlias,
   generateAlias,
   normalizeJobInput,
   normalizeJobPatch,

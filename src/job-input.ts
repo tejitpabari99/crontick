@@ -128,15 +128,7 @@ export interface NormalizeJobInputOptions {
 }
 
 export interface JobCreateCliOptions {
-  /**
-   * The positional identifier argument on `crontick new`/`update`. On create,
-   * when `alias` is not separately provided, this value is used AS the
-   * alias (not the immutable GUID `id`, which is always generated -- see
-   * buildJobFromCreateOptions). Kept optional so a job can be created with
-   * no alias hint at all (one is then auto-generated -- see generateAlias).
-   */
-  id?: string;
-  /** Explicit alias, taking precedence over the positional `id` on create; the only way to rename a job's alias on update. */
+  /** Explicit alias on create; the only way to name a job's alias. When omitted, one is auto-generated (see generateAlias). Also the only way to rename a job's alias on update. */
   alias?: string;
   engineArgs?: string[];
   rawArgs?: string[];
@@ -171,43 +163,18 @@ export interface JobCreateCliOptions {
   force?: boolean;
 }
 
-export type JobPatchCliOptions = Omit<JobCreateCliOptions, 'id'>;
+export type JobPatchCliOptions = JobCreateCliOptions;
 
 const DEFAULT_MAX_PROMPT_FILE_BYTES = 1024 * 1024;
-
-/**
- * Pre-GUID job definitions (hand-written files, older library callers, MCP
- * callers that still pass the field they always used to, and raw HTTP
- * clients that POST/PUT directly to the daemon API) supplied a kebab-case
- * `id` that WAS the human-friendly identifier. Under the GUID identity model
- * `id` must be a GUID (or omitted, so one is generated), so a non-GUID `id`
- * with no explicit `alias` is treated as an alias hint instead of being
- * rejected outright -- the same back-compat behavior the daemon's on-disk
- * migration applies to legacy job files (see store.ts). Operates on `unknown`
- * (not just JobCreateInput) so it can also normalize a raw HTTP request body
- * in api.ts before schema validation.
- */
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-export function coerceLegacyIdToAlias(input: unknown): unknown {
-  if (!isRecord(input)) return input;
-  if (typeof input.id === 'string' && input.alias === undefined && !UUID_PATTERN.test(input.id)) {
-    const { id: _legacyId, ...rest } = input;
-    void _legacyId;
-    return { ...rest, alias: input.id };
-  }
-  return input;
-}
 
 /** Validates and normalizes a full job create input into the canonical persisted shape. */
 export function normalizeJobInput(
   input: JobCreateInput,
   options: NormalizeJobInputOptions = {},
 ): Job {
-  const coerced = coerceLegacyIdToAlias(input) as JobCreateInput;
   const normalized = {
-    ...coerced,
-    action: normalizeActionInput(coerced.action, options, true),
+    ...input,
+    action: normalizeActionInput(input.action, options, true),
   };
 
   const parsed = JobSchema.safeParse(normalized);
@@ -395,9 +362,7 @@ export function buildJobFromCreateOptions(
   }
 
   const jobData = {
-    // The positional `id` argument is a back-compat alias hint, not the
-    // immutable GUID `id` (which is always generated -- see normalizeJobInput).
-    alias: input.alias ?? input.id,
+    alias: input.alias,
     description: input.desc,
     enabled: input.enabled,
     schedule: buildSchedule(input),

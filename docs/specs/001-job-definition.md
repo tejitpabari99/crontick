@@ -44,8 +44,7 @@ deterministic in tests. Every surface that accepts a job identifier (CLI
 positional, MCP `id` params, HTTP path segments) accepts EITHER the GUID `id`
 OR the `alias` and resolves it internally: an exact GUID match wins, otherwise
 the value is looked up by alias. An unresolved identifier fails with
-`JOB_NOT_FOUND`. Legacy callers that still pass a human string as `id` (not a
-GUID) have it transparently coerced to `alias` instead.
+`JOB_NOT_FOUND`.
 
 ## Requirements
 
@@ -80,7 +79,7 @@ GUID) have it transparently coerced to `alias` instead.
 1. Client receives a job definition (create or update), plus any surface-specific overwrite intent (`--force`, `force: true`, or `force=1|true`) out of band from the persisted `Job` object. The persisted field name is `action.envFile`; the CLI sets it only through full job/patch JSON supplied with `--file`.
 2. Input is normalized via `normalizeJobInput` (reads `promptFile` if present, applies defaults).
 3. The normalized input is validated against `JobSchema` (Zod discriminated union).
-4. On create, if the alias (or a legacy human `id` coerced to alias) already resolves to a live job and overwrite intent was not supplied, the operation fails with `JOB_ALREADY_EXISTS` before any persistence.
+4. On create, if the alias already resolves to a live job and overwrite intent was not supplied, the operation fails with `JOB_ALREADY_EXISTS` before any persistence.
 5. Schedule validation and any `action.envFile` preflight run before any persistence; if either fails, no new job is written and an existing job remains unchanged.
 6. On CLI update, omitted flags leave existing fields unchanged; advanced action patches use `--file` rather than dedicated action modifier flags.
 7. On success, the daemon API persists via `Store.upsertJob()`: writes JSON file + SQLite row + schema sidecar.

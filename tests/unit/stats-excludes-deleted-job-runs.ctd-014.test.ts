@@ -116,7 +116,7 @@ async function waitForTerminalRun(runId: string, maxMs = 15_000): Promise<RunRec
 
 function jobDefinition(id: string, line: string) {
   return {
-    id,
+    alias: id,
     schedule: { kind: 'interval' as const, everySec: 3600 },
     action: {
       kind: 'exec' as const,

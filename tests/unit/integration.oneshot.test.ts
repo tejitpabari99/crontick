@@ -99,7 +99,7 @@ describe('Integration: one-shot jobs through a live daemon', () => {
     const jobId = 'oneshot-fires-once';
     const runAt = new Date(Date.now() + 1500).toISOString();
     const created = await apiCall(port, 'POST', '/api/jobs', {
-      id: jobId,
+      alias: jobId,
       schedule: { kind: 'one-shot', runAt },
       action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'] },
     });
@@ -135,7 +135,7 @@ describe('Integration: one-shot jobs through a live daemon', () => {
     const jobId = 'oneshot-past-skipped';
     const runAt = new Date(Date.now() - 3_600_000).toISOString();
     const created = await apiCall(port, 'POST', '/api/jobs', {
-      id: jobId,
+      alias: jobId,
       schedule: { kind: 'one-shot', runAt },
       action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'] },
     });

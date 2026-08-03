@@ -10,7 +10,7 @@ import type { Runner } from './runner.js';
 import { JobSchema } from '../schemas/job.js';
 import { CrontickError } from '../errors.js';
 import { VERSION } from '../version.js';
-import { applyConfigDefaults, coerceLegacyIdToAlias, generateAlias } from '../job-input.js';
+import { applyConfigDefaults, generateAlias } from '../job-input.js';
 import {
   buildDashboardData,
   buildDashboardStats,
@@ -100,10 +100,7 @@ async function handleRequest(
 
     if (method === 'POST' && path === '/api/jobs') {
       const body = await readBody(req);
-      // Back-compat: a raw HTTP body with a legacy (pre-GUID) kebab-case `id`
-      // and no explicit `alias` is treated as an alias hint, not rejected --
-      // see coerceLegacyIdToAlias in job-input.ts.
-      const parsed = JobSchema.safeParse(coerceLegacyIdToAlias(body));
+      const parsed = JobSchema.safeParse(body);
       if (!parsed.success) {
         return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid job', parsed.error.format());
       }
@@ -395,28 +392,19 @@ async function handleRequest(
       const body = await readBody(req);
       const jobs = Array.isArray(body?.jobs) ? body.jobs : [];
       const results: Array<{ id: string; ok: boolean; error?: string }> = [];
-      // Tracks pre-GUID `id` -> newly-assigned GUID `id` for any job in this
-      // batch that got coerced (see coerceLegacyIdToAlias) so the `runs`
-      // array below (which references jobs by the SAME pre-migration id) can
-      // be remapped to still associate with the migrated job.
-      const legacyIdRemap = new Map<string, string>();
       for (const raw of jobs) {
-        // Back-compat: a pre-GUID export/backup with a kebab-case `id` and no
-        // explicit `alias` is treated as an alias hint (see POST /api/jobs).
-        const parsed = JobSchema.safeParse(coerceLegacyIdToAlias(raw));
+        const parsed = JobSchema.safeParse(raw);
         if (parsed.success) {
           let job = applyConfigDefaults(parsed.data);
-          const rawId = isRecord(raw) && typeof raw.id === 'string' ? raw.id : undefined;
           // Import is a restore/merge operation, not a strict create: if this
           // row's id-or-alias already matches a currently-live job (e.g.
-          // re-importing the same backup, or a legacy id that resolves via
-          // alias), overwrite that job in place -- keeping ITS GUID id --
-          // rather than colliding on the alias-uniqueness constraint (see
-          // store.ts) with a brand-new GUID. This mirrors POST /api/jobs's
-          // --force semantics and keeps re-import idempotent.
+          // re-importing the same backup), overwrite that job in place --
+          // keeping ITS GUID id -- rather than colliding on the
+          // alias-uniqueness constraint (see store.ts) with a brand-new GUID.
+          // This mirrors POST /api/jobs's --force semantics and keeps
+          // re-import idempotent.
           const existing = (job.alias ? ctx.store.getJob(job.alias) : undefined) ?? ctx.store.getJob(job.id);
           if (existing) job = { ...job, id: existing.id };
-          if (rawId !== undefined && rawId !== job.id) legacyIdRemap.set(rawId, job.id);
           try {
             // Best-effort: the alias-uniqueness DB index (see store.ts) can
             // still reject an import row whose alias collides with a
@@ -437,16 +425,9 @@ async function handleRequest(
       // Passed through unvalidated (`unknown[]`, not cast to `Run[]`) --
       // Store.importRuns() validates each row itself (see RunImportSchema)
       // and skips malformed rows individually, the same way the jobs loop
-      // above does, instead of trusting the wire payload's shape. jobId is
-      // remapped first (legacyIdRemap) so a run belonging to a job migrated
-      // earlier in this same batch stays associated with it.
+      // above does, instead of trusting the wire payload's shape.
       const runs = Array.isArray(body?.runs) ? body.runs : undefined;
-      const remappedRuns = runs?.map((r) =>
-        isRecord(r) && typeof r.jobId === 'string' && legacyIdRemap.has(r.jobId)
-          ? { ...r, jobId: legacyIdRemap.get(r.jobId) }
-          : r,
-      );
-      const runsResult = remappedRuns ? ctx.store.importRuns(remappedRuns) : undefined;
+      const runsResult = runs ? ctx.store.importRuns(runs) : undefined;
       return sendJson(res, 200, {
         imported: results.filter((r) => r.ok).length,
         results,
@@ -497,10 +478,6 @@ async function handleRequest(
 function forceParam(url: URL): boolean {
   const raw = (url.searchParams.get('force') ?? '').toLowerCase();
   return raw === '1' || raw === 'true';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 
 function sendJobNotFoundError(res: http.ServerResponse, idOrAlias: string): void {

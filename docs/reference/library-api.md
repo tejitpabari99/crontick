@@ -620,14 +620,6 @@ function normalizeJobInput(input: JobCreateInput, options?: NormalizeJobInputOpt
 function normalizeJobPatch(id: string, existing: Job, patch: JobPatchInput, options?: NormalizeJobInputOptions): Job;
 ```
 
-### coerceLegacyIdToAlias
-
-```ts
-function coerceLegacyIdToAlias(input: unknown): unknown;
-```
-
-Back-compat helper: if `input.id` is a non-GUID string and `input.alias` is unset, moves that string to `alias` and drops `id` (so `JobSchema`'s default assigns a fresh GUID). Used internally by `normalizeJobInput` and the daemon's HTTP/import handlers so legacy callers that still pass a human string as `id` keep working unchanged.
-
 ### generateAlias
 
 ```ts

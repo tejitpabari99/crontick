@@ -606,7 +606,7 @@ describe('CTD-003 shared secret redaction', () => {
     try {
       const jobId = 'ctd003-job-response-redaction';
       const created = await fixture.client.createJob({
-        id: jobId,
+        alias: jobId,
         schedule: { kind: 'cron', cron: '0 0 * * *' },
         action: {
           kind: 'exec',

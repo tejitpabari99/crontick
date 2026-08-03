@@ -36,11 +36,11 @@ Because runs are permanently tied to the GUID rather than a reusable human
 string, deleting a job and recreating it (even reusing the same alias) never
 inherits the previous job's run history or dashboard status.
 
-Existing on-disk jobs are migrated in place on daemon startup: the old id becomes
-the `alias`, a fresh GUID becomes the `id`, and run history is remapped to the new
-GUID. For back-compat, a caller that still passes a non-GUID human string as `id`
-has it transparently coerced to `alias` (`coerceLegacyIdToAlias`) so a fresh GUID
-is assigned.
+Jobs are created directly in the GUID + `alias` shape: `id` is a fresh GUID and
+`alias` is either caller-supplied or auto-generated. There is no on-disk
+migration and no coercion of a non-GUID `id` to an alias -- crontick is
+pre-production, so no legacy job files exist to convert (see
+[ADR 0027](0027-remove-pre-production-migration-and-legacy-code.md)).
 
 ## Alternatives considered
 
@@ -67,7 +67,6 @@ the ergonomics while fixing the key.
 **Harder / accepted tradeoffs:**
 
 - Two identity fields must be kept consistent everywhere jobs are serialized.
-- A one-time in-place migration runs on first startup after upgrade.
 - Aliases are unique only among live jobs, so a freed alias can later point at a
   different GUID than it once did — callers that cached a run's `jobId` should key
   on the GUID, not the alias.

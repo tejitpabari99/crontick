@@ -382,6 +382,32 @@ describe('Store', () => {
     expect(store.listRuns({ jobId: 'session-run-job' })[0].sessionId).toBe('sess-persisted-1');
   });
 
+  it('updateRun persists command and getRun/listRuns surface it', () => {
+    const run = store.insertRun('command-run-job');
+    expect(store.getRun(run.id)?.command).toBeUndefined();
+    store.updateRun(run.id, { command: 'node script.js --flag' });
+    expect(store.getRun(run.id)?.command).toBe('node script.js --flag');
+    expect(store.listRuns({ jobId: 'command-run-job' })[0].command).toBe('node script.js --flag');
+  });
+
+  it('creates a fresh schema whose jobs/runs tables include the alias, session_id, and command columns', () => {
+    // The schema is created directly in its final shape (no migrations), so a
+    // brand-new database already carries every column. Assert against the
+    // on-disk file via an independent read connection.
+    const db = new DatabaseSync(join(dir, 'runs.db'));
+    try {
+      const jobsCols = (db.prepare('PRAGMA table_info(jobs)').all() as Array<{ name: string }>).map((c) => c.name);
+      const runsCols = (db.prepare('PRAGMA table_info(runs)').all() as Array<{ name: string }>).map((c) => c.name);
+      expect(jobsCols).toContain('alias');
+      expect(runsCols).toContain('session_id');
+      expect(runsCols).toContain('command');
+      const indexes = (db.prepare('PRAGMA index_list(jobs)').all() as Array<{ name: string }>).map((i) => i.name);
+      expect(indexes).toContain('idx_jobs_alias');
+    } finally {
+      db.close();
+    }
+  });
+
   it('tailLogs returns only logs after sinceTs', async () => {
     const run = store.insertRun('tail-job');
     store.appendLog(run.id, 'stdout', Buffer.from('before\n'));
@@ -404,14 +430,16 @@ describe('Store', () => {
 
   // ── File persistence ────────────────────────────────────────────────────────
 
-  it('loadJobsFromDisk picks up JSON files', () => {
+  it('loadJobsFromDisk picks up JSON files and resolves by id and alias', () => {
     const jobsPath = join(dir, 'jobs');
-    const jobJson = JSON.stringify(execJob('disk-job'));
-    writeFileSync(join(jobsPath, 'disk-job.json'), jobJson);
+    const id = '11111111-1111-4111-8111-111111111111';
+    const job = { ...execJob(id), alias: 'disk-job' } as Job;
+    writeFileSync(join(jobsPath, `${id}.json`), JSON.stringify(job));
 
     const store2 = makeStore(dir);
     store2.open();
     store2.loadJobsFromDisk();
+    expect(store2.getJob(id)).toBeTruthy();
     expect(store2.getJob('disk-job')).toBeTruthy();
     store2.close();
   });

@@ -7,6 +7,7 @@ import {
   normalizeJobPatch,
   buildJobFromCreateOptions,
   buildJobPatchFromUpdateOptions,
+  generateAlias,
   JobPatchInputSchema,
   type ActionInput,
   type JobCreateInput,
@@ -318,7 +319,7 @@ describe('buildJobFromCreateOptions/buildJobPatchFromUpdateOptions — JSON file
     const filePath = join(dir, 'job.json');
     writeFileSync(filePath, `\uFEFF${JSON.stringify(baseJob({ kind: 'exec', command: 'echo', args: ['bom'] }), null, 2)}`, 'utf-8');
 
-    const job = buildJobFromCreateOptions({ id: 'ignored-by-file', file: 'job.json' }, { cwd: dir });
+    const job = buildJobFromCreateOptions({ file: 'job.json' }, { cwd: dir });
     expect(job).toMatchObject({
       alias: 'prompt-job',
       action: { kind: 'exec', command: 'echo', args: ['bom'] },
@@ -340,7 +341,7 @@ describe('buildJobFromCreateOptions/buildJobPatchFromUpdateOptions — JSON file
     writeFileSync(filePath, '{ nope', 'utf-8');
 
     expectJsonFileValidationError(
-      () => buildJobFromCreateOptions({ id: 'ignored-by-file', file: 'bad-job.json' }, { cwd: dir }),
+      () => buildJobFromCreateOptions({ file: 'bad-job.json' }, { cwd: dir }),
       filePath,
       'expected a JSON object matching the crontick job schema',
     );
@@ -362,28 +363,28 @@ describe('buildJobFromCreateOptions/buildJobPatchFromUpdateOptions — JSON file
 describe('buildJobFromCreateOptions — --exec verbatim + rawArgs (L6)', () => {
   it('takes the command verbatim and args from rawArgs, with no whitespace splitting', () => {
     const job = buildJobFromCreateOptions({
-      id: 'exec-job', cron: '0 9 * * *', exec: 'node', rawArgs: ['-e', 'process.exit(0)'],
+      cron: '0 9 * * *', exec: 'node', rawArgs: ['-e', 'process.exit(0)'],
     });
     expect(job.action).toMatchObject({ kind: 'exec', command: 'node', args: ['-e', 'process.exit(0)'] });
   });
 
   it('preserves a single argument containing spaces intact (the naive-split bug this fixes)', () => {
     const job = buildJobFromCreateOptions({
-      id: 'exec-job', cron: '0 9 * * *', exec: 'echo', rawArgs: ['hello world'],
+      cron: '0 9 * * *', exec: 'echo', rawArgs: ['hello world'],
     });
     expect(job.action).toMatchObject({ kind: 'exec', command: 'echo', args: ['hello world'] });
   });
 
   it('keeps a command string containing spaces intact when no rawArgs are given', () => {
     const job = buildJobFromCreateOptions({
-      id: 'exec-job', cron: '0 9 * * *', exec: 'echo hello world',
+      cron: '0 9 * * *', exec: 'echo hello world',
     });
     expect(job.action).toMatchObject({ kind: 'exec', command: 'echo hello world', args: [] });
   });
 
   it('produces action output identical to the library/MCP args-array form for the same intent', () => {
     const viaExec = buildJobFromCreateOptions({
-      id: 'exec-job', cron: '0 9 * * *', exec: 'node', rawArgs: ['-e', 'a b'],
+      cron: '0 9 * * *', exec: 'node', rawArgs: ['-e', 'a b'],
     });
     const viaArgsArray = normalizeJobInput(baseJob({ kind: 'exec', command: 'node', args: ['-e', 'a b'] }));
     expect(viaExec.action).toEqual(viaArgsArray.action);
@@ -391,7 +392,7 @@ describe('buildJobFromCreateOptions — --exec verbatim + rawArgs (L6)', () => {
 
   it('rejects rawArgs (--) on --script, unchanged from before L6', () => {
     expect(() =>
-      buildJobFromCreateOptions({ id: 'exec-job', cron: '0 9 * * *', script: 'echo hi', rawArgs: ['extra'] }),
+      buildJobFromCreateOptions({ cron: '0 9 * * *', script: 'echo hi', rawArgs: ['extra'] }),
     ).toThrow(/valid only with --exec/);
   });
 });
@@ -405,10 +406,10 @@ describe('buildJobFromCreateOptions — --exec verbatim + rawArgs (L6)', () => {
 describe('buildJobFromCreateOptions — explicit --arg (Blocker 1)', () => {
   it('builds exec args from --arg, equivalent to the -- convention for the same values', () => {
     const viaArg = buildJobFromCreateOptions({
-      id: 'exec-job', cron: '0 9 * * *', exec: 'node', args: ['-e', 'process.exit(0)'],
+      cron: '0 9 * * *', exec: 'node', args: ['-e', 'process.exit(0)'],
     });
     const viaDashDash = buildJobFromCreateOptions({
-      id: 'exec-job', cron: '0 9 * * *', exec: 'node', rawArgs: ['-e', 'process.exit(0)'],
+      cron: '0 9 * * *', exec: 'node', rawArgs: ['-e', 'process.exit(0)'],
     });
     expect(viaArg.action).toEqual(viaDashDash.action);
   });
@@ -416,14 +417,14 @@ describe('buildJobFromCreateOptions — explicit --arg (Blocker 1)', () => {
   it('round-trips a single --arg value containing spaces, embedded double quotes, and a leading dash', () => {
     const tricky = '-flag with spaces and "embedded quotes"';
     const job = buildJobFromCreateOptions({
-      id: 'exec-job', cron: '0 9 * * *', exec: 'echo', args: [tricky],
+      cron: '0 9 * * *', exec: 'echo', args: [tricky],
     });
     expect(job.action).toMatchObject({ kind: 'exec', command: 'echo', args: [tricky] });
   });
 
   it('supports repeatable --arg for multiple values', () => {
     const job = buildJobFromCreateOptions({
-      id: 'exec-job', cron: '0 9 * * *', exec: 'node', args: ['-e', 'a b', '--weird-flag'],
+      cron: '0 9 * * *', exec: 'node', args: ['-e', 'a b', '--weird-flag'],
     });
     expect(job.action).toMatchObject({ kind: 'exec', args: ['-e', 'a b', '--weird-flag'] });
   });
@@ -431,7 +432,7 @@ describe('buildJobFromCreateOptions — explicit --arg (Blocker 1)', () => {
   it('works identically for --prompt actions', () => {
     const tricky = '-flag with spaces and "embedded quotes"';
     const job = buildJobFromCreateOptions({
-      id: 'prompt-job', cron: '0 9 * * *', prompt: 'hi', args: [tricky],
+      cron: '0 9 * * *', prompt: 'hi', args: [tricky],
     });
     expect(job.action).toMatchObject({ kind: 'prompt', args: [tricky] });
   });
@@ -439,14 +440,14 @@ describe('buildJobFromCreateOptions — explicit --arg (Blocker 1)', () => {
   it('rejects combining --arg with -- positional args in the same command (ambiguous)', () => {
     expect(() =>
       buildJobFromCreateOptions({
-        id: 'exec-job', cron: '0 9 * * *', exec: 'node', args: ['-e'], rawArgs: ['x'],
+        cron: '0 9 * * *', exec: 'node', args: ['-e'], rawArgs: ['x'],
       }),
     ).toThrow(/Cannot combine --arg/);
   });
 
   it('rejects --arg on --script, same as -- positional args', () => {
     expect(() =>
-      buildJobFromCreateOptions({ id: 'exec-job', cron: '0 9 * * *', script: 'echo hi', args: ['extra'] }),
+      buildJobFromCreateOptions({ cron: '0 9 * * *', script: 'echo hi', args: ['extra'] }),
     ).toThrow(/valid only with --exec/);
   });
 });
@@ -785,6 +786,39 @@ describe('normalizeJobPatch — args-only prompt patch validation (C-1)', () => 
     // --session-id is a reserved crontick arg that the runtime would reject
     const patch = mcpPatch({ action: { kind: 'prompt', args: ['--session-id', 'x'] } });
     expect(() => normalizeJobPatch('job-1', existing, patch)).toThrow();
+  });
+});
+
+// ── generateAlias — auto-generated unique alias ──────────────────────────────
+describe('generateAlias', () => {
+  it('generates a <word>-<1-1000> alias using the injected word list and RNG', () => {
+    // random() is called twice per attempt: first to pick the word index,
+    // then for the 1-1000 suffix. A constant 0 RNG picks words[0] and suffix 1.
+    const alias = generateAlias(() => false, { words: ['atlas', 'birch'], random: () => 0 });
+    expect(alias).toBe('atlas-1');
+  });
+
+  it('retries on collision until an untaken candidate is produced', () => {
+    let calls = 0;
+    // isTaken reports the first two candidates as taken, the third as free.
+    const isTaken = (): boolean => {
+      calls++;
+      return calls <= 2;
+    };
+    const alias = generateAlias(isTaken, { words: ['comet'], random: () => 0 });
+    expect(alias).toBe('comet-1');
+    expect(calls).toBe(3);
+  });
+
+  it('throws ALIAS_GENERATION_FAILED once every attempt collides', () => {
+    let error: unknown;
+    try {
+      generateAlias(() => true, { words: ['dune'], random: () => 0 });
+    } catch (err) {
+      error = err;
+    }
+    expect(error).toBeInstanceOf(CrontickError);
+    expect((error as CrontickError).code).toBe('ALIAS_GENERATION_FAILED');
   });
 });
 

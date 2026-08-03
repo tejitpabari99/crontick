@@ -12,11 +12,6 @@ import { CrontickError, ORPHAN_RUN_ERROR_MESSAGE } from '../errors.js';
 import { jobJsonSchemaText } from '../schema-json.js';
 import { nullLogger, type Logger } from '../logger.js';
 
-/** Matches the shape produced by node:crypto's randomUUID(). Used to tell a
- *  migrated (GUID) job id apart from a pre-migration (kebab-case alias-as-id)
- *  one when loading job files from disk. */
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 // 'missed' is a terminal status recorded by recordMissedRun() for a scheduled
@@ -189,14 +184,12 @@ export class Store {
   /**
    * Creates every table/index a fresh database needs, in one idempotent pass.
    * `CREATE TABLE/INDEX IF NOT EXISTS` throughout, so calling this again on an
-   * already-initialized database (e.g. a second open()) is a no-op — there is
-   * no migration ledger and no prior on-disk shape to reconcile: databases
-   * created by crontick versions before 1.0.0 are not a supported input.
-   *
-   * `jobs.alias` is the one exception: it was added after the GUID/alias
-   * identity model was introduced, so an existing (older) database's `jobs`
-   * table predates it. `migrateAliasColumn()` adds it with a guarded
-   * `ALTER TABLE` so an older on-disk database still opens without throwing.
+   * already-initialized database (e.g. a second open()) is a no-op. There is
+   * no migration ledger and no prior on-disk shape to reconcile: crontick has
+   * a single fixed schema and always creates it in its final shape. Every
+   * column (including `jobs.alias`, `runs.session_id`, and `runs.command`) is
+   * declared directly in its `CREATE TABLE`, and the alias-uniqueness index is
+   * created alongside the tables.
    */
   private createSchema(): void {
     this.db.exec(`
@@ -244,75 +237,14 @@ export class Store {
       CREATE INDEX IF NOT EXISTS idx_runs_job_id_started_at ON runs(job_id, started_at);
       CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs(started_at);
       CREATE INDEX IF NOT EXISTS idx_run_logs_run_id ON run_logs(run_id);
+
+      -- Alias uniqueness enforced at the DB layer as a defense-in-depth
+      -- backstop against a race between two concurrent create/update requests
+      -- (app-level checks in api.ts via generateAlias/getJob are the primary
+      -- enforcement). Partial index so multiple NULL aliases stay allowed.
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_alias ON jobs(alias) WHERE alias IS NOT NULL;
     `);
-    this.migrateAliasColumn();
-    this.migrateRunsSessionIdColumn();
-    this.migrateRunsCommandColumn();
   }
-
-  /**
-   * Best-effort schema upgrade for a `jobs` table created before the
-   * GUID/alias identity model existed: adds the `alias` column (if missing)
-   * and a partial unique index enforcing alias uniqueness at the DB layer
-   * (app-level checks in api.ts are the primary enforcement -- see
-   * generateAlias/getJob -- this is a defense-in-depth backstop against a
-   * race between two concurrent create/update requests). Never throws: a
-   * failure here is logged and the daemon still starts, per AGENTS.md's
-   * "guard schema changes so an older DB opens without throwing".
-   */
-  private migrateAliasColumn(): void {
-    try {
-      const columns = this.db.prepare('PRAGMA table_info(jobs)').all() as Array<{ name: string }>;
-      if (!columns.some((c) => c.name === 'alias')) {
-        this.db.exec('ALTER TABLE jobs ADD COLUMN alias TEXT;');
-        this.logger.info('Migrated jobs table: added alias column for GUID/alias identity model');
-      }
-      this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_alias ON jobs(alias) WHERE alias IS NOT NULL;');
-    } catch (err) {
-      this.logger.warn('Failed to migrate jobs table alias column; continuing without it', { error: String(err) });
-    }
-  }
-
-  /**
-   * Best-effort schema upgrade for a `runs` table created before per-run
-   * session capture: adds the `session_id` column if missing. Same guarded
-   * pattern as migrateAliasColumn() — an older on-disk database (without the
-   * column) still opens without throwing, and a failure here is logged rather
-   * than fatal, per AGENTS.md's "guard schema changes so an older DB opens".
-   */
-  private migrateRunsSessionIdColumn(): void {
-    try {
-      const columns = this.db.prepare('PRAGMA table_info(runs)').all() as Array<{ name: string }>;
-      if (!columns.some((c) => c.name === 'session_id')) {
-        this.db.exec('ALTER TABLE runs ADD COLUMN session_id TEXT;');
-        this.logger.info('Migrated runs table: added session_id column for per-run session capture');
-      }
-    } catch (err) {
-      this.logger.warn('Failed to migrate runs table session_id column; continuing without it', { error: String(err) });
-    }
-  }
-
-  /**
-   * Best-effort schema upgrade for a `runs` table created before per-run
-   * resolved-command capture: adds the `command` column if missing. Same
-   * guarded pattern as migrateRunsSessionIdColumn() — an older on-disk
-   * database (without the column) still opens without throwing, and a failure
-   * here is logged rather than fatal, per AGENTS.md's "guard schema changes so
-   * an older DB opens".
-   */
-  private migrateRunsCommandColumn(): void {
-    try {
-      const columns = this.db.prepare('PRAGMA table_info(runs)').all() as Array<{ name: string }>;
-      if (!columns.some((c) => c.name === 'command')) {
-        this.db.exec('ALTER TABLE runs ADD COLUMN command TEXT;');
-        this.logger.info('Migrated runs table: added command column for per-run resolved-command capture');
-      }
-    } catch (err) {
-      this.logger.warn('Failed to migrate runs table command column; continuing without it', { error: String(err) });
-    }
-  }
-
-  // ── Job CRUD ────────────────────────────────────────────────────────────────
 
   /** Write job to both SQLite cache and JSON file on disk (JSON is source of truth). */
   upsertJob(job: Job): void {
@@ -425,8 +357,9 @@ export class Store {
 
   /**
    * Load jobs from the jobs directory (JSON files are source of truth on
-   * daemon start). A pre-GUID job file (whose `id` is a kebab-case string,
-   * not a GUID) is migrated in place: see migrateLegacyJobFile().
+   * daemon start). Each file is loaded as-is: job files already carry a GUID
+   * `id` and optional `alias`. A file that fails to parse or validate is
+   * skipped with a warning (best-effort robustness), never rewritten.
    */
   loadJobsFromDisk(): void {
     if (!existsSync(this.jobsPath)) {
@@ -435,19 +368,10 @@ export class Store {
     }
     const files = readdirSync(this.jobsPath).filter((f) => f.endsWith('.json') && !f.endsWith('.schema.json'));
     let loaded = 0;
-    let migrated = 0;
     for (const file of files) {
       const filePath = join(this.jobsPath, file);
       try {
         const raw: unknown = JSON.parse(readFileSync(filePath, 'utf-8'));
-        const legacyId = isRecord(raw) && typeof raw.id === 'string' && !UUID_PATTERN.test(raw.id)
-          ? raw.id
-          : undefined;
-        if (legacyId !== undefined && isRecord(raw) && this.migrateLegacyJobFile(filePath, raw, legacyId)) {
-          migrated++;
-          loaded++;
-          continue;
-        }
         const parsed = JobSchema.safeParse(raw);
         if (parsed.success) {
           const json = JSON.stringify(parsed.data);
@@ -468,64 +392,7 @@ export class Store {
         this.logger.warn('Skipped unreadable or malformed job file', { filePath, reason: err instanceof Error ? err.message : String(err) });
       }
     }
-    if (migrated > 0) {
-      this.logger.info(`Migrated ${migrated} pre-GUID job file(s) to the id(GUID)+alias identity model`, { jobsPath: this.jobsPath, migrated });
-    }
     this.logger.debug('Loaded jobs from disk', { jobsPath: this.jobsPath, files: files.length, loaded });
-  }
-
-  /**
-   * Migrates a single pre-GUID job file in place: assigns a fresh GUID `id`,
-   * carries the old `id` forward as `alias` (unless the file already sets an
-   * explicit `alias`), rewrites the job JSON + schema sidecar under the new
-   * id, remaps any existing `runs`/`job_schedule_state` rows so run history
-   * stays associated with the migrated job, and drops any stale sqlite `jobs`
-   * row left under the pre-migration id. Best-effort: returns false (never
-   * throws) if the migrated shape still fails validation or any step of the
-   * rewrite fails, so the caller falls back to the normal warn-and-skip path
-   * instead of crashing the daemon.
-   */
-  private migrateLegacyJobFile(filePath: string, raw: Record<string, unknown>, legacyId: string): boolean {
-    try {
-      const alias = typeof raw.alias === 'string' ? raw.alias : legacyId;
-      const parsed = JobSchema.safeParse({ ...raw, id: randomUUID(), alias });
-      if (!parsed.success) return false;
-
-      const job = parsed.data;
-      const json = JSON.stringify(job);
-      this.db
-        .prepare(
-          'INSERT INTO jobs (id, alias, json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET alias=excluded.alias, json=excluded.json, updated_at=excluded.updated_at',
-        )
-        .run(job.id, job.alias ?? null, json, Date.now());
-      // Drop any stale sqlite row left under the pre-migration id (a harmless no-op if none exists).
-      this.db.prepare('DELETE FROM jobs WHERE id = ?').run(legacyId);
-      // Carry existing run/schedule-state history forward so it stays associated with the migrated job.
-      this.db.prepare('UPDATE runs SET job_id = ? WHERE job_id = ?').run(job.id, legacyId);
-      this.db.prepare('UPDATE job_schedule_state SET job_id = ? WHERE job_id = ?').run(job.id, legacyId);
-
-      writeJobFileHardened(join(this.jobsPath, `${job.id}.json`), json);
-      writeJobFileHardened(join(this.jobsPath, `${job.id}.schema.json`), jobJsonSchemaText());
-      try {
-        unlinkSync(filePath);
-      } catch {
-        // ignore -- the new file under job.id is already durably written
-      }
-      const legacySchemaPath = join(this.jobsPath, `${legacyId}.schema.json`);
-      if (existsSync(legacySchemaPath)) {
-        try {
-          unlinkSync(legacySchemaPath);
-        } catch {
-          // ignore
-        }
-      }
-
-      this.logger.info('Migrated pre-GUID job file to the id(GUID)+alias identity model', { legacyId, newId: job.id, alias: job.alias });
-      return true;
-    } catch (err) {
-      this.logger.warn('Failed to migrate pre-GUID job file; leaving it for the normal validation path', { filePath, legacyId, error: String(err) });
-      return false;
-    }
   }
 
 

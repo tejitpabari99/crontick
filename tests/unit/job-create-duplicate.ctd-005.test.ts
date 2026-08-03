@@ -8,7 +8,7 @@ import { createApiServer } from '../../src/daemon/api.js';
 import type { Runner } from '../../src/daemon/runner.js';
 import { Scheduler } from '../../src/daemon/scheduler.js';
 import { Store } from '../../src/daemon/store.js';
-import type { Job } from '../../src/schemas/job.js';
+import type { JobCreateInput } from '../../src/job-input.js';
 import { SURFACE_CAPABILITIES } from '../../src/surface.js';
 
 const SCRATCH_ROOT = resolve('.crontick', 'job-create-duplicate-ctd-005');
@@ -34,9 +34,9 @@ function makeRunner(): Runner {
   } as unknown as Runner;
 }
 
-function originalJob(id: string): Job {
+function originalJob(alias: string): JobCreateInput {
   return {
-    id,
+    alias,
     description: 'original definition',
     enabled: true,
     schedule: { kind: 'interval', everySec: 60 },
@@ -50,9 +50,9 @@ function originalJob(id: string): Job {
   };
 }
 
-function replacementJob(id: string): Job {
+function replacementJob(alias: string): JobCreateInput {
   return {
-    id,
+    alias,
     description: 'replacement definition',
     enabled: true,
     schedule: { kind: 'cron', cron: '15 6 * * *' },

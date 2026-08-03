@@ -34,7 +34,7 @@ function writeRawConfig(path: string, config: unknown): void {
 
 function promptJob(action: Record<string, unknown> = {}): JobCreateInput {
   return {
-    id: 'prompt-job',
+    alias: 'prompt-job',
     schedule: { kind: 'cron', cron: '0 9 * * *' },
     action: { kind: 'prompt', prompt: 'hello', ...action },
   } as JobCreateInput;

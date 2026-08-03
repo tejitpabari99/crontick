@@ -137,15 +137,9 @@ export function createMcpServer(): McpServer {
     'crontick_job_create',
     {
       description:
-        'Create and schedule a new cron job. This executes arbitrary commands, scripts, or prompts on the user\'s machine on a recurring or future schedule that persists and outlives this session -- confirm the job definition (schedule and action) with the user before calling. Provide the job definition: schedule (kind: cron|interval|one-shot) and action (kind: script|exec|prompt) are required; id (GUID) is generated automatically and should be omitted -- a legacy non-GUID id is accepted for back-compat and treated as an alias hint; alias is an optional, unique, human-friendly identifier -- when omitted, one is auto-generated. Prompt actions use prompt, optional configured engine name, args, sessionId, or reuseSession. After creating, use crontick_job_schedule to preview the job\'s upcoming fire times.',
+        'Create and schedule a new cron job. This executes arbitrary commands, scripts, or prompts on the user\'s machine on a recurring or future schedule that persists and outlives this session -- confirm the job definition (schedule and action) with the user before calling. Provide the job definition: schedule (kind: cron|interval|one-shot) and action (kind: script|exec|prompt) are required; id (GUID) is generated automatically and should be omitted; alias is an optional, unique, human-friendly identifier -- when omitted, one is auto-generated. Prompt actions use prompt, optional configured engine name, args, sessionId, or reuseSession. After creating, use crontick_job_schedule to preview the job\'s upcoming fire times.',
       inputSchema: withVerbose({
         ...JobCreateInputSchema.shape,
-        // Back-compat: unlike the persisted Job schema, a caller-supplied
-        // `id` here need not be a GUID -- a legacy non-GUID value is treated
-        // as an alias hint by coerceLegacyIdToAlias inside client.createJob
-        // (via normalizeJobInput), the same way the CLI's positional id and
-        // a raw HTTP POST body are handled.
-        id: z.string().optional().describe('Legacy alias hint; omit and let a GUID id be generated automatically'),
         force: z.boolean().optional(),
       }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },

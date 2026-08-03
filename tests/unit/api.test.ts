@@ -101,7 +101,7 @@ describe('Daemon HTTP API', () => {
   // ── Jobs CRUD ─────────────────────────────────────────────────────────────────
 
   const testJob = {
-    id: 'api-test-job',
+    alias: 'api-test-job',
     schedule: { kind: 'cron', cron: '0 0 * * *' },
     action: { kind: 'exec', command: 'echo', args: ['hello'] },
   };
@@ -114,7 +114,7 @@ describe('Daemon HTTP API', () => {
 
   it('POST /api/jobs creates a normalized prompt job', async () => {
     const { status, data } = await apiCall(port, 'POST', '/api/jobs', {
-      id: 'api-prompt-job',
+      alias: 'api-prompt-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'prompt', prompt: 'hello', engine: 'agency', args: ['--silent'] },
     });
@@ -130,14 +130,14 @@ describe('Daemon HTTP API', () => {
 
   it('POST /api/jobs rejects caller-only promptFile and normalizes explicit session precedence', async () => {
     const promptFile = await apiCall(port, 'POST', '/api/jobs', {
-      id: 'api-prompt-file-job',
+      alias: 'api-prompt-file-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'prompt', promptFile: 'prompt.txt' },
     });
     expect(promptFile.status).toBe(400);
 
     const sessionMix = await apiCall(port, 'POST', '/api/jobs', {
-      id: 'api-prompt-session-job',
+      alias: 'api-prompt-session-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'prompt', prompt: 'x', sessionId: 'sess-12345678', reuseSession: true },
     });
@@ -151,7 +151,7 @@ describe('Daemon HTTP API', () => {
 
   it('POST /api/jobs rejects reserved prompt passthrough flags', async () => {
     const result = await apiCall(port, 'POST', '/api/jobs', {
-      id: 'api-prompt-reserved-flag',
+      alias: 'api-prompt-reserved-flag',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'prompt', prompt: 'hello', args: ['--prompt=override'] },
     });
@@ -206,7 +206,7 @@ describe('Daemon HTTP API', () => {
     // Use a node-based action (cross-platform) rather than api-test-job's
     // 'echo' action, which isn't a real executable on Windows.
     await apiCall(port, 'POST', '/api/jobs', {
-      id: 'status-filter-job',
+      alias: 'status-filter-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
     });
@@ -292,12 +292,12 @@ describe('Daemon HTTP API', () => {
 
   it('POST /api/import imports jobs', async () => {
     const importJob = {
-      id: 'imported-job',
+      alias: 'imported-job',
       schedule: { kind: 'cron', cron: '0 * * * *' },
       action: { kind: 'exec', command: 'echo', args: [] },
     };
     const importPromptJob = {
-      id: 'imported-prompt-job',
+      alias: 'imported-prompt-job',
       schedule: { kind: 'cron', cron: '0 10 * * *' },
       action: { kind: 'prompt', prompt: 'imported prompt' },
     };
@@ -319,20 +319,22 @@ describe('Daemon HTTP API', () => {
   // the rest were lost) behind a 500. It must now validate each row, skip
   // bad ones individually, and still return 200 with the valid rows applied.
   it('POST /api/import validates and skips malformed runs individually instead of failing the whole import behind a 500', async () => {
+    const importedJobId = '11111111-1111-4111-8111-111111111111';
     const importJob = {
-      id: 'imported-job',
+      id: importedJobId,
+      alias: 'imported-runs-job',
       schedule: { kind: 'cron', cron: '0 * * * *' },
       action: { kind: 'exec', command: 'echo', args: [] },
     };
     const { status, data } = await apiCall(port, 'POST', '/api/import', {
       jobs: [importJob],
       runs: [
-        { id: 'api-run-ok', jobId: 'imported-job', startedAt: 1000, status: 'success', outputTruncated: false },
+        { id: 'api-run-ok', jobId: importedJobId, startedAt: 1000, status: 'success', outputTruncated: false },
         // Missing startedAt: the exact shape that used to throw mid-loop and
         // abort the entire import (partial data + a 500), non-atomically.
-        { id: 'api-run-bad', jobId: 'imported-job', status: 'success', outputTruncated: false },
+        { id: 'api-run-bad', jobId: importedJobId, status: 'success', outputTruncated: false },
         // Out-of-union status: previously persisted verbatim, no validation.
-        { id: 'api-run-bad-status', jobId: 'imported-job', startedAt: 1000, status: 'not-a-real-status', outputTruncated: false },
+        { id: 'api-run-bad-status', jobId: importedJobId, startedAt: 1000, status: 'not-a-real-status', outputTruncated: false },
       ],
     });
 

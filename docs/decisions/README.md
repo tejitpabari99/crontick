@@ -72,3 +72,4 @@ NNNN-kebab-case-title.md
 | 0024 | Reorganize CLI commands and narrow high-risk exposure | Accepted | 2026-08-02 |
 | 0025 | GUID job identity with an optional human-friendly alias | Accepted | 2026-08-02 |
 | 0026 | Simplify round-2 commands by folding admin reads into info | Accepted | 2026-08-03 |
+| 0027 | Remove pre-production migration, legacy, and back-compatibility code | Accepted | 2026-08-03 |
