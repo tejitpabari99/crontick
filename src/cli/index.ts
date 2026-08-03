@@ -566,9 +566,14 @@ runs.command('get <runId>').description('Get a run by ID').action(async (runId: 
 program.command('logs <runId>')
   .description('Get logs for a run')
   .option('--tail <n>', 'Show last N lines', parseInteger)
+  .option('--source <source>', 'Filter log source: engine (stdout+stderr), crontick (scheduling/execution events), or all (default)')
   .action(async (runId: string, opts) => {
     try {
-      const result = await client().getLogs(runId, { lines: opts.tail as number | undefined });
+      const source = opts.source as 'all' | 'engine' | 'crontick' | undefined;
+      if (source && source !== 'all' && source !== 'engine' && source !== 'crontick') {
+        throw new Error(`Invalid --source '${source}'. Expected one of: all, engine, crontick.`);
+      }
+      const result = await client().getLogs(runId, { lines: opts.tail as number | undefined, source });
       if (useJson()) {
         stdout(JSON.stringify(result, null, 2));
       } else {

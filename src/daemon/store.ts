@@ -36,6 +36,7 @@ export interface Run {
   durationMs?: number;
   pid?: number; // OS pid of the spawned child, set once known (see updateRun); absent for 'queued'/'missed' runs.
   outputTruncated: boolean; // true once a run's captured output hit the byte cap (NOT NULL DEFAULT 0 column, always present).
+  sessionId?: string; // prompt-engine session id captured from output (or explicitly provided) for this run; absent for non-prompt runs.
 }
 
 /** Every RunStatus value, kept as a runtime array so RunImportSchema's z.enum
@@ -64,14 +65,30 @@ export const RunImportSchema = z.object({
   durationMs: z.number().optional(),
   pid: z.number().optional(),
   outputTruncated: z.boolean().optional(),
+  sessionId: z.string().optional(),
 });
 
 export interface RunLog {
   runId: string;
-  stream: 'stdout' | 'stderr';
+  stream: LogStream;
   ts: number; // epoch ms
   chunk: Buffer;
 }
+
+/**
+ * Log streams captured per run. `stdout`/`stderr` are the engine's process
+ * output; `crontick` is crontick's own scheduling/execution lifecycle events
+ * (job fired, resolved command, exit code, duration, cancellation, captured
+ * session id, errors). See LogSource for the retrieval-side filter.
+ */
+export type LogStream = 'stdout' | 'stderr' | 'crontick';
+
+/**
+ * Retrieval-side filter for getLogs(): `all` (default) returns every stream,
+ * `engine` returns only stdout+stderr, `crontick` returns only crontick-side
+ * lifecycle events.
+ */
+export type LogSource = 'all' | 'engine' | 'crontick';
 
 export interface ListRunsOptions {
   jobId?: string;
@@ -198,7 +215,8 @@ export class Store {
         error TEXT,
         duration_ms INTEGER,
         pid INTEGER,
-        output_truncated INTEGER NOT NULL DEFAULT 0
+        output_truncated INTEGER NOT NULL DEFAULT 0,
+        session_id TEXT
       );
 
       CREATE TABLE IF NOT EXISTS run_logs (
@@ -225,6 +243,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS idx_run_logs_run_id ON run_logs(run_id);
     `);
     this.migrateAliasColumn();
+    this.migrateRunsSessionIdColumn();
   }
 
   /**
@@ -247,6 +266,25 @@ export class Store {
       this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_alias ON jobs(alias) WHERE alias IS NOT NULL;');
     } catch (err) {
       this.logger.warn('Failed to migrate jobs table alias column; continuing without it', { error: String(err) });
+    }
+  }
+
+  /**
+   * Best-effort schema upgrade for a `runs` table created before per-run
+   * session capture: adds the `session_id` column if missing. Same guarded
+   * pattern as migrateAliasColumn() — an older on-disk database (without the
+   * column) still opens without throwing, and a failure here is logged rather
+   * than fatal, per AGENTS.md's "guard schema changes so an older DB opens".
+   */
+  private migrateRunsSessionIdColumn(): void {
+    try {
+      const columns = this.db.prepare('PRAGMA table_info(runs)').all() as Array<{ name: string }>;
+      if (!columns.some((c) => c.name === 'session_id')) {
+        this.db.exec('ALTER TABLE runs ADD COLUMN session_id TEXT;');
+        this.logger.info('Migrated runs table: added session_id column for per-run session capture');
+      }
+    } catch (err) {
+      this.logger.warn('Failed to migrate runs table session_id column; continuing without it', { error: String(err) });
     }
   }
 
@@ -517,7 +555,7 @@ export class Store {
 
   updateRun(
     id: string,
-    update: Partial<Pick<Run, 'status' | 'exitCode' | 'error' | 'endedAt' | 'durationMs' | 'pid' | 'outputTruncated'>>,
+    update: Partial<Pick<Run, 'status' | 'exitCode' | 'error' | 'endedAt' | 'durationMs' | 'pid' | 'outputTruncated' | 'sessionId'>>,
   ): void {
     const run = this.getRun(id);
     if (!run) throw new CrontickError('NOT_FOUND', `Run ${id} not found`);
@@ -552,6 +590,10 @@ export class Store {
     if (update.outputTruncated !== undefined) {
       fields.push('output_truncated = ?');
       values.push(update.outputTruncated ? 1 : 0);
+    }
+    if (update.sessionId !== undefined) {
+      fields.push('session_id = ?');
+      values.push(update.sessionId ?? null);
     }
 
     if (fields.length === 0) return;
@@ -642,8 +684,8 @@ export class Store {
     const jobExists = this.db.prepare('SELECT 1 FROM jobs WHERE id = ?');
     const insert = this.db.prepare(
       `INSERT OR IGNORE INTO runs
-         (id, job_id, started_at, ended_at, status, exit_code, error, duration_ms, pid, output_truncated)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, job_id, started_at, ended_at, status, exit_code, error, duration_ms, pid, output_truncated, session_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     for (const raw of runs) {
       const parsed = RunImportSchema.safeParse(raw);
@@ -669,6 +711,7 @@ export class Store {
           run.durationMs ?? null,
           run.pid ?? null,
           run.outputTruncated ? 1 : 0,
+          run.sessionId ?? null,
         ) as { changes: number };
         if (result.changes > 0) {
           imported += 1;
@@ -695,16 +738,26 @@ export class Store {
 
   // ── Log CRUD ────────────────────────────────────────────────────────────────
 
-  appendLog(runId: string, stream: 'stdout' | 'stderr', chunk: Buffer): void {
+  appendLog(runId: string, stream: LogStream, chunk: Buffer): void {
     this.db
       .prepare('INSERT INTO run_logs (run_id, stream, ts, chunk) VALUES (?, ?, ?, ?)')
       .run(runId, stream, Date.now(), chunk);
   }
 
-  getLogs(runId: string): RunLog[] {
-    const rows = this.db
-      .prepare('SELECT * FROM run_logs WHERE run_id = ? ORDER BY id')
-      .all(runId) as unknown as DbLogRow[];
+  /**
+   * Returns a run's logs, optionally filtered by source: `all` (default)
+   * returns every stream, `engine` returns only stdout+stderr, `crontick`
+   * returns only crontick-side lifecycle events.
+   */
+  getLogs(runId: string, source: LogSource = 'all'): RunLog[] {
+    const streams = logStreamsForSource(source);
+    const rows = streams
+      ? (this.db
+          .prepare(`SELECT * FROM run_logs WHERE run_id = ? AND stream IN (${streams.map(() => '?').join(', ')}) ORDER BY id`)
+          .all(runId, ...streams) as unknown as DbLogRow[])
+      : (this.db
+          .prepare('SELECT * FROM run_logs WHERE run_id = ? ORDER BY id')
+          .all(runId) as unknown as DbLogRow[]);
     return rows.map(rowToLog);
   }
 
@@ -919,12 +972,13 @@ interface DbRunRow {
   duration_ms: number | null;
   pid: number | null;
   output_truncated: number;
+  session_id: string | null;
 }
 
 interface DbLogRow {
   id: number;
   run_id: string;
-  stream: 'stdout' | 'stderr';
+  stream: LogStream;
   ts: number;
   chunk: Buffer;
 }
@@ -954,7 +1008,15 @@ function rowToRun(row: DbRunRow): Run {
   if (row.error !== null) r.error = row.error;
   if (row.duration_ms !== null) r.durationMs = row.duration_ms;
   if (row.pid !== null) r.pid = row.pid;
+  if (row.session_id !== null) r.sessionId = row.session_id;
   return r;
+}
+
+/** Maps a LogSource filter to the concrete stream list, or null for "all". */
+function logStreamsForSource(source: LogSource): LogStream[] | null {
+  if (source === 'engine') return ['stdout', 'stderr'];
+  if (source === 'crontick') return ['crontick'];
+  return null;
 }
 
 function rowToLog(row: DbLogRow): RunLog {

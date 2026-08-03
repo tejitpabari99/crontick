@@ -249,6 +249,7 @@ Get the last N lines of output for a run.
 |-----------|------|----------|---------|-------------|
 | `id` | `string` | yes | - | Run ID |
 | `lines` | `integer` (positive) | no | `50` | Number of text lines to return after reconstructing newline-delimited output from stored log chunks |
+| `source` | `"all"` \| `"engine"` \| `"crontick"` | no | `all` | Filter log streams: `engine` = `stdout`+`stderr`; `crontick` = crontick scheduling/execution lifecycle events; `all` = both |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `{ runId: string, lines: LogEntry[] }` with log text redacted for common

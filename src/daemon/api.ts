@@ -4,7 +4,7 @@ import http from 'node:http';
 import { createReadStream } from 'node:fs';
 import { URL } from 'node:url';
 import type { Store } from './store.js';
-import type { Run, RunStatus } from './store.js';
+import type { Run, RunStatus, LogSource } from './store.js';
 import type { Scheduler } from './scheduler.js';
 import type { Runner } from './runner.js';
 import { JobSchema } from '../schemas/job.js';
@@ -26,6 +26,11 @@ import { readEnvFileForAction } from './env-file.js';
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 /** Poll interval for SSE log streaming. Stream closes when run reaches a terminal status. */
 const SSE_POLL_MS = 200;
+
+/** Coerce an untrusted `source` query value to a valid LogSource, defaulting to 'all'. */
+function normalizeLogSource(value: string | null): LogSource {
+  return value === 'engine' || value === 'crontick' ? value : 'all';
+}
 
 // ── Context shared with handlers ──────────────────────────────────────────────
 
@@ -262,7 +267,8 @@ async function handleRequest(
       if (method === 'GET' && sub === '/logs') {
         const run = ctx.store.getRun(id);
         if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
-        const logs = ctx.store.getLogs(id);
+        const source = normalizeLogSource(url.searchParams.get('source'));
+        const logs = ctx.store.getLogs(id, source);
         return sendJson(res, 200, redactValue(logs.map((l) => ({
           runId: l.runId,
           stream: l.stream,

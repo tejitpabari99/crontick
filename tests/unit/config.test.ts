@@ -68,6 +68,7 @@ describe('crontick config core', () => {
       defaultEngine: 'copilot',
       engines: { copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {} } },
       retention: { maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 },
+      logging: { fileEnabled: true },
     });
     expect(validateConfigFile({ env })).toMatchObject({ ok: true, path, problems: [] });
   });
@@ -192,6 +193,22 @@ describe('crontick config core', () => {
       env: { AGENCY_HOME: 'Q:\\Logs' },
       engine: 'agency',
     });
+  });
+
+  it('places the built-in copilot -p flag immediately before the prompt text', () => {
+    const { env } = makeHome();
+    const result = buildPromptRunCommand({
+      kind: 'prompt',
+      prompt: 'do the thing',
+      engine: 'copilot',
+      args: [],
+      reuseSession: false,
+    }, { env });
+    expect(result.command).toBe('copilot');
+    expect(result.args).toEqual(['--allow-all-tools', '-p', 'do the thing']);
+    // -p is the last engine arg, so it directly precedes the prompt.
+    const pIndex = result.args.indexOf('-p');
+    expect(result.args[pIndex + 1]).toBe('do the thing');
   });
 
   it('supports client config CRUD', () => {
@@ -360,6 +377,7 @@ describe('crontick config core', () => {
         defaultEngine: 'copilot',
         engines: { copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {} } },
         retention: { maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 },
+        logging: { fileEnabled: true },
       });
     });
   });

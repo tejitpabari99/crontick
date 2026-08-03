@@ -361,6 +361,27 @@ describe('Store', () => {
     expect(logs[1].stream).toBe('stderr');
   });
 
+  it('getLogs source filter: all/engine/crontick select the right streams', () => {
+    const run = store.insertRun('log-source-job');
+    store.appendLog(run.id, 'stdout', Buffer.from('out\n'));
+    store.appendLog(run.id, 'stderr', Buffer.from('err\n'));
+    store.appendLog(run.id, 'crontick', Buffer.from('[crontick] run started\n'));
+
+    expect(store.getLogs(run.id).map((l) => l.stream)).toEqual(['stdout', 'stderr', 'crontick']);
+    expect(store.getLogs(run.id, 'all').map((l) => l.stream)).toEqual(['stdout', 'stderr', 'crontick']);
+    expect(store.getLogs(run.id, 'engine').map((l) => l.stream)).toEqual(['stdout', 'stderr']);
+    expect(store.getLogs(run.id, 'crontick').map((l) => l.stream)).toEqual(['crontick']);
+    expect(store.getLogs(run.id, 'crontick')[0].chunk.toString('utf-8')).toBe('[crontick] run started\n');
+  });
+
+  it('updateRun persists sessionId and getRun/listRuns surface it', () => {
+    const run = store.insertRun('session-run-job');
+    expect(store.getRun(run.id)?.sessionId).toBeUndefined();
+    store.updateRun(run.id, { sessionId: 'sess-persisted-1' });
+    expect(store.getRun(run.id)?.sessionId).toBe('sess-persisted-1');
+    expect(store.listRuns({ jobId: 'session-run-job' })[0].sessionId).toBe('sess-persisted-1');
+  });
+
   it('tailLogs returns only logs after sinceTs', async () => {
     const run = store.insertRun('tail-job');
     store.appendLog(run.id, 'stdout', Buffer.from('before\n'));

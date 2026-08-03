@@ -56,6 +56,9 @@ preserving observability through captured logs and structured run records.
 - **R-003-26**: The child process's `pid` MUST be persisted to the run record (`Store.updateRun()`) as soon as the process spawns, before any output arrives; `missed` runs (spec 004 R-004-28) never spawn a process and so never get a `pid`.
 - **R-003-27**: Captured stdout/stderr for a single run MUST be capped at `retention.maxOutputBytesPerRun` (default 2,000,000; configurable range 1024..1,000,000,000). Once the cap is reached, the runner MUST trim the trailing bytes to a UTF-8 character boundary (never splitting a multi-byte character), append a single truncation marker, set the run's `outputTruncated` field, and drop all further output for that run without persisting it. Hitting the cap MUST NOT kill, signal, or otherwise affect the child process itself; only capture stops.
 - **R-003-28**: `Runner.adoptRun(jobId, runId, pid, store)` MUST re-attach a run that survived a daemon restart (per spec 004 R-004-8) into this daemon's overlap tracking (`activeRunIds`), so that `overlap: 'skip'` and `overlap: 'cancel-previous'` hold for a subsequent tick of the same job exactly as they would for a run spawned by this daemon process. Since no `ChildProcess` handle exists for an adopted run, the runner MUST poll process liveness periodically instead of listening for a native `'exit'` event, and MUST finalize the run once the poll observes the process has exited.
+- **R-003-29**: In addition to the engine's `stdout`/`stderr` streams, the runner MUST record its own scheduling/execution lifecycle events (at minimum: run started, executing with the redacted command, run finished with status/exit/duration, and overlap `run skipped`) on a dedicated `crontick` log stream via `Store.appendLog(runId, 'crontick', ...)`. These events MUST be redacted like engine output.
+- **R-003-30**: Log retrieval MUST support a `source` filter of `all` (default -- every stream), `engine` (`stdout`+`stderr` only), or `crontick` (the `crontick` stream only), exposed consistently across `Store.getLogs()`, the client `getLogs()`, the daemon `GET /api/runs/:id/logs` route, the MCP `crontick_run_logs_tail` tool, and the CLI `logs --source` flag.
+- **R-003-31**: Every run's logs (engine output and crontick lifecycle events, interleaved) MUST additionally be mirrored to a per-job log file at `<logging.dir ?? <dataDir>/logs>/<jobId>.log`, controlled by `logging.fileEnabled` (default `true`) and `logging.dir`. File logging MUST be best-effort: a missing directory or a failed write MUST be swallowed (at most one debug log) and MUST NEVER block or fail a run. The file side effect MUST be behind an injectable interface.
 
 ### Non-functional requirements
 
@@ -78,8 +81,8 @@ preserving observability through captured logs and structured run records.
 
 **Input**: A `Job` object, a run ID (UUID), and a `Store` reference.
 **Output**: Side effects only (store mutations, log entries). No return value from `run()`.
-**Run record fields**: `id`, `jobId`, `startedAt`, `endedAt`, `status`, `exitCode`, `error`, `durationMs`.
-**Log record fields**: `runId`, `stream` (stdout/stderr), `ts`, `chunk` (Buffer).
+**Run record fields**: `id`, `jobId`, `startedAt`, `endedAt`, `status`, `exitCode`, `error`, `durationMs`, `sessionId?` (prompt-engine session id captured for or provided to the run).
+**Log record fields**: `runId`, `stream` (`stdout`/`stderr` for engine output; `crontick` for crontick lifecycle events), `ts`, `chunk` (Buffer).
 
 ## Edge cases and failure modes
 

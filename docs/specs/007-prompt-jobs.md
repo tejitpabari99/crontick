@@ -41,10 +41,11 @@ reuse enables multi-turn conversations across runs.
 - **R-007-8**: Validation MUST reject args containing reserved flags with a descriptive error.
 - **R-007-9**: On Windows, the total estimated command-line length (prompt + engine args + session flag) MUST NOT exceed 30,000 characters. Validation MUST reject with an actionable message if exceeded.
 - **R-007-10**: When `reuseSession=true` and no `sessionId` is set, the runner MUST capture the session ID from engine stdout/stderr output after a successful run.
-- **R-007-11**: Session ID extraction MUST use the regex in `extractSessionId()` against the last 128KB of combined output.
+- **R-007-11**: Session ID extraction MUST use the regex patterns in `extractSessionId()` against the last 128KB of combined output. The patterns MUST match the Copilot CLI's real stats-footer resume hint form `--resume=<id>` (verified against Copilot CLI v1.0.78-2, which emits the session id ONLY as `Resume     copilot --resume=<uuid>` on stderr), as well as `--session-id=<id>`/`--session-id <id>` and generic `session id: <id>` forms, tolerating crontick's `[stderr] ` prefix and surrounding stats lines.
 - **R-007-12**: If session capture succeeds, the job definition MUST be updated: `sessionId` set to the captured value and `reuseSession` set to `false`.
 - **R-007-13**: If `reuseSession=true` but session ID extraction fails (output does not contain a session ID), the run MUST be marked `failed` with error `SESSION_ID_NOT_FOUND`.
 - **R-007-14**: If an explicit `sessionId` is already set and `reuseSession=true`, a notice MUST be logged to stderr but session capture MUST NOT occur.
+- **R-007-15**: The captured session ID (or an explicitly provided/reused `sessionId`) MUST be recorded on the run record (`run.sessionId`), surfaced via `runs get`, the logs API, and the dashboard run data model.
 - **R-007-15**: Session capture MUST only persist if the current job action still matches the expected prompt/engine/args (compare-and-swap to prevent race conditions).
 - **R-007-16**: If engine ENOENT occurs, the error MUST name the engine and command, and suggest installing or updating the config.
 - **R-007-17**: The built-in default config MUST define engine `copilot` with `{ command: "copilot", args: ["--allow-all-tools", "-p"], env: {} }`.

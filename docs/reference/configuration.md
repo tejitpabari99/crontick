@@ -36,6 +36,10 @@ The data directory is resolved by (in order):
     "maxRunsPerJob": 100,
     "maxOutputBytesPerRun": 2000000,
     "maxLogFiles": 30
+  },
+  "logging": {
+    "fileEnabled": true,
+    "dir": "<optional-override-dir>"
   }
 }
 ```
@@ -45,6 +49,7 @@ The data directory is resolved by (in order):
 | `defaultEngine` | `string` | no | `"copilot"` | Must match a key in `engines`; regex `^[A-Za-z0-9_.-]+$` |
 | `engines` | `Record<string, EngineConfig>` | no | `{ copilot: { command: "copilot", args: ["--allow-all-tools", "-p"], env: {} } }` | At least one engine must be defined |
 | `retention` | `RetentionConfig` | no | `{ maxRunsPerJob: 100, maxOutputBytesPerRun: 2000000, maxLogFiles: 30 }` | See below |
+| `logging` | `LoggingConfig` | no | `{ fileEnabled: true }` | See below |
 
 ### RetentionConfig
 
@@ -75,6 +80,24 @@ a restart). Pruning is best-effort: a failure is logged but never blocks startup
 [state-and-storage.md](../concepts/state-and-storage.md#run-history-retention) for the
 user-facing model, and [storage internals](../internals/storage.md) for the eviction and output-cap algorithms.
 
+### LoggingConfig
+
+| Field | Type | Required | Default | Constraints |
+|-------|------|----------|---------|-------------|
+| `fileEnabled` | `boolean` | no | `true` | — |
+| `dir` | `string` | no | `<dataDir>/logs` | Non-empty when set |
+
+In addition to the SQLite run-log store (queried by `crontick logs`), every run's logs are
+mirrored to a per-job log file at `<dir>/<jobId>.log` (job id is the GUID; unsafe filename
+characters are replaced). The file interleaves the engine's `stdout`/`stderr` with crontick's
+own scheduling/execution lifecycle events (see [execution concepts](../concepts/execution.md)).
+Set `logging.fileEnabled` to `false` to disable file logging, or `logging.dir` to override the
+directory (defaults to the `logs/` subfolder of the data directory — see
+[State Directory Layout](#state-directory-layout)). File logging is best-effort: a missing
+directory or a failed write is swallowed (at most one debug log is emitted) and never blocks or
+fails a run. Both keys are re-read per run, so a `crontick daemon reload` or config edit is
+picked up by subsequent runs without a daemon restart. `LoggingConfigSchema` is `.strict()`.
+
 ### EngineConfig
 
 | Field | Type | Required | Default | Constraints |
@@ -97,6 +120,9 @@ Schema is `.strict()` — no extra fields allowed.
     "maxRunsPerJob": 100,
     "maxOutputBytesPerRun": 2000000,
     "maxLogFiles": 30
+  },
+  "logging": {
+    "fileEnabled": true
   }
 }
 ```
@@ -219,7 +245,8 @@ Root: `CRONTICK_HOME` or platform default (see above).
 ├── runs.db                  SQLite (WAL mode): runs, run_logs, jobs cache
 ├── logs/
 │   ├── daemon-YYYY-MM-DD.log   Daemon runtime logs (JSON lines)
-│   └── daemon.ensure.log       Demand-start output capture
+│   ├── daemon.ensure.log       Demand-start output capture
+│   └── <job-id>.log            Per-job full log (engine output + crontick lifecycle events)
 ├── daemon.pid               PID of running daemon process
 ├── daemon.port              Port of daemon HTTP API
 └── daemon.ensure.lock       Exclusive startup lock file

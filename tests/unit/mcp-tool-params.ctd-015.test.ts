@@ -23,7 +23,7 @@ const EXPECTED_TOOL_PARAMS = {
   crontick_job_cancel_run: ['id'],
   crontick_run_list: ['jobId', 'limit', 'since', 'status'],
   crontick_run_get: ['id'],
-  crontick_run_logs_tail: ['id', 'lines'],
+  crontick_run_logs_tail: ['id', 'lines', 'source'],
   crontick_schedule_validate: ['schedule'],
   crontick_schedule_preview: ['schedule', 'n', 'tz'],
   crontick_stats_summary: [],

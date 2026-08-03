@@ -328,6 +328,13 @@ crontick logs <runId>
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--tail <n>` | integer | — | Show the last N text lines after reconstructing newline-delimited output from stored log chunks |
+| `--source <source>` | `engine` \| `crontick` \| `all` | `all` | Filter which log streams are returned: `engine` = the run's `stdout`+`stderr`; `crontick` = crontick's own scheduling/execution lifecycle events; `all` = both, interleaved |
+
+Each run's logs combine two kinds of entries: the **engine** streams (`stdout`/`stderr` from the
+job's process) and the **crontick** stream (lifecycle events such as run started, executing, run
+finished, overlap skips, retries, and session capture). `--source` selects one or both. The same
+filter is available on the MCP `crontick_run_logs_tail` tool (`source`) and the daemon
+`GET /api/runs/:id/logs?source=` route.
 
 ---
 

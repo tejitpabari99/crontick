@@ -7,7 +7,7 @@ import { platform } from 'node:os';
 import { join, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Job, PromptAction } from '../schemas/job.js';
-import type { Store, RunStatus } from './store.js';
+import type { Store, RunStatus, LogStream } from './store.js';
 import { CrontickError } from '../errors.js';
 import { extractSessionId } from './prompt-session.js';
 import { buildPromptRunCommand, loadConfig } from '../config.js';
@@ -15,6 +15,7 @@ import { createStreamingTextRedactor, nullLogger, redactText, type Logger, type 
 import { tempScriptsDir } from '../paths.js';
 import { isProcessAlive, isSameRunProcess } from '../process-liveness.js';
 import { readEnvFileForAction } from './env-file.js';
+import { createJobLogFileFactory, type JobLogFile, type JobLogFileFactory } from './job-log-file.js';
 
 // ── Output cap (L5) ───────────────────────────────────────────────────────────
 
@@ -172,6 +173,40 @@ function validateActionCwd(action: Job['action']): void {
   }
 }
 
+// ── Per-run log writer ──────────────────────────────────────────────────────
+
+/**
+ * Fans a run's log output out to two sinks: the SQLite run-log store (queried
+ * by `crontick logs` and the dashboard) and the per-job log file (best-effort
+ * mirror on disk). Engine output uses the `stdout`/`stderr` streams; crontick's
+ * own scheduling/execution lifecycle events use the `crontick` stream so a
+ * caller can filter engine-only vs crontick-only logs (see store.LogSource).
+ */
+class RunLogWriter {
+  constructor(
+    private readonly store: Store,
+    private readonly file: JobLogFile,
+    private readonly runId: string,
+  ) {}
+
+  /** Persist an engine (or already-formatted) chunk to the store and mirror to the file. */
+  append(stream: LogStream, chunk: Buffer): void {
+    this.store.appendLog(this.runId, stream, chunk);
+    // Best-effort mirror: a misbehaving sink must never block or crash a run.
+    try {
+      this.file.write(chunk.toString('utf-8'));
+    } catch {
+      // swallowed — the store copy is the source of truth; file logging is a mirror.
+    }
+  }
+
+  /** Record a crontick-side lifecycle event (redacted) on the `crontick` stream. */
+  crontick(message: string, data?: unknown): void {
+    const suffix = data === undefined ? '' : ` ${redactText(JSON.stringify(data))}`;
+    this.append('crontick', Buffer.from(`[crontick] ${message}${suffix}\n`, 'utf-8'));
+  }
+}
+
 // ── Runner ────────────────────────────────────────────────────────────────────
 
 export class Runner {
@@ -187,6 +222,7 @@ export class Runner {
   private adoptedPolls: Map<string, ReturnType<typeof setInterval>> = new Map();
 
   private readonly logger: Logger;
+  private readonly jobLogFiles: JobLogFileFactory;
 
   constructor(
     private readonly spawnFn: typeof spawn = spawn,
@@ -194,8 +230,11 @@ export class Runner {
     private readonly maxOutputBytesPerRunOverride?: number,
     /** Test-only seam: overrides ADOPTED_RUN_POLL_MS so adoptRun() tests don't wait 3s per poll tick. */
     private readonly adoptedPollMsOverride?: number,
+    /** Injectable per-job log-file factory (defaults to the real fs-backed sink). */
+    jobLogFiles?: JobLogFileFactory,
   ) {
     this.logger = logger.child('runner');
+    this.jobLogFiles = jobLogFiles ?? createJobLogFileFactory(this.logger);
   }
 
   /**
@@ -269,16 +308,18 @@ export class Runner {
    */
   async run(job: Job, runId: string, store: Store): Promise<void> {
     const overlap = job.overlap ?? 'skip';
+    const log = new RunLogWriter(store, this.jobLogFiles.open(job.id), runId);
     this.logger.debug('Starting run orchestration', { jobId: job.id, runId, overlap, retryMax: job.retry?.max ?? 0 });
-    this.appendDiagnosticLog(store, runId, 'run orchestration', { jobId: job.id, overlap, retryMax: job.retry?.max ?? 0 });
+    this.appendDiagnosticLog(log, 'run orchestration', { jobId: job.id, overlap, retryMax: job.retry?.max ?? 0 });
 
     const isActive = this.activeRunIds.has(job.id);
 
     if (overlap === 'skip' && isActive) {
+      log.crontick('run skipped: overlap=skip, another run is already active', { jobId: job.id });
       await this.finalizeRun(store, runId, {
         status: 'canceled',
         error: 'overlap=skip: another run is already active',
-      });
+      }, log);
       this.logger.debug('Canceled run due to overlap=skip', { jobId: job.id, runId });
       return;
     }
@@ -290,17 +331,17 @@ export class Runner {
     }
 
     if (overlap === 'queue') {
-      await this.enqueue(job, runId, store);
+      await this.enqueue(job, runId, store, log);
     } else {
-      await this.execute(job, runId, store);
+      await this.execute(job, runId, store, log);
     }
   }
 
-  private enqueue(job: Job, runId: string, store: Store): Promise<void> {
+  private enqueue(job: Job, runId: string, store: Store, log: RunLogWriter): Promise<void> {
     return new Promise<void>((resolve) => {
       const queue = this.queues.get(job.id) ?? [];
       queue.push(async () => {
-        await this.execute(job, runId, store);
+        await this.execute(job, runId, store, log);
         resolve();
       });
       this.queues.set(job.id, queue);
@@ -327,12 +368,13 @@ export class Runner {
     await this.drainQueue(jobId);
   }
 
-  private async execute(job: Job, runId: string, store: Store): Promise<void> {
+  private async execute(job: Job, runId: string, store: Store, log: RunLogWriter): Promise<void> {
     const maxRetries = job.retry?.max ?? 0;
     const backoffSec = job.retry?.backoffSec ?? 30;
     let lastResult: RunResult = { status: 'failed', error: 'not started' };
 
     store.updateRun(runId, { status: 'running' });
+    log.crontick('run started', { jobId: job.id, action: job.action.kind, overlap: job.overlap ?? 'skip', retryMax: maxRetries });
 
     const ctrl = new AbortController();
     this.activeAborts.set(job.id, ctrl);
@@ -342,7 +384,7 @@ export class Runner {
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         if (attempt > 0) {
           this.logger.debug('Retry backoff before run attempt', { jobId: job.id, runId, attempt, backoffSec });
-          this.appendDiagnosticLog(store, runId, 'retry backoff', { attempt, backoffSec });
+          this.appendDiagnosticLog(log, 'retry backoff', { attempt, backoffSec });
           await sleep(backoffSec * 1000);
         }
         // Check abort before each retry attempt (cancel-previous or manual cancel)
@@ -351,7 +393,7 @@ export class Runner {
           break;
         }
         try {
-          lastResult = await this.spawn(job, runId, store, ctrl.signal);
+          lastResult = await this.spawn(job, runId, store, ctrl.signal, log);
         } catch (err) {
           lastResult = this.runResultFromError(err, ctrl.signal);
           this.logger.error('Run attempt failed before child completion', {
@@ -361,14 +403,14 @@ export class Runner {
             status: lastResult.status,
             error: lastResult.error,
           });
-          this.appendDiagnosticLog(store, runId, 'attempt failed before child completion', {
+          this.appendDiagnosticLog(log, 'attempt failed before child completion', {
             attempt,
             status: lastResult.status,
             error: lastResult.error,
           });
         }
         this.logger.debug('Run attempt completed', { jobId: job.id, runId, attempt, status: lastResult.status, exitCode: lastResult.exitCode });
-        this.appendDiagnosticLog(store, runId, 'attempt completed', { attempt, status: lastResult.status, exitCode: lastResult.exitCode });
+        this.appendDiagnosticLog(log, 'attempt completed', { attempt, status: lastResult.status, exitCode: lastResult.exitCode });
         if (lastResult.status === 'success') break;
         if (lastResult.status === 'canceled' || lastResult.status === 'timeout') break;
       }
@@ -379,7 +421,7 @@ export class Runner {
       if (this.activeRunIds.get(job.id) === runId) this.activeRunIds.delete(job.id);
     }
 
-    await this.finalizeRun(store, runId, lastResult);
+    await this.finalizeRun(store, runId, lastResult, log);
   }
 
   private async spawn(
@@ -387,6 +429,7 @@ export class Runner {
     runId: string,
     store: Store,
     signal: AbortSignal,
+    log: RunLogWriter,
   ): Promise<RunResult> {
     const { action } = job;
     validateActionCwd(action);
@@ -449,11 +492,19 @@ export class Runner {
         capturePromptSession = latestAction.reuseSession && !sessionId;
         promptCaptureAction = capturePromptSession ? latestAction : undefined;
         if (sessionId && latestAction.reuseSession) {
-          store.appendLog(
-            runId,
+          log.append(
             'stderr',
             Buffer.from('[crontick] notice: reuseSession was ignored because an explicit sessionId was provided.\n', 'utf-8'),
           );
+        }
+        // Persist an explicitly-provided session id onto the run record now
+        // (an extracted one is persisted from the close handler below).
+        if (sessionId) {
+          try {
+            store.updateRun(runId, { sessionId });
+          } catch (err) {
+            this.logger.error('Failed to persist run sessionId', { jobId: job.id, runId, error: String(err) });
+          }
         }
 
         const runCommand = buildPromptRunCommand({ ...latestAction, sessionId }, { logger: this.logger });
@@ -462,8 +513,10 @@ export class Runner {
         args = runCommand.args;
         promptEnv = runCommand.env;
         this.logger.debug('Resolved prompt run command', { jobId: job.id, runId, engine: promptEngineBinary, command: cmd, args, envKeys: Object.keys(promptEnv) });
-        this.appendDiagnosticLog(store, runId, 'resolved prompt command', { engine: promptEngineBinary, command: cmd, args, envKeys: Object.keys(promptEnv) });
+        this.appendDiagnosticLog(log, 'resolved prompt command', { engine: promptEngineBinary, command: cmd, args, envKeys: Object.keys(promptEnv) });
       }
+
+      log.crontick('executing', { command: cmd, args });
 
       // All action kinds use shell:false — no shell interpretation, preventing injection.
       // detached + windowsHide (L8): children survive the daemon's death uniformly on
@@ -500,7 +553,7 @@ export class Runner {
         windowsHide: true,
       };
       if (isWindowsPowerShellHost) {
-        this.appendDiagnosticLog(store, runId, 'detached disabled for pwsh/powershell.exe on Windows (output-capture trade-off, see runner.ts)');
+        this.appendDiagnosticLog(log, 'detached disabled for pwsh/powershell.exe on Windows (output-capture trade-off, see runner.ts)');
       }
 
       // Merge envFile variables (lower priority than action.env, higher than process.env).
@@ -556,7 +609,7 @@ export class Runner {
       };
       const flushRedactor = (stream: 'stdout' | 'stderr'): void => {
         const flushed = flushSafeRedactor(streamRedactors[stream]);
-        if (flushed.length > 0) store.appendLog(runId, stream, flushed);
+        if (flushed.length > 0) log.append(stream, flushed);
       };
       const captureChunk = (stream: 'stdout' | 'stderr', chunk: Buffer): void => {
         if (outputTruncated) return; // marker already emitted; drop silently, child keeps running
@@ -569,10 +622,10 @@ export class Runner {
           if (room > 0) {
             const redacted = safeRedact(truncateToUtf8Boundary(chunk.subarray(0, room)), redactor);
             if (!redacted.textLike) flushRedactor(stream);
-            if (redacted.chunk.length > 0) store.appendLog(runId, stream, redacted.chunk);
+            if (redacted.chunk.length > 0) log.append(stream, redacted.chunk);
           }
           flushRedactor(stream);
-          store.appendLog(runId, stream, Buffer.from(truncationMarker(maxOutputBytes), 'utf-8'));
+          log.append(stream, Buffer.from(truncationMarker(maxOutputBytes), 'utf-8'));
           try {
             store.updateRun(runId, { outputTruncated: true });
           } catch (err) {
@@ -584,7 +637,7 @@ export class Runner {
         capturedBytes += chunk.length;
         const redacted = safeRedact(chunk, redactor);
         if (!redacted.textLike) flushRedactor(stream);
-        if (redacted.chunk.length > 0) store.appendLog(runId, stream, redacted.chunk);
+        if (redacted.chunk.length > 0) log.append(stream, redacted.chunk);
       };
       const captureBufferedChunk = (stream: 'stdout' | 'stderr', chunk: Buffer): void => {
         if (!bufferPowerShellUtf8) {
@@ -606,7 +659,7 @@ export class Runner {
       const result = await new Promise<RunResult>((resolve) => {
         const timeoutMs = action.timeoutSec ? action.timeoutSec * 1000 : undefined;
         this.logger.debug('Spawning child process', { jobId: job.id, runId, command: cmd, args, cwd: spawnOpts.cwd, timeoutMs });
-        this.appendDiagnosticLog(store, runId, 'spawn', { command: cmd, args, cwd: spawnOpts.cwd, timeoutMs });
+        this.appendDiagnosticLog(log, 'spawn', { command: cmd, args, cwd: spawnOpts.cwd, timeoutMs });
         const child = this.spawnFn(cmd, args, spawnOpts);
         // Persist the OS pid the instant it's known (L4) — nothing before this
         // point could reconcile against it. unref() so a detached child never
@@ -678,7 +731,7 @@ export class Runner {
           }
           const durationMs = Date.now() - startedAt;
           this.logger.debug('Child process closed', { jobId: job.id, runId, code, signal: sig, durationMs });
-          this.appendDiagnosticLog(store, runId, 'child closed', { code, signal: sig, durationMs });
+          this.appendDiagnosticLog(log, 'child closed', { code, signal: sig, durationMs });
           if (signal.aborted) {
             finish({ status: 'canceled', error: 'aborted' });
           } else if (timedOut) {
@@ -706,6 +759,14 @@ export class Runner {
                 });
                 return;
               }
+              // Persist the extracted session id onto the run record (for the
+              // dashboard and `runs get`), independent of whether the job-level
+              // capture below wins its race.
+              try {
+                store.updateRun(runId, { sessionId });
+              } catch (err) {
+                this.logger.error('Failed to persist run sessionId', { jobId: job.id, runId, error: String(err) });
+              }
               if (captureAction) {
                 let persisted = false;
                 try {
@@ -721,7 +782,7 @@ export class Runner {
                 if (persisted) {
                   this.logger.debug('Session id captured and persisted', { jobId: job.id, runId });
                   try {
-                    store.appendLog(runId, 'stdout', Buffer.from(`[crontick] captured session id: ${sessionId}\n`, 'utf-8'));
+                    log.append('stdout', Buffer.from(`[crontick] captured session id: ${sessionId}\n`, 'utf-8'));
                   } catch (err) {
                     finish({
                       status: 'failed',
@@ -740,7 +801,7 @@ export class Runner {
 
         child.on('error', (err: NodeJS.ErrnoException) => {
           this.logger.debug('Child process error', { jobId: job.id, runId, code: err.code, message: err.message });
-          this.appendDiagnosticLog(store, runId, 'child error', { code: err.code, message: err.message });
+          this.appendDiagnosticLog(log, 'child error', { code: err.code, message: err.message });
           if (err.code === 'ABORT_ERR' || signal.aborted) {
             finish({ status: 'canceled', error: 'aborted' });
           } else if (err.code === 'ENOENT' && promptEngineBinary) {
@@ -775,23 +836,25 @@ export class Runner {
     return { status: 'failed', error: errorMessage(err) };
   }
 
-  private async finalizeRun(store: Store, runId: string, result: RunResult): Promise<void> {
+  private async finalizeRun(store: Store, runId: string, result: RunResult, log?: RunLogWriter): Promise<void> {
     const run = store.getRun(runId);
     const now = Date.now();
+    const durationMs = run ? now - run.startedAt : undefined;
     store.updateRun(runId, {
       status: result.status,
       exitCode: result.exitCode,
       error: result.error,
       endedAt: now,
-      durationMs: run ? now - run.startedAt : undefined,
+      durationMs,
     });
-    this.logger.debug('Finalized run', { runId, status: result.status, exitCode: result.exitCode, durationMs: run ? now - run.startedAt : undefined });
+    log?.crontick('run finished', { status: result.status, exitCode: result.exitCode, durationMs, error: result.error });
+    this.logger.debug('Finalized run', { runId, status: result.status, exitCode: result.exitCode, durationMs });
   }
 
-  private appendDiagnosticLog(store: Store, runId: string, message: string, data?: unknown): void {
+  private appendDiagnosticLog(log: RunLogWriter, message: string, data?: unknown): void {
     if (!this.logger.isDebugEnabled()) return;
     const suffix = data === undefined ? '' : ` ${redactText(JSON.stringify(data))}`;
-    store.appendLog(runId, 'stderr', Buffer.from(`[crontick:debug] ${message}${suffix}\n`, 'utf-8'));
+    log.append('stderr', Buffer.from(`[crontick:debug] ${message}${suffix}\n`, 'utf-8'));
   }
 
   /** Cancel any active run for a job. */

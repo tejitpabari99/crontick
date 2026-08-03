@@ -73,6 +73,8 @@ export interface DashboardRun {
   durationMs: number | null;
   exitCode: number | null;
   error: string | null;
+  /** Prompt-engine session id captured for this run (or explicitly provided); null for non-prompt runs. */
+  sessionId: string | null;
 }
 
 export interface DashboardData {
@@ -298,6 +300,7 @@ function toDashboardRun(run: Run, aliasByJobId: ReadonlyMap<string, string | nul
     durationMs: run.durationMs ?? null,
     exitCode: run.exitCode ?? null,
     error: run.error ?? null,
+    sessionId: run.sessionId ?? null,
   };
 }
 

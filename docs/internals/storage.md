@@ -72,6 +72,7 @@ PRAGMA foreign_keys=ON;
 | `duration_ms` | INTEGER | nullable |
 | `pid` | INTEGER | nullable (set once the child process is spawned; absent for `missed` runs, which never spawn a process) |
 | `output_truncated` | INTEGER | NOT NULL DEFAULT 0 (0/1; set once captured output hits `retention.maxOutputBytesPerRun`) |
+| `session_id` | TEXT | nullable (prompt-engine session id captured for this run, or explicitly provided; added by a guarded backward-compatible migration for older DBs) |
 
 #### `run_logs`
 
@@ -79,7 +80,7 @@ PRAGMA foreign_keys=ON;
 |--------|------|-------------|
 | `id` | INTEGER | PRIMARY KEY AUTOINCREMENT |
 | `run_id` | TEXT | NOT NULL |
-| `stream` | TEXT | NOT NULL (stdout/stderr) |
+| `stream` | TEXT | NOT NULL (`stdout`/`stderr` for engine output; `crontick` for crontick's own scheduling/execution lifecycle events) |
 | `ts` | INTEGER | NOT NULL (epoch ms) |
 | `chunk` | BLOB | NOT NULL |
 
@@ -137,8 +138,8 @@ class Store {
   importRuns(runs: unknown[]): { imported: number; skipped: Array<{ id: string; error: string }> }; // validates each row (zod), skips invalid/foreign-job rows individually; bulk archival restore; INSERT OR IGNORE
 
   // Log CRUD
-  appendLog(runId, stream, chunk: Buffer): void;
-  getLogs(runId: string): RunLog[];
+  appendLog(runId, stream, chunk: Buffer): void; // stream: 'stdout' | 'stderr' | 'crontick'
+  getLogs(runId: string, source?: 'all' | 'engine' | 'crontick'): RunLog[]; // default 'all'; 'engine' = stdout+stderr
   tailLogs(runId: string, sinceTs: number): RunLog[];
 
   // Schedule state (job_schedule_state table)

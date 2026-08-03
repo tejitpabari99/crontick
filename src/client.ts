@@ -256,8 +256,9 @@ export class CrontickClient {
     return this.request<unknown[]>('GET', `/api/runs${qs ? `?${qs}` : ''}`);
   }
 
-  async getLogs(runId: string, options: { lines?: number } = {}): Promise<LogsResult> {
-    const logs = await this.request<LogEntry[]>('GET', `/api/runs/${encodeURIComponent(runId)}/logs`);
+  async getLogs(runId: string, options: { lines?: number; source?: 'all' | 'engine' | 'crontick' } = {}): Promise<LogsResult> {
+    const query = options.source && options.source !== 'all' ? `?source=${options.source}` : '';
+    const logs = await this.request<LogEntry[]>('GET', `/api/runs/${encodeURIComponent(runId)}/logs${query}`);
     const logicalLines = reconstructLogicalLogLines(logs);
     const lines = options.lines !== undefined ? logicalLines.slice(-options.lines) : logicalLines;
     return { runId, lines };

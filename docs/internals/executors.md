@@ -167,6 +167,14 @@ the generic `canceled` that a plain signal produces.
 
 ## Stream Capture and Redaction
 
+The runner fans all of a run's log output through a `RunLogWriter` (in `src/daemon/runner.ts`)
+that writes to two sinks: the SQLite `run_logs` store (`store.appendLog`) and the per-job log
+file (see [Per-Job Log File](#per-job-log-file)). It exposes two entry points:
+
+- `append(stream, chunk)` — for engine output on the `stdout`/`stderr` streams.
+- `crontick(message, data?)` — for crontick's own lifecycle events, written as a redacted
+  `[crontick] ...` line on the dedicated `crontick` stream.
+
 `child.stdout` and `child.stderr` `'data'` events:
 
 1. Call `safeRedact(chunk)`: if the chunk is valid UTF-8 (no NUL bytes, lossless
@@ -174,10 +182,34 @@ the generic `canceled` that a plain signal produces.
    Binary data passes through unmodified.
 2. Enforce the per-run output cap (see [Output Capture Cap](#output-capture-cap) below) before
    the chunk is persisted.
-3. Call `store.appendLog(runId, stream, redactedChunk)`.
+3. Call `log.append(stream, redactedChunk)` (store + file).
+
+Crontick-side lifecycle events (`run started`, `executing`, `run finished`, overlap `run
+skipped`, retry backoffs, `[crontick:debug] ...` diagnostics) are written via
+`log.crontick(...)` / `appendDiagnosticLog(...)` on the `crontick` stream so callers can filter
+engine-only vs crontick-only logs. `store.getLogs(runId, source)` takes a `source` of `'all'`
+(default), `'engine'` (`stdout`+`stderr`), or `'crontick'`.
 
 Prompt session capture: stdout/stderr chunks are also appended to a
 `transcriptTail` buffer (max 128 KB, ring-style) for session ID extraction.
+
+---
+
+## Per-Job Log File
+
+`src/daemon/job-log-file.ts` provides an injectable per-job file sink (`JobLogFileFactory`,
+injected into the `Runner` constructor; tests pass a fake). For each run, `RunLogWriter` mirrors
+every store write (engine output and crontick events, interleaved) to
+`<logging.dir ?? logsDir()>/<jobId>.log` via `appendFileSync` (append mode, no held handle).
+
+- Config (`logging.fileEnabled`, `logging.dir`) is resolved once per `open()` (i.e. per run),
+  mirroring the per-run re-read of `retention.maxOutputBytesPerRun`, so a `crontick daemon
+  reload` or config edit is picked up without a restart and there is no stale in-memory cache.
+- The job id is sanitized (`[^A-Za-z0-9._-]` → `_`) so it can never escape the log directory.
+- Writes are **best-effort**: a missing directory or a failed write is swallowed (at most one
+  debug log per run) and never blocks or fails a run. `RunLogWriter.append` additionally guards
+  the file write so even a misbehaving sink cannot crash a run — the store copy is the source of
+  truth.
 
 ---
 
@@ -210,10 +242,18 @@ completion and exits normally, it just does not have all of that output recorded
 When `reuseSession && !sessionId` and the run succeeds:
 
 1. `extractSessionId(transcriptTail)` in `src/daemon/prompt-session.ts` applies
-   regex patterns against the last 128 KB of combined output.
+   regex patterns (ordered most-specific first) against the last 128 KB of combined output. The
+   patterns match the Copilot CLI's real stats-footer resume hint
+   (`--resume=<uuid>`, verified against v1.0.78-2) and `--session-id=<id>`/`--session-id <id>`,
+   plus generic `session id: <id>` and `started/created/resumed session <id>` forms. They
+   tolerate crontick's `[stderr] ` prefix and surrounding stats lines.
 2. On match: `store.tryCapturePromptSession(jobId, action, sessionId)` persists
-   the session ID into the job definition for future runs.
+   the session ID into the job definition for future runs, and `store.updateRun(runId,
+   { sessionId })` records it on the run record (surfaced by `runs get` and the dashboard).
 3. On failure: the run is marked `failed` with error `SESSION_ID_NOT_FOUND`.
+
+An explicitly provided `sessionId` (or one already reused for the run) is likewise recorded on
+the run record via `store.updateRun` before the engine is spawned.
 
 ---
 

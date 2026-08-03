@@ -347,13 +347,13 @@ function fakeSpawnWithOutput(text: string) {
 }
 
 function logText(store: Store, runId: string): string {
-  return Buffer.concat(store.getLogs(runId).map((entry) => entry.chunk)).toString('utf-8');
+  return Buffer.concat(store.getLogs(runId, 'engine').map((entry) => entry.chunk)).toString('utf-8');
 }
 
 function persistedLogBytes(dir: string, runId: string): Buffer {
   const db = new DatabaseSync(join(dir, 'runs.db'));
   try {
-    const rows = db.prepare('SELECT chunk FROM run_logs WHERE run_id = ? ORDER BY id')
+    const rows = db.prepare("SELECT chunk FROM run_logs WHERE run_id = ? AND stream IN ('stdout','stderr') ORDER BY id")
       .all(runId) as Array<{ chunk: Uint8Array }>;
     return Buffer.concat(rows.map((row) => Buffer.from(row.chunk)));
   } finally {
@@ -591,7 +591,7 @@ describe('CTD-003 shared secret redaction', () => {
       expect(logBytes.toString('utf-8')).toBe('[REDACTED] [REDACTED]');
       expect(logText(fixture.store, captureRun.id)).toBe('[REDACTED] [REDACTED]');
 
-      const logs = await fixture.client.getLogs(captureRun.id);
+      const logs = await fixture.client.getLogs(captureRun.id, { source: 'engine' });
       const tailed = logs.lines.map((line) => line.data).join('');
       expect(tailed).toBe('[REDACTED] [REDACTED]');
       expect(tailed).not.toContain(AWS_ACCESS_KEY_ID);

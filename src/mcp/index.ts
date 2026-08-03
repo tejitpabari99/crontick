@@ -290,14 +290,15 @@ export function createMcpServer(): McpServer {
     'crontick_run_logs_tail',
     {
       description:
-        'Get the last N lines of output for a run. Useful for diagnosing failures.',
+        'Get the last N lines of output for a run. Useful for diagnosing failures. Use the source filter to select engine output (stdout+stderr), crontick scheduling/execution events, or all (default).',
       inputSchema: withVerbose({
         id: z.string(),
         lines: z.number().int().positive().default(50),
+        source: z.enum(['all', 'engine', 'crontick']).optional(),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.getLogs(args.id, { lines: args.lines })),
+    async (args) => toolWrap(args, (client) => client.getLogs(args.id, { lines: args.lines, source: args.source })),
   );
 
   // ── Schedules ─────────────────────────────────────────────────────────────
