@@ -202,6 +202,18 @@ describe('Daemon HTTP API', () => {
     expect(Array.isArray(data)).toBe(true);
   });
 
+  it('GET /api/runs rejects an invalid limit with a clean 400 (not a 500 crash)', async () => {
+    for (const bad of ['abc', '-5', '0', 'NaN', 'Infinity']) {
+      const { status, data } = await apiCall(port, 'GET', `/api/runs?limit=${bad}`);
+      expect(status, `limit=${bad}`).toBe(400);
+      expect((data as { error?: { code?: string } }).error?.code).toBe('VALIDATION_ERROR');
+    }
+    // A valid positive limit still works.
+    const ok = await apiCall(port, 'GET', '/api/runs?limit=2');
+    expect(ok.status).toBe(200);
+    expect(Array.isArray(ok.data)).toBe(true);
+  });
+
   it('GET /api/runs?status= filters by run status', async () => {
     // Use a node-based action (cross-platform) rather than api-test-job's
     // 'echo' action, which isn't a real executable on Windows.
@@ -392,5 +404,35 @@ describe('Daemon HTTP API', () => {
   it('returns 404 for unknown route', async () => {
     const { status } = await apiCall(port, 'GET', '/api/nonexistent');
     expect(status).toBe(404);
+  });
+
+  // Runs last: DELETE /api/jobs wipes every job. Kept at the end so it doesn't
+  // disturb earlier tests that depend on shared daemon state.
+  it('DELETE /api/jobs requires force and then atomically removes every job', async () => {
+    await apiCall(port, 'POST', '/api/jobs', {
+      alias: 'bulk-api-a',
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
+    });
+    await apiCall(port, 'POST', '/api/jobs', {
+      alias: 'bulk-api-b',
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
+    });
+
+    const missingForce = await apiCall(port, 'DELETE', '/api/jobs');
+    expect(missingForce.status).toBe(400);
+    expect((missingForce.data as { error?: { code?: string } }).error?.code).toBe('VALIDATION_ERROR');
+
+    const before = await apiCall(port, 'GET', '/api/jobs');
+    expect((before.data as unknown[]).length).toBeGreaterThanOrEqual(2);
+
+    const deleted = await apiCall(port, 'DELETE', '/api/jobs?force=1');
+    expect(deleted.status).toBe(200);
+    expect(deleted.data).toMatchObject({ ok: true, deleted: expect.any(Number) });
+    expect((deleted.data as { deleted: number }).deleted).toBeGreaterThanOrEqual(2);
+
+    const after = await apiCall(port, 'GET', '/api/jobs');
+    expect(after.data).toEqual([]);
   });
 });

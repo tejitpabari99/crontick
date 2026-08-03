@@ -254,7 +254,6 @@ function collectJobOptions(engineArgs: string[], opts: Record<string, unknown>):
 }
 
 function collectPatchOptions(engineArgs: string[], opts: Record<string, unknown>): JobPatchCliOptions {
-  if (opts.enable && opts.disable) throw new CrontickError('VALIDATION_ERROR', '--enable and --disable are mutually exclusive');
   return {
     alias: stringOption(opts.alias),
     rawArgs: Array.isArray(engineArgs) ? engineArgs : [],
@@ -272,7 +271,10 @@ function collectPatchOptions(engineArgs: string[], opts: Record<string, unknown>
     overlap: stringOption(opts.overlap),
     retry: numberOption(opts.retry),
     desc: stringOption(opts.desc),
-    enabled: opts.enable ? true : opts.disable ? false : undefined,
+    // Forward the raw flags; the --enable/--disable mutual-exclusion rule and
+    // the resolution to `enabled` live in core (buildJobPatchFromUpdateOptions).
+    enable: booleanOption(opts.enable),
+    disable: booleanOption(opts.disable),
   };
 }
 
@@ -406,10 +408,9 @@ jobs.command('delete <idOrAlias>')
   .action(async (idOrAlias: string, opts) => {
     try {
       if (idOrAlias === 'all') {
-        if (!opts.force) {
-          throw new CrontickError('VALIDATION_ERROR', '`jobs delete all` requires --force to confirm deleting every job. The literal token `all` is reserved for bulk deletion, so a job alias of `all` cannot be targeted from the CLI.');
-        }
-        print(await client().deleteJob(undefined, { all: true, force: true }));
+        // Force validation lives in the core client (deleteJob enforces
+        // force:true for the all-path); the shim just forwards the intent.
+        print(await client().deleteJob(undefined, { all: true, force: booleanOption(opts.force) }));
         return;
       }
       print(await client().deleteJob(idOrAlias));
@@ -452,11 +453,9 @@ runs.command('logs <runId> [source]')
   .option('--tail <n>', 'Show last N lines', parseInteger)
   .action(async (runId: string, source: string | undefined, opts) => {
     try {
-      const src = (source ?? 'all') as 'all' | 'engine' | 'crontick';
-      if (src !== 'all' && src !== 'engine' && src !== 'crontick') {
-        throw new CrontickError('VALIDATION_ERROR', `Invalid source '${source}'. Expected one of: engine, crontick (omit for both).`);
-      }
-      const result = await client().getLogs(runId, { lines: opts.tail as number | undefined, source: src });
+      // Source validation lives in the core client (single source of truth):
+      // the shim forwards the positional untouched.
+      const result = await client().getLogs(runId, { lines: opts.tail as number | undefined, source });
       for (const entry of result.lines) process.stdout.write(`[${entry.stream}] ${entry.data}`);
     } catch (err) { handleError(err); }
   });

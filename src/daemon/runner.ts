@@ -791,7 +791,7 @@ export class Runner {
                 if (persisted) {
                   this.logger.debug('Session id captured and persisted', { jobId: job.id, runId });
                   try {
-                    log.append('stdout', Buffer.from(`[crontick] captured session id: ${sessionId}\n`, 'utf-8'));
+                    log.append('crontick', Buffer.from(`[crontick] captured session id: ${sessionId}\n`, 'utf-8'));
                   } catch (err) {
                     finish({
                       status: 'failed',

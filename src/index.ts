@@ -12,7 +12,7 @@
 
 export { VERSION } from './version.js';
 export { CrontickError, ORPHAN_RUN_ERROR_CODE, ORPHAN_RUN_ERROR_MESSAGE } from './errors.js';
-export { CrontickClient, createClient } from './client.js';
+export { CrontickClient, createClient, LOG_SOURCES } from './client.js';
 export type {
   ConfigPathInfo,
   CreateJobOptions,
@@ -22,6 +22,7 @@ export type {
   DaemonStatus,
   JobStats,
   LogEntry,
+  LogSource,
   LogsResult,
   StatsSummary,
 } from './client.js';

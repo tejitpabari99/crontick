@@ -435,6 +435,13 @@ describe('CLI e2e with daemon', () => {
     const engineLogs = cli(['runs', 'logs', runId, 'engine', '--tail', '5'], env());
     expect(engineLogs.status, engineLogs.stderr).toBe(0);
     expect(engineLogs.stdout).not.toContain('[crontick]');
+    // Invalid source is rejected by core validation (surfaced via the shim).
+    const badSource = cli(['runs', 'logs', runId, 'bogus', '--tail', '5'], env());
+    expectCleanError(badSource, 'VALIDATION_ERROR');
+    expect(badSource.stderr).toContain('Invalid source');
+    // Invalid --limit (non-positive) is rejected as a clean validation error, not a crash.
+    const badLimit = cli(['runs', 'list', '--limit', '0'], env());
+    expectCleanError(badLimit, 'VALIDATION_ERROR');
     expect(parseCliObject(cli(['runs', 'cancel', runId], env()).stdout)).toMatchObject({ ok: true });
   }, 10_000);
 
@@ -455,7 +462,7 @@ describe('CLI e2e with daemon', () => {
     expectCleanError(cli(['jobs', 'get', 'e2e-job'], env()), 'JOB_NOT_FOUND');
     const withoutForce = cli(['jobs', 'delete', 'all'], env());
     expectCleanError(withoutForce, 'VALIDATION_ERROR');
-    expect(withoutForce.stderr).toContain('requires --force');
+    expect(withoutForce.stderr).toContain('requires force:true');
     const withForce = cli(['jobs', 'delete', 'all', '--force'], env());
     expect(withForce.status, withForce.stderr).toBe(0);
     expect(parseCliObject(withForce.stdout)).toMatchObject({ ok: true, deleted: expect.any(Number) });
@@ -579,8 +586,9 @@ describe('CLI e2e with daemon', () => {
 
     const missingForce = cli(['jobs', 'delete', 'all'], env());
     expectCleanError(missingForce, 'VALIDATION_ERROR');
-    expect(missingForce.stderr).toContain('requires --force');
-    expect(missingForce.stderr).toContain('alias of `all` cannot be targeted');
+    // Force validation now originates in the core client (thin-shim rule), so
+    // the CLI surfaces the core's message.
+    expect(missingForce.stderr).toContain('requires force:true');
 
     const deleted = cli(['jobs', 'delete', 'all', '--force'], env());
     expect(deleted.status, deleted.stderr).toBe(0);

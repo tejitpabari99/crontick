@@ -134,6 +134,27 @@ async function handleRequest(
       return sendJson(res, 201, redactValue(stored));
     }
 
+    // Atomic bulk delete: removes every job (and its runs/logs/schedule-state)
+    // in a single store transaction. Guarded by ?force=1 like the client's
+    // deleteJob({ all, force }) contract; force validation is enforced in core
+    // too, this is the transport-side backstop.
+    if (method === 'DELETE' && path === '/api/jobs') {
+      if (!forceParam(url)) {
+        return sendError(res, 400, 'VALIDATION_ERROR', 'Deleting all jobs requires force:true');
+      }
+      // Snapshot the live jobs first so every schedule can be torn down and any
+      // in-flight run canceled — deleting a job removes its definition entirely
+      // (same reasoning as single-job DELETE), so nothing should keep firing or
+      // stay running against a job that no longer exists.
+      const jobs = ctx.store.listJobs();
+      const deleted = ctx.store.deleteAllJobs();
+      for (const job of jobs) {
+        ctx.scheduler.unschedule(job.id);
+        ctx.runner.cancelJob(job.id);
+      }
+      return sendJson(res, 200, { ok: true, deleted });
+    }
+
     // /api/jobs/:id/*
     const jobMatch = path.match(/^\/api\/jobs\/([^/]+)(\/.*)?$/);
     if (jobMatch) {
@@ -232,12 +253,11 @@ async function handleRequest(
       const requestedJobId = url.searchParams.get('jobId') ?? undefined;
       // Accept id-or-alias for the jobId filter, same as every other job lookup.
       const jobId = requestedJobId !== undefined ? (ctx.store.getJob(requestedJobId)?.id ?? requestedJobId) : undefined;
-      const limit = url.searchParams.has('limit')
-        ? parseInt(url.searchParams.get('limit')!, 10)
-        : undefined;
-      const since = url.searchParams.has('since')
-        ? parseInt(url.searchParams.get('since')!, 10)
-        : undefined;
+      // Validate with the shared positive-int helper so NaN/negative/Infinity
+      // yield a clean 400 (VALIDATION_ERROR) instead of reaching SQLite and
+      // surfacing as an opaque 500.
+      const limit = optionalPositiveInt(url.searchParams.get('limit'), 'limit');
+      const since = optionalPositiveInt(url.searchParams.get('since'), 'since');
       const status = (url.searchParams.get('status') ?? undefined) as RunStatus | undefined;
       return sendJson(res, 200, redactValue(ctx.store.listRuns({ jobId, limit, since, status })));
     }

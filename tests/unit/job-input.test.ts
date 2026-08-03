@@ -512,6 +512,14 @@ describe('buildJobPatchFromUpdateOptions - no update flag silently no-ops', () =
     expect(() => buildJobPatchFromUpdateOptions(patchOpts({ every: 60, tz: 'UTC' }))).toThrow(/--tz requires --cron on update/);
     expect(() => buildJobPatchFromUpdateOptions(patchOpts({ at: '2030-01-01T00:00:00.000Z', tz: 'UTC' }))).toThrow(/--tz requires --cron on update/);
   });
+
+  it('resolves --enable/--disable flags in core and rejects passing both together', () => {
+    expect(buildJobPatchFromUpdateOptions(patchOpts({ enable: true })).enabled).toBe(true);
+    expect(buildJobPatchFromUpdateOptions(patchOpts({ disable: true })).enabled).toBe(false);
+    expect(() => buildJobPatchFromUpdateOptions(patchOpts({ enable: true, disable: true }))).toThrow(
+      /--enable and --disable are mutually exclusive/,
+    );
+  });
 });
 
 function existingJob(action: unknown, overlap: Job['overlap'] = 'skip'): Job {

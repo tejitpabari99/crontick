@@ -49,7 +49,7 @@ Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `cancelRun` | `(runId: string): Promise<{ ok: true; canceled: boolean }>` | Cancel result | `CrontickError` |
 | `getRun` | `(runId: string): Promise<unknown>` | Run object | `CrontickError` |
 | `listRuns` | `(options?: { jobId?: string; limit?: number; since?: number; status?: string }): Promise<unknown[]>` | Array of runs | `CrontickError` |
-| `getLogs` | `(runId: string, options?: { lines?: number; source?: 'all' \| 'engine' \| 'crontick' }): Promise<LogsResult>` | `LogsResult` | `CrontickError` |
+| `getLogs` | `(runId: string, options?: { lines?: number; source?: 'all' \| 'engine' \| 'crontick' }): Promise<LogsResult>` | `LogsResult` | `CrontickError` (`VALIDATION_ERROR` on an invalid `source`) |
 | `exportJobs` | `(options?: { includeRuns?: boolean }): Promise<{ jobs: Job[]; runs?: unknown[] }>` | Export payload; `runs` present only when `includeRuns` is set | `CrontickError` |
 | `importJobs` | `(jobs: unknown[], options?: NormalizeJobInputOptions & { runs?: unknown[] }): Promise<unknown>` | Import result, including `runsImported`/`runsSkipped` when `options.runs` is passed | `CrontickError` |
 | `validateSchedule` | `(schedule: Schedule): Promise<unknown>` | Validation result | `CrontickError` |
@@ -176,6 +176,16 @@ interface LogsResult {
   lines: LogEntry[];
 }
 ```
+
+### LogSource / LOG_SOURCES
+
+```ts
+const LOG_SOURCES = ['all', 'engine', 'crontick'] as const;
+type LogSource = (typeof LOG_SOURCES)[number];
+```
+
+The canonical set of accepted `getLogs` / `runs logs` sources. `getLogs` validates its `source`
+argument against this set and throws `CrontickError` (`VALIDATION_ERROR`) for any other value.
 
 ### StatsSummary
 
@@ -415,6 +425,8 @@ interface DashboardJob {
 interface DashboardRun {
   id: string;
   jobId: string;
+  /** The referenced job's alias at snapshot time; null if the job has no alias. */
+  jobAlias: string | null;
   status: string;
   startedAt: number;
   endedAt: number | null;

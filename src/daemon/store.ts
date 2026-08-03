@@ -334,24 +334,51 @@ export class Store {
     const job = this.getJob(idOrAlias);
     if (!job) return false;
     const changes = (this.db.prepare('DELETE FROM jobs WHERE id = ?').run(job.id) as { changes: number }).changes;
-    const filePath = join(this.jobsPath, `${job.id}.json`);
-    const schemaPath = join(this.jobsPath, `${job.id}.schema.json`);
-    if (existsSync(filePath)) {
-      try {
-        unlinkSync(filePath);
-      } catch {
-        // ignore
-      }
-    }
-    if (existsSync(schemaPath)) {
-      try {
-        unlinkSync(schemaPath);
-      } catch {
-        // ignore
-      }
-    }
-    this.logger.debug('Deleted job', { jobId: job.id, alias: job.alias, deleted: changes > 0, filePath, schemaPath });
+    this.removeJobFiles(job.id);
+    this.logger.debug('Deleted job', { jobId: job.id, alias: job.alias, deleted: changes > 0 });
     return changes > 0;
+  }
+
+  /**
+   * Atomically delete every job and all data associated with jobs: run history,
+   * run logs, and per-job schedule state, in a single transaction. Returns the
+   * number of job rows removed. Unlike single-job delete (which archives run
+   * history), a bulk wipe leaves nothing to archive against, so runs/logs are
+   * removed too. Job JSON files are unlinked best-effort after the DB commit
+   * (the SQLite rows are the transactional source of truth; files are a mirror).
+   */
+  deleteAllJobs(): number {
+    const jobs = this.listJobs();
+    this.db.exec('BEGIN;');
+    let deleted: number;
+    try {
+      this.db.exec('DELETE FROM run_logs;');
+      this.db.exec('DELETE FROM runs;');
+      this.db.exec('DELETE FROM job_schedule_state;');
+      deleted = (this.db.prepare('DELETE FROM jobs').run() as { changes: number }).changes;
+      this.db.exec('COMMIT;');
+    } catch (err) {
+      this.db.exec('ROLLBACK;');
+      throw err;
+    }
+    for (const job of jobs) this.removeJobFiles(job.id);
+    this.logger.info('Deleted all jobs', { deleted });
+    return deleted;
+  }
+
+  /** Best-effort removal of a job's persisted JSON + schema files (the DB row is the transactional source of truth). */
+  private removeJobFiles(jobId: string): void {
+    const filePath = join(this.jobsPath, `${jobId}.json`);
+    const schemaPath = join(this.jobsPath, `${jobId}.schema.json`);
+    for (const path of [filePath, schemaPath]) {
+      if (existsSync(path)) {
+        try {
+          unlinkSync(path);
+        } catch {
+          // ignore
+        }
+      }
+    }
   }
 
 
@@ -524,8 +551,23 @@ export class Store {
 
     const join = existingJobsOnly ? 'INNER JOIN jobs ON jobs.id = runs.job_id' : '';
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    const limit = opts.limit !== undefined ? `LIMIT ${opts.limit}` : '';
-    const rows = this.db.prepare(`SELECT runs.* FROM runs ${join} ${where} ORDER BY runs.started_at DESC ${limit}`)
+    // Defense-in-depth: bind LIMIT as a parameter (never string-interpolated)
+    // and reject any non-finite / non-positive value so a bad limit can never
+    // reach SQLite as malformed SQL. The HTTP layer validates first (see
+    // api.ts optionalPositiveInt), this is the store-side backstop.
+    let limitClause = '';
+    if (opts.limit !== undefined) {
+      const n = Number(opts.limit);
+      if (!Number.isInteger(n) || n <= 0) {
+        throw new CrontickError(
+          'VALIDATION_ERROR',
+          `Invalid limit ${opts.limit}. Provide a positive integer for limit, then retry.`,
+        );
+      }
+      limitClause = 'LIMIT ?';
+      params.push(n);
+    }
+    const rows = this.db.prepare(`SELECT runs.* FROM runs ${join} ${where} ORDER BY runs.started_at DESC ${limitClause}`)
       .all(...params) as unknown as DbRunRow[];
     this.logger.debug('Listed runs', {
       count: rows.length,

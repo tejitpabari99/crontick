@@ -160,6 +160,10 @@ export interface JobCreateCliOptions {
   retry?: number;
   desc?: string;
   enabled?: boolean;
+  /** CLI `--enable` flag (update only). Mutually exclusive with `disable`; resolved to `enabled` by buildJobPatchFromUpdateOptions. */
+  enable?: boolean;
+  /** CLI `--disable` flag (update only). Mutually exclusive with `enable`. */
+  disable?: boolean;
   force?: boolean;
 }
 
@@ -322,11 +326,11 @@ function withEngineDefaultForNewPromptAction(
 }
 
 /**
- * Resolves the effective args for --exec/--prompt actions from the two
+ * Resolves the effective args for exec/prompt actions from the two
  * mutually exclusive CLI sources: explicit repeatable `--arg <value>` flags
  * (always correct, shim-independent) and legacy `--` positional args (a
  * convenience that only survives intact on invocations where the shell/shim
- * doesn't mangle it — see cli/index.ts's --exec help text). Combining both in
+ * doesn't mangle it). Combining both in
  * the same command is rejected rather than silently picking one, since that
  * combination is never what the user intended.
  */
@@ -377,6 +381,12 @@ export function buildJobPatchFromUpdateOptions(
   input: JobPatchCliOptions,
   options: NormalizeJobInputOptions = {},
 ): JobPatchInput {
+  // Domain rule enforced in core (not the CLI shim): --enable and --disable
+  // are mutually exclusive. Resolved to a single `enabled` boolean below.
+  if (input.enable && input.disable) {
+    throw new CrontickError('VALIDATION_ERROR', '--enable and --disable are mutually exclusive');
+  }
+  const enabled = input.enabled ?? (input.enable ? true : input.disable ? false : undefined);
   const resolvedArgs = resolveActionArgs(input);
   if (input.file) {
     assertFileModeExclusive(input, resolvedArgs);
@@ -395,7 +405,7 @@ export function buildJobPatchFromUpdateOptions(
   const patch: JobPatchInput = {};
   if (input.alias !== undefined) patch.alias = input.alias;
   if (input.desc !== undefined) patch.description = input.desc;
-  if (input.enabled !== undefined) patch.enabled = input.enabled;
+  if (enabled !== undefined) patch.enabled = enabled;
   const schedule = maybeBuildSchedule(input, true);
   if (schedule !== undefined) patch.schedule = schedule;
   const action = maybeBuildAction(input, resolvedArgs, true);

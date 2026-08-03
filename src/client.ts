@@ -101,6 +101,10 @@ export interface LogsResult {
   lines: LogEntry[];
 }
 
+/** Valid `source` filters accepted by getLogs (see docs/reference/cli.md `runs logs`). */
+export const LOG_SOURCES = ['all', 'engine', 'crontick'] as const;
+export type LogSource = (typeof LOG_SOURCES)[number];
+
 export interface StatsSummary {
   totalJobs: number;
   enabledJobs: number;
@@ -253,9 +257,11 @@ export class CrontickClient {
   async deleteJob(id?: string, options: { all?: boolean; force?: boolean } = {}): Promise<{ ok: true } | { ok: true; deleted: number }> {
     if (options.all) {
       if (!options.force) throw new CrontickError('VALIDATION_ERROR', 'Deleting all jobs requires force:true');
-      const jobs = await this.listJobs();
-      for (const job of jobs) await this.deleteJob(job.id);
-      return { ok: true, deleted: jobs.length };
+      // Single atomic daemon call: DELETE /api/jobs wipes every job (and its
+      // runs/logs/schedule-state) in one store transaction. Avoids the old
+      // per-job loop, which had no atomicity and could report success after a
+      // partial failure.
+      return this.request<{ ok: true; deleted: number }>('DELETE', '/api/jobs?force=1');
     }
     if (!id) throw new CrontickError('VALIDATION_ERROR', 'Provide a job id or alias, or set all:true (with force:true) to delete every job');
     return this.request<{ ok: true }>('DELETE', `/api/jobs/${encodeURIComponent(id)}`);
@@ -296,8 +302,18 @@ export class CrontickClient {
     return this.request<unknown[]>('GET', `/api/runs${qs ? `?${qs}` : ''}`);
   }
 
-  async getLogs(runId: string, options: { lines?: number; source?: 'all' | 'engine' | 'crontick' } = {}): Promise<LogsResult> {
-    const query = options.source && options.source !== 'all' ? `?source=${options.source}` : '';
+  async getLogs(runId: string, options: { lines?: number; source?: LogSource | (string & {}) } = {}): Promise<LogsResult> {
+    const source = options.source;
+    // Core is the single source of truth for `source` validation: the CLI/MCP
+    // shims forward the value unchecked and the daemon defensively normalizes
+    // unknowns, so the user-facing rejection must originate here.
+    if (source !== undefined && !LOG_SOURCES.includes(source as LogSource)) {
+      throw new CrontickError(
+        'VALIDATION_ERROR',
+        `Invalid source '${source}'. Expected one of: engine, crontick (omit for both).`,
+      );
+    }
+    const query = source && source !== 'all' ? `?source=${source}` : '';
     const logs = await this.request<LogEntry[]>('GET', `/api/runs/${encodeURIComponent(runId)}/logs${query}`);
     const logicalLines = reconstructLogicalLogLines(logs);
     const lines = options.lines !== undefined ? logicalLines.slice(-options.lines) : logicalLines;

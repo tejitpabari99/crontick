@@ -542,6 +542,10 @@ describe('Runner', () => {
       reuseSession: false,
     });
     expect(store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('')).toContain('captured session id');
+    // The captured-session-id line is a crontick-side lifecycle event: it must
+    // live on the `crontick` stream, never on the engine (stdout/stderr) streams.
+    expect(store.getLogs(run.id, 'crontick').map((log) => log.chunk.toString('utf-8')).join('')).toContain('captured session id');
+    expect(store.getLogs(run.id, 'engine').map((log) => log.chunk.toString('utf-8')).join('')).not.toContain('captured session id');
   });
 
   it('prompt: captures a session id from the rolling transcript tail after long output', async () => {

@@ -156,6 +156,33 @@ describe('Store', () => {
     expect(store.deleteJob('ghost')).toBe(false);
   });
 
+  it('deleteAllJobs atomically removes every job plus its runs, logs, schedule state, and files, returning the count', () => {
+    store.upsertJob(execJob('bulk-a'));
+    store.upsertJob(execJob('bulk-b'));
+    const runA = store.insertRun('bulk-a');
+    store.appendLog(runA.id, 'stdout', Buffer.from('hi\n'));
+    store.recordTick('bulk-a', 1000);
+    const runB = store.insertRun('bulk-b');
+    store.appendLog(runB.id, 'stderr', Buffer.from('err\n'));
+
+    expect(store.listJobs()).toHaveLength(2);
+
+    const deleted = store.deleteAllJobs();
+    expect(deleted).toBe(2);
+    expect(store.listJobs()).toEqual([]);
+    expect(store.listRuns({})).toEqual([]);
+    expect(store.getLogs(runA.id)).toEqual([]);
+    expect(store.getLogs(runB.id)).toEqual([]);
+    expect(store.getScheduleState('bulk-a')).toBeUndefined();
+    expect(existsSync(join(dir, 'jobs', 'bulk-a.json'))).toBe(false);
+    expect(existsSync(join(dir, 'jobs', 'bulk-b.json'))).toBe(false);
+    expect(existsSync(join(dir, 'jobs', 'bulk-a.schema.json'))).toBe(false);
+  });
+
+  it('deleteAllJobs on an empty store returns 0', () => {
+    expect(store.deleteAllJobs()).toBe(0);
+  });
+
   it('upsertJob is idempotent — updates in place', () => {
     store.upsertJob(execJob('idem-job'));
     store.upsertJob({ ...execJob('idem-job'), enabled: false });

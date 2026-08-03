@@ -195,7 +195,9 @@ describe('CTD-014 deleted-job aggregates', () => {
     expect(dashboard.health.jobs).toEqual({ total: 1, enabled: 1 });
     expect(dashboard.health.runs).toEqual({ last24h: 1, failures24h: 0 });
     expect(dashboard.jobs.map((job) => job.alias)).toEqual([liveJobId]);
-    expect(dashboard.runs.map((run) => ({ id: run.id, jobId: run.jobId }))).toEqual([{ id: liveRunId, jobId: liveJob.id }]);
+    expect(dashboard.runs.map((run) => ({ id: run.id, jobId: run.jobId, jobAlias: run.jobAlias }))).toEqual([
+      { id: liveRunId, jobId: liveJob.id, jobAlias: liveJob.alias ?? null },
+    ]);
 
     const archivedRun = await client.getRun(deletedRunId) as RunRecord;
     expect(archivedRun).toMatchObject({ id: deletedRunId, jobId: deletedJob.id, status: 'success', exitCode: 0 });

@@ -294,6 +294,18 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     await expect(client.importJobs([{ ...testJob, alias: 'also invalid' }])).rejects.toBeInstanceOf(Error);
   });
 
+  it('getLogs validates the source filter in core before hitting the daemon', async () => {
+    makeHome();
+    // startDaemon:false and an unreachable URL: an invalid source must reject
+    // from core validation, never reaching the transport.
+    const client = createClient({ daemonUrl: 'http://127.0.0.1:1/', startDaemon: false, requestTimeoutMs: 200 });
+
+    await expect(client.getLogs('run-1', { source: 'bogus' as never })).rejects.toBeInstanceOf(CrontickError);
+    await expect(client.getLogs('run-1', { source: 'bogus' as never })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+    });
+  });
+
   it('surfaces ENV_FILE_ERROR from createJob without persisting a broken job', async () => {
     const home = makeHome();
     const client = createClient({ daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 15_000 });

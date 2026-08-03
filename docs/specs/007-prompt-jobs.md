@@ -74,7 +74,7 @@ reuse enables multi-turn conversations across runs.
 4. If found: call `store.tryCapturePromptSession(jobId, action, sessionId)`.
 5. `tryCapturePromptSession` compares current job action to expected; if match and
    no existing sessionId, upserts job with captured sessionId and reuseSession=false.
-6. Append `[crontick] captured session id: <id>` to run stdout log.
+6. Append `[crontick] captured session id: <id>` to the run's `crontick` lifecycle log stream (retrievable via `getLogs(runId, 'crontick')`), alongside the other crontick lifecycle events.
 
 **Validation flow (schema-level)**:
 1. Zod `PromptActionSchema` runs `addPromptRuntimeIssues` superRefine.

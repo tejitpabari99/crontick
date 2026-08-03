@@ -172,7 +172,9 @@ crontick jobs delete all --force
 | `--all` | boolean | `false` | Delete every job |
 | `--force` | boolean | `false` | Required with `--all` |
 
-Deleting a job cancels its in-flight run, if any. Historical runs remain queryable by run id, but live aggregates exclude runs whose parent job was deleted.
+Deleting a single job cancels its in-flight run, if any. Historical runs remain queryable by run id, but live aggregates exclude runs whose parent job was deleted.
+
+`jobs delete all --force` removes every job atomically in a single daemon transaction, deleting all jobs together with their associated runs and logs (there is nothing left to query aggregates against). `--force` is required and is validated in the core client.
 
 ---
 
@@ -227,7 +229,7 @@ crontick runs logs <runId> [engine|crontick]
 
 | Argument / flag | Type | Default | Description |
 |-----------------|------|---------|-------------|
-| `source` | `engine` \| `crontick` | both streams | Optional positional filter. `engine` = stdout/stderr from the spawned process; `crontick` = scheduling/execution lifecycle events |
+| `source` | `engine` \| `crontick` | both streams | Optional positional filter. `engine` = stdout/stderr from the spawned process; `crontick` = scheduling/execution lifecycle events. Any other value is rejected with `VALIDATION_ERROR` (validated in the core client) |
 | `--tail <n>` | integer | — | Show the last N logical lines |
 
 Output is one line per stored entry in this form:

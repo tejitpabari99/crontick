@@ -74,13 +74,19 @@ function okResult(data: unknown, diagnostics: LogEvent[] = [], verbose = false):
  */
 export function redactForLlm(msg: string): string {
   return msg
-    // Loopback address:port
+    // IPv4 loopback address:port
     .replace(/127\.0\.0\.1:\d+/g, '<daemon-addr>')
+    // IPv6 loopback: [::1]:port, ::1:port, or bare ::1 (bracketed form first
+    // so its :port isn't swallowed by the bare-::1 pass).
+    .replace(/\[::1\](?::\d+)?/g, '<daemon-addr>')
+    .replace(/::1(?::\d+)?/g, '<daemon-addr>')
     // Windows absolute paths: C:\foo\bar  (must have at least one separator)
     .replace(/[A-Za-z]:\\[^\s"']+/g, '<path>')
-    // POSIX absolute paths: only when preceded by start-of-string, whitespace,
-    // (, [, or a quote — to avoid matching /path inside http://host/path URLs.
-    .replace(/(^|[\s(["'])\/(?:[^\s"'/]+\/)+[^\s"'/]+/g, '$1<path>');
+    // POSIX absolute paths, including single-segment roots like /tmp, /etc,
+    // /home: only when preceded by start-of-string, whitespace, (, [, or a
+    // quote — to avoid matching /path inside http://host/path URLs. The
+    // segment group is `*` (not `+`) so `/tmp` matches, not just `/a/b`.
+    .replace(/(^|[\s(["'])\/(?:[^\s"'/]+\/)*[^\s"'/]+/g, '$1<path>');
 }
 
 function errResult(err: unknown, diagnostics: LogEvent[] = [], verbose = false): ToolResult {
@@ -94,9 +100,11 @@ function errResult(err: unknown, diagnostics: LogEvent[] = [], verbose = false):
   };
 }
 
-function redactedErrorMessage(err: unknown): string {
+/** Redact an error's message for return to the LLM host. Exported for testing. */
+export function redactedErrorMessage(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
-  if (err instanceof Error && 'code' in err && err.code === 'ENV_FILE_ERROR') return msg;
+  // ENV_FILE_ERROR messages embed the resolved env-file absolute path; redact
+  // it too so no machine-specific path leaks into the LLM host context.
   return redactForLlm(msg);
 }
 

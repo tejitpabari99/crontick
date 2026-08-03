@@ -276,8 +276,7 @@ describe('MCP server — full contract', () => {
     expect((json as { action: unknown }).action).toMatchObject({ kind: 'exec', command: 'echo', args: [tricky] });
   });
 
-  it('crontick_job_create preserves env-file error paths in MCP responses', async () => {
-    const missingEnvFile = join(dir, 'missing-mcp.env');
+  it('crontick_job_create redacts env-file absolute paths in MCP responses', async () => {
     const result = await callTool(client, 'crontick_job_create', {
       alias: 'mcp-missing-env-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
@@ -291,7 +290,10 @@ describe('MCP server — full contract', () => {
     });
     expect(result.isError).toBe(true);
     expect((result.json as { error: string }).error).toContain('Failed to load envFile');
-    expect((result.json as { error: string }).error).toContain(missingEnvFile);
+    // ENV_FILE_ERROR messages embed the resolved absolute path; the MCP surface
+    // must redact it so no machine-specific path leaks to the LLM host.
+    expect((result.json as { error: string }).error).not.toContain(dir);
+    expect((result.json as { error: string }).error).toContain('<path>');
   });
 
 
@@ -303,7 +305,6 @@ describe('MCP server — full contract', () => {
     });
     expect(created.isError).toBe(false);
 
-    const missingEnvFile = join(dir, 'missing-mcp-update.env');
     const result = await callTool(client, 'crontick_job_update', {
       id: 'mcp-missing-env-update-job',
       action: {
@@ -316,7 +317,9 @@ describe('MCP server — full contract', () => {
     });
     expect(result.isError).toBe(true);
     expect((result.json as { error: string }).error).toContain('Failed to load envFile');
-    expect((result.json as { error: string }).error).toContain(missingEnvFile);
+    // The env-file absolute path is redacted (see redactedErrorMessage in mcp/index.ts).
+    expect((result.json as { error: string }).error).not.toContain(dir);
+    expect((result.json as { error: string }).error).toContain('<path>');
 
     const fetched = await callTool(client, 'crontick_job_get', { id: 'mcp-missing-env-update-job' });
     expect(fetched.isError).toBe(false);
