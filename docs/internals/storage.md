@@ -229,7 +229,7 @@ user-facing framing.
 ## Run Import
 
 `importRuns(runs: unknown[])` (`src/daemon/store.ts`) bulk-restores previously-exported run rows
-(from `crontick export --include-runs`) as archival data only — no execution, no scheduler
+(from `crontick share export --include-runs`) as archival data only — no execution, no scheduler
 interaction. Every row is validated against `RunImportSchema` (zod) before it is ever bound to a
 statement, mirroring the same validate-then-collect pattern `POST /api/import`'s jobs loop already
 used: a malformed row (bad `status` enum value, missing `startedAt`, wrong types, ...) is skipped
@@ -308,7 +308,7 @@ stdout/stderr is separately bounded by `retention.maxOutputBytesPerRun` (see
 [executors.md](./executors.md#output-capture-cap)), so one run cannot itself produce an
 unbounded `run_logs` row. Eviction is a hard delete with no automatic export, warning, dry-run,
 or undo; a caller who wants to keep history past the cap must run
-`crontick export --include-runs` *before* it is evicted (see
+`crontick share export --include-runs` *before* it is evicted (see
 [cli.md](../reference/cli.md#export)) -- there is no automatic backup. See
 [state-and-storage.md](../concepts/state-and-storage.md) for the
 user-facing framing, and

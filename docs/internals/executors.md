@@ -105,11 +105,10 @@ Before any child process is spawned, the runner pre-validates `action.cwd` for *
 ### Exec actions (`action.kind === 'exec'`)
 
 Direct, verbatim: `cmd = action.command`, `args = action.args ?? []`. No shell, no quoting, no
-whitespace splitting — `action.args` is the array the CLI's repeatable `--arg <value>` flag (or,
-as a convenience, the `--` separator; or the library API's `args` field) already produced, so an
-argument containing a space or a shell metacharacter is passed through to the child exactly as
-given. See [concepts/execution.md](../concepts/execution.md#exec-jobs) and
-[cli.md](../reference/cli.md#new) for the user-facing `--arg`/`--` syntax.
+whitespace splitting -- `action.args` is the array supplied by the job schema (for example a job
+JSON file passed to `crontick jobs new --file <job.json>`) or the library API, so an argument
+containing a space or a shell metacharacter is passed through to the child exactly as given. See
+[concepts/execution.md](../concepts/execution.md#exec-jobs).
 
 ### Prompt actions (`action.kind === 'prompt'`)
 
@@ -344,4 +343,4 @@ adoption poll above:
 
 When `logger.isDebugEnabled()`, the runner writes `[crontick:debug]` lines to
 the run's stderr log via `appendDiagnosticLog()`. These are visible in
-`crontick logs <runId>` when verbose mode was active during the run.
+`crontick runs logs <runId>` when verbose mode was active during the run.

@@ -1,6 +1,6 @@
 # Configuration Reference
 
-All configuration inputs for crontick: file, environment variables, and data directory layout.
+All configuration inputs for crontick: the config file, environment variables, and data directory layout.
 
 ---
 
@@ -9,8 +9,11 @@ All configuration inputs for crontick: file, environment variables, and data dir
 **Location:** `<dataDir>/config.json`
 
 The data directory is resolved by (in order):
+
 1. `CRONTICK_HOME` environment variable (if set)
 2. `env-paths('crontick', { suffix: '' }).data` (platform default)
+
+`crontick config` prints the resolved config path and a short note. There are no config get/set/unset/init/validate or engine-management CLI/MCP commands; edit `config.json` by hand. If the file does not exist, crontick uses the built-in default config.
 
 ### Resolved Config File Paths by OS
 
@@ -28,8 +31,8 @@ The data directory is resolved by (in order):
   "engines": {
     "<name>": {
       "command": "<executable>",
-      "args": ["<arg>", ...],
-      "env": { "<KEY>": "<VALUE>", ... }
+      "args": ["<arg>", "..."],
+      "env": { "<KEY>": "<VALUE>" }
     }
   },
   "retention": {
@@ -47,66 +50,9 @@ The data directory is resolved by (in order):
 | Field | Type | Required | Default | Constraints |
 |-------|------|----------|---------|-------------|
 | `defaultEngine` | `string` | no | `"copilot"` | Must match a key in `engines`; regex `^[A-Za-z0-9_.-]+$` |
-| `engines` | `Record<string, EngineConfig>` | no | `{ copilot: { command: "copilot", args: ["--allow-all-tools", "-p"], env: {} } }` | At least one engine must be defined |
+| `engines` | `Record<string, EngineConfig>` | no | built-in `copilot` engine | At least one engine must be defined |
 | `retention` | `RetentionConfig` | no | `{ maxRunsPerJob: 100, maxOutputBytesPerRun: 2000000, maxLogFiles: 30 }` | See below |
 | `logging` | `LoggingConfig` | no | `{ fileEnabled: true }` | See below |
-
-### RetentionConfig
-
-| Field | Type | Required | Default | Constraints |
-|-------|------|----------|---------|-------------|
-| `maxRunsPerJob` | `integer` | no | `100` | `min(1)`, `max(100_000)` |
-| `maxOutputBytesPerRun` | `integer` | no | `2_000_000` | `min(1024)`, `max(1_000_000_000)` |
-| `maxLogFiles` | `integer` | no | `30` | `min(1)`, `max(3650)` |
-
-Each job retains at most `maxRunsPerJob` runs; the oldest terminal runs (not `running`/`queued`)
-are evicted first, along with their logs, whenever a new run is inserted, and again in a startup
-pass (`pruneAllJobsRunHistory()`) that catches a job whose cap was just lowered via `crontick
-daemon reload` but that hasn't ticked since. Eviction is best-effort: a failure is logged but
-never fails a run insert or blocks daemon startup. Changing `retention.maxRunsPerJob` and running
-`crontick daemon reload` applies the new cap immediately, without a daemon restart.
-
-`maxOutputBytesPerRun` bounds a single run's captured stdout/stderr; once hit, further output is
-dropped at a UTF-8 character boundary (a multi-byte character is never split), a truncation
-marker is appended, and the run's `outputTruncated` field is set. This cap is also re-read on
-`crontick daemon reload`.
-
-`maxLogFiles` bounds how many daily `daemon-YYYY-MM-DD.log` files are kept under the daemon's log
-directory; the oldest files beyond the cap are deleted, keeping the newest. Applied at daemon
-startup and again on `crontick daemon reload` (a lowered value takes effect immediately, without
-a restart). Pruning is best-effort: a failure is logged but never blocks startup or reload.
-
-`RetentionConfigSchema` is `.strict()` — no extra fields allowed. See
-[state-and-storage.md](../concepts/state-and-storage.md#run-history-retention) for the
-user-facing model, and [storage internals](../internals/storage.md) for the eviction and output-cap algorithms.
-
-### LoggingConfig
-
-| Field | Type | Required | Default | Constraints |
-|-------|------|----------|---------|-------------|
-| `fileEnabled` | `boolean` | no | `true` | — |
-| `dir` | `string` | no | `<dataDir>/logs` | Non-empty when set |
-
-In addition to the SQLite run-log store (queried by `crontick logs`), every run's logs are
-mirrored to a per-job log file at `<dir>/<jobId>.log` (job id is the GUID; unsafe filename
-characters are replaced). The file interleaves the engine's `stdout`/`stderr` with crontick's
-own scheduling/execution lifecycle events (see [execution concepts](../concepts/execution.md)).
-Set `logging.fileEnabled` to `false` to disable file logging, or `logging.dir` to override the
-directory (defaults to the `logs/` subfolder of the data directory — see
-[State Directory Layout](#state-directory-layout)). File logging is best-effort: a missing
-directory or a failed write is swallowed (at most one debug log is emitted) and never blocks or
-fails a run. Both keys are re-read per run, so a `crontick daemon reload` or config edit is
-picked up by subsequent runs without a daemon restart. `LoggingConfigSchema` is `.strict()`.
-
-### EngineConfig
-
-| Field | Type | Required | Default | Constraints |
-|-------|------|----------|---------|-------------|
-| `command` | `string` | yes | — | Min length 1 |
-| `args` | `string[]` | no | `[]` | — |
-| `env` | `Record<string, string>` | no | `{}` | — |
-
-Schema is `.strict()` — no extra fields allowed.
 
 ### Built-in Default (no file needed)
 
@@ -127,55 +73,85 @@ Schema is `.strict()` — no extra fields allowed.
 }
 ```
 
-If `config.json` does not exist, crontick uses this built-in config. The file config is deep-merged over the built-in defaults.
+The file config is deep-merged over the built-in defaults. `config.json` must be strict JSON; unknown fields are rejected by the schema.
 
-### JSON parsing behavior
+---
 
-Config file reads accept UTF-8 JSON with an optional leading BOM. When the file cannot be parsed,
-`crontick config validate`, `CrontickClient.validateConfig()`, and `crontick_config_validate`
-report `CONFIG_READ_ERROR` with the file path, line, column, position, and the expected config
-shape.
+## When Config Edits Take Effect
+
+Most config is read fresh for each run and applies automatically on the **next run** without `crontick daemon reload` or a restart:
+
+- engine definitions under `engines`
+- `defaultEngine`
+- the resolved prompt command built by `buildPromptRunCommand()`
+- logging settings (`logging.fileEnabled`, `logging.dir`)
+- per-run output retention (`retention.maxOutputBytesPerRun`)
+- daemon log-file retention (`retention.maxLogFiles`) the next time log retention is applied
+
+The exception is `retention.maxRunsPerJob`. The daemon's Store reads and caches that value at daemon startup. Changing `retention.maxRunsPerJob` requires:
+
+```bash
+crontick daemon restart
+```
+
+`crontick daemon reload` is for reloading job definitions from disk; it is not required for normal config edits and does not replace the restart requirement for `retention.maxRunsPerJob`.
+
+---
+
+## RetentionConfig
+
+| Field | Type | Required | Default | Constraints | Runtime behavior |
+|-------|------|----------|---------|-------------|------------------|
+| `maxRunsPerJob` | `integer` | no | `100` | `min(1)`, `max(100_000)` | Cached by Store at daemon startup; changing requires `crontick daemon restart` |
+| `maxOutputBytesPerRun` | `integer` | no | `2_000_000` | `min(1024)`, `max(1_000_000_000)` | Re-read per run; applies on the next run |
+| `maxLogFiles` | `integer` | no | `30` | `min(1)`, `max(3650)` | Applies the next time daemon log retention runs |
+
+`maxRunsPerJob` retains at most that many runs per job. Oldest terminal runs (not `running`/`queued`) and their crontick-side log rows are evicted best-effort.
+
+`maxOutputBytesPerRun` bounds a single run's captured stdout/stderr. Once hit, further output is dropped at a UTF-8 character boundary, a truncation marker is appended, and the run's `outputTruncated` field is set.
+
+`maxLogFiles` bounds daily `daemon-YYYY-MM-DD.log` files under the daemon log directory; oldest files beyond the cap are deleted best-effort.
+
+See [state-and-storage.md](../concepts/state-and-storage.md#run-history-retention) for the user-facing model, and [storage internals](../internals/storage.md) for eviction details.
+
+---
+
+## LoggingConfig
+
+| Field | Type | Required | Default | Constraints |
+|-------|------|----------|---------|-------------|
+| `fileEnabled` | `boolean` | no | `true` | — |
+| `dir` | `string` | no | `<dataDir>/logs` | Non-empty when set |
+
+Every run's logs are stored in SQLite and can be read with `crontick runs logs`. When file logging is enabled, the same engine and crontick lifecycle streams are mirrored to `<dir>/<jobId>.log`. File logging is best-effort and never blocks or fails a run. Logging config is read per run, so edits apply automatically to new runs.
+
+---
+
+## EngineConfig
+
+| Field | Type | Required | Default | Constraints |
+|-------|------|----------|---------|-------------|
+| `command` | `string` | yes | — | Min length 1 |
+| `args` | `string[]` | no | `[]` | — |
+| `env` | `Record<string, string>` | no | `{}` | — |
+
+Schema is `.strict()` — no extra fields allowed.
 
 ### Prompt-engine argv ordering
 
-`buildPromptRunCommand()` always emits prompt-engine argv as `[..., ...engine.args, prompt, ...action.args]`.
-If an engine requires an explicit prompt-taking flag for non-interactive use, that flag must be
-the final entry in `engine.args` so the appended prompt text becomes its value. Put any other
-non-interactive/setup flags before it.
+`buildPromptRunCommand()` emits prompt-engine argv as:
 
-For the built-in Copilot engine, the working default is `['--allow-all-tools', '-p']`, which
-produces `copilot --allow-all-tools -p <prompt>`. If you override `engines.copilot.args`, keep the
-prompt-taking flag last; `['-p', '--allow-all-tools']` is incorrect because `buildPromptRunCommand()`
-would pass `--allow-all-tools` as the prompt text.
+```text
+[..., ...engine.args, prompt, ...action.args]
+```
 
-### Set vs. Inherited Values
+If an engine requires an explicit prompt-taking flag for non-interactive use, that flag must be the final entry in `engine.args` so the appended prompt text becomes its value. For the built-in Copilot engine, the default is `['--allow-all-tools', '-p']`, producing:
 
-`config get` (with or without a key path) always shows **effective** values — the file
-deep-merged over the built-in defaults above. `config unset <path>` removes the key from
-`config.json` itself; it does not write the built-in default back into the file. So after
-`config unset defaultEngine`, `config get defaultEngine` still reports `"copilot"` (the
-inherited built-in default), but the file no longer pins that value explicitly — a future
-built-in default change, or restoring `config.json` from an older version, no longer requires
-touching that key. To see exactly what's explicitly set (as opposed to inherited), read
-`config.json` directly: any key absent from the file is inherited from the built-in default.
+```text
+copilot --allow-all-tools -p <prompt>
+```
 
-### Redaction on read surfaces
-
-`crontick config get`, `CrontickClient.getConfigValue()`, and the MCP
-`crontick_config_get` tool return effective config values with secret-like material
-redacted. This uses the same shared redaction contract as run reads, log tails, and
-dashboard data: GitHub/OpenAI/Anthropic/Stripe/Slack-style tokens, JWT-like blobs,
-key/value assignments such as `token=...`, connection-string passwords, contextual or
-nearby-access-key-paired AWS secret-access-key values, and private keys (including lone `BEGIN`/`END
-... PRIVATE KEY` markers) are masked before they are printed or serialized. Structured
-key-hint redaction is intentionally narrow: names such as `OPENAI_API_KEY`,
-`clientSecret`, and `AWS_SECRET_ACCESS_KEY` redact, while benign names such as
-`NON_SECRET` do not.
-
-This is presentation-only redaction. The underlying `config.json` file on disk is not
-rewritten; read the file directly if you need the literal stored bytes.
-
-### Multi-Engine Example
+### Multi-engine example
 
 ```json
 {
@@ -195,11 +171,16 @@ rewritten; read the file directly if you need the literal stored bytes.
 }
 ```
 
-Custom engines (like `agency` above) are just configurable entries; only the `command` must be on PATH. If a custom engine needs an explicit prompt-taking flag, keep that flag last in `args` for the same ordering reason described above.
+Custom engines are configurable entries. Only `command` must be on `PATH`.
 
-### Config Key Path
+---
 
-Key paths for `config get/set/unset` are dot-separated: `defaultEngine`, `engines.copilot.command`, etc. Keys must match `^[A-Za-z0-9_.-]+$`.
+## Script and Exec Actions
+
+Script and exec action kinds remain fully supported in the job schema, daemon executors, and core client. Their dedicated CLI flags and MCP convenience parameters were removed to keep the shims focused on the common prompt workflow. To create script or exec jobs:
+
+- use a full job-definition JSON file with `crontick jobs new --file <job.json>`; or
+- call `client.createJob()` from the library with `action.kind: "script"` or `action.kind: "exec"`.
 
 ---
 
@@ -208,48 +189,51 @@ Key paths for `config get/set/unset` are dot-separated: `defaultEngine`, `engine
 | Variable | Type | Default | Effect |
 |----------|------|---------|--------|
 | `CRONTICK_HOME` | string (path) | Platform via `env-paths` | Overrides the data directory root |
-| `CRONTICK_DAEMON_URL` | string (URL) | Port file discovery | Explicit daemon base URL (e.g. `http://127.0.0.1:9876`) |
+| `CRONTICK_DAEMON_URL` | string (URL) | Port file discovery | Explicit daemon base URL (for example, `http://127.0.0.1:9876`) |
 | `CRONTICK_DAEMON_BINARY` | string (path) | Resolved from built files | Override path to daemon script |
 | `CRONTICK_MCP_START_DAEMON` | `"0"` to disable | Enabled (any other value) | When `"0"`, MCP server does not demand-start the daemon |
-| `CRONTICK_VERBOSE` | string | Disabled | `1\|true\|yes\|on\|debug` (case-insensitive) enables verbose logging |
+| `CRONTICK_VERBOSE` | string | Disabled | `1\|true\|yes\|on\|debug` enables verbose logging |
 | `CRONTICK_PLUGIN_NONINTERACTIVE` | any | — | Skips interactive prompts in plugin installer |
 | `CRONTICK_PLUGIN_SKIP_NPM` | any | — | Skips npm install in plugin installer |
 
 ### Precedence
 
 For daemon URL resolution:
-1. `CrontickClientOptions.daemonUrl` (programmatic)
-2. `CRONTICK_DAEMON_URL` environment variable
+
+1. `CrontickClientOptions.daemonUrl`
+2. `CRONTICK_DAEMON_URL`
 3. Port file at `<dataDir>/daemon.port`
 
 For verbose mode:
-1. `CrontickClientOptions.verbose` or CLI `--verbose` flag
-2. `CRONTICK_VERBOSE` environment variable
+
+1. `CrontickClientOptions.verbose` or CLI `--verbose`
+2. `CRONTICK_VERBOSE`
 
 For data directory:
-1. `CRONTICK_HOME` environment variable
+
+1. `CRONTICK_HOME`
 2. `env-paths('crontick', { suffix: '' }).data`
 
 ---
 
 ## State Directory Layout
 
-Root: `CRONTICK_HOME` or platform default (see above).
+Root: `CRONTICK_HOME` or platform default.
 
-```
+```text
 <dataDir>/
-├── config.json              Config file (engines, defaultEngine)
-├── jobs/                    Per-job JSON files (source of truth)
-│   ├── <job-id>.json        Job definition
-│   └── <job-id>.schema.json JSON Schema sidecar
-├── runs.db                  SQLite (WAL mode): runs, run_logs, jobs cache
+├── config.json                 Config file (engines, defaultEngine, retention, logging)
+├── jobs/                       Per-job JSON files (source of truth)
+│   ├── <job-id>.json           Job definition
+│   └── <job-id>.schema.json    JSON Schema sidecar
+├── runs.db                     SQLite (WAL mode): runs, run_logs, jobs cache
 ├── logs/
 │   ├── daemon-YYYY-MM-DD.log   Daemon runtime logs (JSON lines)
 │   ├── daemon.ensure.log       Demand-start output capture
 │   └── <job-id>.log            Per-job full log (engine output + crontick lifecycle events)
-├── daemon.pid               PID of running daemon process
-├── daemon.port              Port of daemon HTTP API
-└── daemon.ensure.lock       Exclusive startup lock file
+├── daemon.pid                  PID of running daemon process
+├── daemon.port                 Port of daemon HTTP API
+└── daemon.ensure.lock          Exclusive startup lock file
 ```
 
 ### Resolved Data Directory Paths by OS
@@ -264,11 +248,7 @@ Root: `CRONTICK_HOME` or platform default (see above).
 
 ## SQLite Schema (runs.db)
 
-Journal mode: WAL (Write-Ahead Logging). Single-writer (daemon process). The full schema
-(`jobs`, `runs`, `run_logs`, `job_schedule_state`, and their indexes) is authoritatively
-documented once, alongside the eviction, missed-fire, and orphan-reconciliation algorithms that
-operate on it, in [internals/storage.md](../internals/storage.md#schema) -- see that page rather
-than duplicating the `CREATE TABLE` statements here.
+Journal mode: WAL. The full schema is documented in [internals/storage.md](../internals/storage.md#schema).
 
 ---
 

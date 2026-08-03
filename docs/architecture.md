@@ -273,7 +273,7 @@ Rendering per surface:
 
 ### Prompt engines
 
-The config file (`<dataDir>/config.json`) defines named engines with `{ command: string, args: string[], env: Record<string, string> }`. Users manage engines via `config engines add/update/remove` (CLI), `crontick_config_engine_*` (MCP), or `addEngine`/`updateEngine`/`removeEngine` (library). The Runner resolves the engine at execution time via `buildPromptRunCommand()` from `src/config.ts`, which merges per-engine config with per-job `action.args` and optional `sessionId`.
+The config file (`<dataDir>/config.json`) defines named engines with `{ command: string, args: string[], env: Record<string, string> }`. Users manage engines by editing `config.json` directly (find it with `crontick config`) or programmatically via `addEngine`/`updateEngine`/`removeEngine` (library-only helpers). The Runner resolves the engine at execution time via `buildPromptRunCommand()` from `src/config.ts`, which merges per-engine config with per-job `action.args` and optional `sessionId`.
 
 The built-in default engine is `copilot` (`{ command: "copilot", args: ["--allow-all-tools", "-p"], env: {} }`), defined in `BUILT_IN_CONFIG`. Any CLI binary that accepts a prompt via arguments can be registered as an engine, but if it needs an explicit prompt-taking flag that flag must be the final configured engine arg because `buildPromptRunCommand()` appends the prompt text after `engine.args`.
 
@@ -409,7 +409,7 @@ Two aspects of crontick's design are sometimes mistaken for gaps; they are delib
 - **Run-history retention is a bounded cache, not an archive.** Each job keeps at most
   `retention.maxRunsPerJob` runs (default 100); eviction is a hard delete with no automatic
   export or undo. A caller who needs to keep history past the cap runs
-  `crontick export --include-runs` beforehand. See
+  `crontick share export --include-runs` beforehand. See
   [concepts/state-and-storage.md](concepts/state-and-storage.md#run-history-retention) for the
   full model and [ADR 0012](decisions/0012-run-history-retention.md) for the rationale.
 

@@ -87,7 +87,7 @@ function waitForPidExit(pid: number, maxMs = 5_000): void {
 }
 
 function stopDaemon(): void {
-  try { cli(['--json', 'daemon', 'stop'], baseUrl ? { CRONTICK_DAEMON_URL: baseUrl } : {}); } catch { /* ignore */ }
+  try { cli(['daemon', 'stop'], baseUrl ? { CRONTICK_DAEMON_URL: baseUrl } : {}); } catch { /* ignore */ }
   const pid = readNumber(pidFile());
   if (pid === undefined) return;
   try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
@@ -121,14 +121,14 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<{ 
 beforeEach(async () => {
   home = join(SCRATCH_ROOT, randomUUID());
   resetHome();
-  const started = cli(['--json', 'daemon', 'start']);
+  const started = cli(['daemon', 'start']);
   if (started.status !== 0) {
     throw new Error(`daemon start failed (${started.status}): ${started.stderr}`);
   }
 
-  const payload = JSON.parse(started.stdout) as { baseUrl?: string; port?: number };
-  port = payload.port ?? waitForPort();
-  baseUrl = payload.baseUrl ?? `http://127.0.0.1:${port}`;
+  const match = started.stdout.trim().match(/^Daemon started on port (\d+)$/);
+  port = match ? Number(match[1]) : waitForPort();
+  baseUrl = `http://127.0.0.1:${port}`;
 
   mcpTransport = new StdioClientTransport({
     command: process.execPath,
@@ -155,7 +155,7 @@ afterEach(async () => {
 });
 
 describe('CTD-012 daemon status discovery fields', () => {
-  it('surfaces port and baseUrl across client, CLI text/json, and MCP', async () => {
+  it('surfaces port and baseUrl across client, CLI text, and MCP', async () => {
     const client = createClient({ daemonUrl: baseUrl, startDaemon: false });
     const clientStatus = await client.daemonStatus() as StatusPayload;
 
@@ -179,9 +179,6 @@ describe('CTD-012 daemon status discovery fields', () => {
     expect(textStatus.stdout).toContain(`port: ${String(port)}`);
     expect(textStatus.stdout).toContain(`baseUrl: ${baseUrl}`);
 
-    const jsonStatus = cli(['--json', 'daemon', 'status'], { CRONTICK_DAEMON_URL: baseUrl });
-    expect(jsonStatus.status, jsonStatus.stderr).toBe(0);
-    expect(JSON.parse(jsonStatus.stdout)).toMatchObject({ port, baseUrl });
 
     const { json: mcpJson, isError } = await callTool('crontick_daemon_status', {});
     expect(isError).toBe(false);

@@ -36,7 +36,7 @@ preserving observability through captured logs and structured run records.
 - **R-003-4**: `overlap=cancel-previous`: If a run for the same job is active, the runner MUST abort it (via `AbortController`) before starting the new run.
 - **R-003-5**: `overlap=queue`: Runs MUST be serialized in FIFO order per job; the queue drains sequentially.
 - **R-003-6**: For `script` actions, the runner MUST write the script to a temp file under the managed data root (`<dataDir>/tmp/scripts/`), resolve the shell (`auto` -> pwsh on Windows, bash elsewhere), and spawn the shell with the temp file as argument. When the resolved shell is PowerShell (`pwsh`/`powershell`), the runner MUST invoke a wrapper script (also under `<dataDir>/tmp/scripts/`) that preserves an explicit user `exit N`, promotes PowerShell/native failures to a truthful non-zero exit status, and sets UTF-8 output encoding before the user script runs.
-- **R-003-7**: For `exec` actions, the runner MUST spawn `command` with `args` directly and verbatim (shell=false): no shell interpretation, no whitespace splitting, no re-quoting. `args` is the array produced by the CLI's repeatable `--arg <value>` flag (the primary, shim-independent mechanism) or its `--` convenience form (or the library API's `args` field), so an argument containing a space or shell metacharacter MUST pass through to the child exactly as given.
+- **R-003-7**: For `exec` actions, the runner MUST spawn `command` with `args` directly and verbatim (shell=false): no shell interpretation, no whitespace splitting, no re-quoting. `args` is the array supplied by the job schema or library API, so an argument containing a space or shell metacharacter MUST pass through to the child exactly as given.
 - **R-003-8**: For `prompt` actions, the runner MUST resolve the engine command via `buildPromptRunCommand()` and spawn it with shell=false.
 - **R-003-9**: All spawned processes MUST inherit `process.env` merged with `action.env` (action.env wins). If `envFile` is specified, its variables are merged below `action.env` but above `process.env`.
 - **R-003-10**: `action.cwd` MUST be used as the working directory; if omitted, `process.cwd()` MUST be used. If `action.cwd` is provided but does not exist or is not a directory, the runner MUST fail the run before spawn with `ACTION_CWD_INVALID: <kind> action cwd ...` naming both the action kind and the rejected path.
@@ -123,8 +123,7 @@ preserving observability through captured logs and structured run records.
 - [x] PowerShell script jobs fail truthfully for implicit PowerShell/native failures while preserving explicit `exit N` (test file: `tests/powershell-exit.ctd-002.test.ts`)
 - [x] PowerShell script jobs preserve exact UTF-8 bytes across Windows code pages and chunk boundaries (test file: `tests/powershell-utf8.ctd-008.test.ts`)
 - [x] Script temp wrappers live under CRONTICK_HOME-managed state and are removed after the run (test file: `tests/temp-script-cleanup.ctd-017.test.ts`)
-- [x] Repeatable `--arg <value>` round-trips spaces, embedded quotes, and a leading dash, and is mutually exclusive with `--` (test file: `tests/cli.test.ts`, "crontick new --arg round-trips a value with spaces, embedded double quotes, and a leading dash"; "crontick new rejects combining --arg with -- positional args (ambiguous args source)")
-- [x] `--exec` takes its command and args verbatim, with no whitespace splitting (test file: `tests/job-input.test.ts`, "buildJobFromCreateOptions -- --exec verbatim + rawArgs"; `tests/cli.test.ts`, "new --help describes --exec's real verbatim-command + --arg/-- args behavior")
+- [x] Exec actions pass `command` and `args` verbatim with no whitespace splitting (test file: `tests/job-input.test.ts`)
 
 ## Out of scope
 

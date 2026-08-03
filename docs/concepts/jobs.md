@@ -61,7 +61,7 @@ Overlap values: `skip` (discard the new run), `queue` (wait for the active run t
    leaves an orphaned process running against a definition that no longer exists; the response
    reports whether a run was actually canceled (`canceledRun: boolean`). See
    [reference/mcp-tools.md](../reference/mcp-tools.md#jobs) and
-   [reference/cli.md](../reference/cli.md#crontick-delete).
+   [reference/cli.md](../reference/cli.md#crontick-jobs-delete).
 
 ## What is persisted vs derived
 

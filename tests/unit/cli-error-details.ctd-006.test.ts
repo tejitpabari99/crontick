@@ -3,8 +3,8 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const CLI = resolve('dist/cli/index.js');
-const INVALID_JOB_ID = 'QA_Job_011_Bad';
-const ID_ERROR_MESSAGE = 'Job alias must be kebab-case (e.g. "my-job")';
+const INVALID_JOB_ALIAS = 'QA_Job_011_Bad';
+const ALIAS_ERROR_MESSAGE = 'Job alias must be kebab-case (e.g. "my-job")';
 
 function cli(args: string[]) {
   return spawnSync(process.execPath, [CLI, ...args], {
@@ -13,33 +13,27 @@ function cli(args: string[]) {
   });
 }
 
+function invalidCreateArgs(): string[] {
+  return ['jobs', 'new', '--alias', INVALID_JOB_ALIAS, '--every', '3600', '--prompt', 'hello'];
+}
+
 describe('CTD-006 CLI error details', () => {
-  it('text-mode validation errors print the headline plus field-level details', () => {
-    const result = cli(['new', INVALID_JOB_ID, '--every', '3600', '--exec', 'node', '--arg', '--version']);
+  it('validation errors print the normalized one-line headline', () => {
+    const result = cli(invalidCreateArgs());
 
     expect(result.status, result.stderr).toBe(1);
     expect(result.stdout).toBe('');
-    expect(result.stderr).toContain('Error [VALIDATION_ERROR]: Invalid job');
-    expect(result.stderr).toContain('Details:');
-    expect(result.stderr).toContain(`alias: ${ID_ERROR_MESSAGE}`);
+    expect(result.stderr.trim()).toBe('error: [VALIDATION_ERROR] Invalid job');
+    expect(result.stderr).not.toContain('Details:');
   });
 
-  it('--json validation errors preserve the full structured payload including details', () => {
-    const result = cli(['--json', 'new', INVALID_JOB_ID, '--every', '3600', '--exec', 'node', '--arg', '--version']);
+  it('--verbose validation errors print field-level Details lines', () => {
+    const result = cli(['--verbose', ...invalidCreateArgs()]);
 
     expect(result.status, result.stderr).toBe(1);
     expect(result.stdout).toBe('');
-
-    const payload = JSON.parse(result.stderr) as {
-      code: string;
-      message: string;
-      details?: { alias?: { _errors?: string[] } };
-    };
-
-    expect(payload).toMatchObject({
-      code: 'VALIDATION_ERROR',
-      message: 'Invalid job',
-    });
-    expect(payload.details?.alias?._errors).toContain(ID_ERROR_MESSAGE);
+    expect(result.stderr).toContain('error: [VALIDATION_ERROR] Invalid job');
+    expect(result.stderr).toContain('Details:');
+    expect(result.stderr).toContain(`- alias: ${ALIAS_ERROR_MESSAGE}`);
   });
 });

@@ -30,8 +30,8 @@ CRONTICK_PLUGIN_NONINTERACTIVE=1 node plugin/install.mjs
 
 ## After Installation
 
-1. Schedule a script job: `crontick new my-job --cron "0 9 * * *" --script "echo hello"`
-2. Schedule a prompt job: `crontick new daily-summary --cron "0 9 * * *" --prompt "Summarize repo status" -- --silent`
+1. Schedule a prompt job: `crontick jobs new --cron "0 9 * * *" --prompt "Summarize repo status" --alias daily-summary`
+2. Schedule a script or exec job from JSON: `crontick jobs new --file job.json`
 3. Configure your MCP host to use `crontick mcp` as an MCP server
 
 See the [README](../README.md) for full documentation.

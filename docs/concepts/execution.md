@@ -84,13 +84,9 @@ The temp file is deleted after the process exits (or on error).
 
 The `command` is spawned directly with `args`. No shell interpretation occurs. `command` is used
 verbatim -- it is never split on whitespace -- so a command string containing spaces (e.g. a path)
-is passed through unchanged as a single argv element. `args` come from whatever a surface passes
-through -- for the CLI, from repeatable `--arg <value>` (primary) or, as a convenience, everything
-after a literal `--` -- so an individual argument containing spaces is preserved intact rather
-than being re-split. See [cli.md](../reference/cli.md#crontick-new) for the CLI's `--arg`/`--`
-syntax and the Windows shim behavior matrix, and
-[ADR 0019](../decisions/0019-arg-flag-primary-for-exec-and-prompt-args.md) for why `--arg` is
-primary.
+is passed through unchanged as a single argv element. `args` come from the job schema (for example,
+a JSON file passed to `crontick jobs new --file <job.json>`) or the library API, so an individual
+argument containing spaces is preserved intact rather than being re-split.
 
 ### Prompt jobs
 
@@ -122,7 +118,7 @@ Each run's logs combine two kinds of entries, distinguished by their stream name
   line.
 
 Log retrieval accepts a `source` filter (`all` -- default, `engine` = `stdout`+`stderr`, or
-`crontick`) across the CLI (`crontick logs --source`), the MCP tool `crontick_run_logs_tail`, the
+`crontick`) across the CLI (`crontick runs logs <runId> [engine|crontick]`), the MCP tool `crontick_run_logs_tail`, the
 client `getLogs()`, and the daemon `GET /api/runs/:id/logs?source=` route.
 
 ### Per-job log file

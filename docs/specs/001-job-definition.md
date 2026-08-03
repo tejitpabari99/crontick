@@ -60,8 +60,8 @@ GUID) have it transparently coerced to `alias` instead.
 - **R-001-7**: The `description` field MAY be omitted; it has no behavioral effect.
 - **R-001-8**: Creating a job with an alias (or GUID `id`) that already resolves to a live job MUST fail with `JOB_ALREADY_EXISTS` and MUST leave the existing definition unchanged, unless the caller explicitly requests overwrite intent (`--force` on the CLI, `force: true` on library/MCP, or `force=1|true` on the HTTP route). This is a breaking change from the earlier silent-upsert create behavior; see ADR 0021.
 - **R-001-9**: Updating a job MUST merge the patch onto the existing definition, re-validate the merged result against `JobSchema`, and complete schedule validation plus any `action.envFile` preflight before any persistence. `action.envFile` preflight MUST resolve relative paths against `action.cwd ?? process.cwd()`, confirm the file is readable, and leave the previously stored job unchanged on failure.
-- **R-001-9a**: CLI update shorthand MUST fail loudly when a modifier flag cannot identify the sub-object it would patch. Specifically, `--shell`, `--job-env-file`, and `--timeout` MUST require an accompanying action source (`--script`, `--exec`, `--prompt`, or `--prompt-file`) on `crontick update`, and `--tz` MUST require `--cron` on `crontick update`. These invocations MUST return `VALIDATION_ERROR` and MUST leave the stored job unchanged instead of silently succeeding with no effect.
-- **R-001-9b**: On the API and MCP surfaces, a partial action patch that omits the action source (`script`, `command`, or `prompt`) but includes only modifier fields (`shell`, `envFile`, `timeoutSec`, `args`, `reuseSession`) MUST be accepted. The missing source field is backfilled from the existing stored action by `mergeActionPatch`. A kind-change patch (e.g. `kind: 'exec'` on a `script` job) still fully replaces the action. This requirement applies to `JobPatchInputSchema` and `normalizeJobPatch`; the CLI's `--shell`/`--job-env-file`/`--timeout`-without-source guard (R-001-9a) is a CLI-only UX constraint that is not weakened by this requirement.
+- **R-001-9a**: CLI update shorthand MUST preserve unspecified fields. `crontick jobs update` MUST leave any omitted option unchanged, and `--enable` / `--disable` MUST be mutually exclusive.
+- **R-001-9b**: On the API and MCP surfaces, a partial action patch that omits the action source (`script`, `command`, or `prompt`) but includes only modifier fields (`shell`, `envFile`, `timeoutSec`, `args`, `reuseSession`) MUST be accepted. The missing source field is backfilled from the existing stored action by `mergeActionPatch`. A kind-change patch (e.g. `kind: 'exec'` on a `script` job) still fully replaces the action. This requirement applies to `JobPatchInputSchema` and `normalizeJobPatch`; the CLI reaches advanced action patches through `jobs update --file <patch.json>` rather than dedicated modifier flags.
 - **R-001-10**: Deleting a job MUST remove both the JSON file and the SQLite row; the scheduler MUST unschedule the job.
 - **R-001-11**: A `script` action MUST have a non-empty `script` string. The `shell` field MUST default to `"auto"`.
 - **R-001-12**: An `exec` action MUST have a non-empty `command` string. The `args` field MUST default to `[]`.
@@ -77,12 +77,12 @@ GUID) have it transparently coerced to `alias` instead.
 
 ## Behavior
 
-1. Client receives a job definition (create or update), plus any surface-specific overwrite intent (`--force`, `force: true`, or `force=1|true`) out of band from the persisted `Job` object. The persisted field name is `action.envFile` on every surface; the CLI option name for that field is `--job-env-file`.
+1. Client receives a job definition (create or update), plus any surface-specific overwrite intent (`--force`, `force: true`, or `force=1|true`) out of band from the persisted `Job` object. The persisted field name is `action.envFile`; the CLI sets it only through full job/patch JSON supplied with `--file`.
 2. Input is normalized via `normalizeJobInput` (reads `promptFile` if present, applies defaults).
 3. The normalized input is validated against `JobSchema` (Zod discriminated union).
 4. On create, if the alias (or a legacy human `id` coerced to alias) already resolves to a live job and overwrite intent was not supplied, the operation fails with `JOB_ALREADY_EXISTS` before any persistence.
 5. Schedule validation and any `action.envFile` preflight run before any persistence; if either fails, no new job is written and an existing job remains unchanged.
-6. On CLI update, shorthand modifier flags that do not identify a target sub-object (`--shell`, `--job-env-file`, `--timeout` without an action source, or `--tz` without `--cron`) fail before persistence instead of being silently ignored.
+6. On CLI update, omitted flags leave existing fields unchanged; advanced action patches use `--file` rather than dedicated action modifier flags.
 7. On success, the daemon API persists via `Store.upsertJob()`: writes JSON file + SQLite row + schema sidecar.
 8. The scheduler is invoked to register or update the timer for the job.
 9. On update, the existing job is fetched, merged with the patch, and re-validated as a full job before persistence.
@@ -102,8 +102,6 @@ GUID) have it transparently coerced to `alias` instead.
 - Duplicate create without explicit overwrite intent: MUST reject with `JOB_ALREADY_EXISTS`; the prior job definition remains unchanged.
 - Invalid schedule on create/update: MUST reject before persistence, so create writes nothing and update preserves the prior job.
 - `action.envFile` missing or unreadable on create/update: MUST reject with `ENV_FILE_ERROR` before persistence; relative paths are resolved against `action.cwd ?? process.cwd()`.
-- CLI update `--shell`, `--job-env-file`, or `--timeout` without an action source: MUST reject with `VALIDATION_ERROR` and preserve the existing job instead of silently succeeding.
-- CLI update `--tz` without `--cron` (including `--tz` by itself or alongside `--every` / `--at`): MUST reject with `VALIDATION_ERROR` and preserve the existing job instead of silently succeeding.
 - Create/update job JSON loaded from `--file` with a leading UTF-8 BOM: MUST be accepted.
 - Malformed create/update job JSON loaded from `--file`: MUST reject with a message that names the file, parse location, and expected job/job-patch shape. EOF-truncated files MUST report the end-of-input location and, when inferable, what construct or token was still expected.
 - `timeoutSec` <= 0: MUST reject (schema requires `.positive()`).
@@ -120,7 +118,7 @@ GUID) have it transparently coerced to `alias` instead.
 - [x] Schema sidecar written on persist (test file: `tests/store.test.ts`)
 - [x] Prompt action validates reserved args (test file: `tests/job-input.test.ts`)
 - [x] Update merge semantics tested end-to-end (CLI and MCP) (test files: `tests/cli.test.ts`, `tests/mcp.test.ts`)
-- [x] Update shorthand audit proves every CLI `update` flag either applies or fails loudly, with explicit regression coverage for `--shell`, `--job-env-file`, `--timeout`, and `--tz` (test files: `tests/job-input.test.ts`, `tests/cli.test.ts`, `tests/client.test.ts`, `tests/mcp.test.ts`)
+- [x] Update merge semantics preserve omitted fields across CLI, MCP, and library surfaces (test files: `tests/job-input.test.ts`, `tests/cli.test.ts`, `tests/client.test.ts`, `tests/mcp.test.ts`)
 - [x] Missing `envFile` on create/update is rejected before persistence, while BOM-prefixed job files still load and malformed job/job-patch files report file/position/expected-shape diagnostics (test files: `tests/job-create-atomicity.ctd-004.test.ts`, `tests/env-file.test.ts`, `tests/job-input.test.ts`, `tests/cli.test.ts`, `tests/mcp.test.ts`)
 
 ## Out of scope

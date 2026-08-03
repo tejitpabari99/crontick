@@ -1,8 +1,10 @@
 import { spawnSync } from 'node:child_process';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
+import { afterEach, beforeEach } from 'vitest';
 
 const CLI = resolve('dist', 'cli', 'index.js');
 const SCRATCH_ROOT = resolve('.crontick', 'cli-daemon-json-ctd-013');
@@ -27,10 +29,18 @@ function sleep(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+function readPositiveNumber(path: string): number | undefined {
+  if (!existsSync(path)) return undefined;
+  const value = Number.parseInt(readFileSync(path, 'utf8').trim(), 10);
+  return Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
 function readPid(): number | undefined {
-  if (!existsSync(pidFile())) return undefined;
-  const pid = Number.parseInt(readFileSync(pidFile(), 'utf8').trim(), 10);
-  return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+  return readPositiveNumber(pidFile());
+}
+
+function readPort(): number | undefined {
+  return readPositiveNumber(portFile());
 }
 
 function waitForPidExit(pid: number, maxMs = 5_000): void {
@@ -46,7 +56,7 @@ function waitForPidExit(pid: number, maxMs = 5_000): void {
 }
 
 function stopDaemon(): void {
-  try { cli(['--json', 'daemon', 'stop']); } catch { /* ignore */ }
+  try { cli(['daemon', 'stop']); } catch { /* ignore */ }
   const pid = readPid();
   if (pid === undefined) return;
   try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
@@ -77,69 +87,49 @@ afterEach(() => {
   home = '';
 });
 
-describe('CTD-013 daemon lifecycle CLI JSON output', () => {
-  it('daemon start --json emits one parseable structured result', () => {
-    const result = cli(['--json', 'daemon', 'start']);
+describe('CTD-013 daemon lifecycle CLI human output', () => {
+  it('daemon start emits one human-readable result and records pid/port', () => {
+    const result = cli(['daemon', 'start']);
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe('');
-
-    const payload = JSON.parse(result.stdout) as {
-      ok: true;
-      started: boolean;
-      pid?: number;
-      port?: number;
-      baseUrl?: string;
-    };
-
-    expect(payload).toMatchObject({ ok: true, started: true });
-    expect(payload.pid).toBeGreaterThan(0);
-    expect(payload.port).toBeGreaterThan(0);
-    expect(payload.baseUrl).toBe(`http://127.0.0.1:${String(payload.port)}`);
-    expect(readPid()).toBe(payload.pid);
-    expect(existsSync(portFile())).toBe(true);
+    const match = result.stdout.trim().match(/^Daemon started on port (\d+)$/);
+    expect(match).not.toBeNull();
+    const port = Number(match?.[1]);
+    expect(port).toBeGreaterThan(0);
+    expect(readPid()).toBeGreaterThan(0);
+    expect(readPort()).toBe(port);
   }, 15_000);
 
-  it('daemon restart --json emits one parseable structured result', () => {
+  it('daemon stop emits the stop message and mode', () => {
     const started = cli(['daemon', 'start']);
     expect(started.status, started.stderr).toBe(0);
     const previousPid = readPid();
     expect(previousPid).toBeGreaterThan(0);
 
-    const result = cli(['--json', 'daemon', 'restart']);
+    const result = cli(['daemon', 'stop']);
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe('');
+    expect(result.stdout.trim()).toContain(`Stopped daemon (pid ${String(previousPid)})`);
+    expect(result.stdout.trim()).toMatch(/\(mode: (graceful|hard-kill)\)$/);
+    if (previousPid !== undefined) waitForPidExit(previousPid);
+  }, 15_000);
 
-    const payload = JSON.parse(result.stdout) as {
-      ok: true;
-      started: boolean;
-      stopped: boolean;
-      previousPid?: number;
-      pid?: number;
-      port?: number;
-      baseUrl?: string;
-    };
+  it('daemon restart emits one human-readable result for the new daemon', () => {
+    const started = cli(['daemon', 'start']);
+    expect(started.status, started.stderr).toBe(0);
+    expect(readPid()).toBeGreaterThan(0);
 
-    expect(payload).toMatchObject({ ok: true, started: true, stopped: true, previousPid });
-    expect(payload.pid).toBeGreaterThan(0);
-    expect(payload.port).toBeGreaterThan(0);
-    expect(payload.baseUrl).toBe(`http://127.0.0.1:${String(payload.port)}`);
-    expect(readPid()).toBe(payload.pid);
+    const result = cli(['daemon', 'restart']);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe('');
+    const match = result.stdout.trim().match(/^Daemon restarted on port (\d+)$/);
+    expect(match).not.toBeNull();
+    const port = Number(match?.[1]);
+    expect(port).toBeGreaterThan(0);
+    expect(readPid()).toBeGreaterThan(0);
+    expect(readPort()).toBe(port);
   }, 20_000);
-
-  it('daemon start --foreground --json fails fast with a validation error and does not launch the daemon', () => {
-    const result = cli(['--json', 'daemon', 'start', '--foreground']);
-
-    expect(result.status, result.stderr).toBe(1);
-    expect(result.stdout).toBe('');
-
-    const payload = JSON.parse(result.stderr) as { code?: string; message: string };
-    expect(payload.code).toBe('VALIDATION_ERROR');
-    expect(payload.message).toContain('--foreground');
-    expect(payload.message).toContain('--json');
-    expect(payload.message).toContain('single JSON object');
-    expect(existsSync(pidFile())).toBe(false);
-    expect(existsSync(portFile())).toBe(false);
-  });
 });

@@ -25,11 +25,11 @@ shim.
 ## CLI Wiring (`src/cli/index.ts`)
 
 - Framework: `commander` v12.
-- Global options: `--version`, `--json`, `-v/--verbose`.
+- Global options: `--version`, `-v/--verbose`.
 - Each subcommand:
   1. Calls `client(startDaemon)` to get a `CrontickClient`.
   2. Calls the appropriate client method.
-  3. Renders output via `print(data, json)` (tabular for humans, JSON for `--json`).
+  3. Renders human-readable output via `print(data)`.
   4. On error: `handleError()` prints message to stderr and calls `process.exit(1)`.
 
 Helper functions:

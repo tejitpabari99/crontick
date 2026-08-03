@@ -571,7 +571,7 @@ function maybeBuildSchedule(input: JobPatchCliOptions, strictUpdate = false): Jo
 
 function buildAction(input: JobCreateCliOptions, rawArgs: string[]): ActionInput {
   const action = maybeBuildAction(input, rawArgs);
-  if (!action) throw new CrontickError('MISSING_ARG', 'Provide --script, --exec, --prompt, or --prompt-file');
+  if (!action) throw new CrontickError('MISSING_ARG', 'Provide --prompt or --prompt-file for a prompt job, or --file <json> for a full job definition (including script/exec actions)');
   return action;
 }
 
@@ -584,7 +584,7 @@ function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[], strictUp
     if (strictUpdate && modifierFlags.length > 0) {
       throw new CrontickError(
         'VALIDATION_ERROR',
-        `${formatCliFlagList(modifierFlags)} ${modifierFlags.length === 1 ? 'requires' : 'require'} an action source on update. Repeat the existing action with one of --script, --exec, --prompt, or --prompt-file, or remove ${formatCliFlagList(modifierFlags)}.`,
+        `${formatCliFlagList(modifierFlags)} ${modifierFlags.length === 1 ? 'requires' : 'require'} an action source on update. Repeat the existing action with --prompt or --prompt-file, or remove ${formatCliFlagList(modifierFlags)}.`,
       );
     }
     if (rawArgs.length > 0) {

@@ -37,6 +37,7 @@ export interface Run {
   pid?: number; // OS pid of the spawned child, set once known (see updateRun); absent for 'queued'/'missed' runs.
   outputTruncated: boolean; // true once a run's captured output hit the byte cap (NOT NULL DEFAULT 0 column, always present).
   sessionId?: string; // prompt-engine session id captured from output (or explicitly provided) for this run; absent for non-prompt runs.
+  command?: string; // redacted resolved command line (binary + args) actually spawned for this run; absent for 'queued'/'missed' runs.
 }
 
 /** Every RunStatus value, kept as a runtime array so RunImportSchema's z.enum
@@ -66,6 +67,7 @@ export const RunImportSchema = z.object({
   pid: z.number().optional(),
   outputTruncated: z.boolean().optional(),
   sessionId: z.string().optional(),
+  command: z.string().optional(),
 });
 
 export interface RunLog {
@@ -216,7 +218,8 @@ export class Store {
         duration_ms INTEGER,
         pid INTEGER,
         output_truncated INTEGER NOT NULL DEFAULT 0,
-        session_id TEXT
+        session_id TEXT,
+        command TEXT
       );
 
       CREATE TABLE IF NOT EXISTS run_logs (
@@ -244,6 +247,7 @@ export class Store {
     `);
     this.migrateAliasColumn();
     this.migrateRunsSessionIdColumn();
+    this.migrateRunsCommandColumn();
   }
 
   /**
@@ -285,6 +289,26 @@ export class Store {
       }
     } catch (err) {
       this.logger.warn('Failed to migrate runs table session_id column; continuing without it', { error: String(err) });
+    }
+  }
+
+  /**
+   * Best-effort schema upgrade for a `runs` table created before per-run
+   * resolved-command capture: adds the `command` column if missing. Same
+   * guarded pattern as migrateRunsSessionIdColumn() — an older on-disk
+   * database (without the column) still opens without throwing, and a failure
+   * here is logged rather than fatal, per AGENTS.md's "guard schema changes so
+   * an older DB opens".
+   */
+  private migrateRunsCommandColumn(): void {
+    try {
+      const columns = this.db.prepare('PRAGMA table_info(runs)').all() as Array<{ name: string }>;
+      if (!columns.some((c) => c.name === 'command')) {
+        this.db.exec('ALTER TABLE runs ADD COLUMN command TEXT;');
+        this.logger.info('Migrated runs table: added command column for per-run resolved-command capture');
+      }
+    } catch (err) {
+      this.logger.warn('Failed to migrate runs table command column; continuing without it', { error: String(err) });
     }
   }
 
@@ -555,7 +579,7 @@ export class Store {
 
   updateRun(
     id: string,
-    update: Partial<Pick<Run, 'status' | 'exitCode' | 'error' | 'endedAt' | 'durationMs' | 'pid' | 'outputTruncated' | 'sessionId'>>,
+    update: Partial<Pick<Run, 'status' | 'exitCode' | 'error' | 'endedAt' | 'durationMs' | 'pid' | 'outputTruncated' | 'sessionId' | 'command'>>,
   ): void {
     const run = this.getRun(id);
     if (!run) throw new CrontickError('NOT_FOUND', `Run ${id} not found`);
@@ -595,6 +619,10 @@ export class Store {
       fields.push('session_id = ?');
       values.push(update.sessionId ?? null);
     }
+    if (update.command !== undefined) {
+      fields.push('command = ?');
+      values.push(update.command ?? null);
+    }
 
     if (fields.length === 0) return;
     values.push(id);
@@ -607,6 +635,51 @@ export class Store {
       .prepare('SELECT * FROM runs WHERE id = ?')
       .get(id) as DbRunRow | undefined;
     return row ? rowToRun(row) : undefined;
+  }
+
+  /**
+   * Delete a single run and all crontick-side data associated with it: its
+   * `run_logs` rows and the `runs` row itself, in one transaction so a run can
+   * never be separated from its logs. Returns true if a run was deleted, false
+   * if no run with that id existed. Per-job log-file lines are not rewritten
+   * (they are an append-only best-effort mirror); the SQLite rows are the
+   * authoritative record and are removed here.
+   */
+  deleteRun(id: string): boolean {
+    const exists = this.db.prepare('SELECT 1 FROM runs WHERE id = ?').get(id);
+    if (!exists) return false;
+    this.db.exec('BEGIN;');
+    try {
+      this.db.prepare('DELETE FROM run_logs WHERE run_id = ?').run(id);
+      this.db.prepare('DELETE FROM runs WHERE id = ?').run(id);
+      this.db.exec('COMMIT;');
+    } catch (err) {
+      this.db.exec('ROLLBACK;');
+      throw err;
+    }
+    this.logger.debug('Deleted run', { runId: id });
+    return true;
+  }
+
+  /**
+   * Delete every run and all crontick-side run data (all `run_logs` and all
+   * `runs` rows), in one transaction. Returns the number of runs deleted. Used
+   * by the `--all` delete path; job definitions and schedule state are left
+   * intact.
+   */
+  deleteAllRuns(): number {
+    const count = (this.db.prepare('SELECT COUNT(*) AS n FROM runs').get() as { n: number }).n;
+    this.db.exec('BEGIN;');
+    try {
+      this.db.prepare('DELETE FROM run_logs').run();
+      this.db.prepare('DELETE FROM runs').run();
+      this.db.exec('COMMIT;');
+    } catch (err) {
+      this.db.exec('ROLLBACK;');
+      throw err;
+    }
+    if (count > 0) this.logger.info('Deleted all runs', { deleted: count });
+    return count;
   }
 
   private queryRuns(opts: ListRunsOptions = {}, existingJobsOnly = false): Run[] {
@@ -684,8 +757,8 @@ export class Store {
     const jobExists = this.db.prepare('SELECT 1 FROM jobs WHERE id = ?');
     const insert = this.db.prepare(
       `INSERT OR IGNORE INTO runs
-         (id, job_id, started_at, ended_at, status, exit_code, error, duration_ms, pid, output_truncated, session_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, job_id, started_at, ended_at, status, exit_code, error, duration_ms, pid, output_truncated, session_id, command)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     for (const raw of runs) {
       const parsed = RunImportSchema.safeParse(raw);
@@ -712,6 +785,7 @@ export class Store {
           run.pid ?? null,
           run.outputTruncated ? 1 : 0,
           run.sessionId ?? null,
+          run.command ?? null,
         ) as { changes: number };
         if (result.changes > 0) {
           imported += 1;
@@ -973,6 +1047,7 @@ interface DbRunRow {
   pid: number | null;
   output_truncated: number;
   session_id: string | null;
+  command: string | null;
 }
 
 interface DbLogRow {
@@ -1009,6 +1084,7 @@ function rowToRun(row: DbRunRow): Run {
   if (row.duration_ms !== null) r.durationMs = row.duration_ms;
   if (row.pid !== null) r.pid = row.pid;
   if (row.session_id !== null) r.sessionId = row.session_id;
+  if (row.command !== null) r.command = row.command;
   return r;
 }
 

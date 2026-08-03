@@ -109,7 +109,7 @@ pause until you start it or run another daemon-backed command.
 ### Need more crontick diagnostics
 
 Use `crontick --verbose ...` (or `-v`) or set `CRONTICK_VERBOSE=1`. Verbose output goes to stderr,
-so `crontick --json --verbose ...` still writes parseable JSON to stdout. Daemon logs live under the
+so `crontick --verbose ...` writes human-readable output to stdout and diagnostics to stderr. Daemon logs live under the
 crontick data directory `logs/`: `daemon.ensure.log` for demand-start and `daemon-YYYY-MM-DD.log` for
 daemon lifecycle/API/scheduler diagnostics. In verbose daemon mode, run logs can also contain
 `[crontick:debug]` lines for spawn/retry/session decisions.
@@ -126,8 +126,8 @@ Check `crontick daemon status` and inspect the latest daemon log in the crontick
 
 ### A run keeps failing
 
-- `crontick logs <run-id> --tail 100`
-- `crontick get <job-id> --json`
+- `crontick runs logs <run-id> --tail 100`
+- `crontick jobs get <job-id>`
 - `crontick doctor`
 
 For MCP workflows, load the run via `crontick_run_get` and `crontick_run_logs_tail`.
@@ -137,8 +137,8 @@ For MCP workflows, load the run via `crontick_run_get` and `crontick_run_logs_ta
 Validate and preview it first:
 
 ```sh
-crontick schedule validate '{"kind":"cron","cron":"0 9 * * *"}'
-crontick schedule preview '{"kind":"cron","cron":"0 9 * * *"}' --limit 5
+crontick jobs schedule <job-id>
+crontick jobs schedule <job-id> -n 5
 ```
 
 ### VALIDATION_ERROR on job create/update
@@ -157,13 +157,13 @@ Run with `--verbose` to see the full Zod error details.
 The `config.json` file is malformed or has invalid fields:
 
 ```sh
-crontick config validate
+crontick config
 ```
 
 If the file is corrupt, delete it and reinitialize:
 
 ```sh
-crontick config init --force
+crontick config
 ```
 
 ### Daemon won't start: `Error: file is not a database`
@@ -187,7 +187,7 @@ and timestamps. **Job definitions are not affected**: jobs are the JSON files un
 `<dataDir>/jobs/`, a separate store from `runs.db`, and are untouched by this recovery.
 
 **Confirm recovery:** `crontick doctor` should report the daemon and dashboard reachable again,
-and `crontick list` should show your jobs unchanged with empty run history (`crontick logs
+and `crontick jobs list` should show your jobs unchanged with empty run history (`crontick runs logs
 <job-id>` returns no runs until the job fires again). See
 [internals/storage.md](internals/storage.md) for the on-disk schema and
 [state-and-storage.md](concepts/state-and-storage.md) for the persistence model.
@@ -200,7 +200,7 @@ from the data directory (`daemon.ensure.lock`) and retry.
 
 ### ENV_FILE_ERROR
 
-The `--job-env-file` path does not exist or cannot be read. Verify the path is correct and the
+The `action.envFile` path does not exist or cannot be read. Verify the path is correct and the
 file is readable. Relative paths resolve against the job's `cwd` (or the daemon's working
 directory if no `cwd` is set).
 
@@ -212,8 +212,8 @@ is a per-job **count** cap only: a job that fires every minute keeps far less ca
 than a job that fires monthly under the same cap. If you need to keep more history, raise
 `retention.maxRunsPerJob` in `config.json` and run `crontick daemon reload` (existing runs beyond
 the old cap that were already pruned cannot be recovered after the fact). To avoid losing history
-in the first place, back it up before it is evicted: `crontick export --include-runs` captures
-every job's run history, and `crontick import` restores it — see
+in the first place, back it up before it is evicted: `crontick share export --include-runs` captures
+every job's run history, and `crontick share import` restores it — see
 [cli.md](reference/cli.md#export). See
 [state-and-storage.md](concepts/state-and-storage.md#run-history-retention) and
 [configuration.md](reference/configuration.md).

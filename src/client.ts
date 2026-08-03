@@ -51,11 +51,14 @@ import {
   setConfigValue,
   updateEngine,
   validateConfigFile,
+  configFilePath,
   type ConfigValidationResult,
   type CrontickConfig,
   type EngineConfig,
 } from './config.js';
 import { createLogger, isVerboseEnv, type Logger, type LogSink } from './logger.js';
+import { dataDir, jobsDir, logsDir, pidFilePath, portFilePath, runsDbPath } from './paths.js';
+import { VERSION } from './version.js';
 
 export interface CrontickClientOptions extends Omit<EnsureDaemonOptions, 'startDaemon' | 'logger'> {
   requestTimeoutMs?: number;
@@ -133,6 +136,34 @@ export interface DaemonStatus {
   uptimeSec: number;
   jobs: number;
   missedFires: DaemonMissedFiresSummary;
+}
+
+export interface CrontickInfoPaths {
+  dataDir: string;
+  jobsDir: string;
+  runsDb: string;
+  logsDir: string;
+  configFile: string;
+  portFile: string;
+  pidFile: string;
+}
+
+export interface CrontickInfo {
+  version: string;
+  node: string;
+  platform: string;
+  paths: CrontickInfoPaths;
+  daemon: { running: boolean; pid?: number; port?: number };
+}
+
+export interface ConfigPathInfo {
+  path: string;
+  note: string;
+}
+
+export interface DeleteRunResult {
+  ok: true;
+  deleted: number;
 }
 
 interface HttpTextResponse {
@@ -241,6 +272,20 @@ export class CrontickClient {
     return this.request<{ ok: true; canceled: boolean }>('POST', `/api/runs/${encodeURIComponent(runId)}/cancel`);
   }
 
+  /**
+   * Delete a run and all crontick-side data associated with it (its log rows).
+   * Pass `{ all: true }` to delete every run; `all` requires `force` as a
+   * safety confirmation (the surfaces enforce this — see CLI/MCP).
+   */
+  async deleteRun(runId?: string, options: { all?: boolean; force?: boolean } = {}): Promise<DeleteRunResult> {
+    if (options.all) {
+      if (!options.force) throw new CrontickError('VALIDATION_ERROR', 'Deleting all runs requires force:true');
+      return this.request<DeleteRunResult>('DELETE', '/api/runs?all=1');
+    }
+    if (!runId) throw new CrontickError('VALIDATION_ERROR', 'Provide a run id, or set all:true (with force:true) to delete every run');
+    return this.request<DeleteRunResult>('DELETE', `/api/runs/${encodeURIComponent(runId)}`);
+  }
+
   async getRun(runId: string): Promise<unknown> {
     return this.request('GET', `/api/runs/${encodeURIComponent(runId)}`);
   }
@@ -277,12 +322,23 @@ export class CrontickClient {
     return this.request('POST', '/api/schedules/validate', ScheduleSchema.parse(schedule));
   }
 
+  /** Library-only: preview upcoming fire times for a raw schedule object. Surfaced via jobSchedule (per-job). */
   async previewSchedule(input: { schedule: Schedule; n?: number; tz?: string }): Promise<unknown> {
     return this.request('POST', '/api/schedules/preview', {
       ...input,
       n: input.n ?? 5,
       schedule: ScheduleSchema.parse(input.schedule),
     });
+  }
+
+  /**
+   * Show upcoming fire times for an existing job (id or alias). Resolves the
+   * job, then previews the next `n` fires (default 5) of its schedule.
+   */
+  async jobSchedule(id: string, options: { n?: number } = {}): Promise<unknown> {
+    const job = await this.getJob(id);
+    const preview = await this.previewSchedule({ schedule: job.schedule, n: options.n });
+    return { jobId: job.id, alias: job.alias ?? null, schedule: job.schedule, ...(preview as Record<string, unknown>) };
   }
 
   async statsSummary(): Promise<StatsSummary> {
@@ -362,6 +418,50 @@ export class CrontickClient {
   /** Returns the JSON Schema derived from Zod JobSchema. Library-only (not in surface parity). */
   jobJsonSchema(): unknown {
     return jobJsonSchema();
+  }
+
+  /**
+   * Read-only environment/paths summary: crontick + node version, platform,
+   * where all state is stored, and best-effort daemon running status. Never
+   * starts the daemon.
+   */
+  async info(): Promise<CrontickInfo> {
+    const env = this.effectiveEnv() ?? process.env;
+    let daemon: CrontickInfo['daemon'] = { running: false };
+    try {
+      const status = await this.request<DaemonStatus>('GET', '/api/daemon/status', undefined, { ensure: false });
+      daemon = { running: true, pid: status.pid, port: status.port };
+    } catch {
+      daemon = { running: false };
+    }
+    return {
+      version: VERSION,
+      node: process.version,
+      platform: process.platform,
+      paths: {
+        dataDir: dataDir(env),
+        jobsDir: jobsDir(env),
+        runsDb: runsDbPath(env),
+        logsDir: logsDir(env),
+        configFile: configFilePath({ env }),
+        portFile: portFilePath(env),
+        pidFile: pidFilePath(env),
+      },
+      daemon,
+    };
+  }
+
+  /**
+   * Returns the config file path plus a note on how edits take effect. The
+   * config file is edited directly by the user; crontick has no set/unset
+   * commands. Library-friendly; used by the `config` surface.
+   */
+  configPath(): ConfigPathInfo {
+    return {
+      path: configFilePath({ env: this.effectiveEnv() }),
+      note:
+        'Edit this file to change the config. Engine, logging, and per-run retention settings apply automatically on the next run; the store retention cap (retention.maxRunsPerJob) is read at daemon start, so changing it requires `crontick daemon restart`.',
+    };
   }
 
   /** Library-only: loads config without daemon (local-only operation). */

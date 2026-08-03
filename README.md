@@ -2,10 +2,7 @@
 
 A standalone cron daemon, CLI, and MCP server for local scheduled jobs.
 
-crontick lets you define periodic and one-shot jobs (shell scripts, direct commands, or LLM
-prompt invocations) and manage them identically from a terminal, a Node.js program, or an
-AI agent over MCP. A demand-started daemon handles scheduling and execution; three thin shims
-(CLI, library client, stdio MCP server) expose the same 37 capabilities with no drift.
+crontick lets you define periodic and one-shot jobs (shell scripts, direct commands, or LLM prompt invocations) and manage them from a terminal, a Node.js program, or an AI agent over MCP. A demand-started daemon handles scheduling and execution; three thin shims (CLI, library client, stdio MCP server) expose the same 29 parity capabilities with no drift.
 
 ### Documentation
 
@@ -23,15 +20,9 @@ AI agent over MCP. A demand-started daemon handles scheduling and execution; thr
 
 ## Why this package exists
 
-System schedulers (cron, Windows Task Scheduler) are not portable, not programmatically
-controllable from the same process, and invisible to AI agents. In-process libraries
-(node-cron, node-schedule) disappear when the process exits and cannot be inspected from a
-separate tool.
+System schedulers (cron, Windows Task Scheduler) are not portable, not programmatically controllable from the same process, and invisible to AI agents. In-process libraries (node-cron, node-schedule) disappear when the process exits and cannot be inspected from a separate tool.
 
-crontick fills the gap: a user-space scheduler that persists jobs across reboots (via a
-demand-started daemon), supports cron expressions, fixed intervals, and one-shot schedules,
-and is accessible from three equivalent surfaces so a human, a script, and an LLM tool-caller
-can all manage the same job set.
+crontick fills the gap: a user-space scheduler that persists jobs across reboots (via a demand-started daemon), supports cron expressions, fixed intervals, and one-shot schedules, and is accessible from equivalent surfaces so a human, a script, and an LLM tool-caller can all manage the same job set.
 
 ---
 
@@ -55,23 +46,21 @@ npm install crontick
 
 ```sh
 npm install -g crontick
-crontick new hello --cron "*/5 * * * *" --exec node --arg -e --arg "console.log('hello')"
-crontick list
-crontick daemon status
+crontick jobs new --every 300 --prompt "Say hello from crontick" --alias hello
+crontick jobs list
+crontick jobs schedule hello -n 5
+crontick runs list --job hello
+crontick info
+crontick config
 ```
 
-> `--arg <value>` (repeatable) is the primary, always-correct way to pass arguments to `--exec`/
-> `--prompt` -- it works identically on every shell and every Windows shim (`crontick.cmd`,
-> `crontick.ps1`, `npx crontick`) and round-trips spaces, quotes, and leading dashes verbatim. See
-> [CLI reference](docs/reference/cli.md#windows-shells---arg-vs---) for the full behavior matrix,
-> including why the `--` convenience form is unreliable on `crontick.ps1`.
->
-> Create is no longer an upsert: reusing an existing job id with `crontick new` or `createJob()`
-> now fails with `JOB_ALREADY_EXISTS`. Use `crontick update <id>` to mutate an existing job, or
-> pass `--force` / `force: true` when you intentionally want replacement.
+`crontick config` prints the config file path. Edit that file by hand; most edits apply on the next run, while `retention.maxRunsPerJob` requires `crontick daemon restart`.
 
-`--job-env-file <path>` loads extra environment variables from a `.env` file; persisted job
-definitions store that setting in `action.envFile`.
+Script and exec actions remain supported in the job schema, daemon, and library. The CLI no longer has dedicated `--script` or `--exec` flags; create those jobs with a full JSON definition:
+
+```sh
+crontick jobs new --file .\job.json
+```
 
 ### Library (ESM)
 
@@ -81,64 +70,62 @@ import { createClient } from 'crontick';
 const client = createClient();
 
 await client.createJob({
-  id: 'hello-interval',
+  alias: 'hello-interval',
   schedule: { kind: 'interval', everySec: 60 },
   action: { kind: 'script', script: 'echo "hello from crontick"' },
 });
 
 const jobs = await client.listJobs();
-console.log(jobs.map(j => j.id));
+console.log(jobs.map(j => j.alias ?? j.id));
 ```
 
-> Library exit guidance: after daemon-backed calls, prefer `process.exitCode = n` and let Node exit
-> naturally instead of calling `process.exit(n)` immediately. crontick's client now uses a
-> short-lived `node:http` loopback transport to avoid the historical Windows native crash, but
-> natural exit remains the safest pattern for library consumers.
+> Library exit guidance: after daemon-backed calls, prefer `process.exitCode = n` and let Node exit naturally instead of calling `process.exit(n)` immediately.
 
 ---
 
 ## Common use cases
 
-### Periodic script
+### Periodic script from the CLI
 
-```sh
-crontick new backup --cron "0 2 * * *" --script "pg_dump mydb > /backups/db.sql"
+Create `backup-job.json`:
+
+```json
+{
+  "alias": "backup",
+  "schedule": { "kind": "cron", "cron": "0 2 * * *" },
+  "action": { "kind": "script", "script": "pg_dump mydb > /backups/db.sql" }
+}
 ```
 
-### One-shot reminder
+Then import it:
 
 ```sh
-crontick new deploy-reminder --at "2026-08-01T09:00:00" --exec notify-send --arg "Deploy v2 today"
+crontick jobs new --file .\backup-job.json
 ```
 
-`--exec <command>` takes the command verbatim (no whitespace splitting); repeatable `--arg
-<value>` builds its argument list one value at a time, so `"Deploy v2 today"` reaches
-`notify-send` as one argument, spaces included -- and this round-trips correctly on every shell
-and every Windows shim (`crontick.cmd`, `crontick.ps1`, `npx crontick`). Need shell features
-(pipes, redirects, globbing) instead? Use `--script`, which runs through a shell.
-
-> As a convenience, args may instead follow a literal `--` (`--exec notify-send -- "Deploy v2
-> today"`), but this is not reliable on every shim: PowerShell's own parameter binding drops a
-> literal `--` token before `crontick.ps1` ever sees it (true for any `.ps1` script, not specific
-> to crontick), so a `--exec`/`--` command silently loses its trailing args there. `--arg` has no
-> such gap -- see [CLI reference](docs/reference/cli.md#windows-shells---arg-vs---) for the full matrix.
-
-### Execute a binary directly
+### One-shot prompt reminder
 
 ```sh
-crontick new healthcheck --every 30 --exec curl --arg -sf --arg http://localhost:3000/health
+crontick jobs new --at "2026-08-01T09:00:00" --prompt "Remind me to deploy v2" --alias deploy-reminder
+```
+
+### Execute a binary directly from the library
+
+```ts
+await client.createJob({
+  alias: 'healthcheck',
+  schedule: { kind: 'interval', everySec: 30 },
+  action: { kind: 'exec', command: 'curl', args: ['-sf', 'http://localhost:3000/health'] },
+});
 ```
 
 ### AI prompt job
 
 ```sh
-crontick new daily-summary --cron "0 9 * * *" --prompt "Summarize yesterday's git log" --engine copilot
+crontick jobs new --cron "0 9 * * *" --prompt "Summarize yesterday's git log" --engine copilot --alias daily-summary
 ```
 
-The built-in `copilot` engine is preconfigured for unattended prompt jobs with
-`--allow-all-tools -p`. If you override `engines.copilot.args`, keep the prompt-taking flag
-(`-p` / `--prompt`) last because crontick appends the prompt text immediately after the
-configured engine args.
+The built-in `copilot` engine is preconfigured for unattended prompt jobs with `--allow-all-tools -p`. If you override `engines.copilot.args`, keep the prompt-taking flag (`-p` / `--prompt`) last because crontick appends the prompt text immediately after the configured engine args.
 
 ### Wire into an MCP client
 
@@ -147,13 +134,12 @@ Add to your MCP client configuration:
 ```json
 {
   "mcpServers": {
-    "crontick": { "command": "crontick-mcp" }
+    "crontick": { "command": "crontick", "args": ["mcp"] }
   }
 }
 ```
 
-The MCP server exposes all 37 capabilities as tools (e.g., `crontick_job_create`,
-`crontick_job_list`, `crontick_schedule_preview`).
+The MCP server exposes all 29 parity capabilities as tools, including `crontick_job_create`, `crontick_job_schedule`, `crontick_run_delete`, `crontick_config_path`, and `crontick_info`.
 
 ---
 
@@ -169,10 +155,10 @@ The library entry point (`import ... from 'crontick'`) exports:
 
 | Export | Purpose |
 |--------|---------|
-| `createClient` / `CrontickClient` | Programmatic access to all 37 capabilities |
+| `createClient` / `CrontickClient` | Programmatic access to crontick operations |
 | `CrontickError` | Typed error with `code`, `message`, `details` |
 | `ORPHAN_RUN_ERROR_CODE` / `ORPHAN_RUN_ERROR_MESSAGE` | Stored `runs.error` value/prefix for a run canceled by a daemon restart (not a thrown `CrontickError` code) |
-| `SURFACE_CAPABILITIES` | Registry of all capability names, client methods, CLI commands, and MCP tool names |
+| `SURFACE_CAPABILITIES` | Registry of capability names, client methods, CLI commands, and MCP tool names |
 | `JobSchema`, `ScheduleSchema`, `PromptActionSchema` | Zod schemas for validation |
 | `RetentionConfigSchema` / `RetentionConfig` | Run retention config schema/type (`maxRunsPerJob`, `maxOutputBytesPerRun`, `maxLogFiles`) |
 | `jobJsonSchema` / `jobJsonSchemaText` | JSON Schema representation of a job |
@@ -193,7 +179,7 @@ Full reference:
 State and configuration live in a platform-specific data directory:
 
 | OS | Default path |
-|----|-------------|
+|----|--------------|
 | Windows | `%LOCALAPPDATA%\crontick\` |
 | macOS | `~/Library/Application Support/crontick/` |
 | Linux | `~/.local/share/crontick/` |
@@ -202,20 +188,17 @@ Override with `CRONTICK_HOME`.
 
 Key environment variables: `CRONTICK_HOME`, `CRONTICK_DAEMON_URL`, `CRONTICK_VERBOSE`.
 
-Each job retains at most `retention.maxRunsPerJob` runs (default `100`, range `1..100000`);
-older terminal runs and their logs are pruned automatically, and a changed cap takes effect on
-`crontick daemon reload` without a restart. `retention.maxOutputBytesPerRun` (default `2_000_000`,
-range `1024..1_000_000_000`) caps captured stdout/stderr per run -- once hit, output is truncated
-at a UTF-8 character boundary and the run's `outputTruncated` field is set.
-`retention.maxLogFiles` (default `30`, range `1..3650`) similarly bounds how many daily daemon
-log files are kept. Back up run history before it's pruned with `crontick export --include-runs`
-(see [docs/reference/cli.md](docs/reference/cli.md)). These are per-job/per-run/log-file caps
-only -- see
-[docs/concepts/state-and-storage.md](docs/concepts/state-and-storage.md#run-history-retention)
-for the exact behavior and its design boundaries.
+Find the config file with:
 
-See [docs/reference/configuration.md](docs/reference/configuration.md) for the full config
-file schema, all environment variables, and precedence rules.
+```sh
+crontick config
+```
+
+Most config edits apply automatically on the next run: engine definitions, prompt command resolution, logging, and `retention.maxOutputBytesPerRun`. `retention.maxRunsPerJob` is cached by the daemon Store at startup, so changing it requires `crontick daemon restart`.
+
+Back up run history before it is pruned with `crontick share export --include-runs`.
+
+See [docs/reference/configuration.md](docs/reference/configuration.md) for the full config file schema, all environment variables, and precedence rules.
 
 ---
 
@@ -233,8 +216,8 @@ try {
 }
 ```
 
-- **CLI**: prints `Error [<code>]: <message>` to stderr; exits non-zero.
-- **MCP**: returns `isError: true` with `{ code, message, details }` in tool result content.
+- **CLI**: prints `error: [CODE] message` (or `error: message`) to stderr in red when supported; exits non-zero. `--verbose` adds details and stack output.
+- **MCP**: returns `isError: true` with `{ error: "..." }` in tool result content.
 - **Library**: throws `CrontickError` directly.
 
 See [docs/reference/errors.md](docs/reference/errors.md) for all error codes and their triggers.
@@ -251,14 +234,11 @@ See [docs/reference/errors.md](docs/reference/errors.md) for all error codes and
 | CJS import | Not supported; use dynamic `import()` from CJS if needed |
 | TypeScript | Full `.d.ts` declarations shipped |
 
-
 ---
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide (DCO, code style, PR
-process). For coding agents, see [AGENTS.md](AGENTS.md). For testing instructions,
-see [docs/testing.md](docs/testing.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide (DCO, code style, PR process). For coding agents, see [AGENTS.md](AGENTS.md). For testing instructions, see [docs/testing.md](docs/testing.md).
 
 Report bugs at <https://github.com/tejitpabari99/crontick/issues>.
 
@@ -274,16 +254,11 @@ This runs lint, type-check, tests, and build in sequence.
 
 ## Security
 
-The daemon listens on `127.0.0.1` only. There are no authentication tokens or remote
-listeners; the trust boundary is the local user session.
+The daemon listens on `127.0.0.1` only. There are no authentication tokens or remote listeners; the trust boundary is the local user session.
 
-Job definitions are trusted input by design: the purpose of the tool is to execute arbitrary
-commands on a schedule. `exec` and `prompt` actions use `shell=false`; `script` actions
-execute through an explicit shell. Run logs are redacted for common secret patterns before
-storage or return.
+Job definitions are trusted input by design: the purpose of the tool is to execute arbitrary commands on a schedule. `exec` and `prompt` actions use `shell=false`; `script` actions execute through an explicit shell. Run logs are redacted for common secret patterns before storage or return.
 
-To report a vulnerability, open a private security advisory at
-<https://github.com/tejitpabari99/crontick/security/advisories/new>.
+To report a vulnerability, open a private security advisory at <https://github.com/tejitpabari99/crontick/security/advisories/new>.
 
 See [SECURITY.md](SECURITY.md) for the full security model.
 

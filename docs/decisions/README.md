@@ -67,3 +67,6 @@ NNNN-kebab-case-title.md
 | 0019 | `--arg` is the primary way to pass arguments to `--exec`/`--prompt` | Accepted | 2026-07-27 |
 | 0020 | Do not detach pwsh/powershell.exe script jobs on Windows | Accepted | 2026-07-27 |
 | 0021 | Duplicate job create requires explicit force | Accepted | 2026-07-28 |
+| 0022 | Keep secret redaction as one shared streaming contract | Accepted | 2026-07-30 |
+| 0023 | Prefer precision over recall for AWS secret redaction | Accepted | 2026-07-31 |
+| 0024 | Reorganize CLI commands and narrow high-risk exposure | Accepted | 2026-08-02 |

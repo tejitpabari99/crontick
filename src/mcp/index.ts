@@ -10,8 +10,6 @@ import { z } from 'zod';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve as pathResolve } from 'node:path';
 import { VERSION } from '../version.js';
-import { ScheduleSchema } from '../schemas/job.js';
-import { EngineConfigSchema } from '../schemas/config.js';
 import { JobCreateInputSchema, JobPatchInputSchema } from '../job-input.js';
 import { createClient, type CrontickClient } from '../client.js';
 import { isVerboseEnv, type LogEvent } from '../logger.js';
@@ -301,34 +299,33 @@ export function createMcpServer(): McpServer {
     async (args) => toolWrap(args, (client) => client.getLogs(args.id, { lines: args.lines, source: args.source })),
   );
 
-  // ── Schedules ─────────────────────────────────────────────────────────────
-
   server.registerTool(
-    'crontick_schedule_validate',
+    'crontick_run_delete',
     {
       description:
-        'Validate a schedule definition. Returns ok:true and human-readable description on success, or an error message on failure. Always call this before creating a job.',
+        'Delete a single run entry and all crontick-side data associated with it (log rows). Pass all:true with force:true to delete every run. Deleting all runs requires force.',
       inputSchema: withVerbose({
-        schedule: ScheduleSchema,
+        id: z.string().optional().describe('Run id to delete. Omit and set all:true to delete every run.'),
+        all: z.boolean().optional().describe('Delete every run. Requires force:true.'),
+        force: z.boolean().optional().describe('Confirm a bulk delete when all:true.'),
       }),
-      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+      annotations: { destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.validateSchedule(args.schedule)),
+    async (args) => toolWrap(args, (client) => client.deleteRun(args.id, { all: args.all, force: args.force })),
   );
 
   server.registerTool(
-    'crontick_schedule_preview',
+    'crontick_job_schedule',
     {
       description:
-        'Preview the next N fire times for a schedule. Useful to confirm the schedule is what the user expects before creating the job.',
+        'Show the next N upcoming fire times for an existing job (id or alias). Useful to confirm a job\'s schedule is what the user expects.',
       inputSchema: withVerbose({
-        schedule: ScheduleSchema,
+        id: z.string().describe('Job id (GUID) or alias'),
         n: z.number().int().positive().max(20).default(5),
-        tz: z.string().optional(),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.previewSchedule({ schedule: args.schedule, n: args.n, tz: args.tz })),
+    async (args) => toolWrap(args, (client) => client.jobSchedule(args.id, { n: args.n })),
   );
 
   // ── Stats ──────────────────────────────────────────────────────────────────
@@ -475,20 +472,6 @@ export function createMcpServer(): McpServer {
   );
 
   server.registerTool(
-    'crontick_dashboard_data',
-    {
-      description:
-        'Return the core dashboard data model: health, aggregate stats, jobs, and recent runs.',
-      inputSchema: withVerbose({
-        jobId: z.string().describe('Job id (GUID) or alias').optional(),
-        runsLimit: z.number().int().positive().optional(),
-      }),
-      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => client.dashboardData(withoutVerbose(args)), false),
-  );
-
-  server.registerTool(
     'crontick_dashboard_stop',
     {
       description:
@@ -513,93 +496,25 @@ export function createMcpServer(): McpServer {
   // ── Config ─────────────────────────────────────────────────────────────────
 
   server.registerTool(
-    'crontick_config_get',
+    'crontick_config_path',
     {
-      description: 'Get the effective crontick config, or a single value by dot-separated path.',
-      inputSchema: withVerbose({ path: z.string().optional() }),
-      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.getConfigValue(args.path)), false),
-  );
-
-  server.registerTool(
-    'crontick_config_set',
-    {
-      description: 'Set one crontick config value by dot-separated path. The updated config is validated and returned.',
-      inputSchema: withVerbose({ path: z.string(), value: z.unknown() }),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.setConfigValue(args.path, args.value)), false),
-  );
-
-  server.registerTool(
-    'crontick_config_unset',
-    {
-      description: 'Remove one crontick config value by dot-separated path. The updated config is validated and returned.',
-      inputSchema: withVerbose({ path: z.string() }),
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.removeConfigValue(args.path)), false),
-  );
-
-  server.registerTool(
-    'crontick_config_engine_list',
-    {
-      description: 'List configured prompt engines from the effective crontick config.',
+      description:
+        'Return the path to the crontick config file plus a note on how edits take effect. Edit that file directly to change config; most settings apply automatically on the next run.',
       inputSchema: withVerbose({}),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.listEngines()), false),
+    async (args) => toolWrap(args, (client) => Promise.resolve(client.configPath()), false),
   );
 
   server.registerTool(
-    'crontick_config_engine_add',
+    'crontick_info',
     {
-      description: 'Add a prompt engine. The engine defines the command, default args, and default env used when prompt jobs run.',
-      inputSchema: withVerbose({ name: z.string(), engine: EngineConfigSchema }),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.addEngine(args.name, args.engine)), false),
-  );
-
-  server.registerTool(
-    'crontick_config_engine_update',
-    {
-      description: 'Update a prompt engine. Provided fields replace the existing command, args, or env.',
-      inputSchema: withVerbose({ name: z.string(), engine: EngineConfigSchema.partial() }),
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.updateEngine(args.name, args.engine)), false),
-  );
-
-  server.registerTool(
-    'crontick_config_engine_remove',
-    {
-      description: 'Remove a prompt engine. You cannot remove the current defaultEngine.',
-      inputSchema: withVerbose({ name: z.string() }),
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.removeEngine(args.name)), false),
-  );
-
-  server.registerTool(
-    'crontick_config_init',
-    {
-      description: 'Create the default crontick config file. Use force:true to replace an existing file.',
-      inputSchema: withVerbose({ force: z.boolean().optional() }),
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.initConfig({ force: args.force })), false),
-  );
-
-  server.registerTool(
-    'crontick_config_validate',
-    {
-      description: 'Validate the current crontick config file, or a specific config file path.',
-      inputSchema: withVerbose({ path: z.string().optional() }),
+      description:
+        'Return crontick environment info: crontick and Node versions, all on-disk file locations (data dir, state dir, logs dir, config file, port file, daemon pid file), and daemon running status.',
+      inputSchema: withVerbose({}),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.validateConfig(args.path)), false),
+    async (args) => toolWrap(args, (client) => client.info(), false),
   );
 
   // ── Resources ─────────────────────────────────────────────────────────────

@@ -3,9 +3,9 @@
 //
 // PREREQUISITE: You must have a prompt engine CLI installed and registered.
 // By default, crontick ships with a built-in "copilot" engine definition
-// (command: "copilot", args: [], env: {}). You need the `copilot` CLI
-// available on your PATH, or register a custom engine first:
-//   crontick config engines add my-engine --command "my-cli" --arg "--flag"
+// (command: "copilot", args: ["--allow-all-tools", "-p"], env: {}). You need
+// the `copilot` CLI available on your PATH, or edit config.json (see
+// `crontick config`) to point at a custom engine.
 //
 // Run: npx tsx examples/04-prompt-job.ts
 

@@ -89,8 +89,8 @@ class CrontickError extends Error {
 
 | | |
 |---|---|
-| **When** | `createJob`, `crontick new`, MCP `crontick_job_create`, or HTTP `POST /api/jobs` attempts to create an ID that already exists without explicit overwrite intent |
-| **Message shape** | `Job "<id>" already exists. Use "crontick update <id>" ... or re-run create with --force / force: true ...` |
+| **When** | `createJob`, `crontick jobs new`, MCP `crontick_job_create`, or HTTP `POST /api/jobs` attempts to create an ID that already exists without explicit overwrite intent |
+| **Message shape** | `Job "<id>" already exists. Use "crontick jobs update <id>" ... or re-run create with --force / force: true ...` |
 | **Details** | — |
 
 ### PARSE_ERROR
@@ -129,28 +129,15 @@ class CrontickError extends Error {
 
 | | |
 |---|---|
-| **When** | Job `action.envFile` / CLI `--job-env-file` path does not exist or cannot be read **at job-creation time** (the daemon `env-file.ts` loader tries to read the file immediately on `POST /api/jobs`). |
+| **When** | Job `action.envFile` path does not exist or cannot be read when the action is normalized or preflighted. The dedicated CLI `--job-env-file` flag is no longer exposed; use the job JSON schema (`action.envFile`) via `crontick jobs new --file <job.json>` or the library API. |
 | **Message shape** | Includes file path |
 | **Details** | — |
-
-> **Why `update --job-env-file` alone gives `VALIDATION_ERROR` instead:** On update, the CLI requires
-> at least one action-source flag (`--script`, `--exec`, `--prompt`) alongside modifier flags such as
-> `--job-env-file`. If no action-source is present, the CLI `maybeBuildAction()` gate raises
-> `VALIDATION_ERROR: "--job-env-file … requires an action source on update"` **before** reaching the
-> file-existence check. These two error codes answer different questions and the distinct messages are
-> intentional: `ENV_FILE_ERROR` = "the file was reached and is missing/unreadable"; `VALIDATION_ERROR`
-> here = "insufficient patch context — the file path was never inspected".
->
-> **Known limitation (PLAN-001):** `envFile` stores a **file path only** in the job record. The
-> file's content is loaded exclusively at run time by the daemon runner and is never persisted, echoed,
-> or returned on any read surface (job-get, list, dashboard). Assertions against env-file content via
-> read surfaces are not possible by design.
 
 ### CONFIG_EXISTS
 
 | | |
 |---|---|
-| **When** | `config init` without `--force` when `config.json` already exists |
+| **When** | `CrontickClient.initConfig({ force: false })` when `config.json` already exists |
 | **Message shape** | `Config file already exists at <path>. Use --force to replace it, or edit that file directly.` |
 | **Details** | `{ path }` |
 
@@ -182,15 +169,15 @@ class CrontickError extends Error {
 
 | | |
 |---|---|
-| **When** | `config get/unset` with a path that does not exist in the config |
-| **Message shape** | `Config key "<path>" was not found. Run "crontick config get" to inspect available keys.` |
+| **When** | Library config helpers read or remove a path that does not exist in the config |
+| **Message shape** | `Config key "<path>" was not found. Inspect config.json directly or use library config helpers to inspect available keys.` |
 | **Details** | `{ key }` |
 
 ### CONFIG_ENGINE_NOT_FOUND
 
 | | |
 |---|---|
-| **When** | `config engines update/remove` or prompt job references a non-existent engine |
+| **When** | Library config engine helpers or a prompt job references a non-existent engine |
 | **Message shape** | `Engine "<name>" is not defined in <path>. ...` |
 | **Details** | `{ path, key }` |
 
@@ -198,7 +185,7 @@ class CrontickError extends Error {
 
 | | |
 |---|---|
-| **When** | `config engines add` with a name that already exists |
+| **When** | Library config engine add helper with a name that already exists |
 | **Message shape** | `Engine "<name>" already exists in <path>. Use update if you want to change it.` |
 | **Details** | `{ path, key }` |
 
@@ -272,18 +259,24 @@ and [storage internals](../internals/storage.md#orphan-reconciliation).
 
 ### CLI
 
-- Errors print to stderr: `Error [<code>]: <message>`
-- Process exits with code `1`
-- `--json` mode: same behavior (error is not JSON-formatted; it goes to stderr)
+- Errors print a single clean line to stderr: `error: [CODE] message` for `CrontickError` values, or `error: message` when no code is available.
+- The line is ANSI red when stderr is a TTY and `NO_COLOR` is not set.
+- Color is suppressed when `NO_COLOR` is set or stderr is not a TTY.
+- Process exits with code `1`.
+- No Node stack trace is shown by default.
+- `--verbose` adds a `Details:` block when structured details exist, then prints the stack for debugging.
+- Commander usage errors (unknown command/option, missing argument) are rendered in the same clean red style.
+
+Known PowerShell limitation: when `$PSNativeCommandUseErrorActionPreference` is enabled, any native command that exits non-zero can surface a shell-level `NativeCommandExitException` that references the npm shim's `.ps1` line. This is a PowerShell artifact of native commands exiting non-zero and cannot be suppressed from inside Node. crontick's own error remains the clean line described above.
 
 ### MCP
 
-- Returned as tool result with `isError: true`
-- Payload: `{ "error": "<redacted message>" }` (or with `diagnostics` when verbose)
-- `redactForLlm()` replaces loopback addresses with `<daemon-addr>` and filesystem paths with `<path>`
+- Returned as tool result with `isError: true`.
+- Payload: `{ "error": "<redacted message>" }` (or with `diagnostics` when verbose).
+- `redactForLlm()` replaces loopback addresses with `<daemon-addr>` and filesystem paths with `<path>`.
 
 ### Library
 
-- Throws `CrontickError` instances directly
-- Callers use `instanceof CrontickError` and inspect `.code` for programmatic handling
-- `.toJSON()` provides a serializable representation
+- Throws `CrontickError` instances directly.
+- Callers use `instanceof CrontickError` and inspect `.code` for programmatic handling.
+- `.toJSON()` provides a serializable representation.

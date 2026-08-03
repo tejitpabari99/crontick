@@ -518,6 +518,15 @@ export class Runner {
 
       log.crontick('executing', { command: cmd, args });
 
+      // Persist the redacted resolved command onto the run record so
+      // `crontick runs get <id>` can show exactly what was executed for this
+      // specific run, independent of any later edits to the job definition.
+      try {
+        store.updateRun(runId, { command: redactText([cmd, ...args].join(' ')) });
+      } catch (err) {
+        this.logger.error('Failed to persist run command', { jobId: job.id, runId, error: String(err) });
+      }
+
       // All action kinds use shell:false — no shell interpretation, preventing injection.
       // detached + windowsHide (L8): children survive the daemon's death uniformly on
       // both platforms — POSIX reparents to init (unchanged from before), and on

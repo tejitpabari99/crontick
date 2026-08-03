@@ -86,8 +86,8 @@ restart. See [storage internals](../internals/storage.md) for the eviction algor
   minute keeps roughly 100 minutes of history; a job that fires monthly keeps years of history
   under the same cap.
 - Eviction is a hard delete with no dry-run or confirmation prompt. If you need to keep runs
-  beyond the cap, back them up first with `crontick export --include-runs` (round-trips via
-  `crontick import`), or raise `retention.maxRunsPerJob` before the cap would evict them.
+  beyond the cap, back them up first with `crontick share export --include-runs` (round-trips via
+  `crontick share import`), or raise `retention.maxRunsPerJob` before the cap would evict them.
 
 A single run's own captured stdout/stderr is bounded separately by
 `retention.maxOutputBytesPerRun` (default 2,000,000 bytes, range `1024..1_000_000_000`); once a
@@ -124,7 +124,7 @@ cat <dataDir>/logs/daemon-$(date +%F).log | jq .
 1. **Stop the daemon first**: `crontick daemon stop`
 2. **Delete runs only**: remove `runs.db` (the daemon recreates it with a fresh schema on next start).
 3. **Delete everything**: remove the entire data directory. Jobs, runs, logs, and config will all be lost.
-4. **Delete one job**: `crontick delete <id>` removes the JSON file, schema sidecar, and SQLite
+4. **Delete one job**: `crontick jobs delete <id>` removes the JSON file, schema sidecar, and SQLite
    row, and cancels the job's in-flight run if it has one -- see
    [jobs.md](./jobs.md#lifecycle-create-update-remove).
 

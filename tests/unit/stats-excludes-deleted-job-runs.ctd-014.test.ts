@@ -56,7 +56,7 @@ function resetHome(): void {
 }
 
 function cli(args: string[]): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync(process.execPath, [CLI, '--json', ...args], {
+  const result = spawnSync(process.execPath, [CLI, ...args], {
     encoding: 'utf8',
     env: {
       ...env,
@@ -68,6 +68,26 @@ function cli(args: string[]): { status: number | null; stdout: string; stderr: s
     stdout: result.stdout,
     stderr: result.stderr,
   };
+}
+
+
+function parseDisplay(value: string): unknown {
+  const trimmed = value.trim();
+  if (trimmed === '') return '';
+  if (/^(true|false)$/i.test(trimmed)) return trimmed.toLowerCase() === 'true';
+  if (trimmed === 'null') return null;
+  if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) return Number(trimmed);
+  if (/^[{["]/.test(trimmed)) try { return JSON.parse(trimmed); } catch { /* keep string */ }
+  return value;
+}
+
+function parseCliObject<T extends Record<string, unknown> = Record<string, unknown>>(stdout: string): T {
+  const out: Record<string, unknown> = {};
+  for (const line of stdout.trim().split(/\r?\n/)) {
+    const idx = line.indexOf(': ');
+    if (idx >= 0) out[line.slice(0, idx)] = parseDisplay(line.slice(idx + 2));
+  }
+  return out as T;
 }
 
 async function callTool(name: string, args: Record<string, unknown>): Promise<{ json: ToolCallJson; isError: boolean }> {
@@ -103,15 +123,6 @@ function jobDefinition(id: string, line: string) {
       command: process.execPath,
       args: ['-e', `console.log(${JSON.stringify(line)})`],
     },
-  };
-}
-
-function dashboardAssertions(data: DashboardPayload): Pick<DashboardPayload, 'stats'> & { healthRuns: DashboardPayload['health']['runs']; jobAliases: (string | null | undefined)[]; runIds: string[] } {
-  return {
-    stats: data.stats,
-    healthRuns: data.health.runs,
-    jobAliases: data.jobs.map((job) => job.alias),
-    runIds: data.runs.map((run) => run.id),
   };
 }
 
@@ -173,7 +184,7 @@ describe('CTD-014 deleted-job aggregates', () => {
 
     const cliSummaryResult = cli(['stats', 'summary']);
     expect(cliSummaryResult.status, cliSummaryResult.stderr).toBe(0);
-    expect(JSON.parse(cliSummaryResult.stdout) as StatsSummary).toEqual(summary);
+    expect(parseCliObject<StatsSummary>(cliSummaryResult.stdout)).toEqual(summary);
 
     const { json: mcpSummaryJson, isError: mcpSummaryError } = await callTool('crontick_stats_summary', {});
     expect(mcpSummaryError).toBe(false);
@@ -185,15 +196,6 @@ describe('CTD-014 deleted-job aggregates', () => {
     expect(dashboard.health.runs).toEqual({ last24h: 1, failures24h: 0 });
     expect(dashboard.jobs.map((job) => job.alias)).toEqual([liveJobId]);
     expect(dashboard.runs.map((run) => ({ id: run.id, jobId: run.jobId }))).toEqual([{ id: liveRunId, jobId: liveJob.id }]);
-
-    const cliDashboardResult = cli(['dashboard', 'data', '--runs-limit', '10']);
-    expect(cliDashboardResult.status, cliDashboardResult.stderr).toBe(0);
-    const cliDashboard = JSON.parse(cliDashboardResult.stdout) as DashboardPayload;
-    expect(dashboardAssertions(cliDashboard)).toEqual(dashboardAssertions(dashboard));
-
-    const { json: mcpDashboardJson, isError: mcpDashboardError } = await callTool('crontick_dashboard_data', { runsLimit: 10 });
-    expect(mcpDashboardError).toBe(false);
-    expect(dashboardAssertions(mcpDashboardJson as DashboardPayload)).toEqual(dashboardAssertions(dashboard));
 
     const archivedRun = await client.getRun(deletedRunId) as RunRecord;
     expect(archivedRun).toMatchObject({ id: deletedRunId, jobId: deletedJob.id, status: 'success', exitCode: 0 });

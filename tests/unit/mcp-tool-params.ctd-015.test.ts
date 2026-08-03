@@ -20,12 +20,12 @@ const EXPECTED_TOOL_PARAMS = {
   crontick_job_enable: ['id'],
   crontick_job_disable: ['id'],
   crontick_job_run_now: ['id'],
+  crontick_job_schedule: ['id', 'n'],
   crontick_job_cancel_run: ['id'],
   crontick_run_list: ['jobId', 'limit', 'since', 'status'],
   crontick_run_get: ['id'],
   crontick_run_logs_tail: ['id', 'lines', 'source'],
-  crontick_schedule_validate: ['schedule'],
-  crontick_schedule_preview: ['schedule', 'n', 'tz'],
+  crontick_run_delete: ['id', 'all', 'force'],
   crontick_stats_summary: [],
   crontick_stats_job: ['id'],
   crontick_daemon_start: [],
@@ -37,18 +37,10 @@ const EXPECTED_TOOL_PARAMS = {
   crontick_import: ['jobs', 'runs'],
   crontick_dashboard_start: [],
   crontick_dashboard_status: [],
-  crontick_dashboard_data: ['jobId', 'runsLimit'],
   crontick_dashboard_stop: [],
   crontick_doctor: [],
-  crontick_config_get: ['path'],
-  crontick_config_set: ['path', 'value'],
-  crontick_config_unset: ['path'],
-  crontick_config_engine_list: [],
-  crontick_config_engine_add: ['name', 'engine'],
-  crontick_config_engine_update: ['name', 'engine'],
-  crontick_config_engine_remove: ['name'],
-  crontick_config_init: ['force'],
-  crontick_config_validate: ['path'],
+  crontick_config_path: [],
+  crontick_info: [],
 } as const;
 
 type ToolCallJson = { error?: string; [key: string]: unknown };
@@ -160,7 +152,7 @@ describe('CTD-015 MCP parameter naming', () => {
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
 
     expect(tools.map((tool) => tool.name).sort()).toEqual([...MCP_TOOLS].sort());
-    expect(tools).toHaveLength(37);
+    expect(tools).toHaveLength(29);
 
     for (const [name, expectedParams] of Object.entries(EXPECTED_TOOL_PARAMS)) {
       const tool = byName.get(name);

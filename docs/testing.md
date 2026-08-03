@@ -144,20 +144,20 @@ Expected: `health` shows `{ status: 'ok', ... }`, job appears in list, then disa
 crontick daemon start
 
 # Create an exec job on a 5-second interval
-crontick new my-test --every 5 --exec echo --arg "hello"
+crontick jobs new --every 5 --prompt "say hello" --alias my-test
 
 # Verify it appears
-crontick list
-crontick get my-test
+crontick jobs list
+crontick jobs get my-test
 
 # Wait >5s, check runs
 crontick runs list --job my-test
 
 # View logs for a run
-crontick logs <run-id>
+crontick runs logs <run-id>
 
 # Clean up
-crontick delete my-test
+crontick jobs delete my-test
 crontick daemon stop
 ```
 
@@ -165,7 +165,7 @@ Expected: `list` shows the job enabled, `runs list` shows at least one `success`
 
 ### MCP server
 
-**Automated coverage:** `tests/mcp.test.ts` (starts real daemon + MCP server, drives all 37 tools via `@modelcontextprotocol/sdk` client over stdio). `tests/surface-drift.test.ts` verifies every tool is registered.
+**Automated coverage:** `tests/mcp.test.ts` (starts real daemon + MCP server, drives all 29 tools via `@modelcontextprotocol/sdk` client over stdio). `tests/surface-drift.test.ts` verifies every tool is registered.
 
 **Launch command:**
 
@@ -193,9 +193,9 @@ npx @modelcontextprotocol/inspector node dist/mcp/index.js
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"crontick_daemon_status","arguments":{}}}
 ```
 
-Expected: `tools/list` returns all 37 `crontick_*` tools; `crontick_daemon_status` returns a JSON text content block.
+Expected: `tools/list` returns all 29 `crontick_*` tools; `crontick_daemon_status` returns a JSON text content block.
 
-**Key tools to smoke-test:** `crontick_job_create`, `crontick_job_list`, `crontick_daemon_status`, `crontick_schedule_preview`, `crontick_doctor`.
+**Key tools to smoke-test:** `crontick_job_create`, `crontick_job_list`, `crontick_daemon_status`, `crontick_job_schedule`, `crontick_doctor`.
 
 ## Surface parity checks
 
@@ -253,16 +253,16 @@ publishing.
 
 ### Job kinds
 
-- [ ] Create a `script` job: `crontick new s1 --every 10 --script "echo script-ok"`
-- [ ] Create an `exec` job: `crontick new e1 --every 10 --exec echo --arg "exec-ok"`
-- [ ] Create a `prompt` job: `crontick new p1 --every 60 --prompt "say hello"` (requires a configured engine)
+- [ ] Create a `script` job from JSON: `crontick jobs new --file script-job.json`
+- [ ] Create an `exec` job from JSON: `crontick jobs new --file exec-job.json`
+- [ ] Create a `prompt` job: `crontick jobs new --every 60 --prompt "say hello" --alias p1` (requires a configured engine)
 - [ ] Each fires at least once and `crontick runs list` shows `success`
 
 ### Schedule kinds
 
-- [ ] `cron`: `crontick new c1 --cron "* * * * *" --exec echo --arg "tick"`
+- [ ] `cron`: `crontick jobs new --cron "* * * * *" --prompt "tick" --alias c1`
 - [ ] `interval`: verified above
-- [ ] `one-shot`: `crontick new o1 --at "<30-seconds-from-now-ISO>" --exec echo --arg "once"` fires exactly once
+- [ ] `one-shot`: `crontick jobs new --at "<30-seconds-from-now-ISO>" --prompt "once" --alias o1` fires exactly once
 
 ### Daemon lifecycle
 
@@ -291,9 +291,9 @@ publishing.
 
 ### Error paths
 
-- [ ] Invalid cron expression: `crontick schedule validate '{"kind":"cron","cron":"bad"}'` returns error
+- [ ] Invalid cron expression on `crontick jobs new --cron bad --prompt test --alias bad-cron` returns error
 - [ ] Failing command: job with `exit 1` shows `failed` status in runs
-- [ ] Missing binary: `crontick new bad --every 5 --exec nonexistent-binary-xyz` run fails with actionable error
+- [ ] Missing binary in an exec job created from JSON fails the run with an actionable error
 
 ### Docs / examples
 

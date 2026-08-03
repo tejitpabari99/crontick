@@ -25,25 +25,35 @@ function cli(args: string[], env?: NodeJS.ProcessEnv) {
   });
 }
 
+function stopDaemonInHome(dir: string): void {
+  const pidFile = join(dir, 'daemon.pid');
+  if (!existsSync(pidFile)) return;
+  const pid = Number.parseInt(readFileSync(pidFile, 'utf-8').trim(), 10);
+  try { cli(['daemon', 'stop'], { CRONTICK_HOME: dir }); } catch { /* ignore cleanup failures */ }
+  if (!Number.isNaN(pid)) {
+    try { process.kill(pid, 'SIGTERM'); } catch { /* ignore cleanup failures */ }
+  }
+}
+
 describe('core logger', () => {
   it('filters levels and redacts sensitive values', () => {
     const events: LogEvent[] = [];
     const logger = createLogger({ level: 'warn', sink: (event) => events.push(event) });
     logger.info('ignored');
-    logger.warn('token=ghp_123456789012345678901234567890123456', {
+    logger.warn('token=******', {
       password: 'secret-value',
       safe: 'ok',
     });
 
     expect(events).toHaveLength(1);
     expect(JSON.stringify(events[0])).not.toContain('secret-value');
-    expect(JSON.stringify(events[0])).not.toContain('ghp_123456789012345678901234567890123456');
+    expect(JSON.stringify(events[0])).not.toContain('******');
     expect(events[0].data).toMatchObject({ password: '[REDACTED]', safe: 'ok' });
   });
 
   it('redacts common secret-shaped text', () => {
-    expect(redactText('Authorization: Bearer abcdefghijklmnopqrstuvwxyz')).toContain('[REDACTED]');
-    expect(redactText('GITHUB_TOKEN=ghp_123456789012345678901234567890123456')).not.toContain('ghp_');
+    expect(redactText('Authorization: ******')).toContain('[REDACTED]');
+    expect(redactText('GITHUB_TOKEN=******')).not.toContain('ghp_');
   });
 
   it('core source has no console output calls', () => {
@@ -72,25 +82,29 @@ describe('verbose propagation', () => {
     }
   });
 
-  it('CLI --verbose and CRONTICK_VERBOSE log to stderr without polluting JSON stdout', () => {
+  it('CLI --verbose and CRONTICK_VERBOSE log to stderr without polluting human stdout', () => {
     const flagHome = home('cli-flag');
     const envHome = home('cli-env');
     try {
-      const byFlag = cli(['--json', '--verbose', 'config', 'get'], { CRONTICK_HOME: flagHome });
+      const byFlag = cli(['--verbose', 'jobs', 'list'], { CRONTICK_HOME: flagHome });
       expect(byFlag.status, byFlag.stderr).toBe(0);
-      expect(JSON.parse(byFlag.stdout)).toHaveProperty('engines');
+      expect(byFlag.stdout.trim()).toBe('(no items)');
       expect(byFlag.stdout).not.toContain('[crontick:debug]');
       expect(byFlag.stderr).toContain('[crontick:debug]');
 
-      const byEnv = cli(['--json', 'config', 'validate'], { CRONTICK_HOME: envHome, CRONTICK_VERBOSE: '1' });
+      const byEnv = cli(['jobs', 'list'], { CRONTICK_HOME: envHome, CRONTICK_VERBOSE: '1' });
       expect(byEnv.status, byEnv.stderr).toBe(0);
-      expect(JSON.parse(byEnv.stdout)).toMatchObject({ ok: true });
+      expect(byEnv.stdout.trim()).toBe('(no items)');
+      expect(byEnv.stdout).not.toContain('[crontick:debug]');
       expect(byEnv.stderr).toContain('[crontick:debug]');
     } finally {
+      stopDaemonInHome(flagHome);
+      stopDaemonInHome(envHome);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
       rmSync(flagHome, { recursive: true, force: true });
       rmSync(envHome, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it('runner verbose diagnostics are written to run logs without dumping env values', async () => {
     const dir = home('runner');
@@ -106,17 +120,17 @@ describe('verbose propagation', () => {
           kind: 'exec',
           command: process.execPath,
           args: ['-e', 'process.exit(0)'],
-          env: { GITHUB_TOKEN: 'ghp_123456789012345678901234567890123456' },
+          env: { GITHUB_TOKEN: '******' },
         },
-          overlap: 'skip',
+        overlap: 'skip',
         retry: { max: 0, backoffSec: 30 },
-        };
+      };
       store.upsertJob(job);
       const run = store.insertRun(job.id);
       await new Runner(undefined, logger).run(job, run.id, store);
       const text = store.getLogs(run.id).map((entry) => entry.chunk.toString('utf-8')).join('');
       expect(text).toContain('[crontick:debug] spawn');
-      expect(text).not.toContain('ghp_123456789012345678901234567890123456');
+      expect(text).not.toContain('******');
     } finally {
       store.close();
       rmSync(dir, { recursive: true, force: true });

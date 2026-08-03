@@ -201,7 +201,7 @@ describe('CTD-005 duplicate create requires explicit force', () => {
   it('keeps force as an option on the existing create-job surface capability', () => {
     expect(SURFACE_CAPABILITIES.find((capability) => capability.capability === 'create-job')).toMatchObject({
       clientMethod: 'createJob',
-      cliCommand: ['new'],
+      cliCommand: ['jobs', 'new'],
       mcpTool: 'crontick_job_create',
       optionNames: ['force'],
     });

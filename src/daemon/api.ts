@@ -245,6 +245,17 @@ async function handleRequest(
       return sendJson(res, 200, redactValue(ctx.store.listRuns({ jobId, limit, since, status })));
     }
 
+    if (method === 'DELETE' && path === '/api/runs') {
+      // `--all` bulk delete. Guarded by an explicit query flag so an accidental
+      // DELETE to the collection endpoint without it is rejected rather than
+      // wiping all run history.
+      if (url.searchParams.get('all') !== '1') {
+        return sendError(res, 400, 'VALIDATION_ERROR', 'DELETE /api/runs requires ?all=1 to delete all runs');
+      }
+      const deleted = ctx.store.deleteAllRuns();
+      return sendJson(res, 200, { ok: true, deleted });
+    }
+
     // /api/runs/:id/*
     const runMatch = path.match(/^\/api\/runs\/([^/]+)(\/.*)?$/);
     if (runMatch) {
@@ -255,6 +266,12 @@ async function handleRequest(
         const run = ctx.store.getRun(id);
         if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
         return sendJson(res, 200, redactValue(run));
+      }
+
+      if (method === 'DELETE' && sub === '') {
+        const deleted = ctx.store.deleteRun(id);
+        if (!deleted) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
+        return sendJson(res, 200, { ok: true, deleted: 1 });
       }
 
       if (method === 'POST' && sub === '/cancel') {
