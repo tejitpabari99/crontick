@@ -10,13 +10,28 @@ Top-level job object.
 
 | Field | Type | Required | Default | Constraints | Description |
 |-------|------|----------|---------|-------------|-------------|
-| `id` | `string` | yes | — | Regex: `^[a-z0-9]+(?:-[a-z0-9]+)*$` (kebab-case) | Unique job identifier |
+| `id` | `string` (GUID) | no (server-assigned) | `randomUUID()` | UUID format | Immutable identifier assigned automatically at creation; never user-supplied. Primary key used internally by the store, `run.jobId`, and the scheduler. |
+| `alias` | `string` | no | auto-generated (`<word>-<1-1000>`) | Regex: `^[a-z0-9]+(?:-[a-z0-9]+)*$` (kebab-case); unique among currently-defined (live) jobs | Optional, user-editable human-friendly name. Deleting a job frees its alias for reuse. |
 | `description` | `string` | no | — | — | Human-readable description |
 | `enabled` | `boolean` | no | `true` | — | Whether the job runs on schedule |
 | `schedule` | `Schedule` | yes | — | Discriminated union on `kind` | When the job runs |
 | `action` | `Action` | yes | — | Discriminated union on `kind` | What the job does |
 | `overlap` | `"skip" \| "queue" \| "cancel-previous"` | no | `"skip"` | Enum | What happens when a new tick fires while a previous run is still active |
 | `retry` | `Retry` | no | `{ max: 0, backoffSec: 30 }` | — | Retry policy for failed runs |
+
+### Identity: GUID `id` + `alias`
+
+Every job's `id` is an immutable, server-assigned GUID -- it is the sole key
+used internally by the store, run history (`run.jobId`), and the scheduler.
+An optional, user-editable `alias` provides a human-friendly name that must be
+unique among currently-defined jobs; when omitted on create, one is
+auto-generated from a small built-in word list plus a random integer 1-1000
+(retried on collision -- see `generateAlias` below). Anywhere a job identifier
+is accepted (CLI, MCP, HTTP API), you may pass either the GUID `id` or the
+`alias`; an exact GUID match is tried first, falling back to an alias lookup,
+and an unresolved value returns `JOB_NOT_FOUND`. A legacy caller that still
+passes a human string as `id` (not a GUID) has it transparently coerced to
+`alias` instead (see `coerceLegacyIdToAlias` in [library-api.md](library-api.md)).
 
 ---
 

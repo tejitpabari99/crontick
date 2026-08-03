@@ -3,6 +3,7 @@
  * create/update. The schemas form discriminated unions keyed on `kind` for both
  * schedules and actions. All action schemas use `.strict()` to reject unknown fields.
  */
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { promptRuntimeValidationMessage } from '../prompt-runtime.js';
 import { EngineNameSchema } from './config.js';
@@ -98,11 +99,31 @@ export const RetrySchema = z.object({
 
 // ── Job ───────────────────────────────────────────────────────────────────────
 
-/** Permanent: job IDs are kebab-case, used as filenames and primary keys. Cannot be renamed. */
-const kebabCase = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/**
+ * Kebab-case pattern shared by the (legacy/current) human-friendly `alias`
+ * field. Exported so store.ts can recognize a pre-GUID on-disk job file
+ * (whose `id` is a kebab-case string, not a UUID) during migration.
+ */
+export const JOB_ALIAS_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/**
+ * Immutable primary key: a GUID assigned once at creation and never changed
+ * (see docs/decisions and docs/concepts/jobs.md). Runs, the scheduler, and
+ * every internal reference key off this value. When omitted from input, a
+ * fresh id is generated -- collision-free for practical purposes without
+ * needing to consult existing jobs (unlike `alias`, which does).
+ */
 export const JobSchema = z.object({
-  id: z.string().regex(kebabCase, 'Job ID must be kebab-case (e.g. "my-job")'),
+  id: z.string().uuid().default(() => randomUUID()),
+  /**
+   * Human-friendly, user-editable, OPTIONAL identifier. Enforced unique only
+   * among currently-defined (live) jobs -- deleting a job frees its alias for
+   * reuse. Resolution (see CrontickClient/daemon API) accepts either the
+   * GUID `id` or the `alias` wherever a job identifier is expected; `id` is
+   * tried first, falling back to `alias`. When omitted on create, one is
+   * auto-generated (see generateAlias in job-input.ts).
+   */
+  alias: z.string().regex(JOB_ALIAS_PATTERN, 'Job alias must be kebab-case (e.g. "my-job")').optional(),
   description: z.string().optional(),
   enabled: z.boolean().default(true),
   schedule: ScheduleSchema,

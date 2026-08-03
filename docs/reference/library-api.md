@@ -31,6 +31,8 @@ class CrontickClient {
 
 #### Methods
 
+Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJob`, `enableJob`, `disableJob`, `runNow`, `statsJob`, the `jobId` filter on `listRuns`) accepts EITHER the job's immutable GUID `id` OR its human-friendly `alias` — an exact GUID match is tried first, falling back to an alias lookup. An identifier that resolves to neither throws `CrontickError('JOB_NOT_FOUND', ...)`. See [job-schema.md](job-schema.md#identity-guid-id--alias) for how `id`/`alias` are assigned.
+
 | Method | Signature | Returns | Throws |
 |--------|-----------|---------|--------|
 | `ensure` | `(): Promise<DaemonInfo>` | `DaemonInfo` | `CrontickError` (`DAEMON_START_FAILED`, `DAEMON_TIMEOUT`, `DAEMON_START_LOCK_TIMEOUT`) |
@@ -615,6 +617,45 @@ function normalizeJobInput(input: JobCreateInput, options?: NormalizeJobInputOpt
 ```ts
 function normalizeJobPatch(id: string, existing: Job, patch: JobPatchInput, options?: NormalizeJobInputOptions): Job;
 ```
+
+### coerceLegacyIdToAlias
+
+```ts
+function coerceLegacyIdToAlias(input: unknown): unknown;
+```
+
+Back-compat helper: if `input.id` is a non-GUID string and `input.alias` is unset, moves that string to `alias` and drops `id` (so `JobSchema`'s default assigns a fresh GUID). Used internally by `normalizeJobInput` and the daemon's HTTP/import handlers so legacy callers that still pass a human string as `id` keep working unchanged.
+
+### generateAlias
+
+```ts
+function generateAlias(isTaken: (candidate: string) => boolean, options?: GenerateAliasOptions): string;
+```
+
+Auto-generates a unique job alias (`<word>-<1-1000>`, retrying on collision) when the caller doesn't supply one on create. `isTaken` should check the candidate against both existing job ids and aliases. `options.words` and `options.random` are injectable (default to `DEFAULT_ALIAS_WORDS` and `Math.random`) so callers/tests can control the output deterministically. Throws `CrontickError('ALIAS_GENERATION_FAILED', ...)` if no unique candidate is found after 50 attempts.
+
+```ts
+interface GenerateAliasOptions {
+  words?: readonly string[]; // defaults to DEFAULT_ALIAS_WORDS
+  random?: () => number;     // defaults to Math.random; must return a float in [0, 1)
+}
+```
+
+### DEFAULT_ALIAS_WORDS
+
+```ts
+const DEFAULT_ALIAS_WORDS: readonly string[];
+```
+
+The built-in word list `generateAlias` draws from by default.
+
+### JOB_ALIAS_PATTERN
+
+```ts
+const JOB_ALIAS_PATTERN: RegExp; // /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+```
+
+The kebab-case pattern a job's `alias` must match when supplied.
 
 ### jobJsonSchema
 

@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { CrontickError } from './errors.js';
 import {
   ExecActionSchema,
+  JOB_ALIAS_PATTERN,
   JobSchema,
   PromptActionBaseSchema,
   ScheduleSchema,
@@ -103,6 +104,8 @@ const RetryPatchSchema = z.object({
 });
 
 export const JobPatchInputSchema = z.object({
+  /** Alias is user-editable after creation; `id` (the GUID) is never patchable. */
+  alias: z.string().regex(JOB_ALIAS_PATTERN, 'Job alias must be kebab-case (e.g. "my-job")').optional(),
   description: z.string().optional(),
   enabled: z.boolean().optional(),
   schedule: ScheduleSchema.optional(),
@@ -125,7 +128,16 @@ export interface NormalizeJobInputOptions {
 }
 
 export interface JobCreateCliOptions {
-  id: string;
+  /**
+   * The positional identifier argument on `crontick new`/`update`. On create,
+   * when `alias` is not separately provided, this value is used AS the
+   * alias (not the immutable GUID `id`, which is always generated -- see
+   * buildJobFromCreateOptions). Kept optional so a job can be created with
+   * no alias hint at all (one is then auto-generated -- see generateAlias).
+   */
+  id?: string;
+  /** Explicit alias, taking precedence over the positional `id` on create; the only way to rename a job's alias on update. */
+  alias?: string;
   engineArgs?: string[];
   rawArgs?: string[];
   /**
@@ -163,14 +175,39 @@ export type JobPatchCliOptions = Omit<JobCreateCliOptions, 'id'>;
 
 const DEFAULT_MAX_PROMPT_FILE_BYTES = 1024 * 1024;
 
+/**
+ * Pre-GUID job definitions (hand-written files, older library callers, MCP
+ * callers that still pass the field they always used to, and raw HTTP
+ * clients that POST/PUT directly to the daemon API) supplied a kebab-case
+ * `id` that WAS the human-friendly identifier. Under the GUID identity model
+ * `id` must be a GUID (or omitted, so one is generated), so a non-GUID `id`
+ * with no explicit `alias` is treated as an alias hint instead of being
+ * rejected outright -- the same back-compat behavior the daemon's on-disk
+ * migration applies to legacy job files (see store.ts). Operates on `unknown`
+ * (not just JobCreateInput) so it can also normalize a raw HTTP request body
+ * in api.ts before schema validation.
+ */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function coerceLegacyIdToAlias(input: unknown): unknown {
+  if (!isRecord(input)) return input;
+  if (typeof input.id === 'string' && input.alias === undefined && !UUID_PATTERN.test(input.id)) {
+    const { id: _legacyId, ...rest } = input;
+    void _legacyId;
+    return { ...rest, alias: input.id };
+  }
+  return input;
+}
+
 /** Validates and normalizes a full job create input into the canonical persisted shape. */
 export function normalizeJobInput(
   input: JobCreateInput,
   options: NormalizeJobInputOptions = {},
 ): Job {
+  const coerced = coerceLegacyIdToAlias(input) as JobCreateInput;
   const normalized = {
-    ...input,
-    action: normalizeActionInput(input.action, options, true),
+    ...coerced,
+    action: normalizeActionInput(coerced.action, options, true),
   };
 
   const parsed = JobSchema.safeParse(normalized);
@@ -178,6 +215,48 @@ export function normalizeJobInput(
     throw new CrontickError('VALIDATION_ERROR', 'Invalid job', parsed.error.format());
   }
   return parsed.data;
+}
+
+/**
+ * Built-in word list used to auto-generate a job alias when the caller
+ * doesn't supply one (see generateAlias). Deliberately small and simple
+ * (short nouns), not meant to be exhaustive -- collision avoidance comes
+ * from combining a word with a random 1-1000 suffix and retrying on
+ * collision, not from the size of the word list itself.
+ */
+export const DEFAULT_ALIAS_WORDS: readonly string[] = [
+  'atlas', 'aurora', 'birch', 'comet', 'cove', 'dune', 'ember', 'falcon',
+  'fern', 'harbor', 'juniper', 'lumen', 'meadow', 'nimbus', 'orbit', 'pixel',
+  'quartz', 'raven', 'reef', 'summit', 'tundra', 'vale', 'willow', 'zephyr',
+];
+
+const MAX_ALIAS_GENERATION_ATTEMPTS = 50;
+
+export interface GenerateAliasOptions {
+  /** Word list to draw the alias prefix from. Defaults to DEFAULT_ALIAS_WORDS. Injectable so tests can control output deterministically. */
+  words?: readonly string[];
+  /** Returns a float in [0, 1); defaults to Math.random. Injectable for deterministic tests. */
+  random?: () => number;
+}
+
+/**
+ * Auto-generates a unique job alias: `<word>-<1-1000>`, retrying on
+ * collision. `isTaken` is injected (checked against currently-live jobs by
+ * id AND alias) so this module has no direct dependency on the store.
+ */
+export function generateAlias(isTaken: (candidate: string) => boolean, options: GenerateAliasOptions = {}): string {
+  const words = options.words && options.words.length > 0 ? options.words : DEFAULT_ALIAS_WORDS;
+  const random = options.random ?? Math.random;
+  for (let attempt = 0; attempt < MAX_ALIAS_GENERATION_ATTEMPTS; attempt++) {
+    const word = words[Math.floor(random() * words.length)];
+    const suffix = 1 + Math.floor(random() * 1000);
+    const candidate = `${word}-${suffix}`;
+    if (!isTaken(candidate)) return candidate;
+  }
+  throw new CrontickError(
+    'ALIAS_GENERATION_FAILED',
+    `Could not generate a unique job alias after ${MAX_ALIAS_GENERATION_ATTEMPTS} attempts. Provide an explicit alias.`,
+  );
 }
 
 /** Fills in the default engine for prompt jobs that omit it (derived field, not user-supplied). */
@@ -210,7 +289,7 @@ export function normalizeJobPatch(
   if (patch.retry) {
     normalizedPatch = { ...normalizedPatch, retry: mergeDefinedFields(existing.retry, patch.retry) as Job['retry'] };
   }
-  const parsed = JobSchema.safeParse({ ...existing, ...normalizedPatch, id });
+  const parsed = JobSchema.safeParse({ ...existing, ...normalizedPatch, id: existing.id });
   if (!parsed.success) {
     throw new CrontickError('VALIDATION_ERROR', 'Invalid job', parsed.error.format());
   }
@@ -316,7 +395,9 @@ export function buildJobFromCreateOptions(
   }
 
   const jobData = {
-    id: input.id,
+    // The positional `id` argument is a back-compat alias hint, not the
+    // immutable GUID `id` (which is always generated -- see normalizeJobInput).
+    alias: input.alias ?? input.id,
     description: input.desc,
     enabled: input.enabled,
     schedule: buildSchedule(input),
@@ -347,6 +428,7 @@ export function buildJobPatchFromUpdateOptions(
   }
 
   const patch: JobPatchInput = {};
+  if (input.alias !== undefined) patch.alias = input.alias;
   if (input.desc !== undefined) patch.description = input.desc;
   if (input.enabled !== undefined) patch.enabled = input.enabled;
   const schedule = maybeBuildSchedule(input, true);
@@ -596,7 +678,8 @@ function assertFileModeExclusive(opts: JobPatchCliOptions, rawArgs: string[]): v
     || opts.overlap !== undefined
     || opts.retry !== undefined
     || opts.desc !== undefined
-    || opts.enabled !== undefined;
+    || opts.enabled !== undefined
+    || opts.alias !== undefined;
 
   if (conflicting) {
     throw new CrontickError(

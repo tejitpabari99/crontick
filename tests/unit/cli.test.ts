@@ -114,6 +114,16 @@ describe('CLI binary (dist/cli/index.js)', () => {
     expect((result.stdout + result.stderr).toLowerCase()).not.toContain('registry');
   });
 
+  it('an unrecognized subcommand exits non-zero with an "unknown command" error, unlike bare invocation', () => {
+    // Regression: adding a root .action() (for bare-invoke exit 0) made Commander
+    // route ANY unmatched subcommand through that same handler instead of its
+    // normal unknown-command error, so a typo'd/removed command silently printed
+    // help and exited 0 -- indistinguishable from success.
+    const result = cli(['not-a-real-command']);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("unknown command 'not-a-real-command'");
+  });
+
   it('logs help does not expose removed follow mode', () => {
     const result = cli(['logs', '--help']);
     expect(result.status).toBe(0);
@@ -358,9 +368,9 @@ describe('CLI e2e with daemon', () => {
     const r = cli(['--json', 'new', 'e2e-job', '--cron', '0 0 * * *', '--exec', process.execPath, '--', '-e', 'process.exit(0)'], env());
     expect(r.status).toBe(0);
     const data = JSON.parse(r.stdout);
-    expect(data.id).toBe('e2e-job');
+    expect(data.alias).toBe('e2e-job');
     expect(data.action).toMatchObject({ kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] });
-    expect(readFileSync(join(dir, 'jobs', 'e2e-job.schema.json'), 'utf-8')).toBe(jobJsonSchemaText());
+    expect(readFileSync(join(dir, 'jobs', `${data.id}.schema.json`), 'utf-8')).toBe(jobJsonSchemaText());
   });
 
   it('crontick new rejects duplicate ids unless --force is explicit, and --force intentionally replaces the job', () => {
@@ -611,15 +621,15 @@ describe('CLI e2e with daemon', () => {
   it('crontick list returns the job', () => {
     const r = cli(['--json', 'list'], env());
     expect(r.status).toBe(0);
-    const data = JSON.parse(r.stdout) as Array<{ id: string }>;
-    expect(data.some((j) => j.id === 'e2e-job')).toBe(true);
+    const data = JSON.parse(r.stdout) as Array<{ alias: string }>;
+    expect(data.some((j) => j.alias === 'e2e-job')).toBe(true);
   });
 
   it('crontick get returns the job', () => {
     const r = cli(['--json', 'get', 'e2e-job'], env());
     expect(r.status).toBe(0);
     const data = JSON.parse(r.stdout);
-    expect(data.id).toBe('e2e-job');
+    expect(data.alias).toBe('e2e-job');
   });
 
   it('job create/get/list/update responses redact secret env values while preserving benign ones', () => {
@@ -644,7 +654,7 @@ describe('CLI e2e with daemon', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).not.toContain(createSecret);
     expect(JSON.parse(result.stdout)).toMatchObject({
-      id: jobId,
+      alias: jobId,
       action: { env: { OPENAI_API_KEY: '[REDACTED]', NON_SECRET: 'https://example.test/job-visible' } },
     });
 
@@ -652,15 +662,15 @@ describe('CLI e2e with daemon', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).not.toContain(createSecret);
     expect(JSON.parse(result.stdout)).toMatchObject({
-      id: jobId,
+      alias: jobId,
       action: { env: { OPENAI_API_KEY: '[REDACTED]', NON_SECRET: 'https://example.test/job-visible' } },
     });
 
     result = cli(['--json', 'list'], env());
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).not.toContain(createSecret);
-    expect((JSON.parse(result.stdout) as Array<{ id: string; action: { env?: Record<string, string> } }>)).toContainEqual(expect.objectContaining({
-      id: jobId,
+    expect((JSON.parse(result.stdout) as Array<{ alias: string; action: { env?: Record<string, string> } }>)).toContainEqual(expect.objectContaining({
+      alias: jobId,
       action: expect.objectContaining({ env: expect.objectContaining({ OPENAI_API_KEY: '[REDACTED]', NON_SECRET: 'https://example.test/job-visible' }) }),
     }));
 
@@ -677,7 +687,7 @@ describe('CLI e2e with daemon', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).not.toContain(updateSecret);
     expect(JSON.parse(result.stdout)).toMatchObject({
-      id: jobId,
+      alias: jobId,
       action: { env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
     });
 
@@ -685,7 +695,7 @@ describe('CLI e2e with daemon', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).not.toContain(updateSecret);
     expect(JSON.parse(result.stdout)).toMatchObject({
-      id: jobId,
+      alias: jobId,
       enabled: false,
       action: { env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
     });
@@ -694,7 +704,7 @@ describe('CLI e2e with daemon', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).not.toContain(updateSecret);
     expect(JSON.parse(result.stdout)).toMatchObject({
-      id: jobId,
+      alias: jobId,
       enabled: true,
       action: { env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
     });
@@ -1185,7 +1195,7 @@ describe('CLI e2e with daemon', () => {
     const fetched = cli(['--json', 'get', 'cli-missing-env-update-job'], env());
     expect(fetched.status, fetched.stderr).toBe(0);
     expect(JSON.parse(fetched.stdout)).toMatchObject({
-      id: 'cli-missing-env-update-job',
+      alias: 'cli-missing-env-update-job',
       action: { kind: 'script', script: 'echo before' },
     });
 
@@ -1207,7 +1217,7 @@ describe('CLI e2e with daemon', () => {
     const fetched = cli(['--json', 'get', 'cli-file-create-job'], env());
     expect(fetched.status, fetched.stderr).toBe(0);
     expect(JSON.parse(fetched.stdout)).toMatchObject({
-      id: 'cli-file-create-job',
+      alias: 'cli-file-create-job',
       action: { kind: 'exec', command: 'echo', args: ['bom-create'] },
     });
 
@@ -1250,7 +1260,7 @@ describe('CLI e2e with daemon', () => {
     expect(fetched.status, fetched.stderr).toBe(0);
     const beforeBad = JSON.parse(fetched.stdout);
     expect(beforeBad).toMatchObject({
-      id: 'cli-file-update-job',
+      alias: 'cli-file-update-job',
       action: { kind: 'exec', command: 'echo', args: ['bom-update'] },
     });
 
@@ -1339,7 +1349,7 @@ describe('CLI e2e with daemon', () => {
     const fetched = cli(['--json', 'get', 'import-bom-job'], env());
     expect(fetched.status, fetched.stderr).toBe(0);
     expect(JSON.parse(fetched.stdout)).toMatchObject({
-      id: 'import-bom-job',
+      alias: 'import-bom-job',
       action: { kind: 'exec', command: 'echo', args: ['bom'] },
     });
 
@@ -1394,6 +1404,7 @@ describe('CLI e2e with daemon', () => {
   it('L7: crontick export --include-runs and crontick import round-trip run history', async () => {
     const create = cli(['--json', 'new', 'export-runs-job', '--cron', '0 0 * * *', '--exec', process.execPath, '--', '-e', 'process.exit(0)'], env());
     expect(create.status, create.stderr).toBe(0);
+    const createdJobId = JSON.parse(create.stdout).id as string;
     const runNow = cli(['--json', 'run-now', 'export-runs-job'], env());
     const { runId } = JSON.parse(runNow.stdout) as { runId: string };
     await new Promise((resolve) => setTimeout(resolve, 2000)); // let the exec job finish
@@ -1401,7 +1412,7 @@ describe('CLI e2e with daemon', () => {
     const exported = cli(['--json', 'export', '--include-runs'], env());
     expect(exported.status, exported.stderr).toBe(0);
     const data = JSON.parse(exported.stdout) as { jobs: Array<{ id: string }>; runs: Array<{ id: string; jobId: string }> };
-    expect(data.runs.some((run) => run.id === runId && run.jobId === 'export-runs-job')).toBe(true);
+    expect(data.runs.some((run) => run.id === runId && run.jobId === createdJobId)).toBe(true);
 
     // Delete the job (run rows aren't cascade-deleted -- the retention gap L7
     // mitigates), then restore job + runs from the export file.
@@ -1433,6 +1444,7 @@ describe('CLI e2e with daemon', () => {
 
     const create = cli(['--json', 'new', 'stats-cli-job', '--cron', '0 1 * * *', '--exec', process.execPath, '--', '-e', 'process.exit(0)'], env());
     expect(create.status, create.stderr).toBe(0);
+    const createdJobId = JSON.parse(create.stdout).id as string;
 
     const summary = cli(['--json', 'stats', 'summary'], env());
     expect(summary.status, summary.stderr).toBe(0);
@@ -1440,7 +1452,7 @@ describe('CLI e2e with daemon', () => {
 
     const job = cli(['--json', 'stats', 'job', 'stats-cli-job'], env());
     expect(job.status, job.stderr).toBe(0);
-    expect(JSON.parse(job.stdout).jobId).toBe('stats-cli-job');
+    expect(JSON.parse(job.stdout).jobId).toBe(createdJobId);
   });
 
   it('crontick daemon status shows daemon info', () => {

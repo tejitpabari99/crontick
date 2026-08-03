@@ -109,7 +109,7 @@ describe('Daemon HTTP API', () => {
   it('POST /api/jobs creates a job', async () => {
     const { status, data } = await apiCall(port, 'POST', '/api/jobs', testJob);
     expect(status).toBe(201);
-    expect((data as { id: string }).id).toBe('api-test-job');
+    expect((data as { alias: string }).alias).toBe('api-test-job');
   });
 
   it('POST /api/jobs creates a normalized prompt job', async () => {
@@ -168,7 +168,7 @@ describe('Daemon HTTP API', () => {
   it('GET /api/jobs/:id retrieves job', async () => {
     const { status, data } = await apiCall(port, 'GET', '/api/jobs/api-test-job');
     expect(status).toBe(200);
-    expect((data as { id: string }).id).toBe('api-test-job');
+    expect((data as { alias: string }).alias).toBe('api-test-job');
   });
 
   it('GET /api/jobs/:id returns 404 for missing job', async () => {

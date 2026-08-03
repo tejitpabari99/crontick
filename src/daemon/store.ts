@@ -12,6 +12,11 @@ import { CrontickError, ORPHAN_RUN_ERROR_MESSAGE } from '../errors.js';
 import { jobJsonSchemaText } from '../schema-json.js';
 import { nullLogger, type Logger } from '../logger.js';
 
+/** Matches the shape produced by node:crypto's randomUUID(). Used to tell a
+ *  migrated (GUID) job id apart from a pre-migration (kebab-case alias-as-id)
+ *  one when loading job files from disk. */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 // 'missed' is a terminal status recorded by recordMissedRun() for a scheduled
@@ -168,11 +173,17 @@ export class Store {
    * already-initialized database (e.g. a second open()) is a no-op — there is
    * no migration ledger and no prior on-disk shape to reconcile: databases
    * created by crontick versions before 1.0.0 are not a supported input.
+   *
+   * `jobs.alias` is the one exception: it was added after the GUID/alias
+   * identity model was introduced, so an existing (older) database's `jobs`
+   * table predates it. `migrateAliasColumn()` adds it with a guarded
+   * `ALTER TABLE` so an older on-disk database still opens without throwing.
    */
   private createSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS jobs (
         id TEXT PRIMARY KEY,
+        alias TEXT,
         json TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -213,6 +224,30 @@ export class Store {
       CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs(started_at);
       CREATE INDEX IF NOT EXISTS idx_run_logs_run_id ON run_logs(run_id);
     `);
+    this.migrateAliasColumn();
+  }
+
+  /**
+   * Best-effort schema upgrade for a `jobs` table created before the
+   * GUID/alias identity model existed: adds the `alias` column (if missing)
+   * and a partial unique index enforcing alias uniqueness at the DB layer
+   * (app-level checks in api.ts are the primary enforcement -- see
+   * generateAlias/getJob -- this is a defense-in-depth backstop against a
+   * race between two concurrent create/update requests). Never throws: a
+   * failure here is logged and the daemon still starts, per AGENTS.md's
+   * "guard schema changes so an older DB opens without throwing".
+   */
+  private migrateAliasColumn(): void {
+    try {
+      const columns = this.db.prepare('PRAGMA table_info(jobs)').all() as Array<{ name: string }>;
+      if (!columns.some((c) => c.name === 'alias')) {
+        this.db.exec('ALTER TABLE jobs ADD COLUMN alias TEXT;');
+        this.logger.info('Migrated jobs table: added alias column for GUID/alias identity model');
+      }
+      this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_alias ON jobs(alias) WHERE alias IS NOT NULL;');
+    } catch (err) {
+      this.logger.warn('Failed to migrate jobs table alias column; continuing without it', { error: String(err) });
+    }
   }
 
   // ── Job CRUD ────────────────────────────────────────────────────────────────
@@ -224,14 +259,14 @@ export class Store {
     const now = Date.now();
     this.db
       .prepare(
-        'INSERT INTO jobs (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at',
+        'INSERT INTO jobs (id, alias, json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET alias=excluded.alias, json=excluded.json, updated_at=excluded.updated_at',
       )
-      .run(persisted.id, json, now);
+      .run(persisted.id, persisted.alias ?? null, json, now);
     const filePath = join(this.jobsPath, `${persisted.id}.json`);
     const schemaPath = join(this.jobsPath, `${persisted.id}.schema.json`);
     writeJobFileHardened(filePath, json);
     writeJobFileHardened(schemaPath, jobJsonSchemaText());
-    this.logger.debug('Persisted job files', { jobId: persisted.id, filePath, schemaPath });
+    this.logger.debug('Persisted job files', { jobId: persisted.id, alias: persisted.alias, filePath, schemaPath });
   }
 
   /**
@@ -256,13 +291,40 @@ export class Store {
     return true;
   }
 
-  getJob(id: string): Job | undefined {
+  /**
+   * Resolves a user-supplied job identifier to the stored job, accepting
+   * EITHER the immutable GUID `id` or the human-friendly `alias`. `id` is
+   * tried first (an exact primary-key match), falling back to an alias
+   * lookup -- this is the single resolution point every job lookup in
+   * api.ts funnels through, so "job id or alias" works uniformly everywhere
+   * a job identifier is accepted.
+   */
+  getJob(idOrAlias: string): Job | undefined {
+    const byId = this.getJobRowById(idOrAlias);
+    if (byId) {
+      this.logger.debug('Read job from store by id', { jobId: idOrAlias });
+      return byId;
+    }
+    const byAlias = this.getJobRowByAlias(idOrAlias);
+    if (byAlias) {
+      this.logger.debug('Read job from store by alias', { alias: idOrAlias, jobId: byAlias.id });
+      return byAlias;
+    }
+    return undefined;
+  }
+
+  private getJobRowById(id: string): Job | undefined {
     const row = this.db.prepare('SELECT json FROM jobs WHERE id = ?').get(id) as
       | { json: string }
       | undefined;
-    if (!row) return undefined;
-    this.logger.debug('Read job from store', { jobId: id });
-    return JSON.parse(row.json) as Job;
+    return row ? (JSON.parse(row.json) as Job) : undefined;
+  }
+
+  private getJobRowByAlias(alias: string): Job | undefined {
+    const row = this.db.prepare('SELECT json FROM jobs WHERE alias = ?').get(alias) as
+      | { json: string }
+      | undefined;
+    return row ? (JSON.parse(row.json) as Job) : undefined;
   }
 
   listJobs(): Job[] {
@@ -273,10 +335,13 @@ export class Store {
     return rows.map((r) => JSON.parse(r.json) as Job);
   }
 
-  deleteJob(id: string): boolean {
-    const changes = (this.db.prepare('DELETE FROM jobs WHERE id = ?').run(id) as { changes: number }).changes;
-    const filePath = join(this.jobsPath, `${id}.json`);
-    const schemaPath = join(this.jobsPath, `${id}.schema.json`);
+  /** Accepts either the GUID `id` or the `alias` (see getJob) and deletes the resolved job's row + files. */
+  deleteJob(idOrAlias: string): boolean {
+    const job = this.getJob(idOrAlias);
+    if (!job) return false;
+    const changes = (this.db.prepare('DELETE FROM jobs WHERE id = ?').run(job.id) as { changes: number }).changes;
+    const filePath = join(this.jobsPath, `${job.id}.json`);
+    const schemaPath = join(this.jobsPath, `${job.id}.schema.json`);
     if (existsSync(filePath)) {
       try {
         unlinkSync(filePath);
@@ -291,11 +356,16 @@ export class Store {
         // ignore
       }
     }
-    this.logger.debug('Deleted job', { jobId: id, deleted: changes > 0, filePath, schemaPath });
+    this.logger.debug('Deleted job', { jobId: job.id, alias: job.alias, deleted: changes > 0, filePath, schemaPath });
     return changes > 0;
   }
 
-  /** Load jobs from the jobs directory (JSON files are source of truth on daemon start). */
+
+  /**
+   * Load jobs from the jobs directory (JSON files are source of truth on
+   * daemon start). A pre-GUID job file (whose `id` is a kebab-case string,
+   * not a GUID) is migrated in place: see migrateLegacyJobFile().
+   */
   loadJobsFromDisk(): void {
     if (!existsSync(this.jobsPath)) {
       this.logger.debug('Jobs directory missing during load', { jobsPath: this.jobsPath });
@@ -303,18 +373,27 @@ export class Store {
     }
     const files = readdirSync(this.jobsPath).filter((f) => f.endsWith('.json') && !f.endsWith('.schema.json'));
     let loaded = 0;
+    let migrated = 0;
     for (const file of files) {
       const filePath = join(this.jobsPath, file);
       try {
-        const raw = readFileSync(filePath, 'utf-8');
-        const parsed = JobSchema.safeParse(JSON.parse(raw));
+        const raw: unknown = JSON.parse(readFileSync(filePath, 'utf-8'));
+        const legacyId = isRecord(raw) && typeof raw.id === 'string' && !UUID_PATTERN.test(raw.id)
+          ? raw.id
+          : undefined;
+        if (legacyId !== undefined && isRecord(raw) && this.migrateLegacyJobFile(filePath, raw, legacyId)) {
+          migrated++;
+          loaded++;
+          continue;
+        }
+        const parsed = JobSchema.safeParse(raw);
         if (parsed.success) {
           const json = JSON.stringify(parsed.data);
           this.db
             .prepare(
-              'INSERT INTO jobs (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at',
+              'INSERT INTO jobs (id, alias, json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET alias=excluded.alias, json=excluded.json, updated_at=excluded.updated_at',
             )
-            .run(parsed.data.id, json, Date.now());
+            .run(parsed.data.id, parsed.data.alias ?? null, json, Date.now());
           loaded++;
         } else {
           // warn (not debug): a job silently vanishing from the schedule after a
@@ -327,8 +406,66 @@ export class Store {
         this.logger.warn('Skipped unreadable or malformed job file', { filePath, reason: err instanceof Error ? err.message : String(err) });
       }
     }
+    if (migrated > 0) {
+      this.logger.info(`Migrated ${migrated} pre-GUID job file(s) to the id(GUID)+alias identity model`, { jobsPath: this.jobsPath, migrated });
+    }
     this.logger.debug('Loaded jobs from disk', { jobsPath: this.jobsPath, files: files.length, loaded });
   }
+
+  /**
+   * Migrates a single pre-GUID job file in place: assigns a fresh GUID `id`,
+   * carries the old `id` forward as `alias` (unless the file already sets an
+   * explicit `alias`), rewrites the job JSON + schema sidecar under the new
+   * id, remaps any existing `runs`/`job_schedule_state` rows so run history
+   * stays associated with the migrated job, and drops any stale sqlite `jobs`
+   * row left under the pre-migration id. Best-effort: returns false (never
+   * throws) if the migrated shape still fails validation or any step of the
+   * rewrite fails, so the caller falls back to the normal warn-and-skip path
+   * instead of crashing the daemon.
+   */
+  private migrateLegacyJobFile(filePath: string, raw: Record<string, unknown>, legacyId: string): boolean {
+    try {
+      const alias = typeof raw.alias === 'string' ? raw.alias : legacyId;
+      const parsed = JobSchema.safeParse({ ...raw, id: randomUUID(), alias });
+      if (!parsed.success) return false;
+
+      const job = parsed.data;
+      const json = JSON.stringify(job);
+      this.db
+        .prepare(
+          'INSERT INTO jobs (id, alias, json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET alias=excluded.alias, json=excluded.json, updated_at=excluded.updated_at',
+        )
+        .run(job.id, job.alias ?? null, json, Date.now());
+      // Drop any stale sqlite row left under the pre-migration id (a harmless no-op if none exists).
+      this.db.prepare('DELETE FROM jobs WHERE id = ?').run(legacyId);
+      // Carry existing run/schedule-state history forward so it stays associated with the migrated job.
+      this.db.prepare('UPDATE runs SET job_id = ? WHERE job_id = ?').run(job.id, legacyId);
+      this.db.prepare('UPDATE job_schedule_state SET job_id = ? WHERE job_id = ?').run(job.id, legacyId);
+
+      writeJobFileHardened(join(this.jobsPath, `${job.id}.json`), json);
+      writeJobFileHardened(join(this.jobsPath, `${job.id}.schema.json`), jobJsonSchemaText());
+      try {
+        unlinkSync(filePath);
+      } catch {
+        // ignore -- the new file under job.id is already durably written
+      }
+      const legacySchemaPath = join(this.jobsPath, `${legacyId}.schema.json`);
+      if (existsSync(legacySchemaPath)) {
+        try {
+          unlinkSync(legacySchemaPath);
+        } catch {
+          // ignore
+        }
+      }
+
+      this.logger.info('Migrated pre-GUID job file to the id(GUID)+alias identity model', { legacyId, newId: job.id, alias: job.alias });
+      return true;
+    } catch (err) {
+      this.logger.warn('Failed to migrate pre-GUID job file; leaving it for the normal validation path', { filePath, legacyId, error: String(err) });
+      return false;
+    }
+  }
+
 
   // ── Run CRUD ────────────────────────────────────────────────────────────────
 

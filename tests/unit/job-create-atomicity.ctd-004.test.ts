@@ -32,9 +32,10 @@ function makeRunner(): Runner {
   } as unknown as Runner;
 }
 
-function baseJob(id: string): Job {
+function baseJob(alias: string): Job {
   return {
-    id,
+    id: randomUUID(),
+    alias,
     description: 'original description',
     enabled: true,
     schedule: { kind: 'cron', cron: '0 0 * * *' },

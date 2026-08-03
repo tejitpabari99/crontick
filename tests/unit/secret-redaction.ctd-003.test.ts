@@ -632,7 +632,7 @@ describe('CTD-003 shared secret redaction', () => {
       });
 
       const listed = await fixture.client.listJobs();
-      const listedJob = listed.find((job) => job.id === jobId);
+      const listedJob = listed.find((job) => job.alias === jobId);
       expect(listedJob).toBeTruthy();
       expect(JSON.stringify(listedJob)).not.toContain(OPENAI_PROJECT);
       expect(((listedJob as Job).action as { env?: Record<string, string> }).env).toMatchObject({

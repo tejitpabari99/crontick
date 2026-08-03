@@ -26,8 +26,8 @@ type DashboardPayload = {
     runs: { last24h: number; failures24h: number };
   };
   stats: StatsSummary;
-  jobs: Array<{ id: string }>;
-  runs: Array<{ id: string; jobId: string }>;
+  jobs: Array<{ id: string; alias?: string | null }>;
+  runs: Array<{ id: string; jobId: string; jobAlias?: string | null }>;
 };
 
 type RunRecord = {
@@ -106,11 +106,11 @@ function jobDefinition(id: string, line: string) {
   };
 }
 
-function dashboardAssertions(data: DashboardPayload): Pick<DashboardPayload, 'stats'> & { healthRuns: DashboardPayload['health']['runs']; jobIds: string[]; runIds: string[] } {
+function dashboardAssertions(data: DashboardPayload): Pick<DashboardPayload, 'stats'> & { healthRuns: DashboardPayload['health']['runs']; jobAliases: (string | null | undefined)[]; runIds: string[] } {
   return {
     stats: data.stats,
     healthRuns: data.health.runs,
-    jobIds: data.jobs.map((job) => job.id),
+    jobAliases: data.jobs.map((job) => job.alias),
     runIds: data.runs.map((run) => run.id),
   };
 }
@@ -146,8 +146,8 @@ describe('CTD-014 deleted-job aggregates', () => {
     const liveJobId = 'ctd-014-live-job';
     const deletedJobId = 'ctd-014-deleted-job';
 
-    await client.createJob(jobDefinition(liveJobId, 'live-history'));
-    await client.createJob(jobDefinition(deletedJobId, 'deleted-history'));
+    const liveJob = await client.createJob(jobDefinition(liveJobId, 'live-history'));
+    const deletedJob = await client.createJob(jobDefinition(deletedJobId, 'deleted-history'));
 
     const liveRunId = (await client.runNow(liveJobId) as { runId: string }).runId;
     await waitForTerminalRun(liveRunId);
@@ -183,8 +183,8 @@ describe('CTD-014 deleted-job aggregates', () => {
     expect(dashboard.stats).toEqual(summary);
     expect(dashboard.health.jobs).toEqual({ total: 1, enabled: 1 });
     expect(dashboard.health.runs).toEqual({ last24h: 1, failures24h: 0 });
-    expect(dashboard.jobs.map((job) => job.id)).toEqual([liveJobId]);
-    expect(dashboard.runs.map((run) => ({ id: run.id, jobId: run.jobId }))).toEqual([{ id: liveRunId, jobId: liveJobId }]);
+    expect(dashboard.jobs.map((job) => job.alias)).toEqual([liveJobId]);
+    expect(dashboard.runs.map((run) => ({ id: run.id, jobId: run.jobId }))).toEqual([{ id: liveRunId, jobId: liveJob.id }]);
 
     const cliDashboardResult = cli(['dashboard', 'data', '--runs-limit', '10']);
     expect(cliDashboardResult.status, cliDashboardResult.stderr).toBe(0);
@@ -196,7 +196,7 @@ describe('CTD-014 deleted-job aggregates', () => {
     expect(dashboardAssertions(mcpDashboardJson as DashboardPayload)).toEqual(dashboardAssertions(dashboard));
 
     const archivedRun = await client.getRun(deletedRunId) as RunRecord;
-    expect(archivedRun).toMatchObject({ id: deletedRunId, jobId: deletedJobId, status: 'success', exitCode: 0 });
+    expect(archivedRun).toMatchObject({ id: deletedRunId, jobId: deletedJob.id, status: 'success', exitCode: 0 });
 
     const archivedLogs = await client.getLogs(deletedRunId);
     expect(archivedLogs.runId).toBe(deletedRunId);

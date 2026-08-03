@@ -157,8 +157,8 @@ function openDashboardUrl(url: string): void {
 function printDashboardData(data: unknown): void {
   const model = data as {
     stats?: { totalJobs?: number; enabledJobs?: number; totalRuns?: number; failed?: number };
-    jobs?: Array<{ id: string; enabled: boolean; scheduleLabel: string; actionKind: string; lastStatus?: string | null }>;
-    runs?: Array<{ id: string; jobId: string; status: string; startedAt: number }>;
+    jobs?: Array<{ id: string; alias?: string | null; enabled: boolean; scheduleLabel: string; actionKind: string; lastStatus?: string | null }>;
+    runs?: Array<{ id: string; jobId: string; jobAlias?: string | null; status: string; startedAt: number }>;
   };
   const stats = model.stats;
   if (stats) {
@@ -170,7 +170,7 @@ function printDashboardData(data: unknown): void {
   if (!model.jobs || model.jobs.length === 0) stdout('(no jobs)');
   else {
     for (const job of model.jobs) {
-      stdout(`- ${job.id} [${job.enabled ? 'enabled' : 'disabled'}] ${job.actionKind} ${job.scheduleLabel} last=${job.lastStatus ?? '—'}`);
+      stdout(`- ${job.alias ?? job.id} (${job.id}) [${job.enabled ? 'enabled' : 'disabled'}] ${job.actionKind} ${job.scheduleLabel} last=${job.lastStatus ?? '—'}`);
     }
   }
   stdout('');
@@ -178,7 +178,7 @@ function printDashboardData(data: unknown): void {
   if (!model.runs || model.runs.length === 0) stdout('(no runs)');
   else {
     for (const run of model.runs) {
-      stdout(`- ${run.id} ${run.jobId} ${run.status} ${new Date(run.startedAt).toISOString()}`);
+      stdout(`- ${run.id} ${run.jobAlias ?? run.jobId} ${run.status} ${new Date(run.startedAt).toISOString()}`);
     }
   }
 }
@@ -241,6 +241,7 @@ function commonJobOptions(command: Command): Command {
     .option('--session-id <id>', 'Reuse this prompt engine session every run')
     .option('--reuse-session', 'Capture the first successful run session id and reuse it')
     .option('--file <path>', 'Load job JSON from a file')
+    .option('--alias <alias>', 'Human-friendly, unique, kebab-case job identifier; auto-generated on create when omitted')
     // No hardcoded default here (unlike most flags): a Commander default would
     // be indistinguishable from the user explicitly typing the same value,
     // which on `update` previously caused an omitted flag to silently reset
@@ -256,9 +257,10 @@ function commonJobOptions(command: Command): Command {
     .option('--desc <description>', 'Job description');
 }
 
-function collectJobOptions(id: string, engineArgs: string[], opts: Record<string, unknown>): JobCreateCliOptions {
+function collectJobOptions(id: string | undefined, engineArgs: string[], opts: Record<string, unknown>): JobCreateCliOptions {
   return {
     id,
+    alias: stringOption(opts.alias),
     rawArgs: Array.isArray(engineArgs) ? engineArgs : [],
     args: stringArrayOption(opts.arg),
     file: stringOption(opts.file),
@@ -286,6 +288,7 @@ function collectJobOptions(id: string, engineArgs: string[], opts: Record<string
 function collectPatchOptions(engineArgs: string[], opts: Record<string, unknown>): JobPatchCliOptions {
   if (opts.enable && opts.disable) throw new CrontickError('VALIDATION_ERROR', '--enable and --disable are mutually exclusive');
   return {
+    alias: stringOption(opts.alias),
     rawArgs: Array.isArray(engineArgs) ? engineArgs : [],
     args: stringArrayOption(opts.arg),
     file: stringOption(opts.file),
@@ -463,12 +466,21 @@ program
     // and exit 1, which PowerShell 7.4+ surfaces as a noisy
     // NativeCommandExitException on a purely informational invocation. Returning
     // normally here leaves process.exitCode at 0.
+    //
+    // Commander only reaches this handler in two cases: truly no args at all,
+    // or an unrecognized subcommand (which Commander would otherwise report
+    // via its own "unknown command" error). Only the former should exit 0 --
+    // an unrecognized subcommand must still fail loudly, so it isn't silently
+    // treated as equivalent to `crontick --help`.
+    if (program.args.length > 0) {
+      program.error(`error: unknown command '${program.args[0]}'`);
+    }
     program.outputHelp();
   });
 
-commonJobOptions(program.command('new <id> [engineArgs...]').description('Create a new job'))
-  .option('--force', 'Replace an existing job when the same id already exists')
-  .action(async (id: string, engineArgs: string[], opts, cmd: Command) => {
+commonJobOptions(program.command('new [id] [engineArgs...]').description('Create a new job (positional [id] is a legacy alias hint; prefer --alias)'))
+  .option('--force', 'Replace an existing job when the same alias (or id) already exists')
+  .action(async (id: string | undefined, engineArgs: string[], opts, cmd: Command) => {
     const c = client();
     try {
       assertNoCrontickFlagCollision(engineArgs, cmd);
@@ -480,7 +492,7 @@ commonJobOptions(program.command('new <id> [engineArgs...]').description('Create
     }
   });
 
-commonJobOptions(program.command('update <id> [engineArgs...]').description('Update an existing job'))
+commonJobOptions(program.command('update <id> [engineArgs...]').description('Update an existing job (id or alias)'))
   .option('--enable', 'Enable the job')
   .option('--disable', 'Disable the job')
   .action(async (id: string, engineArgs: string[], opts, cmd: Command) => {
@@ -504,23 +516,23 @@ program.command('list').description('List all jobs').action(async () => {
   try { print(await client().listJobs()); } catch (err) { handleError(err); }
 });
 
-program.command('get <id>').description('Get a job by ID').action(async (id: string) => {
+program.command('get <id>').description('Get a job by id or alias').action(async (id: string) => {
   try { print(await client().getJob(id)); } catch (err) { handleError(err); }
 });
 
-program.command('enable <id>').description('Enable a job').action(async (id: string) => {
+program.command('enable <id>').description('Enable a job (id or alias)').action(async (id: string) => {
   try { print(await client().enableJob(id)); } catch (err) { handleError(err); }
 });
 
-program.command('disable <id>').description('Disable a job').action(async (id: string) => {
+program.command('disable <id>').description('Disable a job (id or alias)').action(async (id: string) => {
   try { print(await client().disableJob(id)); } catch (err) { handleError(err); }
 });
 
-program.command('delete <id>').description('Delete a job definition; archived runs remain queryable by run ID').action(async (id: string) => {
+program.command('delete <id>').description('Delete a job definition (id or alias); archived runs remain queryable by run ID').action(async (id: string) => {
   try { print(await client().deleteJob(id)); } catch (err) { handleError(err); }
 });
 
-program.command('run-now <id>').description('Trigger an immediate run of a job').action(async (id: string) => {
+program.command('run-now <id>').description('Trigger an immediate run of a job (id or alias)').action(async (id: string) => {
   try { print(await client().runNow(id)); } catch (err) { handleError(err); }
 });
 
@@ -533,7 +545,7 @@ const RUN_STATUSES = ['queued', 'running', 'success', 'failed', 'canceled', 'tim
 const runs = program.command('runs').description('Inspect run history');
 runs.command('list')
   .description('List recent runs')
-  .option('--job <id>', 'Filter by job ID')
+  .option('--job <id>', 'Filter by job id or alias')
   .option('--limit <n>', 'Maximum runs to return', parseInteger)
   .option('--since <ms>', 'Only runs since epoch milliseconds', parseInteger)
   .option('--status <status>', `Filter by run status (${RUN_STATUSES.join('|')})`)
@@ -581,7 +593,7 @@ const stats = program.command('stats').description('Show job/run statistics');
 stats.command('summary').description('Show aggregate statistics').action(async () => {
   try { print(await client().statsSummary()); } catch (err) { handleError(err); }
 });
-stats.command('job <id>').description('Show statistics for one job').action(async (id: string) => {
+stats.command('job <id>').description('Show statistics for one job (id or alias)').action(async (id: string) => {
   try { print(await client().statsJob(id)); } catch (err) { handleError(err); }
 });
 
@@ -733,7 +745,7 @@ dashboard.command('status').description('Show dashboard status').action(async ()
 });
 dashboard.command('data')
   .description('Return the dashboard data model')
-  .option('--job <id>', 'Filter runs by job ID')
+  .option('--job <id>', 'Filter runs by job id or alias')
   .option('--runs-limit <n>', 'Maximum recent runs to return', parseInteger)
   .action(async (opts) => {
     try {

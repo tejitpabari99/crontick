@@ -29,7 +29,7 @@ function makeDir(): string {
 
 function baseJob(action: unknown): JobCreateInput {
   return {
-    id: 'prompt-job',
+    alias: 'prompt-job',
     schedule: { kind: 'cron' as const, cron: '0 9 * * *' },
     action: action as ActionInput,
   };
@@ -320,7 +320,7 @@ describe('buildJobFromCreateOptions/buildJobPatchFromUpdateOptions — JSON file
 
     const job = buildJobFromCreateOptions({ id: 'ignored-by-file', file: 'job.json' }, { cwd: dir });
     expect(job).toMatchObject({
-      id: 'prompt-job',
+      alias: 'prompt-job',
       action: { kind: 'exec', command: 'echo', args: ['bom'] },
     });
   });

@@ -235,12 +235,12 @@ const created = await client.createJob({
   schedule: { kind: 'cron', cron: '0 0 * * *' },
   action: { kind: 'exec', command: 'echo', args: ['hello'] },
 });
-process.stdout.write(JSON.stringify({ id: created.id }));
+process.stdout.write(JSON.stringify({ alias: created.alias }));
 `);
     const result = spawnSync(process.execPath, [script], { encoding: 'utf-8', env: { ...process.env } });
 
     expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout.trim())).toEqual({ id: 'bare-default-daemon-script-job' });
+    expect(JSON.parse(result.stdout.trim())).toEqual({ alias: 'bare-default-daemon-script-job' });
     expect(existsSync(join(home, 'daemon.port'))).toBe(true);
   }, 15_000);
 
@@ -396,20 +396,22 @@ process.stdout.write(JSON.stringify({ id: created.id }));
     const home = makeHome();
     const client = createClient({ daemonScript: writeFakeApiDaemon(home), startupTimeoutMs: 5_000 });
 
-    await expect(client.createJob(testJob)).resolves.toMatchObject({ id: testJob.id });
+    const created = await client.createJob(testJob);
+    expect(created).toMatchObject({ alias: testJob.id });
+    const jobId = created.id;
     await expect(client.listJobs()).resolves.toHaveLength(1);
-    await expect(client.getJob(testJob.id)).resolves.toMatchObject({ id: testJob.id });
-    await expect(client.disableJob(testJob.id)).resolves.toMatchObject({ enabled: false });
-    await expect(client.enableJob(testJob.id)).resolves.toMatchObject({ enabled: true });
-    await expect(client.updateJob(testJob.id, { description: 'updated' })).resolves.toMatchObject({ description: 'updated' });
-    const run = await client.runNow(testJob.id);
+    await expect(client.getJob(jobId)).resolves.toMatchObject({ id: jobId });
+    await expect(client.disableJob(jobId)).resolves.toMatchObject({ enabled: false });
+    await expect(client.enableJob(jobId)).resolves.toMatchObject({ enabled: true });
+    await expect(client.updateJob(jobId, { description: 'updated' })).resolves.toMatchObject({ description: 'updated' });
+    const run = await client.runNow(jobId);
     expect(run.runId).toMatch(/^run-/);
     await expect(client.getRun(run.runId)).resolves.toMatchObject({ id: run.runId });
-    await expect(client.listRuns({ jobId: testJob.id })).resolves.toEqual(expect.any(Array));
+    await expect(client.listRuns({ jobId })).resolves.toEqual(expect.any(Array));
     await expect(client.cancelRun(run.runId)).resolves.toMatchObject({ ok: true, canceled: true });
     await expect(client.getLogs(run.runId)).resolves.toMatchObject({ runId: run.runId, lines: expect.any(Array) });
     await expect(client.statsSummary()).resolves.toMatchObject({ totalJobs: expect.any(Number) });
-    await expect(client.statsJob(testJob.id)).resolves.toMatchObject({ jobId: testJob.id });
+    await expect(client.statsJob(jobId)).resolves.toMatchObject({ jobId });
     await expect(client.exportJobs()).resolves.toMatchObject({ jobs: expect.any(Array) });
     await expect(client.importJobs([{ ...testJob, id: 'imported-client-job' }])).resolves.toMatchObject({ imported: 1 });
     await expect(client.validateSchedule(testJob.schedule)).resolves.toMatchObject({ ok: true });
@@ -418,7 +420,7 @@ process.stdout.write(JSON.stringify({ id: created.id }));
     await expect(client.dashboardStart()).resolves.toMatchObject({ ok: true, running: true, startedDaemon: false });
     await expect(client.dashboardStatus()).resolves.toMatchObject({ ok: true, running: true });
     await expect(client.dashboardData({ runsLimit: 5 })).resolves.toMatchObject({ stats: { totalJobs: expect.any(Number) } });
-    await expect(client.deleteJob(testJob.id)).resolves.toMatchObject({ ok: true });
+    await expect(client.deleteJob(jobId)).resolves.toMatchObject({ ok: true });
   });
 
 
@@ -463,7 +465,7 @@ process.stdout.write(JSON.stringify({ id: created.id }));
     expect(created.action).not.toHaveProperty('promptFile');
 
     await expect(
-      client.updateJob('client-prompt-job', {
+      client.updateJob(created.id, {
         action: { kind: 'prompt', prompt: 'updated', reuseSession: true },
       }),
     ).resolves.toMatchObject({
@@ -506,9 +508,9 @@ process.stdout.write(JSON.stringify({ id: created.id }));
     const home = makeHome();
     const client = createClient({ daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 10_000 });
 
-    await client.createJob({ ...testJob, id: 'client-schema-job' });
+    const created = await client.createJob({ ...testJob, id: 'client-schema-job' });
 
-    expect(readFileSync(join(home, 'jobs', 'client-schema-job.schema.json'), 'utf-8')).toBe(jobJsonSchemaText());
+    expect(readFileSync(join(home, 'jobs', `${created.id}.schema.json`), 'utf-8')).toBe(jobJsonSchemaText());
   }, 15_000);
 
   it('surfaces API errors as CrontickError', async () => {

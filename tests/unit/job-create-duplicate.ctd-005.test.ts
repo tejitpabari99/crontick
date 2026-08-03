@@ -172,7 +172,7 @@ describe('CTD-005 duplicate create requires explicit force', () => {
 
     try {
       await expect(client.createJob(originalJob('duplicate-client-job'))).resolves.toMatchObject({
-        id: 'duplicate-client-job',
+        alias: 'duplicate-client-job',
         description: 'original definition',
       });
 

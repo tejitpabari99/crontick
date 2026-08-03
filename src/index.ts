@@ -25,11 +25,15 @@ export {
   buildJobFromCreateOptions,
   buildJobPatchFromUpdateOptions,
   applyConfigDefaults,
+  coerceLegacyIdToAlias,
+  generateAlias,
   normalizeJobInput,
   normalizeJobPatch,
+  DEFAULT_ALIAS_WORDS,
 } from './job-input.js';
 export type {
   ActionInput,
+  GenerateAliasOptions,
   JobCreateCliOptions,
   JobCreateInput,
   JobPatchCliOptions,
@@ -59,6 +63,7 @@ export { ConfigSchema, EngineConfigSchema, RetentionConfigSchema } from './schem
 export type { CrontickConfig, EngineConfig, RetentionConfig } from './schemas/config.js';
 export {
   JobSchema,
+  JOB_ALIAS_PATTERN,
   PromptActionSchema,
   PromptEngineSchema,
   ScheduleSchema,

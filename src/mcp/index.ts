@@ -139,9 +139,15 @@ export function createMcpServer(): McpServer {
     'crontick_job_create',
     {
       description:
-        'Create and schedule a new cron job. This executes arbitrary commands, scripts, or prompts on the user\'s machine on a recurring or future schedule that persists and outlives this session -- confirm the job definition (schedule and action) with the user before calling. Provide the full job definition including id, schedule (kind: cron|interval|one-shot), and action (kind: script|exec|prompt). Prompt actions use prompt, optional configured engine name, args, sessionId, or reuseSession. Validate the schedule first with crontick_schedule_validate.',
+        'Create and schedule a new cron job. This executes arbitrary commands, scripts, or prompts on the user\'s machine on a recurring or future schedule that persists and outlives this session -- confirm the job definition (schedule and action) with the user before calling. Provide the job definition: schedule (kind: cron|interval|one-shot) and action (kind: script|exec|prompt) are required; id (GUID) is generated automatically and should be omitted -- a legacy non-GUID id is accepted for back-compat and treated as an alias hint; alias is an optional, unique, human-friendly identifier -- when omitted, one is auto-generated. Prompt actions use prompt, optional configured engine name, args, sessionId, or reuseSession. Validate the schedule first with crontick_schedule_validate.',
       inputSchema: withVerbose({
         ...JobCreateInputSchema.shape,
+        // Back-compat: unlike the persisted Job schema, a caller-supplied
+        // `id` here need not be a GUID -- a legacy non-GUID value is treated
+        // as an alias hint by coerceLegacyIdToAlias inside client.createJob
+        // (via normalizeJobInput), the same way the CLI's positional id and
+        // a raw HTTP POST body are handled.
+        id: z.string().optional().describe('Legacy alias hint; omit and let a GUID id be generated automatically'),
         force: z.boolean().optional(),
       }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
@@ -166,8 +172,8 @@ export function createMcpServer(): McpServer {
   server.registerTool(
     'crontick_job_get',
     {
-      description: 'Get the full definition and status of a specific job by ID.',
-      inputSchema: withVerbose({ id: z.string() }),
+      description: 'Get the full definition and status of a specific job by id or alias.',
+      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (args) => toolWrap(args, (client) => client.getJob(args.id)),
@@ -177,9 +183,9 @@ export function createMcpServer(): McpServer {
     'crontick_job_update',
     {
       description:
-        'Update an existing job. Provide the job ID and any fields to change (partial update is merged with existing definition). Action can be script, exec, or prompt.',
+        'Update an existing job (id or alias). Provide the job identifier and any fields to change (partial update is merged with existing definition); alias can be changed here (must remain unique). Action can be script, exec, or prompt.',
       inputSchema: withVerbose({
-id: z.string(),
+        id: z.string().describe('Job id (GUID) or alias'),
         ...JobPatchInputSchema.shape,
       }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
@@ -197,7 +203,7 @@ id: z.string(),
           return errResult(new Error('Invalid action patch: envFile and timeoutSec require a command source on update'));
         }
       }
-return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
+      return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     },
   );
 
@@ -205,8 +211,8 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     'crontick_job_delete',
     {
       description:
-        'Permanently delete a job definition. Archived runs and logs remain directly queryable by run ID, but live aggregates exclude them. This may cancel an in-flight run and cannot be undone -- confirm with the user first.',
-      inputSchema: withVerbose({ id: z.string() }),
+        'Permanently delete a job definition (id or alias). Archived runs and logs remain directly queryable by run ID, but live aggregates exclude them. This may cancel an in-flight run and cannot be undone -- confirm with the user first.',
+      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (args) => toolWrap(args, (client) => client.deleteJob(args.id)),
@@ -215,8 +221,8 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
   server.registerTool(
     'crontick_job_enable',
     {
-      description: 'Enable a disabled job so it will run on its next scheduled time.',
-      inputSchema: withVerbose({ id: z.string() }),
+      description: 'Enable a disabled job (id or alias) so it will run on its next scheduled time.',
+      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => toolWrap(args, (client) => client.enableJob(args.id)),
@@ -225,8 +231,8 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
   server.registerTool(
     'crontick_job_disable',
     {
-      description: 'Disable a job so it will not run until re-enabled.',
-      inputSchema: withVerbose({ id: z.string() }),
+      description: 'Disable a job (id or alias) so it will not run until re-enabled.',
+      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => toolWrap(args, (client) => client.disableJob(args.id)),
@@ -236,8 +242,8 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     'crontick_job_run_now',
     {
       description:
-        'Trigger an immediate run of a job, bypassing its schedule. This executes the job\'s command, script, or prompt on the user\'s machine right now -- confirm with the user before calling. Returns a runId to track progress with crontick_run_get.',
-      inputSchema: withVerbose({ id: z.string() }),
+        'Trigger an immediate run of a job (id or alias), bypassing its schedule. This executes the job\'s command, script, or prompt on the user\'s machine right now -- confirm with the user before calling. Returns a runId to track progress with crontick_run_get.',
+      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async (args) => toolWrap(args, (client) => client.runNow(args.id)),
@@ -258,9 +264,9 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
   server.registerTool(
     'crontick_run_list',
     {
-      description: 'List recent runs, optionally filtered by job ID and/or status. Status includes the terminal "missed" state for schedule fires that were recorded but never executed because the daemon was down.',
+      description: 'List recent runs, optionally filtered by job (id or alias) and/or status. Status includes the terminal "missed" state for schedule fires that were recorded but never executed because the daemon was down.',
       inputSchema: withVerbose({
-        jobId: z.string().optional(),
+        jobId: z.string().describe('Job id (GUID) or alias').optional(),
         limit: z.number().int().positive().optional(),
         since: z.number().int().optional(),
         status: z.enum(['queued', 'running', 'success', 'failed', 'canceled', 'timeout', 'missed']).optional(),
@@ -340,8 +346,8 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
   server.registerTool(
     'crontick_stats_job',
     {
-      description: 'Get run statistics for a specific job: total runs, success/failure rates, last status.',
-      inputSchema: withVerbose({ id: z.string() }),
+      description: 'Get run statistics for a specific job (id or alias): total runs, success/failure rates, last status.',
+      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (args) => toolWrap(args, (client) => client.statsJob(args.id)),
@@ -473,7 +479,7 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
       description:
         'Return the core dashboard data model: health, aggregate stats, jobs, and recent runs.',
       inputSchema: withVerbose({
-        jobId: z.string().optional(),
+        jobId: z.string().describe('Job id (GUID) or alias').optional(),
         runsLimit: z.number().int().positive().optional(),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },

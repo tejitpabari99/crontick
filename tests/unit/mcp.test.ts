@@ -243,8 +243,9 @@ describe('MCP server — full contract', () => {
       action: { kind: 'exec', command: 'echo', args: ['hello'] },
     });
     expect(isError).toBe(false);
-    expect((json as { id: string }).id).toBe(testJobId);
-    expect(readFileSync(join(dir, 'jobs', `${testJobId}.schema.json`), 'utf-8')).toBe(jobJsonSchemaText());
+    const createdJobId = (json as { id: string; alias?: string }).id;
+    expect((json as { alias?: string }).alias).toBe(testJobId);
+    expect(readFileSync(join(dir, 'jobs', `${createdJobId}.schema.json`), 'utf-8')).toBe(jobJsonSchemaText());
   });
 
   it('crontick_job_create requires force to replace an existing job', async () => {
@@ -347,7 +348,7 @@ describe('MCP server — full contract', () => {
     const fetched = await callTool(client, 'crontick_job_get', { id: 'mcp-missing-env-update-job' });
     expect(fetched.isError).toBe(false);
     expect(fetched.json).toMatchObject({
-      id: 'mcp-missing-env-update-job',
+      alias: 'mcp-missing-env-update-job',
       action: { kind: 'script', script: 'echo before' },
     });
   });
@@ -758,7 +759,7 @@ describe('MCP server — full contract', () => {
     expect(result.isError).toBe(false);
     expect(JSON.stringify(result.json)).not.toContain(createSecret);
     expect(result.json).toMatchObject({
-      id: jobId,
+      alias: jobId,
       action: { env: { OPENAI_API_KEY: '[REDACTED]', NON_SECRET: 'https://example.test/mcp-visible' } },
     });
 
@@ -766,7 +767,7 @@ describe('MCP server — full contract', () => {
     expect(result.isError).toBe(false);
     expect(JSON.stringify(result.json)).not.toContain(createSecret);
     expect(result.json).toMatchObject({
-      id: jobId,
+      alias: jobId,
       action: { env: { OPENAI_API_KEY: '[REDACTED]', NON_SECRET: 'https://example.test/mcp-visible' } },
     });
 
@@ -774,7 +775,7 @@ describe('MCP server — full contract', () => {
     expect(result.isError).toBe(false);
     expect(JSON.stringify(result.json)).not.toContain(createSecret);
     expect(result.json).toContainEqual(expect.objectContaining({
-      id: jobId,
+      alias: jobId,
       action: expect.objectContaining({ env: expect.objectContaining({ OPENAI_API_KEY: '[REDACTED]', NON_SECRET: 'https://example.test/mcp-visible' }) }),
     }));
 
@@ -790,7 +791,7 @@ describe('MCP server — full contract', () => {
     expect(result.isError).toBe(false);
     expect(JSON.stringify(result.json)).not.toContain(updateSecret);
     expect(result.json).toMatchObject({
-      id: jobId,
+      alias: jobId,
       action: { env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
     });
 
@@ -798,7 +799,7 @@ describe('MCP server — full contract', () => {
     expect(result.isError).toBe(false);
     expect(JSON.stringify(result.json)).not.toContain(updateSecret);
     expect(result.json).toMatchObject({
-      id: jobId,
+      alias: jobId,
       enabled: false,
       action: { env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
     });
@@ -807,7 +808,7 @@ describe('MCP server — full contract', () => {
     expect(result.isError).toBe(false);
     expect(JSON.stringify(result.json)).not.toContain(updateSecret);
     expect(result.json).toMatchObject({
-      id: jobId,
+      alias: jobId,
       enabled: true,
       action: { env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
     });
@@ -816,16 +817,16 @@ describe('MCP server — full contract', () => {
   it('crontick_job_list returns the created job', async () => {
     const { json, isError } = await callTool(client, 'crontick_job_list');
     expect(isError).toBe(false);
-    const jobs = json as Array<{ id: string }>;
+    const jobs = json as Array<{ id: string; alias?: string }>;
     expect(Array.isArray(jobs)).toBe(true);
-    expect(jobs.some((j) => j.id === testJobId)).toBe(true);
+    expect(jobs.some((j) => j.alias === testJobId)).toBe(true);
   });
 
   it('crontick_job_get returns full job definition', async () => {
     const { json, isError } = await callTool(client, 'crontick_job_get', { id: testJobId });
     expect(isError).toBe(false);
-    const job = json as { id: string; schedule: unknown };
-    expect(job.id).toBe(testJobId);
+    const job = json as { id: string; alias?: string; schedule: unknown };
+    expect(job.alias).toBe(testJobId);
     expect(job.schedule).toBeDefined();
   });
 
@@ -993,18 +994,19 @@ describe('MCP server — full contract', () => {
 
   it('L7: crontick_export includeRuns and crontick_import round-trip run history', async () => {
     const jobId = 'mcp-export-runs-job';
-    await callTool(client, 'crontick_job_create', {
+    const created = await callTool(client, 'crontick_job_create', {
       id: jobId,
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
     });
+    const createdId = (created.json as { id: string }).id;
     await callTool(client, 'crontick_job_run_now', { id: jobId });
     await new Promise((resolve) => setTimeout(resolve, 2000)); // let the exec job finish
 
     const { json: exportJson, isError: exportErr } = await callTool(client, 'crontick_export', { includeRuns: true });
     expect(exportErr).toBe(false);
-    const exported = exportJson as { jobs: Array<{ id: string }>; runs: Array<{ id: string; jobId: string }> };
-    expect(exported.runs.some((r) => r.jobId === jobId)).toBe(true);
+    const exported = exportJson as { jobs: Array<{ id: string; alias?: string }>; runs: Array<{ id: string; jobId: string }> };
+    expect(exported.runs.some((r) => r.jobId === createdId)).toBe(true);
 
     // Delete the job (job history rows are untouched by job delete -- that's
     // exactly the retention gap L7 exists to mitigate), then restore both the
@@ -1012,7 +1014,7 @@ describe('MCP server — full contract', () => {
     // export produces is exactly what import consumes, end to end.
     await callTool(client, 'crontick_job_delete', { id: jobId });
     const { json: importJson, isError: importErr } = await callTool(client, 'crontick_import', {
-      jobs: exported.jobs.filter((j) => j.id === jobId),
+      jobs: exported.jobs.filter((j) => j.id === createdId),
       runs: exported.runs,
     });
     expect(importErr).toBe(false);

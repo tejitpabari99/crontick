@@ -48,7 +48,10 @@ export interface DashboardStats {
 }
 
 export interface DashboardJob {
+  /** Immutable GUID identity (see docs/concepts/jobs.md#identity). */
   id: string;
+  /** Human-friendly, optional, user-editable identifier; unique among currently-defined jobs. Null when unset. */
+  alias: string | null;
   description: string | null;
   enabled: boolean;
   scheduleLabel: string;
@@ -62,6 +65,8 @@ export interface DashboardJob {
 export interface DashboardRun {
   id: string;
   jobId: string;
+  /** The referenced job's alias at snapshot time, for display convenience; null if the job has no alias (or no longer exists). */
+  jobAlias: string | null;
   status: Run['status'];
   startedAt: number;
   endedAt: number | null;
@@ -126,13 +131,15 @@ export function buildDashboardData(ctx: DashboardContext, options: DashboardOpti
   const allRuns = ctx.store.listRunsForExistingJobs({ limit: 1000 });
   const since24h = Date.now() - 24 * 60 * 60 * 1000;
   const runs24h = ctx.store.listRunsForExistingJobs({ since: since24h });
+  // Snapshot of jobId -> alias for run display convenience (DashboardRun.jobAlias).
+  const aliasByJobId = new Map(jobs.map((job) => [job.id, job.alias ?? null] as const));
 
   return redactValue({
     generatedAt: Date.now(),
     health: buildDashboardHealth(ctx, jobs, runs24h),
     stats: buildDashboardStats(jobs, allRuns),
     jobs: jobs.map((job) => buildDashboardJob(ctx, job)),
-    runs: recentRuns.map(toDashboardRun),
+    runs: recentRuns.map((run) => toDashboardRun(run, aliasByJobId)),
   }) as DashboardData;
 }
 
@@ -268,6 +275,7 @@ function buildDashboardJob(ctx: DashboardContext, job: Job): DashboardJob {
   const lastRun = ctx.store.listRuns({ jobId: job.id, limit: 1 })[0];
   return {
     id: job.id,
+    alias: job.alias ?? null,
     description: job.description ?? null,
     enabled: job.enabled,
     scheduleLabel: scheduleLabel(job.schedule),
@@ -279,10 +287,11 @@ function buildDashboardJob(ctx: DashboardContext, job: Job): DashboardJob {
   };
 }
 
-function toDashboardRun(run: Run): DashboardRun {
+function toDashboardRun(run: Run, aliasByJobId: ReadonlyMap<string, string | null>): DashboardRun {
   return {
     id: run.id,
     jobId: run.jobId,
+    jobAlias: aliasByJobId.get(run.jobId) ?? null,
     status: run.status,
     startedAt: run.startedAt,
     endedAt: run.endedAt ?? null,

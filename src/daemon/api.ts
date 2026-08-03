@@ -10,7 +10,7 @@ import type { Runner } from './runner.js';
 import { JobSchema } from '../schemas/job.js';
 import { CrontickError } from '../errors.js';
 import { VERSION } from '../version.js';
-import { applyConfigDefaults } from '../job-input.js';
+import { applyConfigDefaults, coerceLegacyIdToAlias, generateAlias } from '../job-input.js';
 import {
   buildDashboardData,
   buildDashboardStats,
@@ -95,14 +95,31 @@ async function handleRequest(
 
     if (method === 'POST' && path === '/api/jobs') {
       const body = await readBody(req);
-      const parsed = JobSchema.safeParse(body);
+      // Back-compat: a raw HTTP body with a legacy (pre-GUID) kebab-case `id`
+      // and no explicit `alias` is treated as an alias hint, not rejected --
+      // see coerceLegacyIdToAlias in job-input.ts.
+      const parsed = JobSchema.safeParse(coerceLegacyIdToAlias(body));
       if (!parsed.success) {
         return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid job', parsed.error.format());
       }
-      const job = applyConfigDefaults(parsed.data);
+      let job = applyConfigDefaults(parsed.data);
       const force = forceParam(url);
-      if (!force && ctx.store.getJob(job.id)) {
-        return sendDuplicateCreateError(res, job.id);
+      // Auto-generate a unique alias when the caller didn't supply one (see
+      // generateAlias in job-input.ts): word + random 1-1000, retried on
+      // collision against every currently-live job's id AND alias.
+      const alias = job.alias ?? generateAlias((candidate) => ctx.store.getJob(candidate) !== undefined);
+      job = { ...job, alias };
+      // A job identifier collides if either the (fresh, so this normally only
+      // matters for import/restore scenarios) GUID `id` or the `alias`
+      // already belongs to an existing job -- resolved the same way any
+      // other job lookup accepts "id or alias" (see Store.getJob).
+      const collision = ctx.store.getJob(job.id) ?? ctx.store.getJob(alias);
+      if (collision) {
+        if (!force) return sendDuplicateCreateError(res, alias);
+        // force: replace the existing job in place, keeping ITS GUID id so
+        // run history (which references the GUID) stays associated with the
+        // job the caller is intentionally overwriting.
+        job = { ...job, id: collision.id };
       }
       if (!validateJobSchedule(res, ctx.scheduler, job.schedule)) return;
       readEnvFileForAction(job.action);
@@ -118,28 +135,38 @@ async function handleRequest(
     // /api/jobs/:id/*
     const jobMatch = path.match(/^\/api\/jobs\/([^/]+)(\/.*)?$/);
     if (jobMatch) {
-      const id = decodeURIComponent(jobMatch[1]);
+      const requestedId = decodeURIComponent(jobMatch[1]);
       const sub = jobMatch[2] ?? '';
+      // Every job lookup below accepts EITHER the GUID `id` or the `alias`
+      // (see Store.getJob) and resolves once, up front, to the canonical
+      // job/id so every downstream store/scheduler/runner call operates on
+      // the immutable GUID rather than whatever identifier the caller used.
+      const job = ctx.store.getJob(requestedId);
 
       if (method === 'GET' && sub === '') {
-        const job = ctx.store.getJob(id);
-        if (!job) return sendError(res, 404, 'NOT_FOUND', `Job ${id} not found`);
+        if (!job) return sendJobNotFoundError(res, requestedId);
         return sendJson(res, 200, redactValue(job));
       }
 
       if (method === 'PUT' && sub === '') {
-        const existing = ctx.store.getJob(id);
-        if (!existing) return sendError(res, 404, 'NOT_FOUND', `Job ${id} not found`);
+        if (!job) return sendJobNotFoundError(res, requestedId);
         const body = await readBody(req);
-        const parsed = JobSchema.safeParse({ ...existing, ...body, id });
+        const parsed = JobSchema.safeParse({ ...job, ...body, id: job.id });
         if (!parsed.success) {
           return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid job', parsed.error.format());
         }
-        const job = applyConfigDefaults(parsed.data);
-        if (!validateJobSchedule(res, ctx.scheduler, job.schedule)) return;
-        readEnvFileForAction(job.action);
-        ctx.store.upsertJob(job);
-        const stored = ctx.store.getJob(id) ?? job;
+        const updatedJob = applyConfigDefaults(parsed.data);
+        // Renaming the alias must not collide with any OTHER live job's id/alias.
+        if (updatedJob.alias && updatedJob.alias !== job.alias) {
+          const collision = ctx.store.getJob(updatedJob.alias);
+          if (collision && collision.id !== job.id) {
+            return sendDuplicateCreateError(res, updatedJob.alias);
+          }
+        }
+        if (!validateJobSchedule(res, ctx.scheduler, updatedJob.schedule)) return;
+        readEnvFileForAction(updatedJob.action);
+        ctx.store.upsertJob(updatedJob);
+        const stored = ctx.store.getJob(job.id) ?? updatedJob;
         ctx.scheduler.schedule(stored);
         // L2: same watermark seed as job creation — an update can re-enable a
         // job or change its schedule, both of which should compute missed
@@ -149,49 +176,47 @@ async function handleRequest(
       }
 
       if (method === 'DELETE' && sub === '') {
-        const deleted = ctx.store.deleteJob(id);
-        if (!deleted) return sendError(res, 404, 'NOT_FOUND', `Job ${id} not found`);
-        ctx.scheduler.unschedule(id);
+        if (!job) return sendJobNotFoundError(res, requestedId);
+        const deleted = ctx.store.deleteJob(job.id);
+        if (!deleted) return sendJobNotFoundError(res, requestedId);
+        ctx.scheduler.unschedule(job.id);
         // Major 4: unlike a daemon stop (where a detached child surviving is
         // deliberate, L8), deleting a job removes the definition entirely, so
         // there is nothing left for an in-flight run to belong to. Cancel any
         // active run for this job rather than leaving its process running
         // against a job that no longer exists. Visible via `canceledRun` in
         // the response instead of silently orphaning it.
-        const canceledRun = ctx.runner.cancelJob(id);
+        const canceledRun = ctx.runner.cancelJob(job.id);
         return sendJson(res, 200, { ok: true, canceledRun });
       }
 
       if (method === 'POST' && sub === '/enable') {
-        const job = ctx.store.getJob(id);
-        if (!job) return sendError(res, 404, 'NOT_FOUND', `Job ${id} not found`);
+        if (!job) return sendJobNotFoundError(res, requestedId);
         const updated = { ...job, enabled: true };
         ctx.store.upsertJob(updated);
         ctx.scheduler.schedule(updated);
         // L2: re-enabling starts a fresh watermark, same reasoning as create/update.
-        ctx.store.recordTick(id);
+        ctx.store.recordTick(job.id);
         return sendJson(res, 200, redactValue(updated));
       }
 
       if (method === 'POST' && sub === '/disable') {
-        const job = ctx.store.getJob(id);
-        if (!job) return sendError(res, 404, 'NOT_FOUND', `Job ${id} not found`);
+        if (!job) return sendJobNotFoundError(res, requestedId);
         const updated = { ...job, enabled: false };
         ctx.store.upsertJob(updated);
-        ctx.scheduler.unschedule(id);
+        ctx.scheduler.unschedule(job.id);
         return sendJson(res, 200, redactValue(updated));
       }
 
       if (method === 'POST' && sub === '/run') {
-        const job = ctx.store.getJob(id);
-        if (!job) return sendError(res, 404, 'NOT_FOUND', `Job ${id} not found`);
-        const run = ctx.store.insertRun(id);
+        if (!job) return sendJobNotFoundError(res, requestedId);
+        const run = ctx.store.insertRun(job.id);
         // Fire-and-forget: return 202 immediately while the run executes async.
         // Any rejection here is an invariant violation: Runner.run() should
         // always totalize the run row itself before resolving.
         ctx.runner.run(job, run.id, ctx.store).catch((err: unknown) => {
           logger.error('Runner.run rejected after POST /api/jobs/:id/run returned 202', {
-            jobId: id,
+            jobId: job.id,
             runId: run.id,
             error: err instanceof Error ? (err.stack ?? err.message) : String(err),
           });
@@ -202,7 +227,9 @@ async function handleRequest(
 
     // ── Runs ─────────────────────────────────────────────────────────────────
     if (method === 'GET' && path === '/api/runs') {
-      const jobId = url.searchParams.get('jobId') ?? undefined;
+      const requestedJobId = url.searchParams.get('jobId') ?? undefined;
+      // Accept id-or-alias for the jobId filter, same as every other job lookup.
+      const jobId = requestedJobId !== undefined ? (ctx.store.getJob(requestedJobId)?.id ?? requestedJobId) : undefined;
       const limit = url.searchParams.has('limit')
         ? parseInt(url.searchParams.get('limit')!, 10)
         : undefined;
@@ -285,12 +312,12 @@ async function handleRequest(
 
     const statsJobMatch = path.match(/^\/api\/stats\/jobs\/([^/]+)$/);
     if (method === 'GET' && statsJobMatch) {
-      const id = decodeURIComponent(statsJobMatch[1]);
-      const job = ctx.store.getJob(id);
-      if (!job) return sendError(res, 404, 'NOT_FOUND', `Job ${id} not found`);
-      const runs = ctx.store.listRuns({ jobId: id, limit: 100 });
+      const requestedId = decodeURIComponent(statsJobMatch[1]);
+      const job = ctx.store.getJob(requestedId);
+      if (!job) return sendJobNotFoundError(res, requestedId);
+      const runs = ctx.store.listRuns({ jobId: job.id, limit: 100 });
       return sendJson(res, 200, {
-        jobId: id,
+        jobId: job.id,
         totalRuns: runs.length,
         succeeded: runs.filter((r) => r.status === 'success').length,
         failed: runs.filter((r) => r.status === 'failed').length,
@@ -361,13 +388,39 @@ async function handleRequest(
       const body = await readBody(req);
       const jobs = Array.isArray(body?.jobs) ? body.jobs : [];
       const results: Array<{ id: string; ok: boolean; error?: string }> = [];
+      // Tracks pre-GUID `id` -> newly-assigned GUID `id` for any job in this
+      // batch that got coerced (see coerceLegacyIdToAlias) so the `runs`
+      // array below (which references jobs by the SAME pre-migration id) can
+      // be remapped to still associate with the migrated job.
+      const legacyIdRemap = new Map<string, string>();
       for (const raw of jobs) {
-        const parsed = JobSchema.safeParse(raw);
+        // Back-compat: a pre-GUID export/backup with a kebab-case `id` and no
+        // explicit `alias` is treated as an alias hint (see POST /api/jobs).
+        const parsed = JobSchema.safeParse(coerceLegacyIdToAlias(raw));
         if (parsed.success) {
-          const job = applyConfigDefaults(parsed.data);
-          ctx.store.upsertJob(job);
-          ctx.scheduler.schedule(job);
-          results.push({ id: job.id, ok: true });
+          let job = applyConfigDefaults(parsed.data);
+          const rawId = isRecord(raw) && typeof raw.id === 'string' ? raw.id : undefined;
+          // Import is a restore/merge operation, not a strict create: if this
+          // row's id-or-alias already matches a currently-live job (e.g.
+          // re-importing the same backup, or a legacy id that resolves via
+          // alias), overwrite that job in place -- keeping ITS GUID id --
+          // rather than colliding on the alias-uniqueness constraint (see
+          // store.ts) with a brand-new GUID. This mirrors POST /api/jobs's
+          // --force semantics and keeps re-import idempotent.
+          const existing = (job.alias ? ctx.store.getJob(job.alias) : undefined) ?? ctx.store.getJob(job.id);
+          if (existing) job = { ...job, id: existing.id };
+          if (rawId !== undefined && rawId !== job.id) legacyIdRemap.set(rawId, job.id);
+          try {
+            // Best-effort: the alias-uniqueness DB index (see store.ts) can
+            // still reject an import row whose alias collides with a
+            // DIFFERENT already-live job; skip that one row rather than
+            // failing the whole import.
+            ctx.store.upsertJob(job);
+            ctx.scheduler.schedule(job);
+            results.push({ id: job.id, ok: true });
+          } catch (err) {
+            results.push({ id: job.id, ok: false, error: err instanceof Error ? err.message : String(err) });
+          }
         } else {
           results.push({ id: String(raw?.id ?? '?'), ok: false, error: 'validation failed' });
         }
@@ -377,9 +430,16 @@ async function handleRequest(
       // Passed through unvalidated (`unknown[]`, not cast to `Run[]`) --
       // Store.importRuns() validates each row itself (see RunImportSchema)
       // and skips malformed rows individually, the same way the jobs loop
-      // above does, instead of trusting the wire payload's shape.
+      // above does, instead of trusting the wire payload's shape. jobId is
+      // remapped first (legacyIdRemap) so a run belonging to a job migrated
+      // earlier in this same batch stays associated with it.
       const runs = Array.isArray(body?.runs) ? body.runs : undefined;
-      const runsResult = runs ? ctx.store.importRuns(runs) : undefined;
+      const remappedRuns = runs?.map((r) =>
+        isRecord(r) && typeof r.jobId === 'string' && legacyIdRemap.has(r.jobId)
+          ? { ...r, jobId: legacyIdRemap.get(r.jobId) }
+          : r,
+      );
+      const runsResult = remappedRuns ? ctx.store.importRuns(remappedRuns) : undefined;
       return sendJson(res, 200, {
         imported: results.filter((r) => r.ok).length,
         results,
@@ -406,7 +466,9 @@ async function handleRequest(
 
     if (method === 'GET' && path === '/api/dashboard') {
       const runsLimit = optionalPositiveInt(url.searchParams.get('runsLimit'), 'runsLimit');
-      const jobId = url.searchParams.get('jobId') ?? undefined;
+      const requestedJobId = url.searchParams.get('jobId') ?? undefined;
+      // Accept id-or-alias for the jobId filter, same as every other job lookup.
+      const jobId = requestedJobId !== undefined ? (ctx.store.getJob(requestedJobId)?.id ?? requestedJobId) : undefined;
       return sendJson(res, 200, buildDashboardData({ ...ctx, pid: process.pid }, { runsLimit, jobId }));
     }
 
@@ -428,6 +490,14 @@ async function handleRequest(
 function forceParam(url: URL): boolean {
   const raw = (url.searchParams.get('force') ?? '').toLowerCase();
   return raw === '1' || raw === 'true';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function sendJobNotFoundError(res: http.ServerResponse, idOrAlias: string): void {
+  sendError(res, 404, 'JOB_NOT_FOUND', `Job ${idOrAlias} not found`);
 }
 
 function sendDuplicateCreateError(res: http.ServerResponse, jobId: string): void {

@@ -230,7 +230,7 @@ describe('Integration: daemon lifecycle', () => {
     // margin (previously 1200ms) can elapse before scheduleOneShot() runs on
     // a loaded CI runner, which silently no-ops on a non-positive delay and
     // fails the test spuriously rather than exercising reload at all.
-    const jobFile = join(dir, 'jobs', `${jobId}.json`);
+    const jobFile = join(dir, 'jobs', `${(created.data as { id: string }).id}.json`);
     const onDisk = JSON.parse(readFileSync(jobFile, 'utf-8')) as { schedule: { runAt: string } };
     const nearRunAt = new Date(Date.now() + 5000).toISOString();
     onDisk.schedule.runAt = nearRunAt;
@@ -575,7 +575,7 @@ describe('Integration: daemon lifecycle', () => {
     const stopRes = await apiCall(port, 'POST', '/api/daemon/stop');
     expect(stopRes.status).toBe(200);
     const activeRuns = (stopRes.data as { activeRuns?: Array<{ id: string; jobId: string }> }).activeRuns;
-    expect(activeRuns).toEqual(expect.arrayContaining([{ id: runId, jobId }]));
+    expect(activeRuns).toEqual(expect.arrayContaining([{ id: runId, jobId: (created.data as { id: string }).id }]));
 
     const pid = readPidFile(dir);
     if (pid !== undefined) await waitForPidExit(pid, 10_000);

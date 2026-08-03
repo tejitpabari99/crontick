@@ -205,29 +205,34 @@ export class CrontickClient {
     return this.request<Job[]>('GET', '/api/jobs');
   }
 
+  /** `id` accepts either the job's GUID id or its alias (see docs/concepts/jobs.md#identity). */
   async getJob(id: string): Promise<Job> {
     return this.request<Job>('GET', `/api/jobs/${encodeURIComponent(id)}`);
   }
 
-  /** Fetches the existing job first so the patch is applied over the current state. */
+  /** Fetches the existing job first so the patch is applied over the current state. `id` accepts either the job's GUID id or its alias -- the daemon resolves it (see docs/concepts/jobs.md#identity). */
   async updateJob(id: string, patch: JobPatchInput, options: NormalizeJobInputOptions = {}): Promise<Job> {
     const existing = await this.getJob(id);
     const normalized = normalizeJobPatch(id, existing, patch, this.normalizeOptions(options));
     return this.request<Job>('PUT', `/api/jobs/${encodeURIComponent(id)}`, normalized);
   }
 
+  /** `id` accepts either the job's GUID id or its alias. */
   async deleteJob(id: string): Promise<{ ok: true }> {
     return this.request<{ ok: true }>('DELETE', `/api/jobs/${encodeURIComponent(id)}`);
   }
 
+  /** `id` accepts either the job's GUID id or its alias. */
   async enableJob(id: string): Promise<Job> {
     return this.request<Job>('POST', `/api/jobs/${encodeURIComponent(id)}/enable`);
   }
 
+  /** `id` accepts either the job's GUID id or its alias. */
   async disableJob(id: string): Promise<Job> {
     return this.request<Job>('POST', `/api/jobs/${encodeURIComponent(id)}/disable`);
   }
 
+  /** `id` accepts either the job's GUID id or its alias. */
   async runNow(id: string): Promise<{ runId: string }> {
     return this.request<{ runId: string }>('POST', `/api/jobs/${encodeURIComponent(id)}/run`);
   }
@@ -240,6 +245,7 @@ export class CrontickClient {
     return this.request('GET', `/api/runs/${encodeURIComponent(runId)}`);
   }
 
+  /** `options.jobId` accepts either the job's GUID id or its alias. */
   async listRuns(options: { jobId?: string; limit?: number; since?: number; status?: string } = {}): Promise<unknown[]> {
     const params = new URLSearchParams();
     if (options.jobId) params.set('jobId', options.jobId);
