@@ -44,7 +44,7 @@ Helper functions:
 - SDK: `@modelcontextprotocol/sdk` v1.17.
 - Server name: `"crontick"`, version: `VERSION`.
 - Transport: `StdioServerTransport` (JSON-RPC 2.0 over stdin/stdout).
-- 37 tools registered via `server.registerTool(name, { description, inputSchema }, handler)`.
+- 29 tools registered via `server.registerTool(name, { description, inputSchema }, handler)`.
 - Each handler calls `toolWrap(args, fn, startDaemon?)`:
   1. Creates `mcpClient(startDaemon, { verbose, diagnostics })`.
   2. Calls `fn(client)`.
@@ -73,14 +73,14 @@ their expressions across all three surfaces:
 interface SurfaceCapability {
   capability: string;      // e.g. 'create-job'
   clientMethod: string;    // e.g. 'createJob'
-  cliCommand: string[];    // e.g. ['new']
+  cliCommand: string[];    // e.g. ['jobs', 'new']
   mcpTool: string;         // e.g. 'crontick_job_create'
 }
 
 export const SURFACE_CAPABILITIES: readonly SurfaceCapability[];
 ```
 
-Currently 37 entries. Derived export:
+Currently 29 entries. Derived export:
 - `MCP_TOOLS`: all MCP tool names.
 
 ---

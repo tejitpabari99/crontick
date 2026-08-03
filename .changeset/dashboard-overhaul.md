@@ -1,5 +1,5 @@
 ---
-"crontick": minor
+"crontick": patch
 ---
 
 Overhaul the dashboard web UI: the jobs table now shows a job `Alias` column and a

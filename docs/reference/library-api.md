@@ -49,11 +49,13 @@ Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `cancelRun` | `(runId: string): Promise<{ ok: true; canceled: boolean }>` | Cancel result | `CrontickError` |
 | `getRun` | `(runId: string): Promise<unknown>` | Run object | `CrontickError` |
 | `listRuns` | `(options?: { jobId?: string; limit?: number; since?: number; status?: string }): Promise<unknown[]>` | Array of runs | `CrontickError` |
-| `getLogs` | `(runId: string, options?: { lines?: number }): Promise<LogsResult>` | `LogsResult` | `CrontickError` |
+| `getLogs` | `(runId: string, options?: { lines?: number; source?: 'all' \| 'engine' \| 'crontick' }): Promise<LogsResult>` | `LogsResult` | `CrontickError` |
+| `deleteRun` | `(runId?: string, options?: { all?: boolean; force?: boolean }): Promise<DeleteRunResult>` | `{ ok: true, deleted }` — deletes one run (and its crontick-side log rows), or every run when `all` is set (requires `force`) | `CrontickError` (`VALIDATION_ERROR`, `NOT_FOUND`) |
 | `exportJobs` | `(options?: { includeRuns?: boolean }): Promise<{ jobs: Job[]; runs?: unknown[] }>` | Export payload; `runs` present only when `includeRuns` is set | `CrontickError` |
 | `importJobs` | `(jobs: unknown[], options?: NormalizeJobInputOptions & { runs?: unknown[] }): Promise<unknown>` | Import result, including `runsImported`/`runsSkipped` when `options.runs` is passed | `CrontickError` |
 | `validateSchedule` | `(schedule: Schedule): Promise<unknown>` | Validation result | `CrontickError` |
 | `previewSchedule` | `(input: { schedule: Schedule; n?: number; tz?: string }): Promise<unknown>` | Fire times | `CrontickError` |
+| `jobSchedule` | `(id: string, options?: { n?: number }): Promise<unknown>` | Upcoming fire times for an existing job (id or alias); powers `crontick jobs schedule` and `crontick_job_schedule` | `CrontickError` (`NOT_FOUND`) |
 | `statsSummary` | `(): Promise<StatsSummary>` | `StatsSummary` | `CrontickError` |
 | `statsJob` | `(id: string): Promise<JobStats>` | `JobStats` | `CrontickError` |
 | `daemonStart` | `(options?: { foreground?: boolean }): Promise<DaemonStartResult>` | Start result | `CrontickError` |
@@ -77,10 +79,12 @@ Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `removeEngine` | `(name: string): CrontickConfig` | Updated config | `CrontickError` (`CONFIG_ENGINE_NOT_FOUND`, `CONFIG_BUILTIN_ENGINE`) |
 | `initConfig` | `(options?: { force?: boolean }): { path: string; config: CrontickConfig; created: boolean }` | Init result | `CrontickError` (`CONFIG_EXISTS`) |
 | `validateConfig` | `(path?: string): ConfigValidationResult` | Validation result | `CrontickError` |
+| `configPath` | `(): ConfigPathInfo` | `{ path, note }` — powers `crontick config` and `crontick_config_path` | — |
+| `info` | `(): Promise<CrontickInfo>` | `{ version, node, platform, paths, daemon }` — powers `crontick info` and `crontick_info` | `CrontickError` |
 | `drainNotices` | `(): string[]` | Accumulated notices | — |
 | `isVerbose` | `(): boolean` | Verbose flag | — |
 
-**Library-only methods (not in `SURFACE_CAPABILITIES`, no CLI/MCP equivalent):** `ensure`, `health`, `createJobFromCliOptions`, `jobJsonSchema`, `getConfig`, `drainNotices`, `isVerbose`. These are intentionally excluded from the parity contract because they serve internal wiring, direct-use library scenarios, or launch infrastructure rather than proxying a daemon operation.
+**Library-only methods (retained in the client but no longer part of `SURFACE_CAPABILITIES`, so they have no CLI/MCP equivalent):** `ensure`, `health`, `createJobFromCliOptions`, `jobJsonSchema`, `getConfig`, `drainNotices`, `isVerbose`, `validateSchedule`, `previewSchedule`, `dashboardData`, and the config/engine helpers (`getConfigValue`, `setConfigValue`, `removeConfigValue`, `listEngines`, `addEngine`, `updateEngine`, `removeEngine`, `initConfig`, `validateConfig`). These are intentionally excluded from the parity contract because they serve internal wiring, direct-use library scenarios, or launch infrastructure rather than proxying a daemon operation exposed on every surface.
 
 Read methods that surface config values or captured text (`getConfigValue`, `getRun`,
 `listRuns`, `getLogs`, and `dashboardData`) apply the shared redaction contract before
@@ -721,7 +725,7 @@ const BUILT_IN_CONFIG: CrontickConfig;
 const SURFACE_CAPABILITIES: readonly SurfaceCapability[];
 ```
 
-37-element array mapping every capability to its client method, CLI command path, and
+29-element array mapping every capability to its client method, CLI command path, and
 MCP tool name. The existing `create-job` capability row also records its parity-coupled
 `force` option via `optionNames: ['force']`.
 
