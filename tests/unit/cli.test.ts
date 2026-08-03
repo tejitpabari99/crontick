@@ -439,6 +439,8 @@ describe('CLI e2e with daemon', () => {
     const badSource = cli(['runs', 'logs', runId, 'bogus', '--tail', '5'], env());
     expectCleanError(badSource, 'VALIDATION_ERROR');
     expect(badSource.stderr).toContain('Invalid source');
+    // The rejection lists every accepted source (derived from LOG_SOURCES), including `all`.
+    expect(badSource.stderr).toContain('all, engine, crontick');
     // Invalid --limit (non-positive) is rejected as a clean validation error, not a crash.
     const badLimit = cli(['runs', 'list', '--limit', '0'], env());
     expectCleanError(badLimit, 'VALIDATION_ERROR');

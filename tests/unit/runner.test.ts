@@ -525,6 +525,30 @@ describe('Runner', () => {
     expect(store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('')).not.toContain('captured session id');
   });
 
+  it('prompt: reuseSession-ignored notice is written to the crontick stream, never the engine stream', async () => {
+    const fake = fakeSpawn([{ stdout: 'ok\n' }]);
+    runner = new Runner(fake.spawnFn as never);
+    // A job carrying both an explicit sessionId and reuseSession reaches the
+    // runner (e.g. via the getJob-miss fallback where the in-memory job is
+    // used directly). The runner emits a lifecycle notice that reuseSession was
+    // ignored; that notice is a crontick-side event and must live on the
+    // `crontick` stream, never on the engine (stdout/stderr) streams.
+    const job = promptJob('prompt-reuse-notice', {
+      sessionId: 'sess-12345678',
+      reuseSession: true,
+    });
+    const run = store.insertRun(job.id);
+
+    await runner.run(job, run.id, store);
+
+    expect(store.getLogs(run.id, 'crontick').map((log) => log.chunk.toString('utf-8')).join('')).toContain(
+      'reuseSession was ignored',
+    );
+    expect(store.getLogs(run.id, 'engine').map((log) => log.chunk.toString('utf-8')).join('')).not.toContain(
+      'reuseSession was ignored',
+    );
+  });
+
   it('prompt: captures and persists a reusable session id after first successful run', async () => {
     const fake = fakeSpawn([{ stdout: 'session id: sess-abcdefgh\n' }]);
     runner = new Runner(fake.spawnFn as never);

@@ -10,6 +10,7 @@
  */
 import http from 'node:http';
 import { CrontickError } from './errors.js';
+import { LOG_SOURCES, type LogSource } from './log-source.js';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -101,9 +102,8 @@ export interface LogsResult {
   lines: LogEntry[];
 }
 
-/** Valid `source` filters accepted by getLogs (see docs/reference/cli.md `runs logs`). */
-export const LOG_SOURCES = ['all', 'engine', 'crontick'] as const;
-export type LogSource = (typeof LOG_SOURCES)[number];
+export { LOG_SOURCES };
+export type { LogSource };
 
 export interface StatsSummary {
   totalJobs: number;
@@ -310,7 +310,7 @@ export class CrontickClient {
     if (source !== undefined && !LOG_SOURCES.includes(source as LogSource)) {
       throw new CrontickError(
         'VALIDATION_ERROR',
-        `Invalid source '${source}'. Expected one of: engine, crontick (omit for both).`,
+        `Invalid source '${source}'. Expected one of: ${LOG_SOURCES.join(', ')}.`,
       );
     }
     const query = source && source !== 'all' ? `?source=${source}` : '';

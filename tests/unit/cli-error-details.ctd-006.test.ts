@@ -36,4 +36,15 @@ describe('CTD-006 CLI error details', () => {
     expect(result.stderr).toContain('Details:');
     expect(result.stderr).toContain(`- alias: ${ALIAS_ERROR_MESSAGE}`);
   });
+
+  it('an invalid integer option value fails cleanly (exit 1, no stack trace)', () => {
+    const result = cli(['jobs', 'new', '--alias', 'good-alias', '--every', 'abc', '--prompt', 'hello']);
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stdout).toBe('');
+    // Commander's InvalidArgumentError is rendered as a single clean red line.
+    expect(result.stderr).toContain('Invalid integer: abc');
+    expect(result.stderr.trim().startsWith('error:')).toBe(true);
+    expect(result.stderr).not.toContain('at '); // no Node stack frames
+  });
 });

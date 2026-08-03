@@ -4,7 +4,8 @@ import http from 'node:http';
 import { createReadStream } from 'node:fs';
 import { URL } from 'node:url';
 import type { Store } from './store.js';
-import type { Run, RunStatus, LogSource } from './store.js';
+import type { Run, RunStatus } from './store.js';
+import { LOG_SOURCES, type LogSource } from '../log-source.js';
 import type { Scheduler } from './scheduler.js';
 import type { Runner } from './runner.js';
 import { JobSchema } from '../schemas/job.js';
@@ -29,7 +30,7 @@ const SSE_POLL_MS = 200;
 
 /** Coerce an untrusted `source` query value to a valid LogSource, defaulting to 'all'. */
 function normalizeLogSource(value: string | null): LogSource {
-  return value === 'engine' || value === 'crontick' ? value : 'all';
+  return value !== null && (LOG_SOURCES as readonly string[]).includes(value) ? (value as LogSource) : 'all';
 }
 
 // ── Context shared with handlers ──────────────────────────────────────────────

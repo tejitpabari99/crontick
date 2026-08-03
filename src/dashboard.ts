@@ -12,7 +12,6 @@ import { VERSION } from './version.js';
 import type { Job, Schedule } from './schemas/job.js';
 import type { Store, Run } from './daemon/store.js';
 import type { Scheduler } from './daemon/scheduler.js';
-import type { DaemonStopResult } from './daemon/lifecycle.js';
 
 export interface DashboardOptions {
   runsLimit?: number;
@@ -93,12 +92,6 @@ export interface DashboardStatus {
   pid?: number;
   daemon: unknown;
 }
-
-export interface DashboardStartResult extends DashboardStatus {
-  startedDaemon: boolean;
-}
-
-export type DashboardStopResult = DaemonStopResult;
 
 export interface DashboardContext {
   store: Store;

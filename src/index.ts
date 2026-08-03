@@ -79,10 +79,8 @@ export type {
   DashboardJob,
   DashboardOptions,
   DashboardRun,
-  DashboardStartResult,
   DashboardStats,
   DashboardStatus,
-  DashboardStopResult,
 } from './dashboard.js';
 export { SURFACE_CAPABILITIES } from './surface.js';
 export type { SurfaceCapability } from './surface.js';

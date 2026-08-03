@@ -214,6 +214,20 @@ describe('Daemon HTTP API', () => {
     expect(Array.isArray(ok.data)).toBe(true);
   });
 
+  it('GET /api/runs rejects an invalid since with a clean 400 (symmetric with limit)', async () => {
+    // `since` flows through the same optionalPositiveInt guard as `limit`, so it
+    // must reject the same bad values rather than 500-crashing.
+    for (const bad of ['abc', '-5', '0', 'NaN', 'Infinity']) {
+      const { status, data } = await apiCall(port, 'GET', `/api/runs?since=${bad}`);
+      expect(status, `since=${bad}`).toBe(400);
+      expect((data as { error?: { code?: string } }).error?.code).toBe('VALIDATION_ERROR');
+    }
+    // A valid positive since still works.
+    const ok = await apiCall(port, 'GET', '/api/runs?since=1');
+    expect(ok.status).toBe(200);
+    expect(Array.isArray(ok.data)).toBe(true);
+  });
+
   it('GET /api/runs?status= filters by run status', async () => {
     // Use a node-based action (cross-platform) rather than api-test-job's
     // 'echo' action, which isn't a real executable on Windows.

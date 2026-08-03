@@ -183,6 +183,29 @@ describe('Store', () => {
     expect(store.deleteAllJobs()).toBe(0);
   });
 
+  it('deleteAllJobs still removes every DB row and returns the count when a job-file unlink fails', () => {
+    // File removal is best-effort/post-commit, so an unlink failure must not
+    // abort the wipe. Simulate a failure by replacing the persisted job JSON
+    // with a directory of the same name: existsSync() is true but unlinkSync()
+    // throws (caught internally by removeJobFiles).
+    store.upsertJob(execJob('unlink-fail-a'));
+    store.upsertJob(execJob('unlink-fail-b'));
+    const runA = store.insertRun('unlink-fail-a');
+    store.appendLog(runA.id, 'stdout', Buffer.from('hi\n'));
+
+    const jobFile = join(dir, 'jobs', 'unlink-fail-a.json');
+    rmSync(jobFile, { force: true });
+    mkdirSync(jobFile); // now a directory: unlinkSync() will throw EPERM/EISDIR
+
+    const deleted = store.deleteAllJobs();
+    expect(deleted).toBe(2);
+    expect(store.listJobs()).toEqual([]);
+    expect(store.listRuns({})).toEqual([]);
+    expect(store.getLogs(runA.id)).toEqual([]);
+    // The un-unlinkable path is left behind (best-effort), but the wipe still succeeded.
+    expect(existsSync(jobFile)).toBe(true);
+  });
+
   it('upsertJob is idempotent — updates in place', () => {
     store.upsertJob(execJob('idem-job'));
     store.upsertJob({ ...execJob('idem-job'), enabled: false });
@@ -428,8 +451,10 @@ describe('Store', () => {
       expect(jobsCols).toContain('alias');
       expect(runsCols).toContain('session_id');
       expect(runsCols).toContain('command');
-      const indexes = (db.prepare('PRAGMA index_list(jobs)').all() as Array<{ name: string }>).map((i) => i.name);
-      expect(indexes).toContain('idx_jobs_alias');
+      const indexes = db.prepare('PRAGMA index_list(jobs)').all() as Array<{ name: string; unique: number }>;
+      expect(indexes.map((i) => i.name)).toContain('idx_jobs_alias');
+      // The alias index must be UNIQUE (enforces the one-alias-per-job invariant).
+      expect(indexes.find((i) => i.name === 'idx_jobs_alias')?.unique).toBe(1);
     } finally {
       db.close();
     }

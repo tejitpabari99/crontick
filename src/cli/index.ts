@@ -5,7 +5,7 @@
  * Contains no business logic; all scheduling, persistence, and validation live
  * in the client and daemon.
  */
-import { Command } from 'commander';
+import { Command, InvalidArgumentError } from 'commander';
 import { spawnSync } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -283,8 +283,6 @@ function parseInteger(value: string): number {
   if (!Number.isInteger(parsed)) throw new InvalidArgumentError(`Invalid integer: ${value}`);
   return parsed;
 }
-
-class InvalidArgumentError extends Error {}
 
 function stringOption(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;

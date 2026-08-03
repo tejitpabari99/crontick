@@ -449,16 +449,6 @@ interface DashboardStatus {
 }
 ```
 
-### DashboardStartResult
-
-Retained as an exported type for backward compatibility. The `dashboardStart`/`dashboardStop` client methods were removed (the dashboard is served by the daemon), but the result types stay exported so existing imports keep compiling.
-
-```ts
-interface DashboardStartResult extends DashboardStatus {
-  startedDaemon: boolean;
-}
-```
-
 ### SurfaceCapability
 
 ```ts

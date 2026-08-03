@@ -493,7 +493,7 @@ export class Runner {
         promptCaptureAction = capturePromptSession ? latestAction : undefined;
         if (sessionId && latestAction.reuseSession) {
           log.append(
-            'stderr',
+            'crontick',
             Buffer.from('[crontick] notice: reuseSession was ignored because an explicit sessionId was provided.\n', 'utf-8'),
           );
         }
@@ -589,15 +589,36 @@ export class Runner {
       let timedOut = false;
       let timeoutHandle: NodeJS.Timeout | undefined;
 
-      // Ring buffer for prompt session ID extraction (max 128 KB of combined output).
+      // Prompt session ID extraction only needs the last ~128 KB of combined
+      // output. Rather than reallocating (concat + subarray) on every stdout
+      // chunk — O(n^2) for chatty prompts — we retain incoming chunks in an
+      // array and drop whole leading chunks once the buffered bytes still cover
+      // the cap without them. The exact last-maxTranscriptBytes tail is only
+      // materialized once, at process close (see readTranscriptTail).
       const maxTranscriptBytes = 128 * 1024;
-      let transcriptTail = Buffer.alloc(0);
+      const transcriptChunks: Buffer[] = [];
+      let transcriptBytes = 0;
       const appendTranscript = (chunk: Buffer) => {
         if (!capturePromptSession) return;
-        transcriptTail = Buffer.concat([transcriptTail, chunk]);
-        if (transcriptTail.byteLength > maxTranscriptBytes) {
-          transcriptTail = transcriptTail.subarray(transcriptTail.byteLength - maxTranscriptBytes);
+        transcriptChunks.push(chunk);
+        transcriptBytes += chunk.byteLength;
+        // Evict leading chunks while the remainder still fully covers the cap,
+        // so we never keep more than the last chunk beyond maxTranscriptBytes.
+        while (
+          transcriptChunks.length > 1 &&
+          transcriptBytes - transcriptChunks[0].byteLength >= maxTranscriptBytes
+        ) {
+          transcriptBytes -= transcriptChunks[0].byteLength;
+          transcriptChunks.shift();
         }
+      };
+      const readTranscriptTail = (): string => {
+        const combined = transcriptChunks.length === 1 ? transcriptChunks[0] : Buffer.concat(transcriptChunks);
+        const tail =
+          combined.byteLength > maxTranscriptBytes
+            ? combined.subarray(combined.byteLength - maxTranscriptBytes)
+            : combined;
+        return tail.toString('utf-8');
       };
 
       // Byte cap on captured output (L5): re-read per run (not cached at Runner
@@ -758,7 +779,7 @@ export class Runner {
               exitCode: code,
             };
             if (result.status === 'success' && capturePromptSession) {
-              const sessionId = extractSessionId(transcriptTail.toString('utf-8'));
+              const sessionId = extractSessionId(readTranscriptTail());
               if (!sessionId) {
                 this.logger.debug('Session id capture failed', { jobId: job.id, runId });
                 finish({

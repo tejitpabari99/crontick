@@ -12,6 +12,7 @@ import { dirname, resolve as pathResolve } from 'node:path';
 import { VERSION } from '../version.js';
 import { JobCreateInputSchema, JobPatchInputSchema } from '../job-input.js';
 import { createClient, type CrontickClient } from '../client.js';
+import { LOG_SOURCES } from '../log-source.js';
 import { isVerboseEnv, type LogEvent } from '../logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -305,7 +306,7 @@ export function createMcpServer(): McpServer {
       inputSchema: withVerbose({
         id: z.string(),
         lines: z.number().int().positive().default(50),
-        source: z.enum(['all', 'engine', 'crontick']).optional(),
+        source: z.enum(LOG_SOURCES).optional(),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },

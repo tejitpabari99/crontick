@@ -11,6 +11,7 @@ import { JobSchema, type Job, type PromptAction } from '../schemas/job.js';
 import { CrontickError, ORPHAN_RUN_ERROR_MESSAGE } from '../errors.js';
 import { jobJsonSchemaText } from '../schema-json.js';
 import { nullLogger, type Logger } from '../logger.js';
+import type { LogSource } from '../log-source.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -83,9 +84,10 @@ export type LogStream = 'stdout' | 'stderr' | 'crontick';
 /**
  * Retrieval-side filter for getLogs(): `all` (default) returns every stream,
  * `engine` returns only stdout+stderr, `crontick` returns only crontick-side
- * lifecycle events.
+ * lifecycle events. Canonically defined in `src/log-source.ts` and re-exported
+ * here for daemon consumers (api.ts).
  */
-export type LogSource = 'all' | 'engine' | 'crontick';
+export type { LogSource };
 
 export interface ListRunsOptions {
   jobId?: string;
