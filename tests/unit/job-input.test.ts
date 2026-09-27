@@ -280,10 +280,12 @@ describe('normalizeJobInput', () => {
     expect(notices.join('\n')).toContain('reuseSession was ignored');
   });
 
-  it('rejects prompt/session fields on script and exec persisted schemas', () => {
-    expect(JobSchema.safeParse(baseJob({ kind: 'script', script: 'echo hi', sessionId: 'sess-12345678' })).success).toBe(false);
-    expect(JobSchema.safeParse(baseJob({ kind: 'exec', command: 'echo', engine: 'copilot' })).success).toBe(false);
+  it('rejects the removed script and exec action kinds (crontick is prompt-only)', () => {
+    expect(JobSchema.safeParse(baseJob({ kind: 'script', script: 'echo hi' })).success).toBe(false);
+    expect(JobSchema.safeParse(baseJob({ kind: 'exec', command: 'echo' })).success).toBe(false);
+    // Unknown fields on the (only remaining) prompt kind are still rejected by .strict().
     expect(JobSchema.safeParse(baseJob({ kind: 'prompt', prompt: 'x', script: 'echo hi' })).success).toBe(false);
+    expect(JobSchema.safeParse(baseJob({ kind: 'prompt', prompt: 'x', command: 'echo' })).success).toBe(false);
   });
 
   it('validates prompt engine names', () => {
@@ -309,30 +311,26 @@ describe('normalizeJobInput', () => {
   });
 });
 
-// ── buildJobFromCreateOptions — --exec verbatim + rawArgs (L6) ────────────────
-// --exec takes the command verbatim (no whitespace splitting); everything
-// after `--` (rawArgs) becomes action.args, reusing prompt mode's convention.
-
 describe('buildJobFromCreateOptions/buildJobPatchFromUpdateOptions — JSON file input', () => {
   it('accepts a BOM-prefixed job definition file', () => {
     const dir = makeDir();
     const filePath = join(dir, 'job.json');
-    writeFileSync(filePath, `\uFEFF${JSON.stringify(baseJob({ kind: 'exec', command: 'echo', args: ['bom'] }), null, 2)}`, 'utf-8');
+    writeFileSync(filePath, `\uFEFF${JSON.stringify(baseJob({ kind: 'prompt', prompt: 'bom', args: ['x'] }), null, 2)}`, 'utf-8');
 
     const job = buildJobFromCreateOptions({ file: 'job.json' }, { cwd: dir });
     expect(job).toMatchObject({
       alias: 'prompt-job',
-      action: { kind: 'exec', command: 'echo', args: ['bom'] },
+      action: { kind: 'prompt', prompt: 'bom', args: ['x'] },
     });
   });
 
   it('accepts a BOM-prefixed job patch file', () => {
     const dir = makeDir();
     const filePath = join(dir, 'patch.json');
-    writeFileSync(filePath, `\uFEFF${JSON.stringify({ action: { kind: 'exec', command: 'echo', args: ['patched'] } }, null, 2)}`, 'utf-8');
+    writeFileSync(filePath, `\uFEFF${JSON.stringify({ action: { kind: 'prompt', prompt: 'patched' } }, null, 2)}`, 'utf-8');
 
     const patch = buildJobPatchFromUpdateOptions({ file: 'patch.json' }, { cwd: dir });
-    expect(patch).toMatchObject({ action: { kind: 'exec', command: 'echo', args: ['patched'] } });
+    expect(patch).toMatchObject({ action: { kind: 'prompt', prompt: 'patched' } });
   });
 
   it('reports malformed job definition JSON with file path, parse position, and expected shape', () => {
@@ -360,56 +358,19 @@ describe('buildJobFromCreateOptions/buildJobPatchFromUpdateOptions — JSON file
   });
 });
 
-describe('buildJobFromCreateOptions — --exec verbatim + rawArgs (L6)', () => {
-  it('takes the command verbatim and args from rawArgs, with no whitespace splitting', () => {
-    const job = buildJobFromCreateOptions({
-      cron: '0 9 * * *', exec: 'node', rawArgs: ['-e', 'process.exit(0)'],
-    });
-    expect(job.action).toMatchObject({ kind: 'exec', command: 'node', args: ['-e', 'process.exit(0)'] });
-  });
-
-  it('preserves a single argument containing spaces intact (the naive-split bug this fixes)', () => {
-    const job = buildJobFromCreateOptions({
-      cron: '0 9 * * *', exec: 'echo', rawArgs: ['hello world'],
-    });
-    expect(job.action).toMatchObject({ kind: 'exec', command: 'echo', args: ['hello world'] });
-  });
-
-  it('keeps a command string containing spaces intact when no rawArgs are given', () => {
-    const job = buildJobFromCreateOptions({
-      cron: '0 9 * * *', exec: 'echo hello world',
-    });
-    expect(job.action).toMatchObject({ kind: 'exec', command: 'echo hello world', args: [] });
-  });
-
-  it('produces action output identical to the library/MCP args-array form for the same intent', () => {
-    const viaExec = buildJobFromCreateOptions({
-      cron: '0 9 * * *', exec: 'node', rawArgs: ['-e', 'a b'],
-    });
-    const viaArgsArray = normalizeJobInput(baseJob({ kind: 'exec', command: 'node', args: ['-e', 'a b'] }));
-    expect(viaExec.action).toEqual(viaArgsArray.action);
-  });
-
-  it('rejects rawArgs (--) on --script, unchanged from before L6', () => {
-    expect(() =>
-      buildJobFromCreateOptions({ cron: '0 9 * * *', script: 'echo hi', rawArgs: ['extra'] }),
-    ).toThrow(/valid only with --exec/);
-  });
-});
-
 // ── buildJobFromCreateOptions — explicit --arg (Blocker 1) ─────────────────────
-// --arg <value> is the new, always-correct, shim-independent way to pass args
-// to --exec/--prompt actions: it never depends on `--` surviving a Windows
-// shim (crontick.cmd/.ps1), so it round-trips spaces, embedded double quotes,
-// and leading dashes byte-for-byte, unlike the shim-mangled `--` convention.
+// --arg <value> is the always-correct, shim-independent way to pass args to a
+// --prompt action: it never depends on `--` surviving a Windows shim
+// (crontick.cmd/.ps1), so it round-trips spaces, embedded double quotes, and
+// leading dashes byte-for-byte, unlike the shim-mangled `--` convention.
 
 describe('buildJobFromCreateOptions — explicit --arg (Blocker 1)', () => {
-  it('builds exec args from --arg, equivalent to the -- convention for the same values', () => {
+  it('builds prompt args from --arg, equivalent to the -- convention for the same values', () => {
     const viaArg = buildJobFromCreateOptions({
-      cron: '0 9 * * *', exec: 'node', args: ['-e', 'process.exit(0)'],
+      cron: '0 9 * * *', prompt: 'hi', args: ['-e', 'a b'],
     });
     const viaDashDash = buildJobFromCreateOptions({
-      cron: '0 9 * * *', exec: 'node', rawArgs: ['-e', 'process.exit(0)'],
+      cron: '0 9 * * *', prompt: 'hi', rawArgs: ['-e', 'a b'],
     });
     expect(viaArg.action).toEqual(viaDashDash.action);
   });
@@ -417,38 +378,24 @@ describe('buildJobFromCreateOptions — explicit --arg (Blocker 1)', () => {
   it('round-trips a single --arg value containing spaces, embedded double quotes, and a leading dash', () => {
     const tricky = '-flag with spaces and "embedded quotes"';
     const job = buildJobFromCreateOptions({
-      cron: '0 9 * * *', exec: 'echo', args: [tricky],
+      cron: '0 9 * * *', prompt: 'hi', args: [tricky],
     });
-    expect(job.action).toMatchObject({ kind: 'exec', command: 'echo', args: [tricky] });
+    expect(job.action).toMatchObject({ kind: 'prompt', prompt: 'hi', args: [tricky] });
   });
 
   it('supports repeatable --arg for multiple values', () => {
     const job = buildJobFromCreateOptions({
-      cron: '0 9 * * *', exec: 'node', args: ['-e', 'a b', '--weird-flag'],
+      cron: '0 9 * * *', prompt: 'hi', args: ['-e', 'a b', '--weird-flag'],
     });
-    expect(job.action).toMatchObject({ kind: 'exec', args: ['-e', 'a b', '--weird-flag'] });
-  });
-
-  it('works identically for --prompt actions', () => {
-    const tricky = '-flag with spaces and "embedded quotes"';
-    const job = buildJobFromCreateOptions({
-      cron: '0 9 * * *', prompt: 'hi', args: [tricky],
-    });
-    expect(job.action).toMatchObject({ kind: 'prompt', args: [tricky] });
+    expect(job.action).toMatchObject({ kind: 'prompt', args: ['-e', 'a b', '--weird-flag'] });
   });
 
   it('rejects combining --arg with -- positional args in the same command (ambiguous)', () => {
     expect(() =>
       buildJobFromCreateOptions({
-        cron: '0 9 * * *', exec: 'node', args: ['-e'], rawArgs: ['x'],
+        cron: '0 9 * * *', prompt: 'hi', args: ['-e'], rawArgs: ['x'],
       }),
     ).toThrow(/Cannot combine --arg/);
-  });
-
-  it('rejects --arg on --script, same as -- positional args', () => {
-    expect(() =>
-      buildJobFromCreateOptions({ cron: '0 9 * * *', script: 'echo hi', args: ['extra'] }),
-    ).toThrow(/valid only with --exec/);
   });
 });
 
@@ -477,8 +424,6 @@ describe('buildJobPatchFromUpdateOptions - no update flag silently no-ops', () =
       { flag: '--every', opts: patchOpts({ every: 60 }), assert: (patch) => expect(patch.schedule).toEqual({ kind: 'interval', everySec: 60 }) },
       { flag: '--at', opts: patchOpts({ at: '2030-01-01T00:00:00.000Z' }), assert: (patch) => expect(patch.schedule).toEqual({ kind: 'one-shot', runAt: '2030-01-01T00:00:00.000Z' }) },
       { flag: '--tz', opts: patchOpts({ tz: 'UTC' }), error: /--tz requires --cron on update/ },
-      { flag: '--script', opts: patchOpts({ script: 'echo hi' }), assert: (patch) => expect(patch.action).toMatchObject({ kind: 'script', script: 'echo hi' }) },
-      { flag: '--exec', opts: patchOpts({ exec: 'echo' }), assert: (patch) => expect(patch.action).toMatchObject({ kind: 'exec', command: 'echo', args: [] }) },
       { flag: '--prompt', opts: patchOpts({ prompt: 'hello' }), assert: (patch) => expect(patch.action).toMatchObject({ kind: 'prompt', prompt: 'hello' }) },
       { flag: '--prompt-file', opts: patchOpts({ promptFile }), assert: (patch) => expect(patch.action).toMatchObject({ kind: 'prompt', prompt: 'from file' }) },
       { flag: '--arg', opts: patchOpts({ args: ['x'] }), error: /Arguments \(via --arg or --\) are valid only/ },
@@ -487,7 +432,6 @@ describe('buildJobPatchFromUpdateOptions - no update flag silently no-ops', () =
       { flag: '--session-id', opts: patchOpts({ sessionId: 'sess-12345678' }), error: /Prompt engine\/session flags are valid only with prompt mode/ },
       { flag: '--reuse-session', opts: patchOpts({ reuseSession: true }), error: /Prompt engine\/session flags are valid only with prompt mode/ },
       { flag: '--file', opts: patchOpts({ file: 'patch.json' }), options: { cwd: dir }, assert: (patch) => expect(patch.description).toBe('from file patch') },
-      { flag: '--shell', opts: patchOpts({ shell: 'pwsh' }), error: /--shell requires an action source on update/ },
       { flag: '--job-env-file', opts: patchOpts({ envFile: join(dir, 'vars.env') }), error: /--job-env-file .* requires an action source on update/ },
       { flag: '--timeout', opts: patchOpts({ timeout: 30 }), error: /--timeout requires an action source on update/ },
       { flag: '--overlap', opts: patchOpts({ overlap: 'queue' }), assert: (patch) => expect(patch.overlap).toBe('queue') },
@@ -548,14 +492,14 @@ describe('buildJobPatchFromUpdateOptions — overlap', () => {
 
 describe('normalizeJobPatch — overlap merge', () => {
   it('leaves overlap unchanged when the patch omits it', () => {
-    const existing = existingJob({ kind: 'exec', command: 'echo' }, 'queue');
+    const existing = existingJob({ kind: 'prompt', prompt: 'hello' }, 'queue');
     const patch = buildJobPatchFromUpdateOptions(patchOpts({ desc: 'updated' }));
     const result = normalizeJobPatch('job-1', existing, patch);
     expect(result.overlap).toBe('queue');
   });
 
   it('applies an explicit skip over a previously non-skip overlap', () => {
-    const existing = existingJob({ kind: 'exec', command: 'echo' }, 'queue');
+    const existing = existingJob({ kind: 'prompt', prompt: 'hello' }, 'queue');
     const patch = buildJobPatchFromUpdateOptions(patchOpts({ overlap: 'skip' }));
     const result = normalizeJobPatch('job-1', existing, patch);
     expect(result.overlap).toBe('skip');
@@ -563,60 +507,39 @@ describe('normalizeJobPatch — overlap merge', () => {
 });
 
 describe('normalizeJobPatch — action merge (mergeActionPatch)', () => {
-  it('preserves shell/envFile/timeoutSec when only script is repeated', () => {
+  it('preserves envFile/timeoutSec when only prompt text is repeated', () => {
     const existing = existingJob({
-      kind: 'script',
-      script: 'echo hi',
-      shell: 'cmd',
+      kind: 'prompt',
+      prompt: 'hello',
       envFile: '.env.test',
       timeoutSec: 30,
     });
-    const patch = buildJobPatchFromUpdateOptions(patchOpts({ script: 'echo bye' }));
+    const patch = buildJobPatchFromUpdateOptions(patchOpts({ prompt: 'goodbye' }));
     const result = normalizeJobPatch('job-1', existing, patch);
     expect(result.action).toMatchObject({
-      kind: 'script',
-      script: 'echo bye',
-      shell: 'cmd',
+      kind: 'prompt',
+      prompt: 'goodbye',
       envFile: '.env.test',
       timeoutSec: 30,
     });
   });
 
-  it('applies an explicit shell over the preserved action fields', () => {
-    const existing = existingJob({ kind: 'script', script: 'echo hi', shell: 'cmd' });
-    const patch = buildJobPatchFromUpdateOptions(patchOpts({ script: 'echo bye', shell: 'pwsh' }));
+  it('applies an explicit engine override over the preserved action fields', () => {
+    const existing = existingJob({ kind: 'prompt', prompt: 'hello', engine: 'agency' });
+    const patch = buildJobPatchFromUpdateOptions(patchOpts({ prompt: 'goodbye', engine: 'openai' }));
     const result = normalizeJobPatch('job-1', existing, patch);
-    expect(result.action).toMatchObject({ kind: 'script', script: 'echo bye', shell: 'pwsh' });
-  });
-
-  it('fully replaces the action when the kind changes (script -> exec)', () => {
-    const existing = existingJob({
-      kind: 'script',
-      script: 'echo hi',
-      shell: 'cmd',
-      envFile: '.env.test',
-      timeoutSec: 30,
-    });
-    const patch = buildJobPatchFromUpdateOptions(patchOpts({ exec: 'echo', rawArgs: ['done'] }));
-    const result = normalizeJobPatch('job-1', existing, patch);
-    expect(result.action).toMatchObject({ kind: 'exec', command: 'echo', args: ['done'] });
-    expect(result.action).not.toHaveProperty('shell');
-    expect(result.action).not.toHaveProperty('script');
-    // envFile/timeoutSec end up present-but-undefined (CLI always builds the
-    // full action shape); JSON output omits undefined keys, so nothing leaks.
-    expect((result.action as Record<string, unknown>).envFile).toBeUndefined();
-    expect((result.action as Record<string, unknown>).timeoutSec).toBeUndefined();
+    expect(result.action).toMatchObject({ kind: 'prompt', prompt: 'goodbye', engine: 'openai' });
   });
 
   it('leaves the action untouched entirely when the patch has no action fields', () => {
-    const existing = existingJob({ kind: 'script', script: 'echo hi', shell: 'cmd' });
+    const existing = existingJob({ kind: 'prompt', prompt: 'hello', engine: 'agency' });
     const patch = buildJobPatchFromUpdateOptions(patchOpts({ desc: 'just a description change' }));
     const result = normalizeJobPatch('job-1', existing, patch);
     expect(result.action).toEqual(existing.action);
   });
 });
 
-// ── normalizeJobPatch — exec/prompt args, reuseSession, retry, engine ──────────
+// ── normalizeJobPatch — prompt args/reuseSession/retry/engine ──────────────────
 // These patches are round-tripped through JobPatchInputSchema.parse (not built
 // via buildJobPatchFromUpdateOptions) to faithfully simulate an MCP call or a
 // CLI --file JSON patch: both validate the raw patch object against this exact
@@ -630,22 +553,6 @@ function mcpPatch(raw: unknown): JobPatchInput {
   if (!parsed.success) throw new Error(JSON.stringify(parsed.error.format()));
   return parsed.data;
 }
-
-describe('normalizeJobPatch — exec args merge', () => {
-  it('preserves exec args when the patch only changes envFile', () => {
-    const existing = existingJob({ kind: 'exec', command: 'echo', args: ['a', 'b'] });
-    const patch = mcpPatch({ action: { kind: 'exec', command: 'echo', envFile: '.env.new' } });
-    const result = normalizeJobPatch('job-1', existing, patch);
-    expect(result.action).toMatchObject({ kind: 'exec', command: 'echo', args: ['a', 'b'], envFile: '.env.new' });
-  });
-
-  it('applies explicit exec args when provided', () => {
-    const existing = existingJob({ kind: 'exec', command: 'echo', args: ['a', 'b'] });
-    const patch = mcpPatch({ action: { kind: 'exec', command: 'echo', args: ['c'] } });
-    const result = normalizeJobPatch('job-1', existing, patch);
-    expect(result.action).toMatchObject({ kind: 'exec', args: ['c'] });
-  });
-});
 
 describe('normalizeJobPatch — prompt args/reuseSession merge', () => {
   it('preserves prompt args and reuseSession when the patch only changes prompt text', () => {
@@ -661,78 +568,43 @@ describe('normalizeJobPatch — prompt args/reuseSession merge', () => {
     const result = normalizeJobPatch('job-1', existing, patch);
     expect(result.action).toMatchObject({ args: [], reuseSession: false });
   });
+
+  it('preserves prompt args when the patch only changes envFile', () => {
+    const existing = existingJob({ kind: 'prompt', prompt: 'old', args: ['a', 'b'] });
+    const patch = mcpPatch({ action: { kind: 'prompt', prompt: 'old', envFile: '.env.new' } });
+    const result = normalizeJobPatch('job-1', existing, patch);
+    expect(result.action).toMatchObject({ kind: 'prompt', args: ['a', 'b'], envFile: '.env.new' });
+  });
 });
 
 describe('normalizeJobPatch — retry merge', () => {
   it('preserves retry.backoffSec when the patch only sets max', () => {
-    const existing = { ...existingJob({ kind: 'exec', command: 'echo' }), retry: { max: 1, backoffSec: 90 } };
+    const existing = { ...existingJob({ kind: 'prompt', prompt: 'hello' }), retry: { max: 1, backoffSec: 90 } };
     const patch = mcpPatch({ retry: { max: 3 } });
     const result = normalizeJobPatch('job-1', existing, patch);
     expect(result.retry).toEqual({ max: 3, backoffSec: 90 });
   });
 
   it('applies an explicit backoffSec over the preserved retry fields', () => {
-    const existing = { ...existingJob({ kind: 'exec', command: 'echo' }), retry: { max: 1, backoffSec: 90 } };
+    const existing = { ...existingJob({ kind: 'prompt', prompt: 'hello' }), retry: { max: 1, backoffSec: 90 } };
     const patch = mcpPatch({ retry: { max: 3, backoffSec: 15 } });
     const result = normalizeJobPatch('job-1', existing, patch);
     expect(result.retry).toEqual({ max: 3, backoffSec: 15 });
   });
 });
 
-describe('normalizeJobPatch — prompt engine preservation and kind-change defaulting', () => {
+describe('normalizeJobPatch — prompt engine preservation', () => {
   it('preserves a custom engine on a same-kind prompt update that omits engine', () => {
     const existing = existingJob({ kind: 'prompt', prompt: 'old', engine: 'agency' });
     const patch = mcpPatch({ action: { kind: 'prompt', prompt: 'new' } });
     const result = normalizeJobPatch('job-1', existing, patch);
     expect(result.action).toMatchObject({ kind: 'prompt', engine: 'agency' });
   });
-
-  it('fills the configured default engine for a new prompt action introduced via a kind change', () => {
-    const existing = existingJob({ kind: 'exec', command: 'echo' });
-    const patch = mcpPatch({ action: { kind: 'prompt', prompt: 'hello' } });
-    const result = normalizeJobPatch('job-1', existing, patch);
-    expect(result.action).toMatchObject({ kind: 'prompt', prompt: 'hello', engine: 'copilot' });
-  });
 });
 
-// ── CTD-026 regression: single-field action patches (no script/command/prompt) ─
+// ── CTD-026 regression: single-field action patches (no prompt re-supplied) ───
 
 describe('normalizeJobPatch — single-field action patch (CTD-026)', () => {
-  it('accepts a script patch with only shell (no script re-supplied) and merges it', () => {
-    const existing = existingJob({ kind: 'script', script: 'echo hi', shell: 'bash' });
-    const patch = mcpPatch({ action: { kind: 'script', shell: 'pwsh' } });
-    const result = normalizeJobPatch('job-1', existing, patch);
-    expect(result.action).toMatchObject({ kind: 'script', script: 'echo hi', shell: 'pwsh' });
-  });
-
-  it('accepts a script patch with only envFile (no script re-supplied) and merges it', () => {
-    const existing = existingJob({ kind: 'script', script: 'echo hi', shell: 'bash' });
-    const patch = mcpPatch({ action: { kind: 'script', envFile: '.env.prod' } });
-    const result = normalizeJobPatch('job-1', existing, patch);
-    expect(result.action).toMatchObject({ kind: 'script', script: 'echo hi', shell: 'bash', envFile: '.env.prod' });
-  });
-
-  it('accepts a script patch with only timeoutSec (no script re-supplied) and merges it', () => {
-    const existing = existingJob({ kind: 'script', script: 'echo hi', shell: 'cmd', timeoutSec: 10 });
-    const patch = mcpPatch({ action: { kind: 'script', timeoutSec: 60 } });
-    const result = normalizeJobPatch('job-1', existing, patch);
-    expect(result.action).toMatchObject({ kind: 'script', script: 'echo hi', shell: 'cmd', timeoutSec: 60 });
-  });
-
-  it('accepts an exec patch with only envFile (no command re-supplied) and merges it', () => {
-    const existing = existingJob({ kind: 'exec', command: 'node', args: ['server.js'] });
-    const patch = mcpPatch({ action: { kind: 'exec', envFile: '.env.prod' } });
-    const result = normalizeJobPatch('job-1', existing, patch);
-    expect(result.action).toMatchObject({ kind: 'exec', command: 'node', args: ['server.js'], envFile: '.env.prod' });
-  });
-
-  it('accepts an exec patch with only timeoutSec (no command re-supplied) and merges it', () => {
-    const existing = existingJob({ kind: 'exec', command: 'node', args: ['server.js'] });
-    const patch = mcpPatch({ action: { kind: 'exec', timeoutSec: 120 } });
-    const result = normalizeJobPatch('job-1', existing, patch);
-    expect(result.action).toMatchObject({ kind: 'exec', command: 'node', timeoutSec: 120 });
-  });
-
   it('accepts a prompt patch with only timeoutSec (no prompt re-supplied) and merges it', () => {
     const existing = existingJob({ kind: 'prompt', prompt: 'hello world', reuseSession: true });
     const patch = mcpPatch({ action: { kind: 'prompt', timeoutSec: 45 } });
@@ -745,15 +617,6 @@ describe('normalizeJobPatch — single-field action patch (CTD-026)', () => {
     const patch = mcpPatch({ action: { kind: 'prompt', envFile: '.env.ai' } });
     const result = normalizeJobPatch('job-1', existing, patch);
     expect(result.action).toMatchObject({ kind: 'prompt', prompt: 'hello world', envFile: '.env.ai' });
-  });
-
-  it('still replaces the action when the kind changes (single-field patches do not short-circuit kind switch)', () => {
-    const existing = existingJob({ kind: 'script', script: 'echo hi', shell: 'cmd', envFile: '.env.test' });
-    const patch = mcpPatch({ action: { kind: 'exec', command: 'node' } });
-    const result = normalizeJobPatch('job-1', existing, patch);
-    expect(result.action).toMatchObject({ kind: 'exec', command: 'node' });
-    expect((result.action as Record<string, unknown>).script).toBeUndefined();
-    expect((result.action as Record<string, unknown>).shell).toBeUndefined();
   });
 });
 
@@ -829,4 +692,3 @@ describe('generateAlias', () => {
     expect((error as CrontickError).code).toBe('ALIAS_GENERATION_FAILED');
   });
 });
-

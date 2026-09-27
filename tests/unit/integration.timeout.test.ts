@@ -5,8 +5,7 @@ import { tmpdir } from 'node:os';
 import { Store } from '../../src/daemon/store.js';
 import { Runner } from '../../src/daemon/runner.js';
 import type { Job } from '../../src/schemas/job.js';
-
-const node = process.execPath;
+import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), 'crontick-timeout-'));
@@ -16,10 +15,14 @@ describe('Integration: timeout semantics', () => {
   let dir: string;
   let store: Store;
   let runner: Runner;
+  let previousHome: string | undefined;
 
   beforeEach(() => {
     dir = makeTmpDir();
     mkdirSync(join(dir, 'jobs'), { recursive: true });
+    previousHome = process.env['CRONTICK_HOME'];
+    process.env['CRONTICK_HOME'] = dir;
+    writeFakeEngineConfig(dir);
     store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
     store.open();
     runner = new Runner();
@@ -27,18 +30,22 @@ describe('Integration: timeout semantics', () => {
 
   afterEach(() => {
     store.close();
+    if (previousHome === undefined) delete process.env['CRONTICK_HOME'];
+    else process.env['CRONTICK_HOME'] = previousHome;
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('script exceeding timeoutSec is killed and run is marked terminal', async () => {
+  it('prompt job exceeding timeoutSec is killed and run is marked terminal', async () => {
     const job: Job = {
       id: 'timeout-job',
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },
       action: {
-        kind: 'exec',
-        command: node,
-        args: ['-e', 'setTimeout(() => process.exit(0), 60000)'],
+        kind: 'prompt',
+        prompt: 'setTimeout(() => process.exit(0), 60000)',
+        engine: FAKE_ENGINE_NAME,
+        args: [],
+        reuseSession: false,
         timeoutSec: 1,
       },
       overlap: 'skip',
@@ -55,7 +62,7 @@ describe('Integration: timeout semantics', () => {
       id: 'fast-job',
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },
-      action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'], timeoutSec: 10 },
+      action: { kind: 'prompt', prompt: 'process.exit(0)', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false, timeoutSec: 10 },
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
     };

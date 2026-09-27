@@ -25,19 +25,12 @@ const validJobArb = fc.record({
       everySec: fc.integer({ min: 1, max: 3600 }),
     }),
   ),
-  action: fc.oneof(
-    fc.record({
-      kind: fc.constant('exec' as const),
-      command: fc.constantFrom('echo', 'node', 'pwsh'),
-      args: fc.array(fc.string({ maxLength: 20 }), { maxLength: 5 }),
-    }),
-    fc.record({
-      kind: fc.constant('prompt' as const),
-      prompt: fc.string({ minLength: 1, maxLength: 100 }),
-      engine: fc.constantFrom('copilot' as const, 'agency' as const, 'openai' as const),
-      args: fc.array(fc.string({ maxLength: 20 }), { maxLength: 5 }),
-    }),
-  ),
+  action: fc.record({
+    kind: fc.constant('prompt' as const),
+    prompt: fc.string({ minLength: 1, maxLength: 100 }),
+    engine: fc.constantFrom('copilot' as const, 'agency' as const, 'openai' as const),
+    args: fc.array(fc.string({ maxLength: 20 }), { maxLength: 5 }),
+  }),
 });
 
 const invalidJobArb = fc.oneof(

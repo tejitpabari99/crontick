@@ -217,7 +217,7 @@ function commonJobOptions(command: Command): Command {
     .option('--engine <engine>', 'Configured prompt engine name (default: config defaultEngine, i.e. copilot)')
     .option('--session-id <id>', 'Reuse this prompt engine session every run')
     .option('--reuse-session', 'Capture the first successful run session id and reuse it')
-    .option('--file <path>', 'Create the job from a full job-definition JSON file (advanced; supports all action kinds including script/exec)')
+    .option('--file <path>', 'Create the job from a full job-definition JSON file (advanced)')
     .option('--alias <alias>', 'Human-friendly, unique, kebab-case job identifier; auto-generated on create when omitted')
     // No hardcoded default here (unlike most flags): a Commander default would
     // be indistinguishable from the user explicitly typing the same value,

@@ -51,9 +51,10 @@ function jobWithAlias(alias: string): Partial<Job> {
     enabled: true,
     schedule: { kind: 'interval', everySec: 60 },
     action: {
-      kind: 'exec',
-      command: process.execPath,
-      args: ['-e', 'process.exit(0)'],
+      kind: 'prompt',
+      prompt: 'noop',
+      args: [],
+      reuseSession: false,
     },
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },

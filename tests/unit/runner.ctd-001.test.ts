@@ -24,15 +24,24 @@ function makeStore(dir: string): Store {
   return store;
 }
 
-function execJob(id: string, opts: Partial<Extract<Job['action'], { kind: 'exec' }>> = {}): Job {
+/**
+ * A minimal prompt-action job fixture. These tests exercise failure paths
+ * that finalize (or reject) before a real engine process would ever be
+ * spawned (envFile load failure, engine-not-found, a synchronously-throwing
+ * spawnFn, a mocked runner), so the built-in `copilot` engine default is
+ * enough -- no real engine binary or fake-engine config needed.
+ */
+function execJob(id: string, opts: Partial<Extract<Job['action'], { kind: 'prompt' }>> = {}): Job {
   return {
     id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
     action: {
-      kind: 'exec',
-      command: process.execPath,
-      args: ['-e', 'process.exit(0)'],
+      kind: 'prompt',
+      prompt: 'hello',
+      engine: 'copilot',
+      args: [],
+      reuseSession: false,
       ...opts,
     },
     overlap: 'skip',

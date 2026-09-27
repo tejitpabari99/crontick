@@ -9,8 +9,21 @@ import { Scheduler } from '../../src/daemon/scheduler.js';
 import { Runner } from '../../src/daemon/runner.js';
 import { createApiServer } from '../../src/daemon/api.js';
 import type { Job } from '../../src/schemas/job.js';
+import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 
-const node = process.execPath;
+/** Runs `fn` with CRONTICK_HOME temporarily pointed at `dir` (restored after), so
+ *  the runner's prompt-engine resolution (buildPromptRunCommand -> loadConfig)
+ *  reads `dir`'s config.json instead of this process's real CRONTICK_HOME. */
+async function withHome<T>(dir: string, fn: () => Promise<T>): Promise<T> {
+  const previousHome = process.env['CRONTICK_HOME'];
+  process.env['CRONTICK_HOME'] = dir;
+  try {
+    return await fn();
+  } finally {
+    if (previousHome === undefined) delete process.env['CRONTICK_HOME'];
+    else process.env['CRONTICK_HOME'] = previousHome;
+  }
+}
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), 'crontick-sec-'));
@@ -99,10 +112,11 @@ describe('Security', () => {
     rmSync(dir2, { recursive: true, force: true });
   });
 
-  it('exec with shell=false does not expand shell metacharacters', async () => {
+  it('prompt engine spawn with shell=false does not expand shell metacharacters', async () => {
     const runner = new Runner();
     const store2Dir = makeTmpDir();
     mkdirSync(join(store2Dir, 'jobs'), { recursive: true });
+    writeFakeEngineConfig(store2Dir);
     const store2 = new Store(join(store2Dir, 'runs.db'), join(store2Dir, 'jobs'));
     store2.open();
 
@@ -111,15 +125,23 @@ describe('Security', () => {
       id: 'shell-inject',
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },
-      action: { kind: 'exec', command: node, args: ['-e', 'process.stdout.write(process.argv[1])', dangerousArg] },
+      action: {
+        kind: 'prompt',
+        prompt: 'process.stdout.write(process.argv[1])',
+        engine: FAKE_ENGINE_NAME,
+        args: [dangerousArg],
+        reuseSession: false,
+      },
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
     };
 
-    const run = store2.insertRun(job.id);
-    await runner.run(job, run.id, store2);
-    const output = store2.getLogs(run.id, 'engine').map((log) => log.chunk.toString('utf-8')).join('');
-    expect(output).toBe(dangerousArg);
+    await withHome(store2Dir, async () => {
+      const run = store2.insertRun(job.id);
+      await runner.run(job, run.id, store2);
+      const output = store2.getLogs(run.id, 'engine').map((log) => log.chunk.toString('utf-8')).join('');
+      expect(output).toBe(dangerousArg);
+    });
 
     store2.close();
     rmSync(store2Dir, { recursive: true, force: true });
@@ -129,6 +151,7 @@ describe('Security', () => {
     const runner = new Runner();
     const logDir = makeTmpDir();
     mkdirSync(join(logDir, 'jobs'), { recursive: true });
+    writeFakeEngineConfig(logDir);
     const logStore = new Store(join(logDir, 'runs.db'), join(logDir, 'jobs'));
     logStore.open();
 
@@ -137,16 +160,24 @@ describe('Security', () => {
       id: 'aws-secret',
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },
-      action: { kind: 'exec', command: node, args: ['-e', `process.stdout.write('${secretValue}')`] },
+      action: {
+        kind: 'prompt',
+        prompt: `process.stdout.write('${secretValue}')`,
+        engine: FAKE_ENGINE_NAME,
+        args: [],
+        reuseSession: false,
+      },
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
     };
 
-    const run = logStore.insertRun(job.id);
-    await runner.run(job, run.id, logStore);
-    const output = logStore.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('');
-    expect(output).not.toContain(secretValue);
-    expect(output).toContain('[REDACTED]');
+    await withHome(logDir, async () => {
+      const run = logStore.insertRun(job.id);
+      await runner.run(job, run.id, logStore);
+      const output = logStore.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('');
+      expect(output).not.toContain(secretValue);
+      expect(output).toContain('[REDACTED]');
+    });
 
     logStore.close();
     rmSync(logDir, { recursive: true, force: true });
@@ -156,6 +187,7 @@ describe('Security', () => {
     const runner = new Runner();
     const logDir = makeTmpDir();
     mkdirSync(join(logDir, 'jobs'), { recursive: true });
+    writeFakeEngineConfig(logDir);
     const logStore = new Store(join(logDir, 'runs.db'), join(logDir, 'jobs'));
     logStore.open();
 
@@ -164,16 +196,24 @@ describe('Security', () => {
       id: 'gh-token',
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },
-      action: { kind: 'exec', command: node, args: ['-e', `process.stdout.write('${ghToken}')`] },
+      action: {
+        kind: 'prompt',
+        prompt: `process.stdout.write('${ghToken}')`,
+        engine: FAKE_ENGINE_NAME,
+        args: [],
+        reuseSession: false,
+      },
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
     };
 
-    const run = logStore.insertRun(job.id);
-    await runner.run(job, run.id, logStore);
-    const output = logStore.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('');
-    expect(output).not.toContain(ghToken);
-    expect(output).toContain('[REDACTED]');
+    await withHome(logDir, async () => {
+      const run = logStore.insertRun(job.id);
+      await runner.run(job, run.id, logStore);
+      const output = logStore.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('');
+      expect(output).not.toContain(ghToken);
+      expect(output).toContain('[REDACTED]');
+    });
 
     logStore.close();
     rmSync(logDir, { recursive: true, force: true });
@@ -186,7 +226,7 @@ describe('Security', () => {
       id: 'secret-job',
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },
-      action: { kind: 'exec', command: 'echo', args: [] },
+      action: { kind: 'prompt', prompt: 'noop', args: [], reuseSession: false },
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
     };

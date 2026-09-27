@@ -29,7 +29,7 @@ function execJob(id: string): Job {
     id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
-    action: { kind: 'exec', command: 'echo', args: ['hello'] },
+    action: { kind: 'prompt', prompt: 'hello', args: [], reuseSession: false },
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
   };

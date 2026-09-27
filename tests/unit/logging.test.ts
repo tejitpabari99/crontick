@@ -8,6 +8,7 @@ import { createLogger, redactText, type LogEvent } from '../../src/logger.js';
 import { Store } from '../../src/daemon/store.js';
 import { Runner } from '../../src/daemon/runner.js';
 import type { Job } from '../../src/schemas/job.js';
+import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 
 const CLI = resolve('dist/cli/index.js');
 
@@ -108,6 +109,9 @@ describe('verbose propagation', () => {
 
   it('runner verbose diagnostics are written to run logs without dumping env values', async () => {
     const dir = home('runner');
+    writeFakeEngineConfig(dir);
+    const previousHome = process.env['CRONTICK_HOME'];
+    process.env['CRONTICK_HOME'] = dir;
     const logger = createLogger({ verbose: true });
     const store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'), logger);
     store.open();
@@ -117,9 +121,11 @@ describe('verbose propagation', () => {
         enabled: true,
         schedule: { kind: 'interval', everySec: 60 },
         action: {
-          kind: 'exec',
-          command: process.execPath,
-          args: ['-e', 'process.exit(0)'],
+          kind: 'prompt',
+          prompt: 'process.exit(0)',
+          engine: FAKE_ENGINE_NAME,
+          args: [],
+          reuseSession: false,
           env: { GITHUB_TOKEN: '******' },
         },
         overlap: 'skip',
@@ -133,6 +139,8 @@ describe('verbose propagation', () => {
       expect(text).not.toContain('******');
     } finally {
       store.close();
+      if (previousHome === undefined) delete process.env['CRONTICK_HOME'];
+      else process.env['CRONTICK_HOME'] = previousHome;
       rmSync(dir, { recursive: true, force: true });
     }
   });

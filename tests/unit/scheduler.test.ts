@@ -7,7 +7,7 @@ function makeCronJob(id: string, cron: string): Job {
     id,
     enabled: true,
     schedule: { kind: 'cron', cron },
-    action: { kind: 'exec', command: 'echo', args: [] },
+    action: { kind: 'prompt', prompt: 'noop', args: [], reuseSession: false },
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
   };
@@ -18,7 +18,7 @@ function makeIntervalJob(id: string, everySec: number): Job {
     id,
     enabled: true,
     schedule: { kind: 'interval', everySec },
-    action: { kind: 'exec', command: 'echo', args: [] },
+    action: { kind: 'prompt', prompt: 'noop', args: [], reuseSession: false },
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
   };
@@ -29,7 +29,7 @@ function makeOneShotJob(id: string, runAt: string): Job {
     id,
     enabled: true,
     schedule: { kind: 'one-shot', runAt },
-    action: { kind: 'exec', command: 'echo', args: [] },
+    action: { kind: 'prompt', prompt: 'noop', args: [], reuseSession: false },
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
   };

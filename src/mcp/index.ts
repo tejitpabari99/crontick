@@ -146,7 +146,7 @@ export function createMcpServer(): McpServer {
     'crontick_job_create',
     {
       description:
-        'Create and schedule a new cron job. This executes arbitrary commands, scripts, or prompts on the user\'s machine on a recurring or future schedule that persists and outlives this session -- confirm the job definition (schedule and action) with the user before calling. Provide the job definition: schedule (kind: cron|interval|one-shot) and action (kind: script|exec|prompt) are required; id (GUID) is generated automatically and should be omitted; alias is an optional, unique, human-friendly identifier -- when omitted, one is auto-generated. Prompt actions use prompt, optional configured engine name, args, sessionId, or reuseSession. After creating, use crontick_job_schedule to preview the job\'s upcoming fire times.',
+        'Create and schedule a new cron job. This executes an AI prompt on the user\'s machine on a recurring or future schedule that persists and outlives this session -- confirm the job definition (schedule and action) with the user before calling. Provide the job definition: schedule (kind: cron|interval|one-shot) and action (kind: prompt) are required; id (GUID) is generated automatically and should be omitted; alias is an optional, unique, human-friendly identifier -- when omitted, one is auto-generated. Prompt actions use prompt, optional configured engine name, args, sessionId, or reuseSession. After creating, use crontick_job_schedule to preview the job\'s upcoming fire times.',
       inputSchema: withVerbose({
         ...JobCreateInputSchema.shape,
         force: z.boolean().optional(),
@@ -184,7 +184,7 @@ export function createMcpServer(): McpServer {
     'crontick_job_update',
     {
       description:
-        'Update an existing job (id or alias). Provide the job identifier and any fields to change (partial update is merged with existing definition); alias can be changed here (must remain unique). Action can be script, exec, or prompt.',
+        'Update an existing job (id or alias). Provide the job identifier and any fields to change (partial update is merged with existing definition); alias can be changed here (must remain unique). Action is always a prompt action.',
       inputSchema: withVerbose({
         id: z.string().describe('Job id (GUID) or alias'),
         ...JobPatchInputSchema.shape,
@@ -193,17 +193,6 @@ export function createMcpServer(): McpServer {
     },
     async (args) => {
       const { id, ...patch } = args;
-      const action = args.action;
-      if (action) {
-        if (action.kind === 'script' && action.script === undefined &&
-            (action.shell !== undefined || action.envFile !== undefined || action.timeoutSec !== undefined)) {
-          return errResult(new Error('Invalid action patch: shell, envFile, and timeoutSec require a script source on update'));
-        }
-        if (action.kind === 'exec' && action.command === undefined &&
-            (action.envFile !== undefined || action.timeoutSec !== undefined)) {
-          return errResult(new Error('Invalid action patch: envFile and timeoutSec require a command source on update'));
-        }
-      }
       return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     },
   );
@@ -254,7 +243,7 @@ export function createMcpServer(): McpServer {
     'crontick_job_run_now',
     {
       description:
-        'Trigger an immediate run of a job (id or alias), bypassing its schedule. This executes the job\'s command, script, or prompt on the user\'s machine right now -- confirm with the user before calling. Returns a runId to track progress with crontick_run_get.',
+        'Trigger an immediate run of a job (id or alias), bypassing its schedule. This executes the job\'s prompt on the user\'s machine right now -- confirm with the user before calling. Returns a runId to track progress with crontick_run_get.',
       inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
@@ -397,7 +386,7 @@ export function createMcpServer(): McpServer {
     'crontick_import',
     {
       description:
-        'Import job definitions from a JSON array. Jobs are upserted (existing jobs with the same ID are updated), each import persisting recurring jobs that execute arbitrary commands, scripts, or prompts on the user\'s machine -- confirm the imported job definitions with the user before calling. An optional runs array (as produced by crontick_export with includeRuns) is restored archivally: no execution, no scheduler interaction.',
+        'Import job definitions from a JSON array. Jobs are upserted (existing jobs with the same ID are updated), each import persisting recurring jobs that execute AI prompts on the user\'s machine -- confirm the imported job definitions with the user before calling. An optional runs array (as produced by crontick_export with includeRuns) is restored archivally: no execution, no scheduler interaction.',
       inputSchema: withVerbose({
         jobs: z.array(z.unknown()),
         runs: z.array(z.unknown()).optional(),

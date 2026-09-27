@@ -7,6 +7,7 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync } from 'node:f
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 
 const DAEMON_SCRIPT = resolve('dist/daemon/index.js');
 const TIMEOUT_MS = 30_000;
@@ -64,6 +65,7 @@ describe('Daemon HTTP API', () => {
 
   beforeAll(async () => {
     dir = makeTmpDir();
+    writeFakeEngineConfig(dir);
     const stderrChunks: string[] = [];
     daemonProc = spawn(process.execPath, [DAEMON_SCRIPT], {
       env: { ...process.env, CRONTICK_HOME: dir },
@@ -103,7 +105,7 @@ describe('Daemon HTTP API', () => {
   const testJob = {
     alias: 'api-test-job',
     schedule: { kind: 'cron', cron: '0 0 * * *' },
-    action: { kind: 'exec', command: 'echo', args: ['hello'] },
+    action: { kind: 'prompt', prompt: 'hello', args: [], reuseSession: false },
   };
 
   it('POST /api/jobs creates a job', async () => {
@@ -229,12 +231,13 @@ describe('Daemon HTTP API', () => {
   });
 
   it('GET /api/runs?status= filters by run status', async () => {
-    // Use a node-based action (cross-platform) rather than api-test-job's
-    // 'echo' action, which isn't a real executable on Windows.
+    // Uses the fake node-eval engine (cross-platform) rather than
+    // api-test-job's plain 'hello' prompt, so this job actually runs to a
+    // real terminal status.
     await apiCall(port, 'POST', '/api/jobs', {
       alias: 'status-filter-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
-      action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
+      action: { kind: 'prompt', prompt: 'process.exit(0)', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
     });
     const { data: runData } = await apiCall(port, 'POST', '/api/jobs/status-filter-job/run');
     const runId = (runData as { runId: string }).runId;
@@ -320,7 +323,7 @@ describe('Daemon HTTP API', () => {
     const importJob = {
       alias: 'imported-job',
       schedule: { kind: 'cron', cron: '0 * * * *' },
-      action: { kind: 'exec', command: 'echo', args: [] },
+      action: { kind: 'prompt', prompt: 'noop', args: [], reuseSession: false },
     };
     const importPromptJob = {
       alias: 'imported-prompt-job',
@@ -350,7 +353,7 @@ describe('Daemon HTTP API', () => {
       id: importedJobId,
       alias: 'imported-runs-job',
       schedule: { kind: 'cron', cron: '0 * * * *' },
-      action: { kind: 'exec', command: 'echo', args: [] },
+      action: { kind: 'prompt', prompt: 'noop', args: [], reuseSession: false },
     };
     const { status, data } = await apiCall(port, 'POST', '/api/import', {
       jobs: [importJob],
@@ -426,12 +429,12 @@ describe('Daemon HTTP API', () => {
     await apiCall(port, 'POST', '/api/jobs', {
       alias: 'bulk-api-a',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
-      action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
+      action: { kind: 'prompt', prompt: 'process.exit(0)', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
     });
     await apiCall(port, 'POST', '/api/jobs', {
       alias: 'bulk-api-b',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
-      action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
+      action: { kind: 'prompt', prompt: 'process.exit(0)', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
     });
 
     const missingForce = await apiCall(port, 'DELETE', '/api/jobs');

@@ -13,12 +13,10 @@ import { TextDecoder } from 'node:util';
 import { z } from 'zod';
 import { CrontickError } from './errors.js';
 import {
-  ExecActionSchema,
   JOB_ALIAS_PATTERN,
   JobSchema,
   PromptActionBaseSchema,
   ScheduleSchema,
-  ScriptActionSchema,
   type Job,
   type JobInput,
 } from './schemas/job.js';
@@ -37,36 +35,8 @@ const PromptActionInputSchema = PromptActionBaseSchema.omit({ prompt: true }).ex
 }).strict();
 
 const ActionInputSchema = z.discriminatedUnion('kind', [
-  ScriptActionSchema,
-  ExecActionSchema,
   PromptActionInputSchema,
 ]);
-
-/**
- * Script action variant used only inside JobPatchInputSchema: `shell` has no
- * default here (unlike ScriptActionSchema, used for create). A patch's action
- * is validated as a whole object, so if `shell` defaulted to 'auto' whenever
- * omitted, an update that only changes `script` would zod-fill 'auto' and
- * normalizeJobPatch could never tell that apart from an explicit choice —
- * silently resetting a customized shell. Leaving it optional/undefined here
- * lets normalizeJobPatch merge it in from the existing action instead.
- */
-const ScriptActionPatchSchema = ScriptActionSchema.extend({
-  script: z.string().min(1).optional(),
-  shell: z.enum(['auto', 'bash', 'pwsh', 'cmd']).optional(),
-});
-
-/**
- * Exec action variant used only inside JobPatchInputSchema: `args` has no
- * default here (unlike ExecActionSchema, used for create), for the same
- * reason as ScriptActionPatchSchema's `shell` — otherwise a patch that only
- * changes e.g. `envFile` would zod-fill `args` to `[]` and silently wipe out
- * existing exec arguments.
- */
-const ExecActionPatchSchema = ExecActionSchema.extend({
-  command: z.string().min(1).optional(),
-  args: z.array(z.string()).optional(),
-});
 
 /**
  * Prompt action variant used only inside JobPatchInputSchema: `args` and
@@ -82,8 +52,6 @@ const PromptActionPatchSchema = PromptActionInputSchema.extend({
 });
 
 const ActionPatchInputSchema = z.discriminatedUnion('kind', [
-  ScriptActionPatchSchema,
-  ExecActionPatchSchema,
   PromptActionPatchSchema,
 ]);
 
@@ -133,7 +101,7 @@ export interface JobCreateCliOptions {
   engineArgs?: string[];
   rawArgs?: string[];
   /**
-   * Explicit, repeatable `--arg <value>` values for --exec/--prompt actions.
+   * Explicit, repeatable `--arg <value>` values for prompt actions.
    * This is the always-correct, shim-independent way to pass arguments: it
    * never depends on `--` surviving a Windows shim (crontick.ps1/crontick.cmd),
    * and never risks a crontick flag being swallowed as a literal argument.
@@ -146,14 +114,11 @@ export interface JobCreateCliOptions {
   every?: number;
   at?: string;
   tz?: string;
-  script?: string;
-  exec?: string;
   prompt?: string;
   promptFile?: string;
   engine?: string;
   sessionId?: string;
   reuseSession?: boolean;
-  shell?: string;
   envFile?: string;
   timeout?: number;
   overlap?: string;
@@ -271,9 +236,9 @@ export function normalizeJobPatch(
  *  leaving fields the patch left `undefined` untouched. Shared by the action
  *  merge (mergeActionPatch) and the retry merge (normalizeJobPatch) — both
  *  exist because a create-time zod `.default()` had to be dropped from the
- *  matching patch schema (see ScriptActionPatchSchema/ExecActionPatchSchema/
- *  PromptActionPatchSchema/RetryPatchSchema), and the merge fills the gap
- *  left by an omitted field from the existing persisted value instead. */
+ *  matching patch schema (see PromptActionPatchSchema/RetryPatchSchema), and
+ *  the merge fills the gap left by an omitted field from the existing
+ *  persisted value instead. */
 function mergeDefinedFields(existing: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...existing };
   for (const [key, value] of Object.entries(patch)) {
@@ -285,13 +250,11 @@ function mergeDefinedFields(existing: Record<string, unknown>, patch: Record<str
 /**
  * A patch's action is merged field-by-field onto the existing action rather
  * than replacing it wholesale — otherwise fields the caller didn't mention
- * (shell, envFile, timeoutSec, args, reuseSession, ...) would be silently
- * discarded/reset every time any single action field is updated. A `kind`
- * change (e.g. script -> exec) is a deliberate full replacement: the old
- * action's fields don't apply to the new kind, so the patch action is used
- * as-is (and still gets zod's create-time defaults for shell/args/reuseSession
- * via the final JobSchema.safeParse below, since a kind change is effectively
- * a fresh action, same as create).
+ * (envFile, timeoutSec, args, reuseSession, ...) would be silently
+ * discarded/reset every time any single action field is updated. `prompt` is
+ * currently the only action kind, so the `kind` mismatch branch below is
+ * unreachable in practice; it's kept as a defensive fallback (full
+ * replacement, same as create) in case a future action kind is added.
  */
 function mergeActionPatch(existingAction: unknown, patchAction: unknown): unknown {
   if (!isRecord(existingAction) || !isRecord(patchAction) || existingAction.kind !== patchAction.kind) {
@@ -302,11 +265,11 @@ function mergeActionPatch(existingAction: unknown, patchAction: unknown): unknow
 
 /**
  * Fills the configured default engine for a genuinely new prompt action
- * introduced via a kind-change patch (e.g. script -> prompt) that didn't
- * specify --engine. Same-kind prompt updates never need this: their engine
- * is already preserved by mergeActionPatch. This only fires when the
- * existing action was NOT already a prompt (a real kind change), so it
- * never overwrites an engine that mergeActionPatch already carried forward.
+ * introduced via a kind-change patch that didn't specify --engine. Same-kind
+ * prompt updates never need this: their engine is already preserved by
+ * mergeActionPatch. This only fires when the existing action was NOT already
+ * a prompt (a real kind change), so it never overwrites an engine that
+ * mergeActionPatch already carried forward.
  */
 function withEngineDefaultForNewPromptAction(
   existingAction: unknown,
@@ -326,7 +289,7 @@ function withEngineDefaultForNewPromptAction(
 }
 
 /**
- * Resolves the effective args for exec/prompt actions from the two
+ * Resolves the effective args for prompt actions from the two
  * mutually exclusive CLI sources: explicit repeatable `--arg <value>` flags
  * (always correct, shim-independent) and legacy `--` positional args (a
  * convenience that only survives intact on invocations where the shell/shim
@@ -427,7 +390,7 @@ export function buildJobPatchFromUpdateOptions(
  *
  * `isCreate` gates the engine default fill: `engine` has no zod-level
  * default (see PromptEngineSchema usage in schemas/job.ts), so unlike
- * shell/args/reuseSession it can't fall back on the final JobSchema parse.
+ * args/reuseSession it can't fall back on the final JobSchema parse.
  * On create, an omitted engine should resolve to the configured default. On
  * a patch (isCreate: false), filling it here would stamp the config default
  * onto every same-kind prompt update that doesn't mention --engine, wiping
@@ -510,7 +473,6 @@ function validatePromptActionRuntimeArgs(action: Record<string, unknown>): void 
 
 function standaloneActionModifierFlags(input: JobPatchCliOptions): string[] {
   const flags: string[] = [];
-  if (input.shell !== undefined) flags.push('--shell');
   if (input.envFile !== undefined) flags.push(`--job-env-file ${JSON.stringify(input.envFile)}`);
   if (input.timeout !== undefined) flags.push('--timeout');
   return flags;
@@ -546,12 +508,12 @@ function maybeBuildSchedule(input: JobPatchCliOptions, strictUpdate = false): Jo
 
 function buildAction(input: JobCreateCliOptions, rawArgs: string[]): ActionInput {
   const action = maybeBuildAction(input, rawArgs);
-  if (!action) throw new CrontickError('MISSING_ARG', 'Provide --prompt or --prompt-file for a prompt job, or --file <json> for a full job definition (including script/exec actions)');
+  if (!action) throw new CrontickError('MISSING_ARG', 'Provide --prompt or --prompt-file for a prompt job, or --file <json> for a full job definition');
   return action;
 }
 
 function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[], strictUpdate = false): ActionInput | undefined {
-  const actionSourceCount = [input.script, input.exec, input.prompt, input.promptFile].filter(
+  const actionSourceCount = [input.prompt, input.promptFile].filter(
     (value) => value !== undefined,
   ).length;
   if (actionSourceCount === 0) {
@@ -565,7 +527,7 @@ function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[], strictUp
     if (rawArgs.length > 0) {
       throw new CrontickError(
         'VALIDATION_ERROR',
-        'Arguments (via --arg or --) are valid only with --exec, --prompt, or --prompt-file. Remove them or use one of those action sources.',
+        'Arguments (via --arg or --) are valid only with --prompt or --prompt-file. Remove them or use one of those action sources.',
       );
     }
     if (input.engine !== undefined || input.sessionId !== undefined || input.reuseSession) {
@@ -579,47 +541,10 @@ function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[], strictUp
   if (actionSourceCount !== 1) {
     throw new CrontickError(
       'MISSING_ARG',
-      'Provide exactly one action source: --script, --exec, --prompt, or --prompt-file',
+      'Provide exactly one action source: --prompt or --prompt-file',
     );
   }
 
-  const promptMode = input.prompt !== undefined || input.promptFile !== undefined;
-  // --exec reuses the same args convention prompt mode already uses: the
-  // command is taken verbatim (no whitespace splitting) and its arguments
-  // come from repeatable --arg <value> flags (always correct) or, as a
-  // convenience, everything after `--` (see resolveActionArgs).
-  const rawArgsMode = promptMode || input.exec !== undefined;
-  if (!rawArgsMode && rawArgs.length > 0) {
-    throw new CrontickError(
-      'VALIDATION_ERROR',
-      'Arguments (via --arg or --) are valid only with --exec, --prompt, or --prompt-file. Remove them or use one of those action sources.',
-    );
-  }
-  if (!promptMode && (input.engine !== undefined || input.sessionId !== undefined || input.reuseSession)) {
-    throw new CrontickError(
-      'VALIDATION_ERROR',
-      'Prompt engine/session flags are valid only with prompt mode. Use --prompt or --prompt-file, or remove --engine/--session-id/--reuse-session.',
-    );
-  }
-
-  if (input.script !== undefined) {
-    return {
-      kind: 'script',
-      script: input.script,
-      shell: actionShell(input.shell),
-      envFile: input.envFile,
-      timeoutSec: input.timeout,
-    };
-  }
-  if (input.exec !== undefined) {
-    return {
-      kind: 'exec',
-      command: input.exec, // taken verbatim -- no whitespace splitting
-      args: rawArgs, // everything after `--`, same convention as prompt mode
-      envFile: input.envFile,
-      timeoutSec: input.timeout,
-    };
-  }
   return {
     kind: 'prompt',
     prompt: input.prompt,
@@ -640,14 +565,11 @@ function assertFileModeExclusive(opts: JobPatchCliOptions, rawArgs: string[]): v
     || opts.every !== undefined
     || opts.at !== undefined
     || opts.tz !== undefined
-    || opts.script !== undefined
-    || opts.exec !== undefined
     || opts.prompt !== undefined
     || opts.promptFile !== undefined
     || opts.engine !== undefined
     || opts.sessionId !== undefined
     || opts.reuseSession !== undefined
-    || opts.shell !== undefined
     || opts.envFile !== undefined
     || opts.timeout !== undefined
     || opts.overlap !== undefined
@@ -662,12 +584,6 @@ function assertFileModeExclusive(opts: JobPatchCliOptions, rawArgs: string[]): v
       '--file is mutually exclusive with schedule, action, prompt, session, and raw engine arguments',
     );
   }
-}
-
-function actionShell(shell: string | undefined): 'auto' | 'bash' | 'pwsh' | 'cmd' | undefined {
-  if (shell === undefined) return undefined;
-  if (shell === 'bash' || shell === 'pwsh' || shell === 'cmd' || shell === 'auto') return shell;
-  throw new CrontickError('VALIDATION_ERROR', 'Shell must be auto, bash, pwsh, or cmd');
 }
 
 function promptEngine(engine: string | undefined): string | undefined {

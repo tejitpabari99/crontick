@@ -20,7 +20,7 @@ const cleanupFns: Array<() => Promise<void> | void> = [];
 const testJob = {
   alias: 'client-test-job',
   schedule: { kind: 'cron', cron: '0 0 * * *' },
-  action: { kind: 'exec', command: 'echo', args: ['hello'] },
+  action: { kind: 'prompt', prompt: 'hello', args: [], reuseSession: false },
 } satisfies JobInput;
 
 function makeHome(): string {
@@ -238,7 +238,7 @@ const client = createClient({ startupTimeoutMs: 10_000 });
 const created = await client.createJob({
   alias: 'bare-default-daemon-script-job',
   schedule: { kind: 'cron', cron: '0 0 * * *' },
-  action: { kind: 'exec', command: 'echo', args: ['hello'] },
+  action: { kind: 'prompt', prompt: 'hello', args: [], reuseSession: false },
 });
 process.stdout.write(JSON.stringify({ alias: created.alias }));
 `);
@@ -315,9 +315,8 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
       alias: 'client-missing-env-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: {
-        kind: 'exec',
-        command: process.execPath,
-        args: ['-e', 'process.exit(0)'],
+        kind: 'prompt',
+        prompt: 'noop',
         cwd: home,
         envFile: 'missing-client.env',
       },
@@ -335,15 +334,14 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     const original = await client.createJob({
       alias: 'client-missing-env-update-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
-      action: { kind: 'exec', command: 'echo', args: ['before'] },
+      action: { kind: 'prompt', prompt: 'before', args: [], reuseSession: false },
     });
     const missingEnvFile = join(home, 'missing-client-update.env');
 
     await expect(client.updateJob('client-missing-env-update-job', {
       action: {
-        kind: 'exec',
-        command: process.execPath,
-        args: ['-e', 'process.exit(0)'],
+        kind: 'prompt',
+        prompt: 'noop',
         cwd: home,
         envFile: 'missing-client-update.env',
       },
@@ -362,7 +360,7 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     await client.createJob({
       alias: 'client-cron-tz-update-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
-      action: { kind: 'exec', command: 'echo', args: ['before'] },
+      action: { kind: 'prompt', prompt: 'before', args: [], reuseSession: false },
     });
 
     await expect(client.updateJob('client-cron-tz-update-job', {
@@ -372,7 +370,7 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     });
   }, 15_000);
 
-  it('accepts modifier-only shell/envFile/timeout action patches through updateJob and merges them (CTD-026)', async () => {
+  it('accepts modifier-only engine/envFile/timeout action patches through updateJob and merges them (CTD-026)', async () => {
     const home = makeHome();
     const client = createClient({ daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 15_000 });
     const envFilePath = join(home, '.env.client-update.test');
@@ -382,31 +380,31 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
       alias: 'client-action-modifier-update-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: {
-        kind: 'script',
-        script: 'echo before',
-        shell: 'cmd',
+        kind: 'prompt',
+        prompt: 'before',
+        engine: 'agency',
         envFile: envFilePath,
         timeoutSec: 30,
       },
     });
 
-    // envFile-only patch — script and shell must be preserved
+    // envFile-only patch — prompt and engine must be preserved
     const afterEnvFile = await client.updateJob('client-action-modifier-update-job', {
-      action: { kind: 'script', envFile: envFilePath } as Parameters<typeof client.updateJob>[1]['action'],
+      action: { kind: 'prompt', envFile: envFilePath } as Parameters<typeof client.updateJob>[1]['action'],
     });
-    expect(afterEnvFile.action).toMatchObject({ kind: 'script', script: 'echo before', shell: 'cmd', envFile: envFilePath });
+    expect(afterEnvFile.action).toMatchObject({ kind: 'prompt', prompt: 'before', engine: 'agency', envFile: envFilePath });
 
-    // shell-only patch — script must be preserved
-    const afterShell = await client.updateJob('client-action-modifier-update-job', {
-      action: { kind: 'script', shell: 'pwsh' } as Parameters<typeof client.updateJob>[1]['action'],
+    // engine-only patch — prompt must be preserved
+    const afterEngine = await client.updateJob('client-action-modifier-update-job', {
+      action: { kind: 'prompt', engine: 'openai' } as Parameters<typeof client.updateJob>[1]['action'],
     });
-    expect(afterShell.action).toMatchObject({ kind: 'script', script: 'echo before', shell: 'pwsh' });
+    expect(afterEngine.action).toMatchObject({ kind: 'prompt', prompt: 'before', engine: 'openai' });
 
-    // timeoutSec-only patch — script and shell must be preserved
+    // timeoutSec-only patch — prompt and engine must be preserved
     const afterTimeout = await client.updateJob('client-action-modifier-update-job', {
-      action: { kind: 'script', timeoutSec: 45 } as Parameters<typeof client.updateJob>[1]['action'],
+      action: { kind: 'prompt', timeoutSec: 45 } as Parameters<typeof client.updateJob>[1]['action'],
     });
-    expect(afterTimeout.action).toMatchObject({ kind: 'script', script: 'echo before', shell: 'pwsh', timeoutSec: 45 });
+    expect(afterTimeout.action).toMatchObject({ kind: 'prompt', prompt: 'before', engine: 'openai', timeoutSec: 45 });
   }, 15_000);
 
   it('supports common CRUD and helper methods through the HTTP API', async () => {

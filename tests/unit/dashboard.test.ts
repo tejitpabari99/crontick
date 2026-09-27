@@ -90,7 +90,7 @@ describe('core dashboard data model', () => {
       id: 'dashboard-core-job',
       enabled: true,
       schedule: { kind: 'interval', everySec: 60 },
-      action: { kind: 'exec', command: process.execPath, args: ['-v'] },
+      action: { kind: 'prompt', prompt: 'hello', args: [], reuseSession: false },
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
     } satisfies Job;
@@ -103,7 +103,7 @@ describe('core dashboard data model', () => {
 
     expect(data.health).toMatchObject({ ok: true, product: 'crontick', port: 12345, pid: 6789 });
     expect(data.stats).toMatchObject({ totalJobs: 1, enabledJobs: 1, totalRuns: 1, succeeded: 1, failed: 0 });
-    expect(data.jobs[0]).toMatchObject({ id: job.id, scheduleLabel: 'every 60s', actionKind: 'exec', lastStatus: 'success' });
+    expect(data.jobs[0]).toMatchObject({ id: job.id, scheduleLabel: 'every 60s', actionKind: 'prompt', lastStatus: 'success' });
     expect(data.jobs[0].nextRunAt).toEqual(expect.any(String));
     expect(data.runs[0]).toMatchObject({ id: run.id, jobId: job.id, status: 'success', durationMs: 25, exitCode: 0 });
   });
@@ -126,7 +126,7 @@ describe('core dashboard data model', () => {
       id: 'avg-duration-job',
       enabled: true,
       schedule: { kind: 'interval', everySec: 60 },
-      action: { kind: 'exec', command: process.execPath, args: ['-v'] },
+      action: { kind: 'prompt', prompt: 'hello', args: [], reuseSession: false },
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
     } satisfies Job;

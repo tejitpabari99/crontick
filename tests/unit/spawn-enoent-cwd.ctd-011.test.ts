@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir, platform } from 'node:os';
+import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
@@ -17,33 +17,6 @@ function makeStore(dir: string): Store {
   const s = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
   s.open();
   return s;
-}
-
-function execJob(id: string, cwd: string): Job {
-  return {
-    id,
-    enabled: true,
-    schedule: { kind: 'cron', cron: '* * * * *' },
-    action: { kind: 'exec', command: process.execPath, args: ['--version'], cwd },
-    overlap: 'skip',
-    retry: { max: 0, backoffSec: 30 },
-  };
-}
-
-function scriptJob(id: string, cwd: string): Job {
-  return {
-    id,
-    enabled: true,
-    schedule: { kind: 'cron', cron: '* * * * *' },
-    action: {
-      kind: 'script',
-      script: platform() === 'win32' ? '@echo hello\r\n' : 'printf "hello\\n"\n',
-      shell: platform() === 'win32' ? 'cmd' : 'bash',
-      cwd,
-    },
-    overlap: 'skip',
-    retry: { max: 0, backoffSec: 30 },
-  };
 }
 
 function promptJob(id: string, cwd: string): Job {
@@ -140,12 +113,8 @@ describe('Runner missing cwd preflight (CTD-011)', () => {
     expect(store.getRun(run.id)?.error).not.toContain('ENOENT');
   }
 
-  it('fails exec jobs with an explicit missing-cwd error and terminal failed status before spawn', async () => {
-    await expectMissingCwdFailure(execJob('exec-missing-cwd', join(dir, 'missing-exec-cwd')));
-  });
-
-  it('fails script jobs with the same explicit missing-cwd error and terminal failed status before spawn', async () => {
-    await expectMissingCwdFailure(scriptJob('script-missing-cwd', join(dir, 'missing-script-cwd')));
+  it('fails prompt jobs with an explicit missing-cwd error and terminal failed status before spawn', async () => {
+    await expectMissingCwdFailure(promptJob('prompt-missing-cwd-preflight', join(dir, 'missing-prompt-cwd-preflight')));
   });
 
   it('fails prompt jobs with the same cwd-focused error instead of prompt-engine PATH guidance', async () => {

@@ -5,8 +5,7 @@ import { tmpdir } from 'node:os';
 import { Store } from '../../src/daemon/store.js';
 import { Runner } from '../../src/daemon/runner.js';
 import type { Job } from '../../src/schemas/job.js';
-
-const node = process.execPath;
+import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), 'crontick-overlap-'));
@@ -23,7 +22,13 @@ function makeJob(id: string, overlap: Job['overlap'], durationMs = 200): Job {
     id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
-    action: { kind: 'exec', command: node, args: ['-e', `setTimeout(() => process.exit(0), ${durationMs})`] },
+    action: {
+      kind: 'prompt',
+      prompt: `setTimeout(() => process.exit(0), ${durationMs})`,
+      engine: FAKE_ENGINE_NAME,
+      args: [],
+      reuseSession: false,
+    },
     overlap,
     retry: { max: 0, backoffSec: 0 },
   };
@@ -33,16 +38,22 @@ describe('Integration: overlap policies stress', () => {
   let dir: string;
   let store: Store;
   let runner: Runner;
+  let previousHome: string | undefined;
 
   beforeEach(() => {
     dir = makeTmpDir();
     mkdirSync(join(dir, 'jobs'), { recursive: true });
+    previousHome = process.env['CRONTICK_HOME'];
+    process.env['CRONTICK_HOME'] = dir;
+    writeFakeEngineConfig(dir);
     store = makeStore(dir);
     runner = new Runner();
   });
 
   afterEach(() => {
     store.close();
+    if (previousHome === undefined) delete process.env['CRONTICK_HOME'];
+    else process.env['CRONTICK_HOME'] = previousHome;
     rmSync(dir, { recursive: true, force: true });
   });
 

@@ -56,7 +56,7 @@ describe('readEnvFileForAction', () => {
     writeFileSync(envFilePath, 'FOO=bar\n', 'utf-8');
 
     try {
-      expect(readEnvFileForAction({ kind: 'exec', envFile: envFilePath })).toEqual({
+      expect(readEnvFileForAction({ kind: 'prompt', envFile: envFilePath })).toEqual({
         path: envFilePath,
         vars: { FOO: 'bar' },
       });
@@ -71,7 +71,7 @@ describe('readEnvFileForAction', () => {
     writeFileSync(envFilePath, 'FOO=bar\nBAZ=qux\n', 'utf-8');
 
     try {
-      expect(readEnvFileForAction({ kind: 'exec', cwd: dir, envFile: 'nested.env' })).toEqual({
+      expect(readEnvFileForAction({ kind: 'prompt', cwd: dir, envFile: 'nested.env' })).toEqual({
         path: envFilePath,
         vars: { FOO: 'bar', BAZ: 'qux' },
       });
@@ -86,7 +86,7 @@ describe('readEnvFileForAction', () => {
     writeFileSync(envFilePath, 'HELLO=world\n', 'utf-8');
 
     try {
-      expect(readEnvFileForAction({ kind: 'exec', envFile: 'process.env' }, dir)).toEqual({
+      expect(readEnvFileForAction({ kind: 'prompt', envFile: 'process.env' }, dir)).toEqual({
         path: envFilePath,
         vars: { HELLO: 'world' },
       });
@@ -102,7 +102,7 @@ describe('readEnvFileForAction', () => {
     try {
       const error = (() => {
         try {
-          readEnvFileForAction({ kind: 'exec', cwd: dir, envFile: 'missing.env' });
+          readEnvFileForAction({ kind: 'prompt', cwd: dir, envFile: 'missing.env' });
           return undefined;
         } catch (err) {
           return err;
@@ -129,7 +129,7 @@ describe('readEnvFileForAction', () => {
     try {
       const error = (() => {
         try {
-          readEnvFileForAction({ kind: 'exec', cwd: dir, envFile: 'env-dir' });
+          readEnvFileForAction({ kind: 'prompt', cwd: dir, envFile: 'env-dir' });
           return undefined;
         } catch (err) {
           return err;

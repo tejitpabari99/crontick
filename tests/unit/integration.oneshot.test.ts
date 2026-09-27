@@ -9,6 +9,7 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync } from 'node:f
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 
 const DAEMON_SCRIPT = join(process.cwd(), 'dist', 'daemon', 'index.js');
 const TIMEOUT_MS = 30_000;
@@ -81,6 +82,7 @@ describe('Integration: one-shot jobs through a live daemon', () => {
 
   beforeAll(async () => {
     dir = makeTmpDir();
+    writeFakeEngineConfig(dir);
     const stderrChunks: string[] = [];
     daemonProc = spawn(node, [DAEMON_SCRIPT], {
       env: { ...process.env, CRONTICK_HOME: dir },
@@ -101,7 +103,7 @@ describe('Integration: one-shot jobs through a live daemon', () => {
     const created = await apiCall(port, 'POST', '/api/jobs', {
       alias: jobId,
       schedule: { kind: 'one-shot', runAt },
-      action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'] },
+      action: { kind: 'prompt', prompt: 'process.exit(0)', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
     });
     expect(created.status).toBe(201);
 
@@ -137,7 +139,7 @@ describe('Integration: one-shot jobs through a live daemon', () => {
     const created = await apiCall(port, 'POST', '/api/jobs', {
       alias: jobId,
       schedule: { kind: 'one-shot', runAt },
-      action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'] },
+      action: { kind: 'prompt', prompt: 'process.exit(0)', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
     });
     expect(created.status).toBe(201);
 

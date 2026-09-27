@@ -40,9 +40,10 @@ function baseJob(alias: string): Job {
     enabled: true,
     schedule: { kind: 'cron', cron: '0 0 * * *' },
     action: {
-      kind: 'exec',
-      command: process.execPath,
-      args: ['-e', 'process.exit(0)'],
+      kind: 'prompt',
+      prompt: 'noop',
+      args: [],
+      reuseSession: false,
     },
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
@@ -100,7 +101,7 @@ describe('CTD-004 create/update schedule atomicity', () => {
       const result = await apiCall(port, 'POST', '/api/jobs', {
         alias: 'invalid-create',
         schedule: { kind: 'cron', cron: '61 * * * *' },
-        action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
+        action: { kind: 'prompt', prompt: 'noop', args: [], reuseSession: false },
       });
 
       expect(result.status).toBe(400);
@@ -171,9 +172,10 @@ describe('CTD-004 create/update schedule atomicity', () => {
         alias: 'missing-env-create',
         schedule: { kind: 'cron', cron: '0 0 * * *' },
         action: {
-          kind: 'exec',
-          command: process.execPath,
-          args: ['-e', 'process.exit(0)'],
+          kind: 'prompt',
+          prompt: 'noop',
+          args: [],
+          reuseSession: false,
           cwd: dir,
           envFile: 'missing-create.env',
         },
@@ -210,9 +212,10 @@ describe('CTD-004 create/update schedule atomicity', () => {
     try {
       const result = await apiCall(port, 'PUT', '/api/jobs/missing-env-update-job', {
         action: {
-          kind: 'exec',
-          command: process.execPath,
-          args: ['-e', 'process.exit(0)'],
+          kind: 'prompt',
+          prompt: 'noop',
+          args: [],
+          reuseSession: false,
           cwd: dir,
           envFile: 'missing-update.env',
         },

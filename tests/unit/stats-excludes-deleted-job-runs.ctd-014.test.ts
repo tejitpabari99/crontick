@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ORPHAN_RUN_ERROR_CODE, ORPHAN_RUN_ERROR_MESSAGE, createClient } from '../../src/index.js';
+import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 
 const CLI = resolve('dist', 'cli', 'index.js');
 const MCP = resolve('dist', 'mcp', 'index.js');
@@ -53,6 +54,7 @@ function resetHome(): void {
   rmSync(HOME, { recursive: true, force: true });
   mkdirSync(join(HOME, 'jobs'), { recursive: true });
   mkdirSync(join(HOME, 'logs'), { recursive: true });
+  writeFakeEngineConfig(HOME);
 }
 
 function cli(args: string[]): { status: number | null; stdout: string; stderr: string } {
@@ -119,9 +121,11 @@ function jobDefinition(id: string, line: string) {
     alias: id,
     schedule: { kind: 'interval' as const, everySec: 3600 },
     action: {
-      kind: 'exec' as const,
-      command: process.execPath,
-      args: ['-e', `console.log(${JSON.stringify(line)})`],
+      kind: 'prompt' as const,
+      prompt: `console.log(${JSON.stringify(line)})`,
+      engine: FAKE_ENGINE_NAME,
+      args: [],
+      reuseSession: false,
     },
   };
 }

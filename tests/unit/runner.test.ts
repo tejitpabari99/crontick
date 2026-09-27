@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { platform, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
@@ -11,6 +11,7 @@ import { isProcessAlive } from '../../src/process-liveness.js';
 import { Store } from '../../src/daemon/store.js';
 import type { Job } from '../../src/schemas/job.js';
 import { JobSchema } from '../../src/schemas/job.js';
+import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 
 const node = process.execPath;
 
@@ -24,12 +25,23 @@ function makeStore(dir: string): Store {
   return s;
 }
 
-function execJob(id: string, command: string, args: string[], opts?: Partial<Job>): Job {
+/**
+ * Builds a job whose prompt action resolves (via config, see
+ * writeFakeEngineConfig) to `node -e <code>`, so the runner really spawns a
+ * process running `code` -- this is what `exec`-kind fixtures did before
+ * crontick became prompt-only (see docs/decisions/0028-prompt-only-jobs.md).
+ * Kept call-compatible with the old `execJob(id, node, ['-e', code, ...extraArgs])`
+ * shape used throughout this file: `command` is unused (always `node`
+ * already), and `args` is `['-e', code, ...extraArgs]`.
+ */
+function execJob(id: string, _command: string, args: string[], opts?: Partial<Job>): Job {
+  const code = args[0] === '-e' ? (args[1] ?? '') : args.join(' ');
+  const extraArgs = args[0] === '-e' ? args.slice(2) : [];
   return {
     id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
-    action: { kind: 'exec', command, args },
+    action: { kind: 'prompt', prompt: code, engine: FAKE_ENGINE_NAME, args: extraArgs, reuseSession: false },
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
     ...opts,
@@ -115,6 +127,11 @@ describe('Runner', () => {
     mkdirSync(join(dir, 'jobs'), { recursive: true });
     previousHome = process.env['CRONTICK_HOME'];
     process.env['CRONTICK_HOME'] = dir;
+    // Registers FAKE_ENGINE_NAME ('node -e <prompt>') alongside the built-in
+    // `copilot` engine, so execJob()'s real-spawn fixtures resolve without a
+    // real engine CLI installed, while promptJob()'s `engine: 'copilot'`
+    // default (used by the fakeSpawn-based tests below) is untouched.
+    writeFakeEngineConfig(dir);
     store = makeStore(dir);
     runner = new Runner();
   });
@@ -172,61 +189,6 @@ describe('Runner', () => {
     expect(updated.durationMs).toBeGreaterThanOrEqual(0);
   });
 
-  // ── script kind ─────────────────────────────────────────────────────────────
-
-  it('script: executes inline script body', async () => {
-    const isWindows = platform() === 'win32';
-    const job: Job = {
-      id: 'script-job',
-      enabled: true,
-      schedule: { kind: 'cron', cron: '* * * * *' },
-      action: {
-        kind: 'script',
-        script: isWindows ? '@echo from-script\r\n' : 'printf "from-script\\n"\n',
-        shell: isWindows ? 'cmd' : 'bash',
-      },
-      overlap: 'skip',
-      retry: { max: 0, backoffSec: 30 },
-    };
-    const run = store.insertRun(job.id);
-    await runner.run(job, run.id, store);
-    const updated = store.getRun(run.id)!;
-    expect(updated.status).toBe('success');
-    expect(store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('')).toContain('from-script');
-  });
-
-  it('script: shell="auto" (the default job kind) captures non-empty output on every platform (BLOCKER 1 regression)', async () => {
-    // Before the L1 fix, spawn(..., { detached: true }) on Windows gave
-    // pwsh/powershell.exe no console at all (Win32 DETACHED_PROCESS flag —
-    // see nodejs/node#51018), and PowerShell's host silently never wrote to
-    // its (validly redirected) stdio pipes: a script job on the DEFAULT
-    // shell ('auto' -> pwsh on Windows) reported status: 'success' with zero
-    // captured output. That's exactly the README's first example
-    // (`crontick new hello --script "echo hello"`), so this must exercise
-    // 'auto' specifically — the test above pins an explicit non-pwsh shell
-    // and would not have caught this.
-    const isWindows = platform() === 'win32';
-    const job: Job = {
-      id: 'script-job-auto-shell',
-      enabled: true,
-      schedule: { kind: 'cron', cron: '* * * * *' },
-      action: {
-        kind: 'script',
-        script: isWindows ? "Write-Output 'from-auto-script'\r\n" : 'printf "from-auto-script\\n"\n',
-        shell: 'auto',
-      },
-      overlap: 'skip',
-      retry: { max: 0, backoffSec: 30 },
-    };
-    const run = store.insertRun(job.id);
-    await runner.run(job, run.id, store);
-    const updated = store.getRun(run.id)!;
-    expect(updated.status).toBe('success');
-    const output = store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('');
-    expect(output.length).toBeGreaterThan(0);
-    expect(output).toContain('from-auto-script');
-  }, 15_000);
-
   // ── Timeout ──────────────────────────────────────────────────────────────────
 
   it('exec: timeout cancels long-running job', async () => {
@@ -234,7 +196,7 @@ describe('Runner', () => {
       'timeout-job',
       node,
       ['-e', 'setTimeout(() => {}, 30000)'],
-      { action: { kind: 'exec', command: node, args: ['-e', 'setTimeout(() => {}, 30000)'], timeoutSec: 1 } },
+      { action: { kind: 'prompt', prompt: 'setTimeout(() => {}, 30000)', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false, timeoutSec: 1 } },
     );
     const run = store.insertRun(job.id);
     await runner.run(job, run.id, store);
@@ -367,17 +329,18 @@ describe('Runner', () => {
     expect(bytes).toEqual(Buffer.from([0, 1, 2, 255, 65]));
   });
 
-  // ── Exec schema: shell injection rejected ────────────────────────────────────
+  // ── Prompt schema: shell injection rejected ──────────────────────────────────
 
-  it('exec: job JSON with shell:true is stripped by zod — runner cannot receive shell:true', () => {
+  it('prompt: job JSON with an injected shell:true is rejected by the strict schema — runner cannot receive shell:true', () => {
     const jobData = {
       id: 'shell-test',
       schedule: { kind: 'cron', cron: '* * * * *' },
-      action: { kind: 'exec', command: 'echo', args: [], shell: true },
+      action: { kind: 'prompt', prompt: 'hello', shell: true },
     };
     const result = JobSchema.safeParse(jobData);
     expect(result.success).toBe(false);
-    // Either way shell:true cannot reach runner
+    // No action shape can smuggle shell:true through to the runner, which
+    // always spawns with shell:false regardless.
   });
 
   // ── prompt kind ─────────────────────────────────────────────────────────────
@@ -802,9 +765,9 @@ describe('Runner', () => {
   // ── Session-id capture on the run row + crontick log stream + per-job file ──
 
   describe('run session id + crontick log stream + per-job file logging', () => {
-    it('persists an extracted session id (Copilot --resume footer) onto the run row', async () => {
+    it('persists an extracted session id (generic session-id footer) onto the run row', async () => {
       const uuid = 'b4823c07-1617-489e-9fe4-820a42ba8677';
-      const fake = fakeSpawn([{ stderr: `Resume     copilot --resume=${uuid}\n` }]);
+      const fake = fakeSpawn([{ stderr: `session id: ${uuid}\n` }]);
       runner = new Runner(fake.spawnFn as never);
       const job = promptJob('run-sessionid-extracted', { reuseSession: true });
       store.upsertJob(job);

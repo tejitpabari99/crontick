@@ -2,17 +2,15 @@
 // retry with backoff, timeout, and stream capture with secret redaction.
 // See docs/internals/executors.md
 import { spawn } from 'node:child_process';
-import { writeFileSync, unlinkSync, existsSync, mkdirSync, statSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { platform } from 'node:os';
-import { join, basename } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { basename } from 'node:path';
 import type { Job, PromptAction } from '../schemas/job.js';
 import type { Store, RunStatus, LogStream } from './store.js';
 import { CrontickError } from '../errors.js';
 import { extractSessionId } from './prompt-session.js';
 import { buildPromptRunCommand, loadConfig } from '../config.js';
 import { createStreamingTextRedactor, nullLogger, redactText, type Logger, type StreamingTextRedactor } from '../logger.js';
-import { tempScriptsDir } from '../paths.js';
 import { isProcessAlive, isSameRunProcess } from '../process-liveness.js';
 import { readEnvFileForAction } from './env-file.js';
 import { createJobLogFileFactory, type JobLogFile, type JobLogFileFactory } from './job-log-file.js';
@@ -118,26 +116,6 @@ export function truncateToUtf8Boundary(buf: Buffer): Buffer {
   // Ran out of scan window without finding a lead byte (>=4 trailing
   // continuation bytes) — already-invalid input; leave untouched.
   return buf;
-}
-
-const EMPTY_BUFFER = Buffer.alloc(0);
-
-interface BufferedUtf8Chunk {
-  complete: Buffer;
-  pending: Buffer;
-}
-
-function splitBufferedUtf8Chunk(chunk: Buffer): BufferedUtf8Chunk {
-  const complete = truncateToUtf8Boundary(chunk);
-  if (complete.length === chunk.length) return { complete, pending: EMPTY_BUFFER };
-  return {
-    complete,
-    pending: Buffer.from(chunk.subarray(complete.length)),
-  };
-}
-
-function appendBufferedUtf8Chunk(pending: Buffer, chunk: Buffer): BufferedUtf8Chunk {
-  return splitBufferedUtf8Chunk(pending.length === 0 ? chunk : Buffer.concat([pending, chunk]));
 }
 
 const ACTION_CWD_INVALID_ERROR_CODE = 'ACTION_CWD_INVALID';
@@ -433,374 +411,314 @@ export class Runner {
   ): Promise<RunResult> {
     const { action } = job;
     validateActionCwd(action);
-    const tempFiles: string[] = [];
-    let tmpFile: string | undefined;
 
-    try {
-      let cmd: string;
-      let args: string[];
+    let promptEnv: Record<string, string> = {};
 
-      let capturePromptSession = false;
-      let promptCaptureAction: PromptAction | undefined;
-      let promptSessionJob = job;
-      let promptEngineBinary: string | undefined;
-      let promptEnv: Record<string, string> = {};
-      let bufferPowerShellUtf8 = false;
-
-      if (action.kind === 'script') {
-        // Write transient script wrappers under the managed data root so
-        // crontick owns their full lifecycle instead of relying on the OS temp
-        // directory's cleanup policy.
-        const ext = resolveShellExt(action.shell ?? 'auto');
-        const tmpDir = tempScriptsDir();
-        mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
-
-        const resolved = resolveShell(action.shell ?? 'auto');
-        if (resolved === 'pwsh') {
-          const userScriptFile = join(tmpDir, `${randomUUID()}.user.ps1`);
-          tmpFile = join(tmpDir, `${randomUUID()}${ext}`);
-          tempFiles.push(userScriptFile, tmpFile);
-          bufferPowerShellUtf8 = true;
-          writeFileSync(userScriptFile, action.script, { encoding: 'utf-8', mode: 0o700 });
-          // Deliberately invoke the user's script from a wrapper file so pwsh can
-          // report truthful failures while an explicit user `exit N` still wins.
-          writeFileSync(tmpFile, buildPowerShellScriptWrapper(userScriptFile), { encoding: 'utf-8', mode: 0o700 });
-          cmd = 'pwsh';
-          args = ['-NoProfile', '-NonInteractive', '-File', tmpFile];
-        } else if (resolved === 'cmd') {
-          tmpFile = join(tmpDir, `${randomUUID()}${ext}`);
-          tempFiles.push(tmpFile);
-          writeFileSync(tmpFile, action.script, { encoding: 'utf-8', mode: 0o700 });
-          cmd = 'cmd';
-          args = ['/c', tmpFile];
-        } else {
-          tmpFile = join(tmpDir, `${randomUUID()}${ext}`);
-          tempFiles.push(tmpFile);
-          writeFileSync(tmpFile, action.script, { encoding: 'utf-8', mode: 0o700 });
-          cmd = 'bash';
-          args = [tmpFile];
-        }
-      } else if (action.kind === 'exec') {
-        cmd = action.command;
-        args = action.args ?? [];
-      } else {
-        const latestJob = store.getJob(job.id);
-        if (latestJob?.action.kind === 'prompt') promptSessionJob = latestJob;
-        const latestAction =
-          promptSessionJob.action.kind === 'prompt' ? promptSessionJob.action : action;
-        const sessionId = latestAction.sessionId ?? action.sessionId;
-        capturePromptSession = latestAction.reuseSession && !sessionId;
-        promptCaptureAction = capturePromptSession ? latestAction : undefined;
-        if (sessionId && latestAction.reuseSession) {
-          log.append(
-            'crontick',
-            Buffer.from('[crontick] notice: reuseSession was ignored because an explicit sessionId was provided.\n', 'utf-8'),
-          );
-        }
-        // Persist an explicitly-provided session id onto the run record now
-        // (an extracted one is persisted from the close handler below).
-        if (sessionId) {
-          try {
-            store.updateRun(runId, { sessionId });
-          } catch (err) {
-            this.logger.error('Failed to persist run sessionId', { jobId: job.id, runId, error: String(err) });
-          }
-        }
-
-        const runCommand = buildPromptRunCommand({ ...latestAction, sessionId }, { logger: this.logger });
-        cmd = runCommand.command;
-        promptEngineBinary = runCommand.engine;
-        args = runCommand.args;
-        promptEnv = runCommand.env;
-        this.logger.debug('Resolved prompt run command', { jobId: job.id, runId, engine: promptEngineBinary, command: cmd, args, envKeys: Object.keys(promptEnv) });
-        this.appendDiagnosticLog(log, 'resolved prompt command', { engine: promptEngineBinary, command: cmd, args, envKeys: Object.keys(promptEnv) });
-      }
-
-      log.crontick('executing', { command: cmd, args });
-
-      // Persist the redacted resolved command onto the run record so
-      // `crontick runs get <id>` can show exactly what was executed for this
-      // specific run, independent of any later edits to the job definition.
+    const latestJob = store.getJob(job.id);
+    const promptSessionJob = latestJob?.action.kind === 'prompt' ? latestJob : job;
+    const latestAction =
+      promptSessionJob.action.kind === 'prompt' ? promptSessionJob.action : action;
+    const sessionId = latestAction.sessionId ?? action.sessionId;
+    const capturePromptSession = latestAction.reuseSession && !sessionId;
+    const promptCaptureAction: PromptAction | undefined = capturePromptSession ? latestAction : undefined;
+    if (sessionId && latestAction.reuseSession) {
+      log.append(
+        'crontick',
+        Buffer.from('[crontick] notice: reuseSession was ignored because an explicit sessionId was provided.\n', 'utf-8'),
+      );
+    }
+    // Persist an explicitly-provided session id onto the run record now
+    // (an extracted one is persisted from the close handler below).
+    if (sessionId) {
       try {
-        store.updateRun(runId, { command: redactText([cmd, ...args].join(' ')) });
+        store.updateRun(runId, { sessionId });
       } catch (err) {
-        this.logger.error('Failed to persist run command', { jobId: job.id, runId, error: String(err) });
+        this.logger.error('Failed to persist run sessionId', { jobId: job.id, runId, error: String(err) });
       }
+    }
 
-      // All action kinds use shell:false — no shell interpretation, preventing injection.
-      // detached + windowsHide (L8): children survive the daemon's death uniformly on
-      // both platforms — POSIX reparents to init (unchanged from before), and on
-      // Windows CREATE_NEW_PROCESS_GROUP decouples the child from the daemon's Job
-      // Object so it isn't torn down when the daemon exits/crashes/restarts.
-      // windowsHide prevents a visible console window from appearing for every job
-      // on Windows now that detached is always set (Node opens one by default
-      // otherwise). Combined with L3/L4's pid-based adoption, a child that's still
-      // alive when the daemon comes back up is re-attached instead of double-run.
-      //
-      // EXCEPTION — pwsh/powershell.exe on Windows: Node's `detached: true` maps to
-      // Win32's DETACHED_PROCESS creation flag there (libuv src/win/process.c), which
-      // gives the child no console at all. PowerShell's host requires an attached
-      // console to initialize and, without one, never reaches the point of writing to
-      // its (still perfectly valid) stdout/stderr handles — confirmed by reproducing
-      // with both pipe- and file-redirected stdio: both come back completely empty,
-      // while the same detached spawn works fine for cmd.exe and node.exe (see
-      // nodejs/node#51018). windowsHide is unrelated and not the cause (verified
-      // independently). Silent output loss is unacceptable, so for this one
-      // command/platform combination we deliberately drop `detached` and accept the
-      // trade-off: a pwsh/powershell.exe script job's child will NOT survive the
-      // daemon being killed via Ctrl+C propagated through the shared console (though
-      // an abrupt crash/kill -9 still leaves it running, since Windows doesn't
-      // cascade-kill unrelated processes on its own). Every other shell/command keeps
-      // both guarantees.
-      const isWindowsPowerShellHost = platform() === 'win32' && isPowerShellHostCommand(cmd);
-      const spawnOpts: Parameters<typeof spawn>[2] = {
-        cwd: action.cwd ?? process.cwd(),
-        env: { ...process.env, ...promptEnv, ...(action.env ?? {}) } as NodeJS.ProcessEnv,
-        signal,
-        shell: false,
-        detached: !isWindowsPowerShellHost,
-        windowsHide: true,
-      };
-      if (isWindowsPowerShellHost) {
-        this.appendDiagnosticLog(log, 'detached disabled for pwsh/powershell.exe on Windows (output-capture trade-off, see runner.ts)');
+    const runCommand = buildPromptRunCommand({ ...latestAction, sessionId }, { logger: this.logger });
+    const cmd = runCommand.command;
+    const promptEngineBinary = runCommand.engine;
+    const args = runCommand.args;
+    promptEnv = runCommand.env;
+    this.logger.debug('Resolved prompt run command', { jobId: job.id, runId, engine: promptEngineBinary, command: cmd, args, envKeys: Object.keys(promptEnv) });
+    this.appendDiagnosticLog(log, 'resolved prompt command', { engine: promptEngineBinary, command: cmd, args, envKeys: Object.keys(promptEnv) });
+
+    log.crontick('executing', { command: cmd, args });
+
+    // Persist the redacted resolved command onto the run record so
+    // `crontick runs get <id>` can show exactly what was executed for this
+    // specific run, independent of any later edits to the job definition.
+    try {
+      store.updateRun(runId, { command: redactText([cmd, ...args].join(' ')) });
+    } catch (err) {
+      this.logger.error('Failed to persist run command', { jobId: job.id, runId, error: String(err) });
+    }
+
+    // All action kinds use shell:false — no shell interpretation, preventing injection.
+    // detached + windowsHide (L8): children survive the daemon's death uniformly on
+    // both platforms — POSIX reparents to init (unchanged from before), and on
+    // Windows CREATE_NEW_PROCESS_GROUP decouples the child from the daemon's Job
+    // Object so it isn't torn down when the daemon exits/crashes/restarts.
+    // windowsHide prevents a visible console window from appearing for every job
+    // on Windows now that detached is always set (Node opens one by default
+    // otherwise). Combined with L3/L4's pid-based adoption, a child that's still
+    // alive when the daemon comes back up is re-attached instead of double-run.
+    //
+    // EXCEPTION — pwsh/powershell.exe on Windows: Node's `detached: true` maps to
+    // Win32's DETACHED_PROCESS creation flag there (libuv src/win/process.c), which
+    // gives the child no console at all. PowerShell's host requires an attached
+    // console to initialize and, without one, never reaches the point of writing to
+    // its (still perfectly valid) stdout/stderr handles — confirmed by reproducing
+    // with both pipe- and file-redirected stdio: both come back completely empty,
+    // while the same detached spawn works fine for cmd.exe and node.exe (see
+    // nodejs/node#51018). windowsHide is unrelated and not the cause (verified
+    // independently). Silent output loss is unacceptable, so for this one
+    // command/platform combination we deliberately drop `detached` and accept the
+    // trade-off: a pwsh/powershell.exe script job's child will NOT survive the
+    // daemon being killed via Ctrl+C propagated through the shared console (though
+    // an abrupt crash/kill -9 still leaves it running, since Windows doesn't
+    // cascade-kill unrelated processes on its own). Every other shell/command keeps
+    // both guarantees.
+    const isWindowsPowerShellHost = platform() === 'win32' && isPowerShellHostCommand(cmd);
+    const spawnOpts: Parameters<typeof spawn>[2] = {
+      cwd: action.cwd ?? process.cwd(),
+      env: { ...process.env, ...promptEnv, ...(action.env ?? {}) } as NodeJS.ProcessEnv,
+      signal,
+      shell: false,
+      detached: !isWindowsPowerShellHost,
+      windowsHide: true,
+    };
+    if (isWindowsPowerShellHost) {
+      this.appendDiagnosticLog(log, 'detached disabled for pwsh/powershell.exe on Windows (output-capture trade-off, see runner.ts)');
+    }
+
+    // Merge envFile variables (lower priority than action.env, higher than process.env).
+    const envFile = readEnvFileForAction(action);
+    if (envFile) {
+      spawnOpts.env = {
+        ...process.env,
+        ...promptEnv,
+        ...envFile.vars,
+        ...(action.env ?? {}),
+      } as NodeJS.ProcessEnv;
+      this.logger.debug('Loaded env file for run', { jobId: job.id, runId, envFile: envFile.path, envKeys: Object.keys(envFile.vars) });
+    }
+
+    // Timeout enforcement (L-timeout): tracked manually rather than via spawn()'s
+    // `timeout` option. Node's own timeout kills with SIGTERM and fires `close`
+    // with (code: null, signal: 'SIGTERM') — it never emits an 'error' with
+    // ETIMEDOUT, so that branch in the 'error' handler below was unreachable, and
+    // the close handler's generic "killed by signal" check saw every timeout as a
+    // plain SIGTERM and recorded status: 'canceled'. `timedOut` is set by our own
+    // timer just before we send the same SIGTERM ourselves, so the close handler
+    // can tell "we killed it because it ran too long" apart from "someone/something
+    // else sent SIGTERM" and record status: 'timeout' accordingly.
+    let timedOut = false;
+    let timeoutHandle: NodeJS.Timeout | undefined;
+
+    // Prompt session ID extraction only needs the last ~128 KB of combined
+    // output. Rather than reallocating (concat + subarray) on every stdout
+    // chunk — O(n^2) for chatty prompts — we retain incoming chunks in an
+    // array and drop whole leading chunks once the buffered bytes still cover
+    // the cap without them. The exact last-maxTranscriptBytes tail is only
+    // materialized once, at process close (see readTranscriptTail).
+    const maxTranscriptBytes = 128 * 1024;
+    const transcriptChunks: Buffer[] = [];
+    let transcriptBytes = 0;
+    const appendTranscript = (chunk: Buffer) => {
+      if (!capturePromptSession) return;
+      transcriptChunks.push(chunk);
+      transcriptBytes += chunk.byteLength;
+      // Evict leading chunks while the remainder still fully covers the cap,
+      // so we never keep more than the last chunk beyond maxTranscriptBytes.
+      while (
+        transcriptChunks.length > 1 &&
+        transcriptBytes - transcriptChunks[0].byteLength >= maxTranscriptBytes
+      ) {
+        transcriptBytes -= transcriptChunks[0].byteLength;
+        transcriptChunks.shift();
       }
+    };
+    const readTranscriptTail = (): string => {
+      const combined = transcriptChunks.length === 1 ? transcriptChunks[0] : Buffer.concat(transcriptChunks);
+      const tail =
+        combined.byteLength > maxTranscriptBytes
+          ? combined.subarray(combined.byteLength - maxTranscriptBytes)
+          : combined;
+      return tail.toString('utf-8');
+    };
 
-      // Merge envFile variables (lower priority than action.env, higher than process.env).
-      const envFile = readEnvFileForAction(action);
-      if (envFile) {
-        spawnOpts.env = {
-          ...process.env,
-          ...promptEnv,
-          ...envFile.vars,
-          ...(action.env ?? {}),
-        } as NodeJS.ProcessEnv;
-        this.logger.debug('Loaded env file for run', { jobId: job.id, runId, envFile: envFile.path, envKeys: Object.keys(envFile.vars) });
+    // Byte cap on captured output (L5): re-read per run (not cached at Runner
+    // construction) so a config change via `crontick daemon reload` takes
+    // effect for new runs without a full restart, mirroring the
+    // maxRunsPerJob reload pattern. The child process itself is never
+    // killed or throttled here — only persistence of further chunks stops.
+    const maxOutputBytes = this.maxOutputBytesPerRunOverride ?? resolveMaxOutputBytesPerRun();
+    let capturedBytes = 0;
+    let outputTruncated = false;
+    const streamRedactors: Record<'stdout' | 'stderr', StreamingTextRedactor> = {
+      stdout: createStreamingTextRedactor(),
+      stderr: createStreamingTextRedactor(),
+    };
+    const flushRedactor = (stream: 'stdout' | 'stderr'): void => {
+      const flushed = flushSafeRedactor(streamRedactors[stream]);
+      if (flushed.length > 0) log.append(stream, flushed);
+    };
+    const captureChunk = (stream: 'stdout' | 'stderr', chunk: Buffer): void => {
+      if (outputTruncated) return; // marker already emitted; drop silently, child keeps running
+      const redactor = streamRedactors[stream];
+      if (capturedBytes + chunk.length > maxOutputBytes) {
+        const room = Math.max(0, maxOutputBytes - capturedBytes);
+        // truncateToUtf8Boundary (L5 fix): the cap cuts at an arbitrary byte
+        // offset — trim back to a full character so the last stored bytes
+        // before the marker are never an invalid, split UTF-8 sequence.
+        if (room > 0) {
+          const redacted = safeRedact(truncateToUtf8Boundary(chunk.subarray(0, room)), redactor);
+          if (!redacted.textLike) flushRedactor(stream);
+          if (redacted.chunk.length > 0) log.append(stream, redacted.chunk);
+        }
+        flushRedactor(stream);
+        log.append(stream, Buffer.from(truncationMarker(maxOutputBytes), 'utf-8'));
+        try {
+          store.updateRun(runId, { outputTruncated: true });
+        } catch (err) {
+          this.logger.error('Failed to persist outputTruncated flag', { jobId: job.id, runId, error: String(err) });
+        }
+        outputTruncated = true;
+        return;
       }
-
-      // Timeout enforcement (L-timeout): tracked manually rather than via spawn()'s
-      // `timeout` option. Node's own timeout kills with SIGTERM and fires `close`
-      // with (code: null, signal: 'SIGTERM') — it never emits an 'error' with
-      // ETIMEDOUT, so that branch in the 'error' handler below was unreachable, and
-      // the close handler's generic "killed by signal" check saw every timeout as a
-      // plain SIGTERM and recorded status: 'canceled'. `timedOut` is set by our own
-      // timer just before we send the same SIGTERM ourselves, so the close handler
-      // can tell "we killed it because it ran too long" apart from "someone/something
-      // else sent SIGTERM" and record status: 'timeout' accordingly.
-      let timedOut = false;
-      let timeoutHandle: NodeJS.Timeout | undefined;
-
-      // Prompt session ID extraction only needs the last ~128 KB of combined
-      // output. Rather than reallocating (concat + subarray) on every stdout
-      // chunk — O(n^2) for chatty prompts — we retain incoming chunks in an
-      // array and drop whole leading chunks once the buffered bytes still cover
-      // the cap without them. The exact last-maxTranscriptBytes tail is only
-      // materialized once, at process close (see readTranscriptTail).
-      const maxTranscriptBytes = 128 * 1024;
-      const transcriptChunks: Buffer[] = [];
-      let transcriptBytes = 0;
-      const appendTranscript = (chunk: Buffer) => {
-        if (!capturePromptSession) return;
-        transcriptChunks.push(chunk);
-        transcriptBytes += chunk.byteLength;
-        // Evict leading chunks while the remainder still fully covers the cap,
-        // so we never keep more than the last chunk beyond maxTranscriptBytes.
-        while (
-          transcriptChunks.length > 1 &&
-          transcriptBytes - transcriptChunks[0].byteLength >= maxTranscriptBytes
-        ) {
-          transcriptBytes -= transcriptChunks[0].byteLength;
-          transcriptChunks.shift();
+      capturedBytes += chunk.length;
+      const redacted = safeRedact(chunk, redactor);
+      if (!redacted.textLike) flushRedactor(stream);
+      if (redacted.chunk.length > 0) log.append(stream, redacted.chunk);
+    };
+    const result = await new Promise<RunResult>((resolve) => {
+      const timeoutMs = action.timeoutSec ? action.timeoutSec * 1000 : undefined;
+      this.logger.debug('Spawning child process', { jobId: job.id, runId, command: cmd, args, cwd: spawnOpts.cwd, timeoutMs });
+      this.appendDiagnosticLog(log, 'spawn', { command: cmd, args, cwd: spawnOpts.cwd, timeoutMs });
+      const child = this.spawnFn(cmd, args, spawnOpts);
+      // Persist the OS pid the instant it's known (L4) — nothing before this
+      // point could reconcile against it. unref() so a detached child never
+      // keeps the daemon's event loop alive on its own.
+      if (child.pid !== undefined) {
+        try {
+          store.updateRun(runId, { pid: child.pid });
+        } catch (err) {
+          this.logger.error('Failed to persist run pid', { jobId: job.id, runId, error: String(err) });
         }
-      };
-      const readTranscriptTail = (): string => {
-        const combined = transcriptChunks.length === 1 ? transcriptChunks[0] : Buffer.concat(transcriptChunks);
-        const tail =
-          combined.byteLength > maxTranscriptBytes
-            ? combined.subarray(combined.byteLength - maxTranscriptBytes)
-            : combined;
-        return tail.toString('utf-8');
-      };
-
-      // Byte cap on captured output (L5): re-read per run (not cached at Runner
-      // construction) so a config change via `crontick daemon reload` takes
-      // effect for new runs without a full restart, mirroring the
-      // maxRunsPerJob reload pattern. The child process itself is never
-      // killed or throttled here — only persistence of further chunks stops.
-      const maxOutputBytes = this.maxOutputBytesPerRunOverride ?? resolveMaxOutputBytesPerRun();
-      let capturedBytes = 0;
-      let outputTruncated = false;
-      const bufferedChunks: Record<'stdout' | 'stderr', Buffer> = {
-        stdout: EMPTY_BUFFER,
-        stderr: EMPTY_BUFFER,
-      };
-      const streamRedactors: Record<'stdout' | 'stderr', StreamingTextRedactor> = {
-        stdout: createStreamingTextRedactor(),
-        stderr: createStreamingTextRedactor(),
-      };
-      const flushRedactor = (stream: 'stdout' | 'stderr'): void => {
-        const flushed = flushSafeRedactor(streamRedactors[stream]);
-        if (flushed.length > 0) log.append(stream, flushed);
-      };
-      const captureChunk = (stream: 'stdout' | 'stderr', chunk: Buffer): void => {
-        if (outputTruncated) return; // marker already emitted; drop silently, child keeps running
-        const redactor = streamRedactors[stream];
-        if (capturedBytes + chunk.length > maxOutputBytes) {
-          const room = Math.max(0, maxOutputBytes - capturedBytes);
-          // truncateToUtf8Boundary (L5 fix): the cap cuts at an arbitrary byte
-          // offset — trim back to a full character so the last stored bytes
-          // before the marker are never an invalid, split UTF-8 sequence.
-          if (room > 0) {
-            const redacted = safeRedact(truncateToUtf8Boundary(chunk.subarray(0, room)), redactor);
-            if (!redacted.textLike) flushRedactor(stream);
-            if (redacted.chunk.length > 0) log.append(stream, redacted.chunk);
-          }
-          flushRedactor(stream);
-          log.append(stream, Buffer.from(truncationMarker(maxOutputBytes), 'utf-8'));
-          try {
-            store.updateRun(runId, { outputTruncated: true });
-          } catch (err) {
-            this.logger.error('Failed to persist outputTruncated flag', { jobId: job.id, runId, error: String(err) });
-          }
-          outputTruncated = true;
-          return;
-        }
-        capturedBytes += chunk.length;
-        const redacted = safeRedact(chunk, redactor);
-        if (!redacted.textLike) flushRedactor(stream);
-        if (redacted.chunk.length > 0) log.append(stream, redacted.chunk);
-      };
-      const captureBufferedChunk = (stream: 'stdout' | 'stderr', chunk: Buffer): void => {
-        if (!bufferPowerShellUtf8) {
-          captureChunk(stream, chunk);
-          return;
-        }
-        const { complete, pending } = appendBufferedUtf8Chunk(bufferedChunks[stream], chunk);
-        bufferedChunks[stream] = pending;
-        if (complete.length > 0) captureChunk(stream, complete);
-      };
-      const flushBufferedChunk = (stream: 'stdout' | 'stderr'): void => {
-        if (!bufferPowerShellUtf8) return;
-        const pending = bufferedChunks[stream];
-        if (pending.length === 0) return;
-        bufferedChunks[stream] = EMPTY_BUFFER;
-        captureChunk(stream, pending);
-      };
-
-      const result = await new Promise<RunResult>((resolve) => {
-        const timeoutMs = action.timeoutSec ? action.timeoutSec * 1000 : undefined;
-        this.logger.debug('Spawning child process', { jobId: job.id, runId, command: cmd, args, cwd: spawnOpts.cwd, timeoutMs });
-        this.appendDiagnosticLog(log, 'spawn', { command: cmd, args, cwd: spawnOpts.cwd, timeoutMs });
-        const child = this.spawnFn(cmd, args, spawnOpts);
-        // Persist the OS pid the instant it's known (L4) — nothing before this
-        // point could reconcile against it. unref() so a detached child never
-        // keeps the daemon's event loop alive on its own.
-        if (child.pid !== undefined) {
-          try {
-            store.updateRun(runId, { pid: child.pid });
-          } catch (err) {
-            this.logger.error('Failed to persist run pid', { jobId: job.id, runId, error: String(err) });
-          }
-        }
-        child.unref?.();
-        if (timeoutMs !== undefined) {
-          timeoutHandle = setTimeout(() => {
-            timedOut = true;
-            try {
-              if (!signal.aborted) child.kill('SIGTERM');
-            } catch {
-              // already gone
-            }
-          }, timeoutMs);
-          timeoutHandle.unref?.();
-        }
-        const startedAt = Date.now();
-        const captureAction = promptCaptureAction;
-        let settled = false;
-        const finish = (runResult: RunResult) => {
-          if (settled) return;
-          settled = true;
-          if (timeoutHandle) clearTimeout(timeoutHandle);
-          resolve(runResult);
-        };
-        const failFromCallback = (err: unknown) => {
-          finish({ status: 'failed', error: `RUNNER_CALLBACK_FAILED: ${errorMessage(err)}` });
+      }
+      child.unref?.();
+      if (timeoutMs !== undefined) {
+        timeoutHandle = setTimeout(() => {
+          timedOut = true;
           try {
             if (!signal.aborted) child.kill('SIGTERM');
           } catch {
-            // ignore termination races
+            // already gone
           }
-        };
+        }, timeoutMs);
+        timeoutHandle.unref?.();
+      }
+      const startedAt = Date.now();
+      const captureAction = promptCaptureAction;
+      let settled = false;
+      const finish = (runResult: RunResult) => {
+        if (settled) return;
+        settled = true;
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        resolve(runResult);
+      };
+      const failFromCallback = (err: unknown) => {
+        finish({ status: 'failed', error: `RUNNER_CALLBACK_FAILED: ${errorMessage(err)}` });
+        try {
+          if (!signal.aborted) child.kill('SIGTERM');
+        } catch {
+          // ignore termination races
+        }
+      };
 
-        child.stdout?.on('data', (chunk: Buffer) => {
-          try {
-            appendTranscript(chunk);
-            captureBufferedChunk('stdout', chunk);
-          } catch (err) {
-            failFromCallback(err);
-          }
-        });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        try {
+          appendTranscript(chunk);
+          captureChunk('stdout', chunk);
+        } catch (err) {
+          failFromCallback(err);
+        }
+      });
 
-        child.stderr?.on('data', (chunk: Buffer) => {
-          try {
-            appendTranscript(chunk);
-            captureBufferedChunk('stderr', chunk);
-          } catch (err) {
-            failFromCallback(err);
-          }
-        });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        try {
+          appendTranscript(chunk);
+          captureChunk('stderr', chunk);
+        } catch (err) {
+          failFromCallback(err);
+        }
+      });
 
-        child.on('close', (code, sig) => {
-          try {
-            flushBufferedChunk('stdout');
-            flushBufferedChunk('stderr');
-            flushRedactor('stdout');
-            flushRedactor('stderr');
-          } catch (err) {
-            finish({ status: 'failed', error: `RUNNER_CALLBACK_FAILED: ${errorMessage(err)}` });
-            return;
-          }
-          const durationMs = Date.now() - startedAt;
-          this.logger.debug('Child process closed', { jobId: job.id, runId, code, signal: sig, durationMs });
-          this.appendDiagnosticLog(log, 'child closed', { code, signal: sig, durationMs });
-          if (signal.aborted) {
-            finish({ status: 'canceled', error: 'aborted' });
-          } else if (timedOut) {
-            // Checked before the generic signal branch below: our own timer sent
-            // this SIGTERM, so close() looks identical to a user cancellation
-            // (code: null, signal: 'SIGTERM') unless we track intent ourselves.
-            finish({ status: 'timeout', error: `run exceeded timeoutSec (${action.timeoutSec}s)` });
-          } else if (sig === 'SIGTERM' || sig === 'SIGKILL') {
-            finish({ status: 'canceled', error: `killed by signal ${sig}` });
-          } else if (code === null) {
-            finish({ status: 'failed', error: 'process exited without code' });
-          } else {
-            const result: RunResult = {
-              status: code === 0 ? 'success' : 'failed',
-              exitCode: code,
-            };
-            if (result.status === 'success' && capturePromptSession) {
-              const sessionId = extractSessionId(readTranscriptTail());
-              if (!sessionId) {
-                this.logger.debug('Session id capture failed', { jobId: job.id, runId });
+      child.on('close', (code, sig) => {
+        try {
+          flushRedactor('stdout');
+          flushRedactor('stderr');
+        } catch (err) {
+          finish({ status: 'failed', error: `RUNNER_CALLBACK_FAILED: ${errorMessage(err)}` });
+          return;
+        }
+        const durationMs = Date.now() - startedAt;
+        this.logger.debug('Child process closed', { jobId: job.id, runId, code, signal: sig, durationMs });
+        this.appendDiagnosticLog(log, 'child closed', { code, signal: sig, durationMs });
+        if (signal.aborted) {
+          finish({ status: 'canceled', error: 'aborted' });
+        } else if (timedOut) {
+          // Checked before the generic signal branch below: our own timer sent
+          // this SIGTERM, so close() looks identical to a user cancellation
+          // (code: null, signal: 'SIGTERM') unless we track intent ourselves.
+          finish({ status: 'timeout', error: `run exceeded timeoutSec (${action.timeoutSec}s)` });
+        } else if (sig === 'SIGTERM' || sig === 'SIGKILL') {
+          finish({ status: 'canceled', error: `killed by signal ${sig}` });
+        } else if (code === null) {
+          finish({ status: 'failed', error: 'process exited without code' });
+        } else {
+          const result: RunResult = {
+            status: code === 0 ? 'success' : 'failed',
+            exitCode: code,
+          };
+          if (result.status === 'success' && capturePromptSession) {
+            const sessionId = extractSessionId(readTranscriptTail());
+            if (!sessionId) {
+              this.logger.debug('Session id capture failed', { jobId: job.id, runId });
+              finish({
+                status: 'failed',
+                exitCode: code,
+                error: 'SESSION_ID_NOT_FOUND: prompt engine output did not include a session id. Configure an explicit session id with --session-id <id>, or disable reuseSession.',
+              });
+              return;
+            }
+            // Persist the extracted session id onto the run record (for the
+            // dashboard and `runs get`), independent of whether the job-level
+            // capture below wins its race.
+            try {
+              store.updateRun(runId, { sessionId });
+            } catch (err) {
+              this.logger.error('Failed to persist run sessionId', { jobId: job.id, runId, error: String(err) });
+            }
+            if (captureAction) {
+              let persisted = false;
+              try {
+                persisted = store.tryCapturePromptSession(job.id, captureAction, sessionId);
+              } catch (err) {
                 finish({
                   status: 'failed',
                   exitCode: code,
-                  error: 'SESSION_ID_NOT_FOUND: prompt engine output did not include a session id. Configure an explicit session id with --session-id <id>, or disable reuseSession.',
+                  error: `SESSION_PERSIST_FAILED: ${errorMessage(err)}`,
                 });
                 return;
               }
-              // Persist the extracted session id onto the run record (for the
-              // dashboard and `runs get`), independent of whether the job-level
-              // capture below wins its race.
-              try {
-                store.updateRun(runId, { sessionId });
-              } catch (err) {
-                this.logger.error('Failed to persist run sessionId', { jobId: job.id, runId, error: String(err) });
-              }
-              if (captureAction) {
-                let persisted = false;
+              if (persisted) {
+                this.logger.debug('Session id captured and persisted', { jobId: job.id, runId });
                 try {
-                  persisted = store.tryCapturePromptSession(job.id, captureAction, sessionId);
+                  log.append('crontick', Buffer.from(`[crontick] captured session id: ${sessionId}\n`, 'utf-8'));
                 } catch (err) {
                   finish({
                     status: 'failed',
@@ -809,53 +727,31 @@ export class Runner {
                   });
                   return;
                 }
-                if (persisted) {
-                  this.logger.debug('Session id captured and persisted', { jobId: job.id, runId });
-                  try {
-                    log.append('crontick', Buffer.from(`[crontick] captured session id: ${sessionId}\n`, 'utf-8'));
-                  } catch (err) {
-                    finish({
-                      status: 'failed',
-                      exitCode: code,
-                      error: `SESSION_PERSIST_FAILED: ${errorMessage(err)}`,
-                    });
-                    return;
-                  }
-                }
               }
             }
-            finish(result);
           }
-          void durationMs; // consumed below via store
-        });
-
-        child.on('error', (err: NodeJS.ErrnoException) => {
-          this.logger.debug('Child process error', { jobId: job.id, runId, code: err.code, message: err.message });
-          this.appendDiagnosticLog(log, 'child error', { code: err.code, message: err.message });
-          if (err.code === 'ABORT_ERR' || signal.aborted) {
-            finish({ status: 'canceled', error: 'aborted' });
-          } else if (err.code === 'ENOENT' && promptEngineBinary) {
-            finish({
-              status: 'failed',
-              error: `Prompt engine "${promptEngineBinary}" command "${cmd}" was not found on PATH. Install it, update PATH, or change engines.${promptEngineBinary}.command in crontick config before the next run.`,
-            });
-          } else {
-            finish({ status: 'failed', error: err.message });
-          }
-        });
+          finish(result);
+        }
+        void durationMs; // consumed below via store
       });
 
-      return result;
-    } finally {
-      for (const tempFile of tempFiles) {
-        if (!existsSync(tempFile)) continue;
-        try {
-          unlinkSync(tempFile);
-        } catch {
-          // ignore cleanup failure
+      child.on('error', (err: NodeJS.ErrnoException) => {
+        this.logger.debug('Child process error', { jobId: job.id, runId, code: err.code, message: err.message });
+        this.appendDiagnosticLog(log, 'child error', { code: err.code, message: err.message });
+        if (err.code === 'ABORT_ERR' || signal.aborted) {
+          finish({ status: 'canceled', error: 'aborted' });
+        } else if (err.code === 'ENOENT' && promptEngineBinary) {
+          finish({
+            status: 'failed',
+            error: `Prompt engine "${promptEngineBinary}" command "${cmd}" was not found on PATH. Install it, update PATH, or change engines.${promptEngineBinary}.command in crontick config before the next run.`,
+          });
+        } else {
+          finish({ status: 'failed', error: err.message });
         }
-      }
-    }
+      });
+    });
+
+    return result;
   }
 
 
@@ -909,55 +805,6 @@ export class Runner {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Resolve shell per platform: 'auto' → pwsh on Windows, bash elsewhere. */
-function resolveShell(shell: string): 'bash' | 'pwsh' | 'cmd' {
-  if (shell === 'auto') {
-    return platform() === 'win32' ? 'pwsh' : 'bash';
-  }
-  if (shell === 'pwsh') return 'pwsh';
-  if (shell === 'cmd') return 'cmd';
-  return 'bash';
-}
-
-/** Map shell name to temp-file extension (.ps1, .bat, .sh). */
-function resolveShellExt(shell: string): string {
-  const resolved = resolveShell(shell);
-  if (resolved === 'pwsh') return '.ps1';
-  if (resolved === 'cmd') return '.bat';
-  return '.sh';
-}
-
-function buildPowerShellScriptWrapper(userScriptPath: string): string {
-  const escapedUserScriptPath = escapePowerShellSingleQuotedString(userScriptPath);
-  return [
-    "$ErrorActionPreference = 'Stop'",
-    '$utf8NoBom = [System.Text.UTF8Encoding]::new($false)',
-    '[Console]::OutputEncoding = $utf8NoBom',
-    '$OutputEncoding = $utf8NoBom',
-    'if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {',
-    '  $PSNativeCommandUseErrorActionPreference = $true',
-    '}',
-    '$global:LASTEXITCODE = 0',
-    'trap {',
-    '  [Console]::Error.WriteLine($_.ToString())',
-    '  if ($global:LASTEXITCODE -is [int] -and $global:LASTEXITCODE -ne 0) {',
-    '    exit $global:LASTEXITCODE',
-    '  }',
-    '  exit 1',
-    '}',
-    `& '${escapedUserScriptPath}'`,
-    'if ($global:LASTEXITCODE -is [int] -and $global:LASTEXITCODE -ne 0) {',
-    '  exit $global:LASTEXITCODE',
-    '}',
-    'exit 0',
-    '',
-  ].join('\n');
-}
-
-function escapePowerShellSingleQuotedString(value: string): string {
-  return value.replace(/'/g, "''");
-}
 
 /**
  * True if `cmd` invokes PowerShell (Core `pwsh` or Windows PowerShell

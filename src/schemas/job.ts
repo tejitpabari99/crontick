@@ -43,20 +43,6 @@ const CommonActionFields = {
   timeoutSec: z.number().positive().optional(),
 };
 
-export const ScriptActionSchema = z.object({
-  kind: z.literal('script'),
-  script: z.string().min(1),
-  shell: z.enum(['auto', 'bash', 'pwsh', 'cmd']).default('auto'),
-  ...CommonActionFields,
-}).strict();
-
-export const ExecActionSchema = z.object({
-  kind: z.literal('exec'),
-  command: z.string().min(1),
-  args: z.array(z.string()).default([]),
-  ...CommonActionFields,
-}).strict();
-
 export const PromptEngineSchema = EngineNameSchema;
 
 /**
@@ -78,13 +64,17 @@ export const PromptActionBaseSchema = z.object({
 export const PromptActionSchema = PromptActionBaseSchema.superRefine(addPromptRuntimeIssues);
 
 /**
- * Action discriminated union keyed on `kind`. Uses PromptActionBaseSchema
- * (not PromptActionSchema) as the union member because Zod discriminatedUnion
+ * Action discriminated union keyed on `kind`. Prompt is the only member since
+ * the `script`/`exec` action kinds were removed (crontick is prompt-only --
+ * see docs/decisions/0028-prompt-only-jobs.md). `kind: 'prompt'` is kept
+ * explicit (rather than dropping the discriminant and flattening the action
+ * shape) so job JSON stays self-describing and forward-compatible with a
+ * future action kind, and so existing job files/tooling that read
+ * `action.kind` keep working unchanged. Uses PromptActionBaseSchema (not
+ * PromptActionSchema) as the union member because Zod discriminatedUnion
  * requires plain objects; the prompt refinement is re-applied via superRefine.
  */
 export const ActionSchema = z.discriminatedUnion('kind', [
-  ScriptActionSchema,
-  ExecActionSchema,
   PromptActionBaseSchema,
 ]).superRefine((action, ctx) => {
   if (action.kind === 'prompt') addPromptRuntimeIssues(action, ctx);

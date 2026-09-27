@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { jobJsonSchemaText } from '../../src/schema-json.js';
+import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 
 const CLI = resolve('dist/cli/index.js');
 const DAEMON_SCRIPT = resolve('dist/daemon/index.js');
@@ -112,7 +113,7 @@ function writeJobFile(dir: string, alias: string, overrides: Record<string, unkn
     id,
     alias,
     schedule: { kind: 'cron', cron: '0 0 * * *' },
-    action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
+    action: { kind: 'prompt', prompt: 'process.exit(0)', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
     ...overrides,
   };
   return { id, file: writeJsonFile(dir, alias, job) };
@@ -250,6 +251,7 @@ describe('CLI e2e with daemon', () => {
 
   beforeAll(async () => {
     dir = makeTmpDir();
+    writeFakeEngineConfig(dir);
     const stderrChunks: string[] = [];
     daemonProc = spawn(process.execPath, [DAEMON_SCRIPT], { env: { ...process.env, CRONTICK_HOME: dir }, stdio: 'pipe' });
     daemonProc.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk.toString()));
@@ -264,24 +266,24 @@ describe('CLI e2e with daemon', () => {
 
   const env = () => ({ CRONTICK_HOME: dir });
 
-  it('jobs new --file creates an exec job; duplicate aliases require --force', () => {
+  it('jobs new --file creates a prompt job; duplicate aliases require --force', () => {
     const { file, id } = writeJobFile(dir, 'e2e-job');
     const created = cli(['jobs', 'new', '--file', file], env());
     expect(created.status, created.stderr).toBe(0);
     expect(parseCliObject(created.stdout)).toMatchObject({ id, alias: 'e2e-job' });
-    expect(parseCliObject(created.stdout).action).toMatchObject({ kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] });
+    expect(parseCliObject(created.stdout).action).toMatchObject({ kind: 'prompt', prompt: 'process.exit(0)', engine: FAKE_ENGINE_NAME });
     expect(readFileSync(join(dir, 'jobs', `${id}.schema.json`), 'utf-8')).toBe(jobJsonSchemaText());
 
     const original = writeJobFile(dir, 'duplicate-cli-job', {
       schedule: { kind: 'interval', everySec: 60 },
       description: 'original cli definition',
-      action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
+      action: { kind: 'prompt', prompt: 'process.exit(0)', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
     }).file;
     expect(cli(['jobs', 'new', '--file', original], env()).status).toBe(0);
     const replacement = writeJobFile(dir, 'duplicate-cli-job', {
       schedule: { kind: 'cron', cron: '15 6 * * *' },
       description: 'replacement cli definition',
-      action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(1)'] },
+      action: { kind: 'prompt', prompt: 'process.exit(1)', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
     }).file;
     expectCleanError(cli(['jobs', 'new', '--file', replacement], env()), 'JOB_ALREADY_EXISTS');
     expect(parseCliObject(cli(['jobs', 'get', 'duplicate-cli-job'], env()).stdout)).toMatchObject({ description: 'original cli definition' });
@@ -340,7 +342,7 @@ describe('CLI e2e with daemon', () => {
     const alias = 'cli-redaction-job';
     const createSecret = `sk-proj-${'V'.repeat(28)}`;
     const updateSecret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
-    const createFile = writeJobFile(dir, alias, { action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'], env: { OPENAI_API_KEY: createSecret, NON_SECRET: 'https://example.test/job-visible' } } }).file;
+    const createFile = writeJobFile(dir, alias, { action: { kind: 'prompt', prompt: 'process.exit(0)', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false, env: { OPENAI_API_KEY: createSecret, NON_SECRET: 'https://example.test/job-visible' } } }).file;
     let result = cli(['jobs', 'new', '--file', createFile], env());
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).not.toContain(createSecret);
@@ -350,7 +352,7 @@ describe('CLI e2e with daemon', () => {
     result = cli(['jobs', 'list'], env());
     expect(result.stdout).not.toContain(createSecret);
     expect(parseCliTable(result.stdout)).toContainEqual(expect.objectContaining({ alias, action: expect.objectContaining({ env: expect.objectContaining({ OPENAI_API_KEY: '[REDACTED]' }) }) }));
-    const patchFile = writeJsonFile(dir, 'cli-redaction-job-update', { action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'], env: { AWS_SECRET_ACCESS_KEY: updateSecret, NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } } });
+    const patchFile = writeJsonFile(dir, 'cli-redaction-job-update', { action: { kind: 'prompt', prompt: 'process.exit(0)', env: { AWS_SECRET_ACCESS_KEY: updateSecret, NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } } });
     result = cli(['jobs', 'update', alias, '--file', patchFile], env());
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).not.toContain(updateSecret);
@@ -362,7 +364,7 @@ describe('CLI e2e with daemon', () => {
   });
 
   it('jobs update changes metadata, overlap, enablement, timezone, and preserves omitted fields', () => {
-    const { file } = writeJobFile(dir, 'merge-check-job', { schedule: { kind: 'cron', cron: '0 9 * * *' }, action: { kind: 'exec', command: 'echo', args: ['hi'] }, overlap: 'queue', retry: { max: 2, backoffSec: 30 } });
+    const { file } = writeJobFile(dir, 'merge-check-job', { schedule: { kind: 'cron', cron: '0 9 * * *' }, action: { kind: 'prompt', prompt: 'hi', args: [], reuseSession: false }, overlap: 'queue', retry: { max: 2, backoffSec: 30 } });
     expect(cli(['jobs', 'new', '--file', file], env()).status).toBe(0);
     let updated = cli(['jobs', 'update', 'merge-check-job', '--desc', 'merged'], env());
     expect(updated.status, updated.stderr).toBe(0);
@@ -378,17 +380,17 @@ describe('CLI e2e with daemon', () => {
   });
 
   it('jobs update --file preserves and replaces action/retry fields through the core patch path', () => {
-    const { file } = writeJobFile(dir, 'file-patch-job', { action: { kind: 'exec', command: 'echo', args: ['a', 'b'] } });
+    const { file } = writeJobFile(dir, 'file-patch-job', { action: { kind: 'prompt', prompt: 'hi', args: ['a', 'b'], reuseSession: false } });
     expect(cli(['jobs', 'new', '--file', file], env()).status).toBe(0);
-    const envFilePath = join(dir, 'file-exec-args.env');
+    const envFilePath = join(dir, 'file-prompt-args.env');
     writeFileSync(envFilePath, 'FOO=bar\n', 'utf-8');
-    let patchFile = writeJsonFile(dir, 'file-exec-args-patch', { action: { kind: 'exec', command: 'echo', envFile: envFilePath } });
+    let patchFile = writeJsonFile(dir, 'file-prompt-args-patch', { action: { kind: 'prompt', envFile: envFilePath } });
     let updated = cli(['jobs', 'update', 'file-patch-job', '--file', patchFile], env());
     expect(updated.status, updated.stderr).toBe(0);
-    expect(parseCliObject(updated.stdout).action).toMatchObject({ kind: 'exec', command: 'echo', args: ['a', 'b'], envFile: envFilePath });
-    patchFile = writeJsonFile(dir, 'file-action-switch-patch', { action: { kind: 'script', script: 'echo done', shell: 'cmd' } });
+    expect(parseCliObject(updated.stdout).action).toMatchObject({ kind: 'prompt', prompt: 'hi', args: ['a', 'b'], envFile: envFilePath });
+    patchFile = writeJsonFile(dir, 'file-action-engine-patch', { action: { kind: 'prompt', engine: 'agency' } });
     updated = cli(['jobs', 'update', 'file-patch-job', '--file', patchFile], env());
-    expect(parseCliObject(updated.stdout).action).toMatchObject({ kind: 'script', script: 'echo done', shell: 'cmd' });
+    expect(parseCliObject(updated.stdout).action).toMatchObject({ kind: 'prompt', prompt: 'hi', engine: 'agency' });
     patchFile = writeJsonFile(dir, 'file-retry-seed-patch', { retry: { max: 1, backoffSec: 90 } });
     updated = cli(['jobs', 'update', 'file-patch-job', '--file', patchFile], env());
     expect(parseCliObject(updated.stdout).retry).toEqual({ max: 1, backoffSec: 90 });
@@ -397,19 +399,13 @@ describe('CLI e2e with daemon', () => {
     expect(parseCliObject(updated.stdout).retry).toEqual({ max: 3, backoffSec: 90 });
   });
 
-  it('jobs update --file preserves prompt args/reuseSession/engine and fills default engine on kind change', () => {
+  it('jobs update --file preserves prompt args/reuseSession/engine when only prompt text changes', () => {
     const created = cli(['jobs', 'new', '--alias', 'file-prompt-preserve-job', '--cron', '0 9 * * *', '--prompt', 'old', '--engine', 'agency', '--reuse-session', '--', '--flag'], env());
     expect(created.status, created.stderr).toBe(0);
-    let patchFile = writeJsonFile(dir, 'file-prompt-preserve-patch', { action: { kind: 'prompt', prompt: 'new' } });
-    let updated = cli(['jobs', 'update', 'file-prompt-preserve-job', '--file', patchFile], env());
+    const patchFile = writeJsonFile(dir, 'file-prompt-preserve-patch', { action: { kind: 'prompt', prompt: 'new' } });
+    const updated = cli(['jobs', 'update', 'file-prompt-preserve-job', '--file', patchFile], env());
     expect(updated.status, updated.stderr).toBe(0);
     expect(parseCliObject(updated.stdout).action).toMatchObject({ kind: 'prompt', prompt: 'new', args: ['--flag'], reuseSession: true, engine: 'agency' });
-
-    const { file } = writeJobFile(dir, 'file-kind-change-engine-job');
-    expect(cli(['jobs', 'new', '--file', file], env()).status).toBe(0);
-    patchFile = writeJsonFile(dir, 'file-kind-change-engine-patch', { action: { kind: 'prompt', prompt: 'hello' } });
-    updated = cli(['jobs', 'update', 'file-kind-change-engine-job', '--file', patchFile], env());
-    expect(parseCliObject(updated.stdout).action).toMatchObject({ kind: 'prompt', prompt: 'hello', engine: 'copilot' });
   });
 
   it('jobs run-now triggers a run; runs commands inspect, filter, log, cancel, and delete it', async () => {
@@ -515,7 +511,7 @@ describe('CLI e2e with daemon', () => {
     expect(result.stderr).toContain('Unexpected end of JSON input');
     expect(result.stderr).toContain(`position ${eofContents.length}`);
 
-    const createJob = { id: nextUuid(), alias: 'cli-file-create-job', schedule: { kind: 'cron', cron: '0 12 * * *' }, action: { kind: 'exec', command: 'echo', args: ['bom-create'] } };
+    const createJob = { id: nextUuid(), alias: 'cli-file-create-job', schedule: { kind: 'cron', cron: '0 12 * * *' }, action: { kind: 'prompt', prompt: 'bom-create', args: [], reuseSession: false } };
     const createFile = join(dir, 'new-file-bom.json');
     writeFileSync(createFile, `\uFEFF${JSON.stringify(createJob, null, 2)}`, 'utf-8');
     expect(cli(['jobs', 'new', '--file', createFile], env()).status).toBe(0);
@@ -527,7 +523,7 @@ describe('CLI e2e with daemon', () => {
     expect(result.stderr).toContain('expected a JSON object matching the crontick job schema');
     expect(parseCliTable(cli(['jobs', 'list'], env()).stdout).length).toBe(beforeCount);
     const patchFile = join(dir, 'update-file-bom.json');
-    writeFileSync(patchFile, `\uFEFF${JSON.stringify({ action: { kind: 'exec', command: 'echo', args: ['bom-update'] } })}`, 'utf-8');
+    writeFileSync(patchFile, `\uFEFF${JSON.stringify({ action: { kind: 'prompt', prompt: 'bom-update' } })}`, 'utf-8');
     expect(cli(['jobs', 'update', 'cli-file-create-job', '--file', patchFile], env()).status).toBe(0);
     const beforeBad = parseCliObject(cli(['jobs', 'get', 'cli-file-create-job'], env()).stdout);
     const badPatchFile = join(dir, 'update-file-bad.json');

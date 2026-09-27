@@ -299,9 +299,11 @@ function jobWithEnv(id: string, env: Record<string, string>): Job {
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
     action: {
-      kind: 'exec',
-      command: process.execPath,
-      args: ['-e', 'process.exit(0)'],
+      kind: 'prompt',
+      prompt: 'noop',
+      engine: 'copilot',
+      args: [],
+      reuseSession: false,
       env,
     },
     overlap: 'skip',
@@ -609,9 +611,10 @@ describe('CTD-003 shared secret redaction', () => {
         alias: jobId,
         schedule: { kind: 'cron', cron: '0 0 * * *' },
         action: {
-          kind: 'exec',
-          command: process.execPath,
-          args: ['-e', 'process.exit(0)'],
+          kind: 'prompt',
+          prompt: 'noop',
+          args: [],
+          reuseSession: false,
           env: {
             OPENAI_API_KEY: OPENAI_PROJECT,
             NON_SECRET: BENIGN_WINDOWS_PATH,
@@ -643,9 +646,10 @@ describe('CTD-003 shared secret redaction', () => {
       const updated = await fixture.client.updateJob(jobId, {
         description: 'updated secret env',
         action: {
-          kind: 'exec',
-          command: process.execPath,
-          args: ['-e', 'process.exit(0)'],
+          kind: 'prompt',
+          prompt: 'noop',
+          args: [],
+          reuseSession: false,
           env: {
             AWS_SECRET_ACCESS_KEY,
             NO_PASSWORD: BENIGN_40_CHAR,
