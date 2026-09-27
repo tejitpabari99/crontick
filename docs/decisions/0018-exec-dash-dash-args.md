@@ -1,6 +1,6 @@
 # 0018: `--exec` takes command and args verbatim, separated by `--`
 
-- Status: Superseded by ADR-0019
+- Status: Superseded by ADR-0019; also superseded by [ADR 0028](0028-prompt-only-jobs.md) (the `exec` action kind itself was removed)
 - Date: 2026-07-26
 
 > Superseded by [ADR 0019](0019-arg-flag-primary-for-exec-and-prompt-args.md), which

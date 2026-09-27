@@ -1,6 +1,6 @@
 # 0019: `--arg` is the primary way to pass arguments to `--exec`/`--prompt`
 
-- Status: Accepted
+- Status: Accepted; partially superseded by [ADR 0028](0028-prompt-only-jobs.md) -- the `exec` action kind and its `--exec` flag no longer exist, so this ADR's guidance now applies only to `--prompt`/`--prompt-file` args
 - Date: 2026-07-27
 
 ## Context

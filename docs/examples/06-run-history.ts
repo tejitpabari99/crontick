@@ -8,11 +8,11 @@ import { createClient } from 'crontick';
 
 const client = createClient();
 
-// Create a simple script job (interval schedule, but we will trigger manually).
+// Create a simple prompt job (interval schedule, but we will trigger manually).
 await client.createJob({
   id: 'run-history-demo',
   schedule: { kind: 'interval', everySec: 3600 },
-  action: { kind: 'script', script: 'echo "run at $(date)"' },
+  action: { kind: 'prompt', prompt: 'Report the current date and time' },
 });
 
 // Trigger an immediate run.

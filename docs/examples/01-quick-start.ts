@@ -1,5 +1,5 @@
 // 01-quick-start.ts
-// Demonstrates: creating a client, adding a script job on an interval,
+// Demonstrates: creating a client, adding a prompt job on an interval,
 // listing jobs, and cleaning up.
 //
 // Run: npx tsx examples/01-quick-start.ts
@@ -12,7 +12,7 @@ const client = createClient();
 const job = await client.createJob({
   id: 'hello-interval',
   schedule: { kind: 'interval', everySec: 60 },
-  action: { kind: 'script', script: 'echo "hello from crontick"' },
+  action: { kind: 'prompt', prompt: 'Say hello from crontick' },
 });
 console.log('Created job:', job.id);
 

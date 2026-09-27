@@ -12,7 +12,7 @@ const client = createClient();
 const job = await client.createJob({
   id: 'weekday-greeting',
   schedule: { kind: 'cron', cron: '0 9 * * 1-5', tz: 'America/New_York' },
-  action: { kind: 'script', script: 'echo "Good morning!"' },
+  action: { kind: 'prompt', prompt: 'Say good morning' },
 });
 console.log('Created cron job:', job.id);
 console.log('Schedule:', JSON.stringify(job.schedule, null, 2));

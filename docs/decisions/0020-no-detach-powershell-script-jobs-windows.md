@@ -1,6 +1,6 @@
 # 0020: Do not detach pwsh/powershell.exe script jobs on Windows
 
-- Status: Accepted
+- Status: Accepted; superseded by [ADR 0028](0028-prompt-only-jobs.md) -- the `script` action kind (and the PowerShell script-wrapper machinery this ADR's exception applied to) was removed. The general `isPowerShellHostCommand()` detached-spawn exception itself remains in the runner for any command (including a prompt engine) whose resolved basename is `pwsh`/`powershell`.
 - Date: 2026-07-27
 
 ## Context
