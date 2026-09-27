@@ -1,5 +1,0 @@
----
-"crontick": patch
----
-
-Jobs now have an immutable, server-assigned GUID `id` (`node:crypto` `randomUUID()`) as their internal primary key, plus an optional, user-editable, unique `alias`. Auto-generated when omitted (`<word>-<1-1000>`, retried on collision). Every surface that accepts a job identifier (CLI, MCP, HTTP API) now accepts either the GUID `id` or the `alias` and resolves it internally, returning `JOB_NOT_FOUND` when neither matches. This fixes a bug where deleting a job and recreating it with the same identifier would show the previous job's stale run status/history in the dashboard, since runs are now permanently tied to the GUID rather than a reusable human string. Existing on-disk jobs are migrated in place on daemon startup: their old id becomes the `alias` and a fresh GUID becomes the `id`, with run history remapped to match. The dashboard now exposes both `id` and `alias` for each job (and each run's associated `alias`) without changing any existing fields or the frontend markup.

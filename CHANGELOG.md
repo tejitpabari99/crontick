@@ -1,5 +1,50 @@
 # crontick
 
+## 0.2.1
+
+### Patch Changes
+
+- 364cb8e: Running `crontick` with no subcommand now prints help and exits `0` instead of
+  `1`. Previously the bare invocation used Commander's default "no command"
+  behavior (help to stderr, exit code 1), which PowerShell 7.4+ surfaces as a
+  noisy `NativeCommandExitException` on a purely informational invocation.
+  `crontick --help` and every subcommand are unchanged.
+- 364cb8e: Reorganize the CLI and MCP surfaces around grouped jobs/runs/stats/share commands: config now prints the file path, info reports version/runtime/path status, runs delete removes run history/log rows, and jobs schedule previews existing jobs. The global --json flag and dedicated script/exec/config CLI/MCP exposure were removed while script and exec remain available through job JSON and the core client; CLI errors now render as clean colored single-line messages with verbose diagnostics on request.
+- 364cb8e: Remove the `dashboard` CLI command group and `crontick_dashboard_*` MCP tools; the dashboard is always served by the daemon, and `crontick info` (and `crontick_info`) now expose its URL via `dashboardUrl`.
+- 364cb8e: Overhaul the dashboard web UI: the jobs table now shows a job `Alias` column and a
+  copyable GUID `ID` column (the `Enabled` column is dropped) plus a right-aligned
+  actions cell with enable/disable and delete icon buttons (disable and delete prompt
+  for confirmation). Clicking a job row filters the runs list to that job. The recent
+  runs section gains a server-side "Filter Job" dropdown, a client-side status filter,
+  and a time/duration sort control. Run rows now show the full run id and session id
+  (each with a copy button) and open a log modal that splits Output (stdout + crontick
+  streams) from Error (stderr + the run's recorded error), each independently scrollable.
+  The stale `crontick dashboard data --runs-limit` hint in the dashboard runsLimit
+  validation errors is replaced with guidance to provide a positive integer.
+- 364cb8e: Jobs now have an immutable, server-assigned GUID `id` (`node:crypto` `randomUUID()`) as their internal primary key, plus an optional, user-editable, unique `alias`. Auto-generated when omitted (`<word>-<1-1000>`, retried on collision). Every surface that accepts a job identifier (CLI, MCP, HTTP API) now accepts either the GUID `id` or the `alias` and resolves it internally, returning `JOB_NOT_FOUND` when neither matches. This fixes a bug where deleting a job and recreating it with the same identifier would show the previous job's stale run status/history in the dashboard, since runs are now permanently tied to the GUID rather than a reusable human string. Existing on-disk jobs are migrated in place on daemon startup: their old id becomes the `alias` and a fresh GUID becomes the `id`, with run history remapped to match. The dashboard now exposes both `id` and `alias` for each job (and each run's associated `alias`) without changing any existing fields or the frontend markup.
+- 364cb8e: Fix Copilot session-id capture and add full per-job logging.
+
+  - Session-id extraction now matches the Copilot CLI's real `--resume=<uuid>` stats-footer form (and `--session-id=`/`--session-id <id>`), so `reuseSession` jobs no longer fail with `SESSION_ID_NOT_FOUND` when the id is present in the transcript.
+  - The extracted (or explicitly provided) session id is now persisted on the run record and surfaced via `runs get`, the logs API, and the dashboard run data model (`sessionId`).
+  - Runs now emit crontick-side lifecycle events (run started, executing, run finished, skips, retries, session captured) on a dedicated `crontick` log stream, in addition to engine `stdout`/`stderr`. Log retrieval accepts a `source` filter (`all` | `engine` | `crontick`) across the client, MCP tool (`crontick_run_logs_tail`), daemon `/api/runs/:id/logs` route, and the CLI `logs --source` flag.
+  - Every run's logs are additionally mirrored to a best-effort per-job log file at `<dataDir>/logs/<jobId>.log`. New `logging` config (`logging.fileEnabled`, `logging.dir`) controls this; file writes never block or fail a run.
+
+- 364cb8e: docs: rewrite README to foreground crontick's AI-native prompt-job workflow and current command surface
+- 364cb8e: Remove pre-production migration, legacy, and back-compatibility code: fold all columns and the alias-uniqueness index directly into the base SQLite schema (no `ALTER TABLE` upgrades), drop on-disk job-file migration, and remove the `coerceLegacyIdToAlias` shim and its public export.
+- 364cb8e: Review fixes and hardening:
+
+  - Captured-session-id lifecycle events are now written to the `crontick` log stream (retrievable via `getLogs(runId, 'crontick')`) instead of the engine stdout stream, matching every other lifecycle event.
+  - `getLogs` `source` validation now lives solely in the core `CrontickClient` (throws `VALIDATION_ERROR` for values outside `all`/`engine`/`crontick`); the duplicate CLI-shim guard was removed. `LOG_SOURCES` and `LogSource` are now exported from the public API.
+  - Bulk delete (`jobs delete all --force`) is now atomic: a new internal daemon `DELETE /api/jobs` route deletes every job together with its runs, logs, and schedule state in a single store transaction via `Store.deleteAllJobs()`, instead of looping per-job HTTP requests.
+  - `GET /api/runs` `limit`/`since` are validated as positive integers, returning a clean `VALIDATION_ERROR` instead of a 500 for `NaN`/negative/`Infinity`; `queryRuns` binds `LIMIT` as a parameter.
+  - MCP `redactForLlm` now also redacts single-segment POSIX absolute paths (e.g. `/tmp`) and IPv6 loopback forms (`::1`, `[::1]:port`), and applies redaction to `ENV_FILE_ERROR` messages.
+  - Domain validation (`--enable`/`--disable` mutual exclusion, `jobs delete all` force requirement) moved out of the CLI shim into the core, keeping shims logic-free.
+
+- 364cb8e: Review polish: route the reuseSession-ignored notice to the `crontick` log stream, derive the `getLogs` source-validation message (and MCP/daemon schemas) from a single canonical `LOG_SOURCES` module, remove the orphaned `DashboardStartResult`/`DashboardStopResult` exports, use Commander's `InvalidArgumentError` for integer option coercion, and avoid per-chunk transcript-tail reallocation during prompt session-id capture.
+- 364cb8e: Round-2 command simplification: fold doctor/daemon/config into `info`, remove delete-run, jobs delete all --force, surface capabilities 26→21.
+- 364cb8e: Align SKILL.md with the current CLI/MCP surface, update stale skill test assertions to reference existing tools, and fix the plugin install example command.
+- 364cb8e: Rewrite the packaged SKILL.md as a concise, CLI-first guide for driving crontick prompt jobs from an AI agent, aligned with the current 26-capability command surface and the copilot default engine.
+
 ## 0.2.0
 
 ### Minor Changes
