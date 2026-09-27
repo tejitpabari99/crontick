@@ -7,284 +7,188 @@ Complete reference for the `crontick` command-line interface.
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--version`, `-V` | boolean | — | Print version and exit |
-| `--json` | boolean | `false` | Format all output as JSON |
 | `-v`, `--verbose` | boolean | `false` | Write diagnostic logs to stderr (also enabled by `CRONTICK_VERBOSE=1`) |
+
+There is no global `--json` flag. CLI output is always human-readable. Use the library or MCP surface when a structured JSON payload is required.
+
+Running `crontick` with no subcommand prints help and exits `0`. `crontick --help` behaves the same way.
 
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | `0` | Success |
-| `1` | Error (any `CrontickError`, failed `doctor`, or failed `config validate`) |
+| `1` | Error, failed `info doctor`, or validation/usage failure |
 
-Unless otherwise noted, read commands that surface config values, run errors, captured
-output, or dashboard data redact common secret shapes before printing. The same shared
-redaction contract applies on CLI, library, MCP, and HTTP read surfaces.
-
-## Error Output
-
-In text mode, command failures print `Error [CODE]: message` (or `Error: message` for non-
-`CrontickError` exceptions). When an error includes structured `details` data, the CLI now prints
-an additional `Details:` block with readable field-level lines such as `id: ...` or
-`schedule.everySec: ...`.
-
-In `--json` mode, failures still exit with code `1`, but stderr contains the full structured error
-payload as JSON, including `code`, `message`, and `details` when present.
+Errors are rendered as a single clean line on stderr; see [errors.md](errors.md#cli).
 
 ---
 
-## Commands
+## Command Tree
 
-### crontick new
+```text
+crontick jobs new [engineArgs...]
+crontick jobs update <id> [engineArgs...]
+crontick jobs list
+crontick jobs get <id>
+crontick jobs schedule <id> [-n <count>]
+crontick jobs delete <idOrAlias>
+crontick jobs delete all --force
+crontick jobs run-now <id>
 
-Create a new job.
+crontick runs list [--job <id>] [--limit <n>] [--since <ms>] [--status <status>]
+crontick runs get <runId>
+crontick runs logs <runId> [engine|crontick] [--tail <n>]
+crontick runs cancel <runId>
 
-```bash
-crontick new <id> [engineArgs...]
+crontick stats summary
+crontick stats job <id>
+
+crontick share export [--out <file>] [--include-runs]
+crontick share import <file>
+
+crontick info
+crontick info doctor
+crontick info daemon stop
+crontick info daemon reload
+crontick mcp [--no-start-daemon] [--daemon-url <url>]
 ```
 
-**Positional arguments:**
+Commands accept a job identifier as either the immutable GUID `id` or the human-friendly `alias`. `jobs new` assigns the GUID automatically; use `--alias <name>` only when you want to control the human-friendly name.
 
-| Name | Required | Description |
-|------|----------|-------------|
-| `id` | yes | Job ID (kebab-case: `^[a-z0-9]+(?:-[a-z0-9]+)*$`) |
-| `engineArgs` | no | Convenience form of the command/prompt's arguments (after `--`); mutually exclusive with `--arg` |
+---
 
-**Options:**
+## Job Commands
+
+### crontick jobs new
+
+Create a new job. The job's GUID `id` is always assigned by crontick. If `--alias` is omitted, crontick auto-generates a unique alias.
+
+```bash
+crontick jobs new [engineArgs...]
+```
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--cron <expr>` | string | — | Cron expression (e.g. `"0 9 * * *"`) |
+| `--desc <description>` | string | — | Job description |
+| `--cron <expr>` | string | — | Cron expression (for example, `"0 9 * * *"`) |
 | `--every <sec>` | integer | — | Interval in seconds |
 | `--at <iso>` | string | — | One-shot run-at ISO-8601 time |
-| `--tz <tz>` | string | — | Timezone for cron schedule |
-| `--script <body>` | string | — | Inline script body |
-| `--exec <cmd>` | string | — | Command to exec, taken verbatim. Pass its arguments with repeatable `--arg <value>` (primary, always correct) or, as a convenience, everything after a literal `--` |
-| `--arg <value>` | string (repeatable) | `[]` | Argument to pass to `--exec` or `--prompt`; repeatable. The documented way to pass arguments — round-trips spaces, embedded quotes, and leading dashes on every shell and every Windows shim. Cannot be combined with `--`/`engineArgs` in the same command |
+| `--tz <tz>` | string | — | IANA timezone for cron schedules |
 | `--prompt <text>` | string | — | Prompt text for a prompt action |
-| `--prompt-file <path>` | string | — | UTF-8 `.txt` file to read into the prompt |
+| `--prompt-file <path>` | string | — | UTF-8 text file to read into the prompt |
 | `--engine <engine>` | string | config `defaultEngine` | Configured prompt engine name |
 | `--session-id <id>` | string | — | Reuse this prompt engine session every run |
-| `--reuse-session` | boolean | `false` | Capture first successful run session id and reuse it |
-| `--file <path>` | string | — | Load job JSON from a file |
-| `--force` | boolean | `false` | Replace an existing job when the same id already exists |
-| `--shell <shell>` | string | `auto` (create only) | Shell: `auto`\|`bash`\|`pwsh`\|`cmd`\* |
-| `--job-env-file <path>` | string | — | Load extra environment variables from a `.env` file |
-| `--timeout <sec>` | integer | — | Timeout in seconds |
-| `--overlap <policy>` | string | `skip` (create only) | Overlap policy: `skip`\|`queue`\|`cancel-previous`\* |
-| `--retry <max>` | integer | `0` | Retry count |
-| `--desc <description>` | string | — | Job description |
+| `--reuse-session` | boolean | `false` | Capture the first successful run session id and reuse it |
+| `--file <path>` | string | — | Create the job from a full job-definition JSON file (advanced; supports all action kinds including `script` and `exec`) |
+| `--alias <alias>` | string | auto-generated | Human-friendly, unique, kebab-case job identifier |
+| `--timeout <sec>` | integer | none / unbounded | Per-run timeout in seconds |
+| `--overlap <policy>` | `skip` \| `queue` \| `cancel-previous` | `skip` | Overlap policy |
+| `--retry <max>` | integer | `0` | Retry count on failure |
+| `--force` | boolean | `false` | Replace an existing job when the same alias already exists |
 
-\* `--shell` and `--overlap` only receive their default (`auto` / `skip`) when creating a job
-(`crontick new`). On `crontick update`, omitting either flag leaves the job's existing value
-unchanged — there is no update-time default, so a partial update never silently resets these
-fields. See [job-schema.md](job-schema.md#update-vs-create-semantics) and
-[jobs.md](../concepts/jobs.md).
+Exactly one schedule source (`--cron`, `--every`, `--at`) and one prompt source (`--prompt`, `--prompt-file`) are required unless `--file` is used. Values after the command are stored as prompt action arguments (`action.args`). If a token after the positional separator matches a crontick long flag, the CLI rejects it rather than silently storing it as a literal prompt arg.
 
-On `crontick update`, `--shell`, `--job-env-file`, and `--timeout` are action modifiers, not
-standalone changes. Pass them together with the action source you are updating (`--script`,
-`--exec`, `--prompt`, or `--prompt-file`). If you pass one of those flags without an action source,
-crontick now fails with `VALIDATION_ERROR` and leaves the stored job unchanged instead of
-silently succeeding with no effect.
-
-On `crontick update`, `--tz` must be paired with `--cron`. To change a cron job's timezone, repeat
-the cron expression and timezone together (for example `crontick update job --cron "0 10 * * *"
---tz UTC`). Passing `--tz` by itself, or with `--every` / `--at`, now fails loudly instead of
-being silently ignored.
-
-`--exec` takes `<cmd>` verbatim: it is never split on whitespace, so a command string containing
-a space (e.g. a path) is passed through unchanged as one argv element. Pass its arguments with
-repeatable `--arg <value>`, once per argument:
+Dedicated `--script`, `--exec`, `--arg`, `--shell`, and `--job-env-file` flags are not exposed on the CLI. Script and exec actions remain supported by the job schema, daemon executors, and library API; create them with `crontick jobs new --file <job.json>` or `client.createJob()`.
 
 ```bash
-crontick new notify --every 30 --exec notify-send --arg "Deploy finished" --arg "with warnings"
-```
-
-`--arg` is the documented, always-correct way to pass arguments — it round-trips spaces, embedded
-double quotes, leading dashes, and values that are spelled like crontick's own flags (`-v`,
-`--json`, ...) identically across `crontick.ps1`, `crontick.cmd`, and `npx crontick`. See
-[ADR 0019](../decisions/0019-arg-flag-primary-for-exec-and-prompt-args.md) for why.
-
-As a convenience, everything after a literal `--` (Commander's standard separator) is also
-collected as `[engineArgs...]` and used as the argument list, with no whitespace splitting:
-
-```bash
-crontick new notify --every 30 --exec notify-send -- "Deploy finished" "with warnings"
-```
-
-`--arg` and `--`/`engineArgs` are mutually exclusive in the same command; combining both fails
-with `Cannot combine --arg with -- positional arguments in the same command...`. A crontick flag
-placed after `--` (e.g. `-- --json`) is rejected with an explicit error rather than silently
-stored as a literal job argument — pass it via `--arg` instead if you meant it literally.
-
-Need shell features instead (pipes, redirects, globbing)? Use `--script`, which runs through a
-shell. Need to set `action.args` directly without going through argv parsing at all? Use `--file`
-with an explicit `action.args` array. See [job-schema.md](job-schema.md#kind-exec) for the `exec`
-action's JSON shape.
-
-On Windows, a PowerShell-backed `--script` job (`shell: auto` resolving to `pwsh`, or an
-explicit `--shell pwsh` / `powershell`) is wrapped so uncaught terminating errors,
-non-terminating `Write-Error`, command-not-found, missing-module errors, and native
-non-zero exits all fail the run with a non-zero exit status instead of a false success.
-An explicit `exit N` still wins. Captured stdout/stderr is emitted and stored as UTF-8,
-independent of the console's OEM code page.
-
-#### Windows shells: `--arg` vs `--`
-
-`--arg` works correctly on every real entry point. `--` is a convenience that is not reliable
-through npm's Windows shims. Verified behavior:
-
-| Form | `crontick.ps1` | `crontick.cmd` | `npx crontick` |
-|---|---|---|---|
-| `--arg <value>`, incl. spaces / leading dash / flag-like value | works | works | works |
-| `--arg <value>` with embedded double quotes | works | fails — `cmd.exe` strips embedded quotes | works |
-| `--` passthrough | fails — the PowerShell shim drops the literal `--` | works (no embedded quotes) | works |
-| crontick flag placed after `--` | rejected | rejected | rejected |
-
-Neither shim behavior is a crontick defect: a bare `crontick` on Windows resolves to the
-npm-generated `crontick.ps1` shim, and PowerShell's own parameter binding strips a literal `--`
-token before the shim's argv ever includes it (true of any `.ps1` script); the npm-generated
-`crontick.cmd` shim is subject to `cmd.exe`'s own quoting rules, which mangle embedded double
-quotes before Node ever sees them.
-
-**Guidance:** prefer `--arg` on Windows. If you need embedded double quotes and are using the
-`.cmd` shim, switch to PowerShell (`crontick.ps1`/bare `crontick` in a PowerShell prompt) or
-`npx crontick` instead — both forward `--arg` correctly, including embedded quotes.
-
-Exactly one schedule source (`--cron`, `--every`, `--at`) and one action source (`--script`, `--exec`, `--prompt`, `--prompt-file`) are required unless `--file` is used.
-
-When `--file` is used for create or update, crontick accepts UTF-8 JSON with an optional leading
-BOM. Malformed JSON fails with `VALIDATION_ERROR` that names the file, reports line/column/position,
-and states the expected job or job-patch shape.
-
-Creating a job is no longer a silent upsert. If `<id>` already exists, `crontick new`
-fails with `JOB_ALREADY_EXISTS` and leaves the existing definition unchanged. Use
-`crontick update <id>` for in-place edits, or pass `--force` when you intentionally want
-create to replace the existing job. Schedule validation also happens before any
-persistence, so an invalid `--cron` / `--every` / `--at` value never leaves a broken job
-behind.
-
-`--job-env-file` loads extra environment variables from a `.env` file. In persisted job
-JSON and the library/MCP/HTTP JSON surfaces, the same setting is stored as `action.envFile`
-/ `envFile`. `crontick new` and `crontick update` preflight that file before persistence: if it is
-missing or unreadable, the command fails with `ENV_FILE_ERROR`, resolves relative paths against
-`action.cwd` when set (otherwise the current working directory), and leaves existing job state
-unchanged.
-
-```bash
-crontick new daily-backup --cron "0 2 * * *" --script "pg_dump mydb > /backups/db.sql"
+crontick jobs new --every 300 --prompt "Summarize the current repository status" --alias repo-summary
+crontick jobs new --file .\job.json
 ```
 
 ---
 
-### crontick update
+### crontick jobs update
 
-Update an existing job.
+Update an existing job by GUID or alias.
 
 ```bash
-crontick update <id> [engineArgs...]
+crontick jobs update <id> [engineArgs...]
 ```
 
-Accepts all options from `crontick new` plus:
+`jobs update` accepts the same job options as `jobs new` except create-only `--force`, plus:
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--enable` | boolean | — | Enable the job |
 | `--disable` | boolean | — | Disable the job |
 
-`--enable` and `--disable` are mutually exclusive.
-
-`crontick update` shares `crontick new`'s `--file`, `--job-env-file`, and read-surface redaction
-semantics. Its JSON result redacts secret-like `action.env` values with the same contract
-used by `crontick new`, `crontick list`, and `crontick get`. Missing or unreadable
-`--job-env-file` still fails before persistence with `ENV_FILE_ERROR` when an action update is
-actually being applied, so the stored job remains unchanged. If `--job-env-file` is passed without
-an action source, the command now fails earlier with `VALIDATION_ERROR` instead of silently doing
-nothing.
+Omitted options leave the existing job unchanged. `--enable` and `--disable` are mutually exclusive.
 
 ```bash
-crontick update daily-backup --cron "30 3 * * *"
+crontick jobs update repo-summary --cron "0 9 * * 1-5" --tz America/Los_Angeles
+crontick jobs update repo-summary --disable
 ```
 
 ---
 
-### crontick list
+### crontick jobs list
 
-List all jobs. Returned job JSON redacts secret-like `action.env` values while preserving benign trap names such as `NON_SECRET`.
-
-```bash
-crontick list
-```
-
-No additional options.
-
----
-
-### crontick get
-
-Get a job by ID. Returned job JSON redacts secret-like `action.env` values while preserving benign trap names such as `NON_SECRET`.
+List all jobs.
 
 ```bash
-crontick get <id>
+crontick jobs list
 ```
 
 ---
 
-### crontick enable
+### crontick jobs get
 
-Enable a job.
+Get a job by GUID or alias.
 
 ```bash
-crontick enable <id>
+crontick jobs get <id>
 ```
 
 ---
 
-### crontick disable
+### crontick jobs schedule
 
-Disable a job.
+Show upcoming fire times for a job.
 
 ```bash
-crontick disable <id>
+crontick jobs schedule <id>
 ```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-n`, `--count <n>` | integer | `5` | Number of upcoming fire times to show |
+
+This replaces the old raw `schedule preview` command: schedules are previewed in the context of an existing job.
 
 ---
 
-### crontick delete
+### crontick jobs delete
 
-Delete a job.
+Delete one job, or delete all jobs with explicit confirmation.
 
 ```bash
-crontick delete <id>
+crontick jobs delete <idOrAlias>
+crontick jobs delete all --force
 ```
 
-Cancels the job's in-flight run, if any, before removing the job -- a deleted job never leaves an
-orphaned process running against a definition that no longer exists. Deleting a job removes only the
-job definition; archived run and log history remain available via `crontick runs get <runId>` and
-`crontick logs <runId>`, but those archived rows are excluded from live aggregates. See
-[jobs.md](../concepts/jobs.md#lifecycle-create-update-remove).
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--all` | boolean | `false` | Delete every job |
+| `--force` | boolean | `false` | Required with `--all` |
+
+Deleting a single job cancels its in-flight run, if any. Historical runs remain queryable by run id, but live aggregates exclude runs whose parent job was deleted.
+
+`jobs delete all --force` removes every job atomically in a single daemon transaction, deleting all jobs together with their associated runs and logs (there is nothing left to query aggregates against). `--force` is required and is validated in the core client.
 
 ---
 
-### crontick run-now
+### crontick jobs run-now
 
 Trigger an immediate run of a job.
 
 ```bash
-crontick run-now <id>
+crontick jobs run-now <id>
 ```
 
 ---
 
-### crontick cancel-run
-
-Cancel an in-progress run.
-
-```bash
-crontick cancel-run <runId>
-```
-
----
+## Run Commands
 
 ### crontick runs list
 
@@ -296,7 +200,7 @@ crontick runs list
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--job <id>` | string | — | Filter by job ID |
+| `--job <id>` | string | — | Filter by job GUID or alias |
 | `--limit <n>` | integer | — | Maximum runs to return |
 | `--since <ms>` | integer | — | Only runs since epoch milliseconds |
 | `--status <status>` | string | — | Filter by run status: `queued`\|`running`\|`success`\|`failed`\|`canceled`\|`timeout`\|`missed` |
@@ -311,58 +215,42 @@ Get a run by ID.
 crontick runs get <runId>
 ```
 
+The output includes the resolved, redacted command for that run, the engine/status/timing fields, and any captured `sessionId`.
+
 ---
 
-### crontick logs
+### crontick runs logs
 
 Get logs for a run.
 
 ```bash
-crontick logs <runId>
+crontick runs logs <runId> [engine|crontick]
 ```
 
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--tail <n>` | integer | — | Show the last N text lines after reconstructing newline-delimited output from stored log chunks |
+| Argument / flag | Type | Default | Description |
+|-----------------|------|---------|-------------|
+| `source` | `engine` \| `crontick` | both streams | Optional positional filter. `engine` = stdout/stderr from the spawned process; `crontick` = scheduling/execution lifecycle events. Any other value is rejected with `VALIDATION_ERROR` (validated in the core client) |
+| `--tail <n>` | integer | — | Show the last N logical lines |
 
----
+Output is one line per stored entry in this form:
 
-### crontick schedule validate
-
-Validate a schedule JSON object.
-
-```bash
-crontick schedule validate '<scheduleJson>'
-```
-
-| Positional | Type | Description |
-|------------|------|-------------|
-| `scheduleJson` | string (JSON) | Schedule object as JSON string |
-
-```bash
-crontick schedule validate '{"kind":"cron","cron":"0 9 * * *"}'
+```text
+[<stream>] <data>
 ```
 
 ---
 
-### crontick schedule preview
+### crontick runs cancel
 
-Preview upcoming fire times for a schedule.
-
-```bash
-crontick schedule preview '<scheduleJson>'
-```
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--limit <n>` | integer | — | Number of fire times to return |
-| `--tz <tz>` | string | — | Timezone override |
+Cancel an in-progress run.
 
 ```bash
-crontick schedule preview '{"kind":"interval","everySec":3600}' --limit 5
+crontick runs cancel <runId>
 ```
 
 ---
+
+## Stats Commands
 
 ### crontick stats summary
 
@@ -372,11 +260,7 @@ Show aggregate statistics.
 crontick stats summary
 ```
 
-Only runs whose parent job still exists are counted. Deleting a job keeps its historical runs
-archived for direct `crontick runs get <runId>` / `crontick logs <runId>` access, but those
-archived rows are excluded from live aggregate totals.
-
----
+Only runs whose parent job still exists are counted.
 
 ### crontick stats job
 
@@ -388,319 +272,130 @@ crontick stats job <id>
 
 ---
 
-### crontick config get
+## Share Commands
 
-Get the effective config or one config value.
-
-```bash
-crontick config get [path]
-```
-
-| Positional | Type | Description |
-|------------|------|-------------|
-| `path` | string (optional) | Dot-separated config path (e.g. `engines.copilot.command`) |
-
-Returns the effective config with secret-like values redacted. The shared contract masks
-common provider tokens, `token=`/`password=`-style assignments, contextual or nearby-access-key-paired AWS
-secret-access-key values, and private keys (including lone PEM begin/end markers) while avoiding
-broad substring matches such as `NON_SECRET`. The underlying `config.json` file on disk is not
-rewritten; read it directly if you need the literal stored bytes.
-
----
-
-### crontick config set
-
-Set one config value. The printed updated config uses the same secret-redaction contract as `config get`.
-
-```bash
-crontick config set <path> <value>
-```
-
-`value` is parsed as JSON when possible; otherwise treated as a string. Benign trap names such as `NON_SECRET` remain visible in the returned config.
-
----
-
-### crontick config unset
-
-Remove one config value. The printed updated config uses the same secret-redaction contract as `config get`.
-
-```bash
-crontick config unset <path>
-```
-
-Removes the key from `config.json` itself. If the key has a built-in default (e.g.
-`defaultEngine`, `retention.*`, or the built-in `copilot` engine's fields), `config get`
-continues to report that default afterward — but the file no longer pins the value
-explicitly. See [configuration.md](configuration.md#set-vs-inherited-values).
-
----
-
-### crontick config init
-
-Create the default config file.
-
-```bash
-crontick config init
-```
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--force` | boolean | `false` | Replace an existing config file |
-
----
-
-### crontick config validate
-
-Validate the config file.
-
-```bash
-crontick config validate [path]
-```
-
-| Positional | Type | Description |
-|------------|------|-------------|
-| `path` | string (optional) | File path to validate (defaults to the standard config path) |
-
-Exits with code `1` if validation fails. A leading UTF-8 BOM is accepted. Malformed JSON now
-reports the file path, line, column, position, and the expected config shape instead of surfacing
-a raw `SyntaxError`.
-
----
-
-### crontick config engines
-
-List configured engines. Add/update commands return the updated config with secret-like engine `env` values redacted while preserving benign trap names such as `NON_SECRET`.
-
-```bash
-crontick config engines
-```
-
----
-
-### crontick config engines add
-
-Add an engine.
-
-```bash
-crontick config engines add <name>
-```
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--command <cmd>` | string | **required** | Engine executable |
-| `--arg <arg>` | string (repeatable) | `[]` | Default engine argument |
-| `--env <KEY=VALUE>` | string (repeatable) | `{}` | Default engine environment variable |
-
-```bash
-crontick config engines add my-llm --command "my-llm-cli" --arg "--model=gpt-4" --env "API_KEY=abc"
-```
-
----
-
-### crontick config engines update
-
-Update an engine.
-
-```bash
-crontick config engines update <name>
-```
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--command <cmd>` | string | — | Engine executable |
-| `--arg <arg>` | string (repeatable) | — | Replaces the current args when provided |
-| `--env <KEY=VALUE>` | string (repeatable) | — | Replaces current env when provided |
-
----
-
-### crontick config engines remove
-
-Remove an engine.
-
-```bash
-crontick config engines remove <name>
-```
-
-Cannot remove the current `defaultEngine` or built-in engines.
-
----
-
-### crontick export
+### crontick share export
 
 Export all jobs.
 
 ```bash
-crontick export
+crontick share export
 ```
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--out <file>` | string | stdout | Output file path |
-| `--include-runs` | boolean | `false` | Also include run history (a `runs` array) in the export |
+| `--include-runs` | boolean | `false` | Also include run history |
 
----
+When `--out` is omitted, JSON is printed to stdout.
 
-### crontick import
+### crontick share import
 
 Import jobs from a JSON file.
 
 ```bash
-crontick import <file>
+crontick share import <file>
 ```
 
-Jobs are upserted (existing jobs with the same ID are updated). If the file was produced with
-`--include-runs`, its `runs` array is restored archivally into `runs.db` (`INSERT OR IGNORE`,
-keyed by run id; rows for a job that no longer exists are skipped) -- this is a plain data
-restore, not re-execution, and does not touch the scheduler. A leading UTF-8 BOM is accepted.
-Malformed import JSON fails with `VALIDATION_ERROR` that names the file, reports line/column/position,
-and states that crontick expected either a JSON array of jobs or an export object with jobs and
-optional runs.
+Jobs are upserted. If the file includes exported run history, runs are restored archivally; they are not re-executed and do not affect the scheduler.
 
 ---
 
-### crontick doctor
+## Info Commands
+
+### crontick info
+
+Show version, runtime, config path, storage locations, daemon status, and dashboard URL.
+
+```bash
+crontick info
+```
+
+The default output includes:
+
+- crontick version
+- Node.js version
+- platform
+- daemon running status, including PID and port when available
+- config file path (`configPath`)
+- dashboard URL when the daemon is running
+- `paths` block: `dataDir`, `jobsDir`, `logsDir`, `runsDb`, `portFile`, `pidFile`
+
+`info` never starts the daemon; when the daemon is stopped it prints that state and notes that the dashboard becomes available again on the next daemon-backed command.
+
+### crontick info doctor
 
 Check system health.
 
 ```bash
-crontick doctor
+crontick info doctor
 ```
 
-Exits with code `1` if any check fails. Checks: Node.js version, SQLite availability, data directory, daemon connectivity, dashboard reachability, MCP server.
+Exits with code `1` if any check fails. Checks include Node.js version, SQLite availability, data directory, daemon connectivity, dashboard reachability, and MCP server availability.
 
----
-
-### crontick daemon start
-
-Start the daemon.
-
-```bash
-crontick daemon start
-```
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--foreground` | boolean | `false` | Run in foreground (blocking) |
-
-In `--json` mode, background starts print the structured daemon-start result (`ok`, `started`,
-`pid`, `port`, `baseUrl`). `--foreground --json` is rejected up front because foreground mode
-streams daemon logs to stdout instead of producing a single JSON object.
-
----
-
-### crontick daemon stop
+### crontick info daemon stop
 
 Stop the daemon.
 
 ```bash
-crontick daemon stop
+crontick info daemon stop
 ```
 
-Sends `POST /api/daemon/stop` to shut the daemon down in-process (works identically on every
-platform) and reports `mode: "graceful"` on success. If the HTTP route is unreachable (an older
-daemon binary or a stale port file), falls back to `process.kill(pid, 'SIGTERM')`; if the process
-does not exit within the poll timeout after either path (graceful-accepted-but-stalled, or plain
-SIGTERM), it escalates to `SIGKILL` and reports `mode: "hard-kill"` — not the normal path, but the
-daemon is never left running indefinitely by a stalled stop. Reports `mode: "already-stopped"` if
-no daemon was running. The response also reports any `activeRuns` (`{ id, jobId }`) still in
-progress when the daemon stopped, since their processes keep running detached (see
-[jobs.md](../concepts/jobs.md#lifecycle-create-update-remove)) and are not abandoned silently. See
-[daemon-lifecycle.md](../concepts/daemon-lifecycle.md#shutdown).
+### crontick info daemon reload
 
----
-
-### crontick daemon status
-
-Show daemon status.
+Reload job definitions from disk without restarting the daemon.
 
 ```bash
-crontick daemon status
+crontick info daemon reload
 ```
 
-The result includes the daemon's loopback discovery fields (`port`, `baseUrl`) plus a
-`missedFires` summary: `{ jobsWithMissedFires, missedRunsRecorded, jobsCapped, capPerJob }`,
-describing fires the schedule would have produced while the daemon was not running, recorded on
-the most recent daemon start (`capPerJob` is 500). In text mode these fields print as `key: value`
-lines; with `--json` they are part of the structured status object. See
-[daemon-lifecycle.md](../concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down).
+Running `crontick info daemon` with no subcommand prints help. Config edits normally do not require reload; see [configuration.md](configuration.md#when-config-edits-take-effect).
 
 ---
 
-### crontick daemon reload
+## Dashboard
 
-Reload jobs from disk.
+crontick has **no `dashboard` command group**. The dashboard is always served by the
+daemon on its loopback origin whenever the daemon is running — there is nothing to start
+or stop separately. To open it:
 
-```bash
-crontick daemon reload
-```
+1. Run `crontick info` and copy the `dashboardUrl` line (for example
+   `http://127.0.0.1:<port>/dashboard`).
+2. Open that URL in a browser.
 
----
+If the daemon is not running yet, run any daemon-backed command (for example `crontick jobs list`) and it will start automatically; then `crontick info` will report the URL.
 
-### crontick daemon restart
+The former `crontick dashboard start`, `crontick dashboard status`, `crontick dashboard
+stop`, and `crontick dashboard data` CLI commands have been removed.
 
-Restart the daemon.
+### Dashboard web UI
 
-```bash
-crontick daemon restart
-```
+The dashboard is a dependency-free web page served on the daemon's loopback origin
+(`/` and `/dashboard`). It renders live snapshots from `GET /api/dashboard` and drives
+job/run actions through the existing `/api/*` routes.
 
-In `--json` mode, restart prints the structured daemon-restart result (`ok`, `started`, `stopped`,
-`previousPid`, `pid`, `port`, `baseUrl`) instead of only human text.
-
----
-
-### crontick dashboard start
-
-Start the dashboard server.
-
-```bash
-crontick dashboard start
-```
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--open` | boolean | `false` | Open in the default browser |
-
----
-
-### crontick dashboard status
-
-Show dashboard status.
-
-```bash
-crontick dashboard status
-```
+- **Header** — shows the real daemon `version`, pid, node version and job count, plus an
+  uptime badge (hover for a "daemon uptime" tooltip).
+- **Jobs table** — columns are `Alias` (falls back to `—`), `ID` (shortened GUID with a
+  copy icon for the full id), `Description`, `Schedule`, `Action`, `Last status`,
+  `Next run`, and an `Actions` cell. Actions are icon buttons: enable (`▶`) / disable
+  (`⏹`, prompts for confirmation) and delete (`🗑`, prompts for confirmation). Clicking a
+  job row (outside the action buttons) sets the runs "Filter Job" control to that job and
+  reloads the filtered snapshot.
+- **Recent runs toolbar** — beside the heading: a **Filter Job** dropdown (server-side
+  filter via `jobId`, so it reflects all of a job's runs), a client-side **Filter Status**
+  dropdown, a **Sort** control (Time / Duration, ascending or descending; default Time ↓),
+  and the runs-limit input in the top toolbar.
+- **Runs table** — shows the full run id and session id, each with a copy icon, plus Job
+  (`jobAlias || jobId`), Status, Started and Duration. Clicking a run row opens a log modal.
+- **Run log modal** — fetches `GET /api/runs/:id/logs?source=all` and renders two stacked,
+  independently scrollable panes: **Output** (stdout + crontick streams) and **Error**
+  (stderr plus the run's recorded `error`). Close with the ✕ button, a backdrop click, or
+  `Esc`.
 
 ---
 
-### crontick dashboard data
-
-Return the dashboard data model.
-
-```bash
-crontick dashboard data
-```
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--job <id>` | string | — | Filter runs by job ID |
-| `--runs-limit <n>` | integer | — | Maximum recent runs to return |
-
-Aggregate run counts and the recent-runs list include only runs whose parent job still exists.
-Deleting a job keeps its historical runs directly queryable by run id, but removes them from
-these live dashboard views.
-
----
-
-### crontick dashboard stop
-
-Stop the dashboard server.
-
-```bash
-crontick dashboard stop
-```
-
----
+## MCP Command
 
 ### crontick mcp
 

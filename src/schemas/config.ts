@@ -50,6 +50,20 @@ export const RetentionConfigSchema = z.object({
 }).strict();
 
 /**
+ * Per-job log file settings (added alongside the `crontick` log stream). When
+ * `fileEnabled` is true (the default), the daemon mirrors every run's engine
+ * output AND crontick-side lifecycle events to `<dir>/<jobGuid>.log`, in
+ * addition to the SQLite run-log storage. `dir` overrides the target
+ * directory; when omitted it defaults to the `logs/` subfolder of the data
+ * directory (see src/paths.ts logsDir). All file writes are best-effort and
+ * never block or fail a run, so this is purely additive observability.
+ */
+export const LoggingConfigSchema = z.object({
+  fileEnabled: z.boolean().default(true),
+  dir: z.string().min(1).optional(),
+}).strict();
+
+/**
  * Top-level config schema. File config is deep-merged over BUILT_IN_CONFIG
  * (defined in src/config.ts), then validated here. The refinement ensures
  * `defaultEngine` actually exists in `engines`.
@@ -60,6 +74,7 @@ export const ConfigSchema = z.object({
     copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {} },
   }),
   retention: RetentionConfigSchema.default({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 }),
+  logging: LoggingConfigSchema.default({ fileEnabled: true }),
 }).strict().superRefine((config, ctx) => {
   if (Object.keys(config.engines).length === 0) {
     ctx.addIssue({
@@ -80,6 +95,7 @@ export const ConfigSchema = z.object({
 export type EngineConfig = z.infer<typeof EngineConfigSchema>;
 export type CrontickConfig = z.infer<typeof ConfigSchema>;
 export type RetentionConfig = z.infer<typeof RetentionConfigSchema>;
+export type LoggingConfig = z.infer<typeof LoggingConfigSchema>;
 
 /**
  * "Persisted" counterparts of the schemas above — every field is `.optional()`
@@ -109,10 +125,16 @@ export const PersistedRetentionConfigSchema = z.object({
   maxLogFiles: z.number().int().min(1).max(3650).optional(),
 }).strict();
 
+export const PersistedLoggingConfigSchema = z.object({
+  fileEnabled: z.boolean().optional(),
+  dir: z.string().min(1).optional(),
+}).strict();
+
 export const PersistedConfigSchema = z.object({
   defaultEngine: EngineNameSchema.optional(),
   engines: z.record(EngineNameSchema, PersistedEngineConfigSchema).optional(),
   retention: PersistedRetentionConfigSchema.optional(),
+  logging: PersistedLoggingConfigSchema.optional(),
 }).strict();
 
 export type PersistedConfig = z.infer<typeof PersistedConfigSchema>;

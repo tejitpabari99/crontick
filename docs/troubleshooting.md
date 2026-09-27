@@ -3,7 +3,7 @@
 ## Run doctor first
 
 ```sh
-crontick doctor
+crontick info doctor
 ```
 
 Typical output:
@@ -99,17 +99,17 @@ include what was attempted, the failed path/exit/stderr excerpt when available, 
 run. Start it explicitly with:
 
 ```sh
-crontick daemon start
+crontick jobs list
 ```
 
-Then run `crontick doctor`. If it still fails, inspect the ensure log in the crontick data directory:
+Then run `crontick info doctor`. If it still fails, inspect the ensure log in the crontick data directory:
 `logs/daemon.ensure.log`. crontick is not a supervisor; if the daemon died while idle, scheduled jobs
 pause until you start it or run another daemon-backed command.
 
 ### Need more crontick diagnostics
 
 Use `crontick --verbose ...` (or `-v`) or set `CRONTICK_VERBOSE=1`. Verbose output goes to stderr,
-so `crontick --json --verbose ...` still writes parseable JSON to stdout. Daemon logs live under the
+so `crontick --verbose ...` writes human-readable output to stdout and diagnostics to stderr. Daemon logs live under the
 crontick data directory `logs/`: `daemon.ensure.log` for demand-start and `daemon-YYYY-MM-DD.log` for
 daemon lifecycle/API/scheduler diagnostics. In verbose daemon mode, run logs can also contain
 `[crontick:debug]` lines for spawn/retry/session decisions.
@@ -120,15 +120,15 @@ Use Node.js 22.5+; older Node versions may need the daemon re-exec shim or a new
 
 ### Dashboard opens but API fails
 
-Check `crontick daemon status` and inspect the latest daemon log in the crontick data directory `logs/` folder.
+Check `crontick info` and inspect the latest daemon log in the crontick data directory `logs/` folder.
 
 
 
 ### A run keeps failing
 
-- `crontick logs <run-id> --tail 100`
-- `crontick get <job-id> --json`
-- `crontick doctor`
+- `crontick runs logs <run-id> --tail 100`
+- `crontick jobs get <job-id>`
+- `crontick info doctor`
 
 For MCP workflows, load the run via `crontick_run_get` and `crontick_run_logs_tail`.
 
@@ -137,8 +137,8 @@ For MCP workflows, load the run via `crontick_run_get` and `crontick_run_logs_ta
 Validate and preview it first:
 
 ```sh
-crontick schedule validate '{"kind":"cron","cron":"0 9 * * *"}'
-crontick schedule preview '{"kind":"cron","cron":"0 9 * * *"}' --limit 5
+crontick jobs schedule <job-id>
+crontick jobs schedule <job-id> -n 5
 ```
 
 ### VALIDATION_ERROR on job create/update
@@ -157,13 +157,13 @@ Run with `--verbose` to see the full Zod error details.
 The `config.json` file is malformed or has invalid fields:
 
 ```sh
-crontick config validate
+crontick info
 ```
 
 If the file is corrupt, delete it and reinitialize:
 
 ```sh
-crontick config init --force
+crontick info
 ```
 
 ### Daemon won't start: `Error: file is not a database`
@@ -172,22 +172,22 @@ This means `runs.db` (the SQLite run-history database) is corrupted. The daemon 
 unconditionally on startup and does not attempt repair, so it fails to start entirely -- no jobs
 run, scheduled or otherwise -- until the file is removed. Recovery:
 
-1. Stop the daemon if it is still running (`crontick daemon stop`); if it never started, skip this.
+1. Stop the daemon if it is still running (`crontick info daemon stop`); if it never started, skip this.
 2. Find the data directory: `CRONTICK_HOME` if set, otherwise the platform default (Windows
    `%LOCALAPPDATA%\crontick`, macOS `~/Library/Application Support/crontick`, Linux
-   `~/.local/share/crontick`). `crontick doctor` also prints the resolved path.
+   `~/.local/share/crontick`). `crontick info doctor` also prints the resolved path.
 3. Delete `runs.db` and its WAL side files in that directory: `runs.db`, `runs.db-wal`,
    `runs.db-shm`. All three must go together -- removing only `runs.db` can leave a stale
    `-wal`/`-shm` pair that the next open tries to replay against the new, empty database file.
-4. Start the daemon again (`crontick daemon start`, or let the next daemon-backed command
+4. Start the daemon again (`crontick jobs list`, or let the next daemon-backed command
    demand-start it). A fresh `runs.db` is created automatically.
 
 **What this loses:** run history and logs only -- every past run, its stdout/stderr, exit code,
 and timestamps. **Job definitions are not affected**: jobs are the JSON files under
 `<dataDir>/jobs/`, a separate store from `runs.db`, and are untouched by this recovery.
 
-**Confirm recovery:** `crontick doctor` should report the daemon and dashboard reachable again,
-and `crontick list` should show your jobs unchanged with empty run history (`crontick logs
+**Confirm recovery:** `crontick info doctor` should report the daemon and dashboard reachable again,
+and `crontick jobs list` should show your jobs unchanged with empty run history (`crontick runs logs
 <job-id>` returns no runs until the job fires again). See
 [internals/storage.md](internals/storage.md) for the on-disk schema and
 [state-and-storage.md](concepts/state-and-storage.md) for the persistence model.
@@ -200,7 +200,7 @@ from the data directory (`daemon.ensure.lock`) and retry.
 
 ### ENV_FILE_ERROR
 
-The `--job-env-file` path does not exist or cannot be read. Verify the path is correct and the
+The `action.envFile` path does not exist or cannot be read. Verify the path is correct and the
 file is readable. Relative paths resolve against the job's `cwd` (or the daemon's working
 directory if no `cwd` is set).
 
@@ -210,25 +210,25 @@ Each job keeps at most `retention.maxRunsPerJob` runs (default `100`); older run
 logs) are pruned automatically and permanently — eviction has no dry-run, warning, or undo. This
 is a per-job **count** cap only: a job that fires every minute keeps far less calendar history
 than a job that fires monthly under the same cap. If you need to keep more history, raise
-`retention.maxRunsPerJob` in `config.json` and run `crontick daemon reload` (existing runs beyond
+`retention.maxRunsPerJob` in `config.json` and run `crontick info daemon reload` (existing runs beyond
 the old cap that were already pruned cannot be recovered after the fact). To avoid losing history
-in the first place, back it up before it is evicted: `crontick export --include-runs` captures
-every job's run history, and `crontick import` restores it — see
+in the first place, back it up before it is evicted: `crontick share export --include-runs` captures
+every job's run history, and `crontick share import` restores it — see
 [cli.md](reference/cli.md#export). See
 [state-and-storage.md](concepts/state-and-storage.md#run-history-retention) and
 [configuration.md](reference/configuration.md).
 
-### `crontick daemon stop` reports `mode: "hard-kill"` instead of `"graceful"`
+### `crontick info daemon stop` reports `mode: "hard-kill"` instead of `"graceful"`
 
-`crontick daemon stop` (and `daemon restart`) prefer `POST /api/daemon/stop`, an in-process
+`crontick info daemon stop` (and `daemon restart (library-only)`) prefer `POST /api/daemon/stop`, an in-process
 graceful shutdown that works identically on every platform, including Windows, where OS signals
 sent to another process do not invoke Node's signal handlers at all. A result of `mode:
 "hard-kill"` means the HTTP route could not be reached, so `stopDaemon()` fell back to a raw
 `SIGTERM`/process-kill instead — this is the only path left when the daemon is already wedged or
 unresponsive. Common causes:
 
-- **Stale or missing `daemon.port` file.** Run `crontick doctor` to check daemon reachability;
-  if the port file is stale, the next `crontick daemon start` will overwrite it.
+- **Stale or missing `daemon.port` file.** Run `crontick info doctor` to check daemon reachability;
+  if the port file is stale, the next `crontick jobs list` will overwrite it.
 - **The daemon is deadlocked or otherwise not answering HTTP**, in which case the hard-kill
   fallback is the correct, intended recovery path, not a bug.
 

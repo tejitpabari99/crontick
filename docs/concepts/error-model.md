@@ -35,7 +35,7 @@ The same `CrontickError` is rendered differently depending on the consumer:
 
 ### CLI
 
-The CLI's `handleError` function prints the message to stderr and exits with code 1. When `--json` is active, it outputs the full `toJSON()` representation. The `details` object often includes an `action` field suggesting a remediation command.
+The CLI's `handleError` function prints one clean `error: [CODE] message` line to stderr and exits with code 1. `--verbose` adds details and stack output for debugging.
 
 ### MCP server
 

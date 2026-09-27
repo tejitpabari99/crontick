@@ -4,7 +4,7 @@
  *
  * Steps:
  *   1. Check/install the crontick npm package globally.
- *   2. Run `crontick doctor` to verify the installation.
+ *   2. Run `crontick info doctor` to verify the installation.
  *   3. Copy the bundled SKILL.md to ~/.copilot/skills/crontick/. *
  * Environment flags:
  *   CRONTICK_PLUGIN_NONINTERACTIVE=1   — skip prompts, accept defaults
@@ -68,11 +68,11 @@ if (!skipNpm) {
   steps.push('npm install skipped (CRONTICK_PLUGIN_SKIP_NPM=1)');
 }
 
-// ── Step 2: Run crontick doctor ───────────────────────────────────────────────
+// ── Step 2: Run crontick info doctor ─────────────────────────────────────────
 
-console.log('\n[crontick-plugin] Running crontick doctor…');
-run('crontick', ['doctor']);
-steps.push('crontick doctor completed');
+console.log('\n[crontick-plugin] Running crontick info doctor…');
+run('crontick', ['info', 'doctor']);
+steps.push('crontick info doctor completed');
 
 // ── Step 3: Copy SKILL.md ─────────────────────────────────────────────────────
 
@@ -102,4 +102,4 @@ for (const step of steps) {
 }
 console.log('\nGet started:');
 console.log('  crontick --help');
-console.log('  crontick new my-job --cron "0 9 * * *" --script "echo hello"');
+console.log('  crontick jobs new --cron "0 9 * * *" --prompt "Summarize my open GitHub PRs"');

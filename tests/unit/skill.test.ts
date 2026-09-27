@@ -9,7 +9,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { redactForLlm } from '../../src/mcp/index.js';
+import { redactForLlm, redactedErrorMessage } from '../../src/mcp/index.js';
+import { CrontickError } from '../../src/errors.js';
 
 const SKILL_MD = resolve('src/skill/SKILL.md');
 const PKG_JSON = resolve('package.json');
@@ -34,8 +35,8 @@ describe('src/skill/SKILL.md content', () => {
   it('lists crontick_* tools', () => {
     expect(content).toContain('crontick_job_create');
     expect(content).toContain('crontick_job_list');
-    expect(content).toContain('crontick_schedule_validate');
-    expect(content).toContain('crontick_schedule_preview');
+    expect(content).toContain('crontick_job_schedule');
+    expect(content).toContain('crontick_run_logs_tail');
     expect(content).not.toContain('crontick_' + 'auto' + 'start');
   });
 
@@ -119,6 +120,39 @@ describe('redactForLlm', () => {
     const msg = `Daemon script not found at C:\\Users\\x\\dist\\daemon\\index.js`;
     const redacted = redactForLlm(msg);
     expect(redacted).not.toContain('C:\\Users\\x\\dist\\daemon\\index.js');
+    expect(redacted).toContain('<path>');
+  });
+
+  it('redacts single-segment POSIX absolute paths (/tmp, /etc, /home)', () => {
+    for (const dir of ['/tmp', '/etc', '/home']) {
+      const redacted = redactForLlm(`Cannot write to ${dir}`);
+      expect(redacted).not.toContain(dir);
+      expect(redacted).toContain('<path>');
+    }
+  });
+
+  it('redacts IPv6 loopback forms (::1, [::1]:port, ::1:port)', () => {
+    expect(redactForLlm('Connection refused at [::1]:54321')).toBe(
+      'Connection refused at <daemon-addr>',
+    );
+    expect(redactForLlm('Connection refused at ::1:54321')).toBe(
+      'Connection refused at <daemon-addr>',
+    );
+    const bare = redactForLlm('Bound to ::1 only');
+    expect(bare).not.toContain('::1');
+    expect(bare).toContain('<daemon-addr>');
+  });
+
+  it('leaves http URLs and non-loopback text intact', () => {
+    expect(redactForLlm('GET http://example.com/api/jobs failed')).toBe(
+      'GET http://example.com/api/jobs failed',
+    );
+  });
+
+  it('redacts the absolute path in an ENV_FILE_ERROR message', () => {
+    const err = new CrontickError('ENV_FILE_ERROR', 'Failed to read env file /home/user/secrets/.env');
+    const redacted = redactedErrorMessage(err);
+    expect(redacted).not.toContain('/home/user/secrets/.env');
     expect(redacted).toContain('<path>');
   });
 });

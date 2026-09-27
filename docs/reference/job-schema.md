@@ -10,13 +10,26 @@ Top-level job object.
 
 | Field | Type | Required | Default | Constraints | Description |
 |-------|------|----------|---------|-------------|-------------|
-| `id` | `string` | yes | — | Regex: `^[a-z0-9]+(?:-[a-z0-9]+)*$` (kebab-case) | Unique job identifier |
+| `id` | `string` (GUID) | no (server-assigned) | `randomUUID()` | UUID format | Immutable identifier assigned automatically at creation; never user-supplied. Primary key used internally by the store, `run.jobId`, and the scheduler. |
+| `alias` | `string` | no | auto-generated (`<word>-<1-1000>`) | Regex: `^[a-z0-9]+(?:-[a-z0-9]+)*$` (kebab-case); unique among currently-defined (live) jobs | Optional, user-editable human-friendly name. Deleting a job frees its alias for reuse. |
 | `description` | `string` | no | — | — | Human-readable description |
 | `enabled` | `boolean` | no | `true` | — | Whether the job runs on schedule |
 | `schedule` | `Schedule` | yes | — | Discriminated union on `kind` | When the job runs |
 | `action` | `Action` | yes | — | Discriminated union on `kind` | What the job does |
 | `overlap` | `"skip" \| "queue" \| "cancel-previous"` | no | `"skip"` | Enum | What happens when a new tick fires while a previous run is still active |
 | `retry` | `Retry` | no | `{ max: 0, backoffSec: 30 }` | — | Retry policy for failed runs |
+
+### Identity: GUID `id` + `alias`
+
+Every job's `id` is an immutable, server-assigned GUID -- it is the sole key
+used internally by the store, run history (`run.jobId`), and the scheduler.
+An optional, user-editable `alias` provides a human-friendly name that must be
+unique among currently-defined jobs; when omitted on create, one is
+auto-generated from a small built-in word list plus a random integer 1-1000
+(retried on collision -- see `generateAlias` below). Anywhere a job identifier
+is accepted (CLI, MCP, HTTP API), you may pass either the GUID `id` or the
+`alias`; an exact GUID match is tried first, falling back to an alias lookup,
+and an unresolved value returns `JOB_NOT_FOUND`.
 
 ---
 
@@ -114,17 +127,17 @@ The **input schema** (`JobCreateInputSchema`) differs from the stored `JobSchema
 
 ## Update vs Create Semantics
 
-The "Default" column above only applies **when creating a job** (`crontick new`, `crontick_job_create`, or `client.createJob`). On a partial update (`crontick update`, `crontick_job_update`, or `client.updateJob`), fields the caller does not mention are **preserved from the existing job**, not reset to the table's default. This applies identically across the CLI, MCP, and library surfaces, since all three funnel through the same `normalizeJobPatch()` logic.
+The "Default" column above only applies **when creating a job** (`crontick jobs new`, `crontick_job_create`, or `client.createJob`). On a partial update (`crontick jobs update`, `crontick_job_update`, or `client.updateJob`), fields the caller does not mention are **preserved from the existing job**, not reset to the table's default. This applies identically across the CLI, MCP, and library surfaces, since all three funnel through the same `normalizeJobPatch()` logic.
 
 Concretely:
 
 - `overlap`; `action.shell` (script), `action.envFile`, `action.timeoutSec` (all action kinds); `action.args` (exec/prompt); `action.reuseSession` (prompt); `retry.backoffSec` — all keep their previous value unless the patch explicitly sets them.
 - `action.engine` (prompt) is treated the same way for a same-kind update: the config `defaultEngine` fill-in only happens when creating a job or when a patch changes a non-prompt action into a `prompt` action for the first time. A patch that leaves an existing prompt action's `kind` unchanged never overwrites a configured `engine`, even if the patch omits it.
 - **Changing `action.kind`** (e.g. `script` -> `exec`) is not a field-by-field merge: the new action wholly replaces the old one, and only the fields provided in the patch (plus the normal create-time defaults for the new kind) apply. There is no cross-kind field preservation — e.g. updating a `script` job to `exec` does not carry over `shell`.
-- **Single-field action patches** (e.g. `{ action: { kind: 'script', shell: 'pwsh' } }` with no `script`) are valid on the API and MCP surfaces: the mandatory action source (`script`, `command`, or `prompt`) is optional in `JobPatchInputSchema` and is backfilled from the existing stored action by `mergeActionPatch`. Note that the CLI's `crontick update` command still requires an explicit action source (e.g. `--script "..."`) when `--shell`, `--job-env-file`, or `--timeout` are provided; this is a CLI-only UX constraint, not a restriction of the underlying schema or `normalizeJobPatch`.
+- **Single-field action patches** (e.g. `{ action: { kind: 'script', shell: 'pwsh' } }` with no `script`) are valid on the API and MCP surfaces: the mandatory action source (`script`, `command`, or `prompt`) is optional in `JobPatchInputSchema` and is backfilled from the existing stored action by `mergeActionPatch`. The CLI no longer exposes dedicated script/exec modifier flags; use `crontick jobs update --file <patch.json>` for advanced action patches.
 - `retry.max` and the rest of `retry` follow the same partial-merge rule as `overlap`.
 
-See [jobs.md](../concepts/jobs.md) for the conceptual explanation and [cli.md](cli.md) for the corresponding `--shell`/`--overlap` default-column caveat.
+See [jobs.md](../concepts/jobs.md) for the conceptual explanation and [cli.md](cli.md) for the corresponding CLI defaults and update behavior.
 
 ---
 
@@ -134,7 +147,7 @@ See [jobs.md](../concepts/jobs.md) for the conceptual explanation and [cli.md](c
 
 ```json
 {
-  "id": "daily-backup",
+  "alias": "daily-backup",
   "description": "Nightly database backup",
   "enabled": true,
   "schedule": {
@@ -156,7 +169,7 @@ See [jobs.md](../concepts/jobs.md) for the conceptual explanation and [cli.md](c
 
 ```json
 {
-  "id": "health-check",
+  "alias": "health-check",
   "enabled": true,
   "schedule": {
     "kind": "interval",
@@ -176,7 +189,7 @@ See [jobs.md](../concepts/jobs.md) for the conceptual explanation and [cli.md](c
 
 ```json
 {
-  "id": "morning-summary",
+  "alias": "morning-summary",
   "description": "Generate a daily summary via LLM",
   "enabled": true,
   "schedule": {
@@ -200,7 +213,7 @@ See [jobs.md](../concepts/jobs.md) for the conceptual explanation and [cli.md](c
 
 ```json
 {
-  "id": "migration-run",
+  "alias": "migration-run",
   "enabled": true,
   "schedule": {
     "kind": "one-shot",

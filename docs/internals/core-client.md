@@ -49,7 +49,7 @@ async createJob(input: Job | JobCreateInput, options?): Promise<Job>
 async listJobs(): Promise<Job[]>
 async getJob(id: string): Promise<Job>
 async updateJob(id: string, patch: JobPatchInput, options?): Promise<Job>
-async deleteJob(id: string): Promise<{ ok: true }>
+async deleteJob(id?: string, options?: { all?: boolean; force?: boolean }): Promise<{ ok: true } | { ok: true; deleted: number }>
 async enableJob(id: string): Promise<Job>
 async disableJob(id: string): Promise<Job>
 async runNow(id: string): Promise<{ runId: string }>

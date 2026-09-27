@@ -118,7 +118,7 @@ describe('Security', () => {
 
     const run = store2.insertRun(job.id);
     await runner.run(job, run.id, store2);
-    const output = store2.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('');
+    const output = store2.getLogs(run.id, 'engine').map((log) => log.chunk.toString('utf-8')).join('');
     expect(output).toBe(dangerousArg);
 
     store2.close();

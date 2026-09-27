@@ -11,6 +11,7 @@ import { JobSchema, type Job, type PromptAction } from '../schemas/job.js';
 import { CrontickError, ORPHAN_RUN_ERROR_MESSAGE } from '../errors.js';
 import { jobJsonSchemaText } from '../schema-json.js';
 import { nullLogger, type Logger } from '../logger.js';
+import type { LogSource } from '../log-source.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,8 @@ export interface Run {
   durationMs?: number;
   pid?: number; // OS pid of the spawned child, set once known (see updateRun); absent for 'queued'/'missed' runs.
   outputTruncated: boolean; // true once a run's captured output hit the byte cap (NOT NULL DEFAULT 0 column, always present).
+  sessionId?: string; // prompt-engine session id captured from output (or explicitly provided) for this run; absent for non-prompt runs.
+  command?: string; // redacted resolved command line (binary + args) actually spawned for this run; absent for 'queued'/'missed' runs.
 }
 
 /** Every RunStatus value, kept as a runtime array so RunImportSchema's z.enum
@@ -59,14 +62,32 @@ export const RunImportSchema = z.object({
   durationMs: z.number().optional(),
   pid: z.number().optional(),
   outputTruncated: z.boolean().optional(),
+  sessionId: z.string().optional(),
+  command: z.string().optional(),
 });
 
 export interface RunLog {
   runId: string;
-  stream: 'stdout' | 'stderr';
+  stream: LogStream;
   ts: number; // epoch ms
   chunk: Buffer;
 }
+
+/**
+ * Log streams captured per run. `stdout`/`stderr` are the engine's process
+ * output; `crontick` is crontick's own scheduling/execution lifecycle events
+ * (job fired, resolved command, exit code, duration, cancellation, captured
+ * session id, errors). See LogSource for the retrieval-side filter.
+ */
+export type LogStream = 'stdout' | 'stderr' | 'crontick';
+
+/**
+ * Retrieval-side filter for getLogs(): `all` (default) returns every stream,
+ * `engine` returns only stdout+stderr, `crontick` returns only crontick-side
+ * lifecycle events. Canonically defined in `src/log-source.ts` and re-exported
+ * here for daemon consumers (api.ts).
+ */
+export type { LogSource };
 
 export interface ListRunsOptions {
   jobId?: string;
@@ -165,14 +186,18 @@ export class Store {
   /**
    * Creates every table/index a fresh database needs, in one idempotent pass.
    * `CREATE TABLE/INDEX IF NOT EXISTS` throughout, so calling this again on an
-   * already-initialized database (e.g. a second open()) is a no-op — there is
-   * no migration ledger and no prior on-disk shape to reconcile: databases
-   * created by crontick versions before 1.0.0 are not a supported input.
+   * already-initialized database (e.g. a second open()) is a no-op. There is
+   * no migration ledger and no prior on-disk shape to reconcile: crontick has
+   * a single fixed schema and always creates it in its final shape. Every
+   * column (including `jobs.alias`, `runs.session_id`, and `runs.command`) is
+   * declared directly in its `CREATE TABLE`, and the alias-uniqueness index is
+   * created alongside the tables.
    */
   private createSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS jobs (
         id TEXT PRIMARY KEY,
+        alias TEXT,
         json TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -187,7 +212,9 @@ export class Store {
         error TEXT,
         duration_ms INTEGER,
         pid INTEGER,
-        output_truncated INTEGER NOT NULL DEFAULT 0
+        output_truncated INTEGER NOT NULL DEFAULT 0,
+        session_id TEXT,
+        command TEXT
       );
 
       CREATE TABLE IF NOT EXISTS run_logs (
@@ -212,10 +239,14 @@ export class Store {
       CREATE INDEX IF NOT EXISTS idx_runs_job_id_started_at ON runs(job_id, started_at);
       CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs(started_at);
       CREATE INDEX IF NOT EXISTS idx_run_logs_run_id ON run_logs(run_id);
+
+      -- Alias uniqueness enforced at the DB layer as a defense-in-depth
+      -- backstop against a race between two concurrent create/update requests
+      -- (app-level checks in api.ts via generateAlias/getJob are the primary
+      -- enforcement). Partial index so multiple NULL aliases stay allowed.
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_alias ON jobs(alias) WHERE alias IS NOT NULL;
     `);
   }
-
-  // ── Job CRUD ────────────────────────────────────────────────────────────────
 
   /** Write job to both SQLite cache and JSON file on disk (JSON is source of truth). */
   upsertJob(job: Job): void {
@@ -224,14 +255,14 @@ export class Store {
     const now = Date.now();
     this.db
       .prepare(
-        'INSERT INTO jobs (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at',
+        'INSERT INTO jobs (id, alias, json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET alias=excluded.alias, json=excluded.json, updated_at=excluded.updated_at',
       )
-      .run(persisted.id, json, now);
+      .run(persisted.id, persisted.alias ?? null, json, now);
     const filePath = join(this.jobsPath, `${persisted.id}.json`);
     const schemaPath = join(this.jobsPath, `${persisted.id}.schema.json`);
     writeJobFileHardened(filePath, json);
     writeJobFileHardened(schemaPath, jobJsonSchemaText());
-    this.logger.debug('Persisted job files', { jobId: persisted.id, filePath, schemaPath });
+    this.logger.debug('Persisted job files', { jobId: persisted.id, alias: persisted.alias, filePath, schemaPath });
   }
 
   /**
@@ -256,13 +287,40 @@ export class Store {
     return true;
   }
 
-  getJob(id: string): Job | undefined {
+  /**
+   * Resolves a user-supplied job identifier to the stored job, accepting
+   * EITHER the immutable GUID `id` or the human-friendly `alias`. `id` is
+   * tried first (an exact primary-key match), falling back to an alias
+   * lookup -- this is the single resolution point every job lookup in
+   * api.ts funnels through, so "job id or alias" works uniformly everywhere
+   * a job identifier is accepted.
+   */
+  getJob(idOrAlias: string): Job | undefined {
+    const byId = this.getJobRowById(idOrAlias);
+    if (byId) {
+      this.logger.debug('Read job from store by id', { jobId: idOrAlias });
+      return byId;
+    }
+    const byAlias = this.getJobRowByAlias(idOrAlias);
+    if (byAlias) {
+      this.logger.debug('Read job from store by alias', { alias: idOrAlias, jobId: byAlias.id });
+      return byAlias;
+    }
+    return undefined;
+  }
+
+  private getJobRowById(id: string): Job | undefined {
     const row = this.db.prepare('SELECT json FROM jobs WHERE id = ?').get(id) as
       | { json: string }
       | undefined;
-    if (!row) return undefined;
-    this.logger.debug('Read job from store', { jobId: id });
-    return JSON.parse(row.json) as Job;
+    return row ? (JSON.parse(row.json) as Job) : undefined;
+  }
+
+  private getJobRowByAlias(alias: string): Job | undefined {
+    const row = this.db.prepare('SELECT json FROM jobs WHERE alias = ?').get(alias) as
+      | { json: string }
+      | undefined;
+    return row ? (JSON.parse(row.json) as Job) : undefined;
   }
 
   listJobs(): Job[] {
@@ -273,29 +331,65 @@ export class Store {
     return rows.map((r) => JSON.parse(r.json) as Job);
   }
 
-  deleteJob(id: string): boolean {
-    const changes = (this.db.prepare('DELETE FROM jobs WHERE id = ?').run(id) as { changes: number }).changes;
-    const filePath = join(this.jobsPath, `${id}.json`);
-    const schemaPath = join(this.jobsPath, `${id}.schema.json`);
-    if (existsSync(filePath)) {
-      try {
-        unlinkSync(filePath);
-      } catch {
-        // ignore
-      }
-    }
-    if (existsSync(schemaPath)) {
-      try {
-        unlinkSync(schemaPath);
-      } catch {
-        // ignore
-      }
-    }
-    this.logger.debug('Deleted job', { jobId: id, deleted: changes > 0, filePath, schemaPath });
+  /** Accepts either the GUID `id` or the `alias` (see getJob) and deletes the resolved job's row + files. */
+  deleteJob(idOrAlias: string): boolean {
+    const job = this.getJob(idOrAlias);
+    if (!job) return false;
+    const changes = (this.db.prepare('DELETE FROM jobs WHERE id = ?').run(job.id) as { changes: number }).changes;
+    this.removeJobFiles(job.id);
+    this.logger.debug('Deleted job', { jobId: job.id, alias: job.alias, deleted: changes > 0 });
     return changes > 0;
   }
 
-  /** Load jobs from the jobs directory (JSON files are source of truth on daemon start). */
+  /**
+   * Atomically delete every job and all data associated with jobs: run history,
+   * run logs, and per-job schedule state, in a single transaction. Returns the
+   * number of job rows removed. Unlike single-job delete (which archives run
+   * history), a bulk wipe leaves nothing to archive against, so runs/logs are
+   * removed too. Job JSON files are unlinked best-effort after the DB commit
+   * (the SQLite rows are the transactional source of truth; files are a mirror).
+   */
+  deleteAllJobs(): number {
+    const jobs = this.listJobs();
+    this.db.exec('BEGIN;');
+    let deleted: number;
+    try {
+      this.db.exec('DELETE FROM run_logs;');
+      this.db.exec('DELETE FROM runs;');
+      this.db.exec('DELETE FROM job_schedule_state;');
+      deleted = (this.db.prepare('DELETE FROM jobs').run() as { changes: number }).changes;
+      this.db.exec('COMMIT;');
+    } catch (err) {
+      this.db.exec('ROLLBACK;');
+      throw err;
+    }
+    for (const job of jobs) this.removeJobFiles(job.id);
+    this.logger.info('Deleted all jobs', { deleted });
+    return deleted;
+  }
+
+  /** Best-effort removal of a job's persisted JSON + schema files (the DB row is the transactional source of truth). */
+  private removeJobFiles(jobId: string): void {
+    const filePath = join(this.jobsPath, `${jobId}.json`);
+    const schemaPath = join(this.jobsPath, `${jobId}.schema.json`);
+    for (const path of [filePath, schemaPath]) {
+      if (existsSync(path)) {
+        try {
+          unlinkSync(path);
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
+
+  /**
+   * Load jobs from the jobs directory (JSON files are source of truth on
+   * daemon start). Each file is loaded as-is: job files already carry a GUID
+   * `id` and optional `alias`. A file that fails to parse or validate is
+   * skipped with a warning (best-effort robustness), never rewritten.
+   */
   loadJobsFromDisk(): void {
     if (!existsSync(this.jobsPath)) {
       this.logger.debug('Jobs directory missing during load', { jobsPath: this.jobsPath });
@@ -306,15 +400,15 @@ export class Store {
     for (const file of files) {
       const filePath = join(this.jobsPath, file);
       try {
-        const raw = readFileSync(filePath, 'utf-8');
-        const parsed = JobSchema.safeParse(JSON.parse(raw));
+        const raw: unknown = JSON.parse(readFileSync(filePath, 'utf-8'));
+        const parsed = JobSchema.safeParse(raw);
         if (parsed.success) {
           const json = JSON.stringify(parsed.data);
           this.db
             .prepare(
-              'INSERT INTO jobs (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at',
+              'INSERT INTO jobs (id, alias, json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET alias=excluded.alias, json=excluded.json, updated_at=excluded.updated_at',
             )
-            .run(parsed.data.id, json, Date.now());
+            .run(parsed.data.id, parsed.data.alias ?? null, json, Date.now());
           loaded++;
         } else {
           // warn (not debug): a job silently vanishing from the schedule after a
@@ -329,6 +423,7 @@ export class Store {
     }
     this.logger.debug('Loaded jobs from disk', { jobsPath: this.jobsPath, files: files.length, loaded });
   }
+
 
   // ── Run CRUD ────────────────────────────────────────────────────────────────
 
@@ -380,7 +475,7 @@ export class Store {
 
   updateRun(
     id: string,
-    update: Partial<Pick<Run, 'status' | 'exitCode' | 'error' | 'endedAt' | 'durationMs' | 'pid' | 'outputTruncated'>>,
+    update: Partial<Pick<Run, 'status' | 'exitCode' | 'error' | 'endedAt' | 'durationMs' | 'pid' | 'outputTruncated' | 'sessionId' | 'command'>>,
   ): void {
     const run = this.getRun(id);
     if (!run) throw new CrontickError('NOT_FOUND', `Run ${id} not found`);
@@ -416,6 +511,14 @@ export class Store {
       fields.push('output_truncated = ?');
       values.push(update.outputTruncated ? 1 : 0);
     }
+    if (update.sessionId !== undefined) {
+      fields.push('session_id = ?');
+      values.push(update.sessionId ?? null);
+    }
+    if (update.command !== undefined) {
+      fields.push('command = ?');
+      values.push(update.command ?? null);
+    }
 
     if (fields.length === 0) return;
     values.push(id);
@@ -429,6 +532,7 @@ export class Store {
       .get(id) as DbRunRow | undefined;
     return row ? rowToRun(row) : undefined;
   }
+
 
   private queryRuns(opts: ListRunsOptions = {}, existingJobsOnly = false): Run[] {
     const conditions: string[] = [];
@@ -449,8 +553,23 @@ export class Store {
 
     const join = existingJobsOnly ? 'INNER JOIN jobs ON jobs.id = runs.job_id' : '';
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    const limit = opts.limit !== undefined ? `LIMIT ${opts.limit}` : '';
-    const rows = this.db.prepare(`SELECT runs.* FROM runs ${join} ${where} ORDER BY runs.started_at DESC ${limit}`)
+    // Defense-in-depth: bind LIMIT as a parameter (never string-interpolated)
+    // and reject any non-finite / non-positive value so a bad limit can never
+    // reach SQLite as malformed SQL. The HTTP layer validates first (see
+    // api.ts optionalPositiveInt), this is the store-side backstop.
+    let limitClause = '';
+    if (opts.limit !== undefined) {
+      const n = Number(opts.limit);
+      if (!Number.isInteger(n) || n <= 0) {
+        throw new CrontickError(
+          'VALIDATION_ERROR',
+          `Invalid limit ${opts.limit}. Provide a positive integer for limit, then retry.`,
+        );
+      }
+      limitClause = 'LIMIT ?';
+      params.push(n);
+    }
+    const rows = this.db.prepare(`SELECT runs.* FROM runs ${join} ${where} ORDER BY runs.started_at DESC ${limitClause}`)
       .all(...params) as unknown as DbRunRow[];
     this.logger.debug('Listed runs', {
       count: rows.length,
@@ -505,8 +624,8 @@ export class Store {
     const jobExists = this.db.prepare('SELECT 1 FROM jobs WHERE id = ?');
     const insert = this.db.prepare(
       `INSERT OR IGNORE INTO runs
-         (id, job_id, started_at, ended_at, status, exit_code, error, duration_ms, pid, output_truncated)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, job_id, started_at, ended_at, status, exit_code, error, duration_ms, pid, output_truncated, session_id, command)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     for (const raw of runs) {
       const parsed = RunImportSchema.safeParse(raw);
@@ -532,6 +651,8 @@ export class Store {
           run.durationMs ?? null,
           run.pid ?? null,
           run.outputTruncated ? 1 : 0,
+          run.sessionId ?? null,
+          run.command ?? null,
         ) as { changes: number };
         if (result.changes > 0) {
           imported += 1;
@@ -558,16 +679,26 @@ export class Store {
 
   // ── Log CRUD ────────────────────────────────────────────────────────────────
 
-  appendLog(runId: string, stream: 'stdout' | 'stderr', chunk: Buffer): void {
+  appendLog(runId: string, stream: LogStream, chunk: Buffer): void {
     this.db
       .prepare('INSERT INTO run_logs (run_id, stream, ts, chunk) VALUES (?, ?, ?, ?)')
       .run(runId, stream, Date.now(), chunk);
   }
 
-  getLogs(runId: string): RunLog[] {
-    const rows = this.db
-      .prepare('SELECT * FROM run_logs WHERE run_id = ? ORDER BY id')
-      .all(runId) as unknown as DbLogRow[];
+  /**
+   * Returns a run's logs, optionally filtered by source: `all` (default)
+   * returns every stream, `engine` returns only stdout+stderr, `crontick`
+   * returns only crontick-side lifecycle events.
+   */
+  getLogs(runId: string, source: LogSource = 'all'): RunLog[] {
+    const streams = logStreamsForSource(source);
+    const rows = streams
+      ? (this.db
+          .prepare(`SELECT * FROM run_logs WHERE run_id = ? AND stream IN (${streams.map(() => '?').join(', ')}) ORDER BY id`)
+          .all(runId, ...streams) as unknown as DbLogRow[])
+      : (this.db
+          .prepare('SELECT * FROM run_logs WHERE run_id = ? ORDER BY id')
+          .all(runId) as unknown as DbLogRow[]);
     return rows.map(rowToLog);
   }
 
@@ -782,12 +913,14 @@ interface DbRunRow {
   duration_ms: number | null;
   pid: number | null;
   output_truncated: number;
+  session_id: string | null;
+  command: string | null;
 }
 
 interface DbLogRow {
   id: number;
   run_id: string;
-  stream: 'stdout' | 'stderr';
+  stream: LogStream;
   ts: number;
   chunk: Buffer;
 }
@@ -817,7 +950,16 @@ function rowToRun(row: DbRunRow): Run {
   if (row.error !== null) r.error = row.error;
   if (row.duration_ms !== null) r.durationMs = row.duration_ms;
   if (row.pid !== null) r.pid = row.pid;
+  if (row.session_id !== null) r.sessionId = row.session_id;
+  if (row.command !== null) r.command = row.command;
   return r;
+}
+
+/** Maps a LogSource filter to the concrete stream list, or null for "all". */
+function logStreamsForSource(source: LogSource): LogStream[] | null {
+  if (source === 'engine') return ['stdout', 'stderr'];
+  if (source === 'crontick') return ['crontick'];
+  return null;
 }
 
 function rowToLog(row: DbLogRow): RunLog {

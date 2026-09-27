@@ -54,7 +54,8 @@ PRAGMA foreign_keys=ON;
 
 | Column | Type | Constraints |
 |--------|------|-------------|
-| `id` | TEXT | PRIMARY KEY |
+| `id` | TEXT | PRIMARY KEY (GUID) |
+| `alias` | TEXT | nullable (human-friendly identifier; unique among live jobs via `idx_jobs_alias`) |
 | `json` | TEXT | NOT NULL (full Job JSON) |
 | `updated_at` | INTEGER | NOT NULL (epoch ms) |
 
@@ -72,6 +73,8 @@ PRAGMA foreign_keys=ON;
 | `duration_ms` | INTEGER | nullable |
 | `pid` | INTEGER | nullable (set once the child process is spawned; absent for `missed` runs, which never spawn a process) |
 | `output_truncated` | INTEGER | NOT NULL DEFAULT 0 (0/1; set once captured output hits `retention.maxOutputBytesPerRun`) |
+| `session_id` | TEXT | nullable (prompt-engine session id captured for this run, or explicitly provided; absent for non-prompt runs) |
+| `command` | TEXT | nullable (redacted resolved command line actually spawned for this run; absent for `queued`/`missed` runs) |
 
 #### `run_logs`
 
@@ -79,7 +82,7 @@ PRAGMA foreign_keys=ON;
 |--------|------|-------------|
 | `id` | INTEGER | PRIMARY KEY AUTOINCREMENT |
 | `run_id` | TEXT | NOT NULL |
-| `stream` | TEXT | NOT NULL (stdout/stderr) |
+| `stream` | TEXT | NOT NULL (`stdout`/`stderr` for engine output; `crontick` for crontick's own scheduling/execution lifecycle events) |
 | `ts` | INTEGER | NOT NULL (epoch ms) |
 | `chunk` | BLOB | NOT NULL |
 
@@ -103,6 +106,11 @@ never been observed live, so no gap can be computed for it yet.
 | `idx_runs_job_id_started_at` | runs | `job_id, started_at` |
 | `idx_runs_started_at` | runs | `started_at` |
 | `idx_run_logs_run_id` | run_logs | `run_id` |
+| `idx_jobs_alias` | jobs | `alias` (UNIQUE, partial: `WHERE alias IS NOT NULL`) |
+
+`idx_jobs_alias` is a partial unique index enforcing alias uniqueness at the DB layer as a
+defense-in-depth backstop (app-level checks in `api.ts` via `generateAlias`/`getJob` are the
+primary enforcement); the `WHERE alias IS NOT NULL` clause keeps multiple aliasless jobs allowed.
 
 `idx_runs_job_id_started_at` is a composite `(job_id, started_at)` index; the single-column
 `idx_runs_job_id` it would otherwise shadow is deliberately never created, since every query the
@@ -137,8 +145,8 @@ class Store {
   importRuns(runs: unknown[]): { imported: number; skipped: Array<{ id: string; error: string }> }; // validates each row (zod), skips invalid/foreign-job rows individually; bulk archival restore; INSERT OR IGNORE
 
   // Log CRUD
-  appendLog(runId, stream, chunk: Buffer): void;
-  getLogs(runId: string): RunLog[];
+  appendLog(runId, stream, chunk: Buffer): void; // stream: 'stdout' | 'stderr' | 'crontick'
+  getLogs(runId: string, source?: 'all' | 'engine' | 'crontick'): RunLog[]; // default 'all'; 'engine' = stdout+stderr
   tailLogs(runId: string, sinceTs: number): RunLog[];
 
   // Schedule state (job_schedule_state table)
@@ -147,7 +155,7 @@ class Store {
 
   // Maintenance
   reconcileOrphanRuns(check?: (pid: number, startedAt: number) => boolean | undefined): { canceled: number; adopted: number };
-  setRunRetentionCap(cap: number): void; // used by `crontick daemon reload` to apply a changed cap live
+  setRunRetentionCap(cap: number): void; // used by `crontick info daemon reload` to apply a changed cap live
   pruneAllJobsRunHistory(cap?: number): number; // reload-triggered cap-reconciliation sweep across every job_id in `runs`
 }
 ```
@@ -228,7 +236,7 @@ user-facing framing.
 ## Run Import
 
 `importRuns(runs: unknown[])` (`src/daemon/store.ts`) bulk-restores previously-exported run rows
-(from `crontick export --include-runs`) as archival data only — no execution, no scheduler
+(from `crontick share export --include-runs`) as archival data only — no execution, no scheduler
 interaction. Every row is validated against `RunImportSchema` (zod) before it is ever bound to a
 statement, mirroring the same validate-then-collect pattern `POST /api/import`'s jobs loop already
 used: a malformed row (bad `status` enum value, missing `startedAt`, wrong types, ...) is skipped
@@ -257,7 +265,7 @@ Every `insertRun()` call also prunes that job's history down to
 `retention.maxRunsPerJob` (default `100`, see
 [configuration.md](../reference/configuration.md)). `pruneAllJobsRunHistory()` additionally
 sweeps every job on daemon boot; its practical purpose is to reconcile a cap that was **lowered**
-via `crontick daemon reload` while the daemon was down or between ticks for a quiet job, catching
+via `crontick info daemon reload` while the daemon was down or between ticks for a quiet job, catching
 up rows the per-insert prune had no opportunity to evict yet. It is not an upgrade step or a
 schema migration — the schema itself needs no such step (see [Schema](#schema) above).
 
@@ -295,7 +303,7 @@ blocks daemon startup — see [daemon.md](./daemon.md) for the startup
 sequence. The sweep is also per-job try/catch, so one job's failure does
 not abort the sweep for every other job.
 
-**Reload.** `crontick daemon reload` re-reads `retention.maxRunsPerJob` from
+**Reload.** `crontick info daemon reload` re-reads `retention.maxRunsPerJob` from
 config and calls `setRunRetentionCap()`, so a changed cap takes effect
 immediately for both future inserts and the next sweep, without a daemon
 restart — see [daemon.md](./daemon.md).
@@ -307,7 +315,7 @@ stdout/stderr is separately bounded by `retention.maxOutputBytesPerRun` (see
 [executors.md](./executors.md#output-capture-cap)), so one run cannot itself produce an
 unbounded `run_logs` row. Eviction is a hard delete with no automatic export, warning, dry-run,
 or undo; a caller who wants to keep history past the cap must run
-`crontick export --include-runs` *before* it is evicted (see
+`crontick share export --include-runs` *before* it is evicted (see
 [cli.md](../reference/cli.md#export)) -- there is no automatic backup. See
 [state-and-storage.md](../concepts/state-and-storage.md) for the
 user-facing framing, and

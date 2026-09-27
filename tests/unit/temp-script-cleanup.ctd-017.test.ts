@@ -85,7 +85,7 @@ describe.runIf(process.platform === 'win32')('CTD-017 temp script cleanup', () =
     expect(daemon.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
 
     await client!.createJob({
-      id: 'ctd-017-script-job',
+      alias: 'ctd-017-script-job',
       schedule: { kind: 'interval', everySec: 3600 },
       action: {
         kind: 'script',

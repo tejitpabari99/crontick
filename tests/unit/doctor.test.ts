@@ -1,5 +1,5 @@
 /**
- * `crontick doctor` smoke test.
+ * `crontick info doctor` smoke test.
  */
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -9,12 +9,12 @@ import { tmpdir } from 'node:os';
 
 const CLI_SCRIPT = resolve('dist/cli/index.js');
 
-describe('crontick doctor', () => {
+describe('crontick info doctor', () => {
   it('runs and reports checks (even if some fail)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'crontick-doctor-'));
     mkdirSync(join(dir, 'jobs'), { recursive: true });
 
-    const result = spawnSync(process.execPath, [CLI_SCRIPT, 'doctor'], {
+    const result = spawnSync(process.execPath, [CLI_SCRIPT, 'info', 'doctor'], {
       encoding: 'utf-8',
       timeout: 15_000,
       env: { ...process.env, CRONTICK_HOME: dir },

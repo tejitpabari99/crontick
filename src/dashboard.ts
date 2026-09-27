@@ -12,7 +12,6 @@ import { VERSION } from './version.js';
 import type { Job, Schedule } from './schemas/job.js';
 import type { Store, Run } from './daemon/store.js';
 import type { Scheduler } from './daemon/scheduler.js';
-import type { DaemonStopResult } from './daemon/lifecycle.js';
 
 export interface DashboardOptions {
   runsLimit?: number;
@@ -48,7 +47,10 @@ export interface DashboardStats {
 }
 
 export interface DashboardJob {
+  /** Immutable GUID identity (see docs/concepts/jobs.md#identity). */
   id: string;
+  /** Human-friendly, optional, user-editable identifier; unique among currently-defined jobs. Null when unset. */
+  alias: string | null;
   description: string | null;
   enabled: boolean;
   scheduleLabel: string;
@@ -62,12 +64,16 @@ export interface DashboardJob {
 export interface DashboardRun {
   id: string;
   jobId: string;
+  /** The referenced job's alias at snapshot time, for display convenience; null if the job has no alias (or no longer exists). */
+  jobAlias: string | null;
   status: Run['status'];
   startedAt: number;
   endedAt: number | null;
   durationMs: number | null;
   exitCode: number | null;
   error: string | null;
+  /** Prompt-engine session id captured for this run (or explicitly provided); null for non-prompt runs. */
+  sessionId: string | null;
 }
 
 export interface DashboardData {
@@ -86,12 +92,6 @@ export interface DashboardStatus {
   pid?: number;
   daemon: unknown;
 }
-
-export interface DashboardStartResult extends DashboardStatus {
-  startedDaemon: boolean;
-}
-
-export type DashboardStopResult = DaemonStopResult;
 
 export interface DashboardContext {
   store: Store;
@@ -126,13 +126,15 @@ export function buildDashboardData(ctx: DashboardContext, options: DashboardOpti
   const allRuns = ctx.store.listRunsForExistingJobs({ limit: 1000 });
   const since24h = Date.now() - 24 * 60 * 60 * 1000;
   const runs24h = ctx.store.listRunsForExistingJobs({ since: since24h });
+  // Snapshot of jobId -> alias for run display convenience (DashboardRun.jobAlias).
+  const aliasByJobId = new Map(jobs.map((job) => [job.id, job.alias ?? null] as const));
 
   return redactValue({
     generatedAt: Date.now(),
     health: buildDashboardHealth(ctx, jobs, runs24h),
     stats: buildDashboardStats(jobs, allRuns),
     jobs: jobs.map((job) => buildDashboardJob(ctx, job)),
-    runs: recentRuns.map(toDashboardRun),
+    runs: recentRuns.map((run) => toDashboardRun(run, aliasByJobId)),
   }) as DashboardData;
 }
 
@@ -215,8 +217,8 @@ export function resolveDashboardAsset(reqPath: string): DashboardAsset {
     if (decodedSub.split('/').includes('..')) {
       throw new CrontickError(
         'BAD_DASHBOARD_ASSET',
-        `Dashboard asset path is outside the dashboard directory. Request a path under /dashboard, then retry: crontick dashboard start`,
-        { requestedPath: reqPath, action: 'crontick dashboard start' },
+        `Dashboard asset path is outside the dashboard directory. Request a path under /dashboard.`,
+        { requestedPath: reqPath },
       );
     }
     const normalizedSub = normalize(sub).replace(/^[/\\]+/, '');
@@ -226,8 +228,8 @@ export function resolveDashboardAsset(reqPath: string): DashboardAsset {
   if (filePath !== indexFile && !filePath.startsWith(`${dashDir}${pathSep}`)) {
     throw new CrontickError(
       'BAD_DASHBOARD_ASSET',
-      `Dashboard asset path is outside the dashboard directory. Request a path under /dashboard, then retry: crontick dashboard start`,
-      { requestedPath: reqPath, action: 'crontick dashboard start' },
+      `Dashboard asset path is outside the dashboard directory. Request a path under /dashboard.`,
+      { requestedPath: reqPath },
     );
   }
 
@@ -244,8 +246,8 @@ export function resolveDashboardAsset(reqPath: string): DashboardAsset {
   if (!stat.isFile()) {
     throw new CrontickError(
       'BAD_DASHBOARD_ASSET',
-      `Dashboard asset path is not a file. Request a file under /dashboard, then retry: crontick dashboard start`,
-      { requestedPath: reqPath, action: 'crontick dashboard start' },
+      `Dashboard asset path is not a file. Request a file under /dashboard.`,
+      { requestedPath: reqPath },
     );
   }
 
@@ -259,8 +261,8 @@ export function resolveDashboardAsset(reqPath: string): DashboardAsset {
 export function dashboardDaemonDownError(operation: string): CrontickError {
   return new CrontickError(
     'DAEMON_NOT_RUNNING',
-    `Dashboard daemon is not running while attempting ${operation}. Start it with: crontick dashboard start`,
-    { action: 'crontick dashboard start', operation },
+    `Dashboard daemon is not running while attempting ${operation}. Start it with: crontick daemon start`,
+    { action: 'crontick daemon start', operation },
   );
 }
 
@@ -268,6 +270,7 @@ function buildDashboardJob(ctx: DashboardContext, job: Job): DashboardJob {
   const lastRun = ctx.store.listRuns({ jobId: job.id, limit: 1 })[0];
   return {
     id: job.id,
+    alias: job.alias ?? null,
     description: job.description ?? null,
     enabled: job.enabled,
     scheduleLabel: scheduleLabel(job.schedule),
@@ -279,16 +282,18 @@ function buildDashboardJob(ctx: DashboardContext, job: Job): DashboardJob {
   };
 }
 
-function toDashboardRun(run: Run): DashboardRun {
+function toDashboardRun(run: Run, aliasByJobId: ReadonlyMap<string, string | null>): DashboardRun {
   return {
     id: run.id,
     jobId: run.jobId,
+    jobAlias: aliasByJobId.get(run.jobId) ?? null,
     status: run.status,
     startedAt: run.startedAt,
     endedAt: run.endedAt ?? null,
     durationMs: run.durationMs ?? null,
     exitCode: run.exitCode ?? null,
     error: run.error ?? null,
+    sessionId: run.sessionId ?? null,
   };
 }
 
@@ -303,8 +308,8 @@ function normalizeLimit(limit: number | undefined, fallback: number): number {
   if (!Number.isInteger(limit) || limit <= 0) {
     throw new CrontickError(
       'VALIDATION_ERROR',
-      `Invalid dashboard runsLimit ${String(limit)}. Provide a positive integer, then retry: crontick dashboard data --runs-limit <n>`,
-      { runsLimit: limit, action: 'crontick dashboard data --runs-limit <n>' },
+      `Invalid dashboard runsLimit ${String(limit)}. Provide a positive integer for runsLimit, then retry the request.`,
+      { runsLimit: limit, action: 'Provide a positive integer for runsLimit' },
     );
   }
   return limit;

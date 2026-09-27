@@ -111,7 +111,7 @@ describe('Integration: live Scheduler auto-fires ticks into runs (no manual /run
     // "fires" test). No startAt: the scheduler arms an initial ~1s delay,
     // then a real setInterval every 1s.
     const created = await apiCall(port, 'POST', '/api/jobs', {
-      id: jobId,
+      alias: jobId,
       schedule: { kind: 'interval', everySec: 1 },
       action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'] },
     });
@@ -139,7 +139,7 @@ describe('Integration: live Scheduler auto-fires ticks into runs (no manual /run
     // slow. Croner (the library backing the scheduler) supports the optional
     // leading seconds field.
     const created = await apiCall(port, 'POST', '/api/jobs', {
-      id: jobId,
+      alias: jobId,
       schedule: { kind: 'cron', cron: '* * * * * *' },
       action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'] },
     });

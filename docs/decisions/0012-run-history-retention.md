@@ -32,7 +32,7 @@ Add a per-job count cap, `retention.maxRunsPerJob` (default `100`, bounds `1..10
   more than 32766 bound parameters per statement and an unbatched delete could itself fail (or
   hold a long-lived transaction) on a large backlog -- exactly the case the backfill exists to
   fix. `run_logs` for an evicted run are deleted before the `runs` row in the same transaction.
-- The cap is **re-read on `crontick daemon reload`** (`Store.setRunRetentionCap()`), so an
+- The cap is **re-read on `crontick info daemon reload`** (`Store.setRunRetentionCap()`), so an
   operator can change it without restarting the daemon.
 - The composite index `idx_runs_job_id_started_at` on `(job_id, started_at)` (created directly
   in the schema; there is no separate migration step -- see ADR 0017) supports the eviction

@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 import { JobSchema } from '../../src/schemas/job.js';
 
-const validIdArb = fc
+// `id` is now an immutable GUID (see docs/concepts/jobs.md#identity); the
+// human-friendly, kebab-case identifier these generators previously called
+// "id" is `alias`.
+const validAliasArb = fc
   .tuple(
     fc.constantFrom('job', 'task', 'sync', 'backup', 'daily'),
     fc.array(fc.constantFrom('a1', 'b2', 'cleanup', 'nightly', 'run'), { maxLength: 3 }),
@@ -10,7 +13,7 @@ const validIdArb = fc
   .map(([head, tail]) => [head, ...tail].join('-').slice(0, 30));
 
 const validJobArb = fc.record({
-  id: validIdArb,
+  alias: validAliasArb,
   enabled: fc.boolean(),
   schedule: fc.oneof(
     fc.record({
@@ -39,24 +42,20 @@ const validJobArb = fc.record({
 
 const invalidJobArb = fc.oneof(
   fc.record({
-    id: fc.constantFrom('Invalid', 'BAD-ID', 'Upper-Case'),
+    alias: fc.constantFrom('Invalid', 'BAD-ID', 'Upper-Case'),
     schedule: fc.constant({ kind: 'cron', cron: '* * * * *' }),
     action: fc.constant({ kind: 'exec', command: 'echo', args: [] }),
   }),
-  fc.constant({}),
-  fc.constant({ id: 'valid-id' }),
+  fc.constant({ schedule: { kind: 'bogus' } }),
   fc.constant({
-    id: 'valid-id',
     schedule: { kind: 'bogus' },
     action: { kind: 'exec', command: 'echo', args: [] },
   }),
   fc.constant({
-    id: 'valid-id',
     schedule: { kind: 'interval', everySec: -1 },
     action: { kind: 'exec', command: 'echo', args: [] },
   }),
   fc.constant({
-    id: 'valid-id',
     schedule: { kind: 'cron', cron: '* * * * *' },
     action: { kind: 'script', script: 'echo hi', engine: 'copilot' },
   }),
@@ -85,7 +84,7 @@ describe('property: JobSchema', () => {
 
   it('applies prompt defaults and strict mode-specific validation', () => {
     const parsed = JobSchema.parse({
-      id: 'valid-id',
+      alias: 'valid-id',
       schedule: { kind: 'cron', cron: '* * * * *' },
       action: { kind: 'prompt', prompt: 'hello' },
     });
@@ -96,7 +95,7 @@ describe('property: JobSchema', () => {
       reuseSession: false,
     });
     expect(JobSchema.safeParse({
-      id: 'valid-id',
+      alias: 'valid-id',
       schedule: { kind: 'cron', cron: '* * * * *' },
       action: { kind: 'prompt', prompt: 'hello', promptFile: 'x.txt' },
     }).success).toBe(false);

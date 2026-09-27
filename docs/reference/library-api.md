@@ -31,6 +31,8 @@ class CrontickClient {
 
 #### Methods
 
+Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJob`, `enableJob`, `disableJob`, `runNow`, `statsJob`, the `jobId` filter on `listRuns`) accepts EITHER the job's immutable GUID `id` OR its human-friendly `alias` — an exact GUID match is tried first, falling back to an alias lookup. An identifier that resolves to neither throws `CrontickError('JOB_NOT_FOUND', ...)`. See [job-schema.md](job-schema.md#identity-guid-id--alias) for how `id`/`alias` are assigned.
+
 | Method | Signature | Returns | Throws |
 |--------|-----------|---------|--------|
 | `ensure` | `(): Promise<DaemonInfo>` | `DaemonInfo` | `CrontickError` (`DAEMON_START_FAILED`, `DAEMON_TIMEOUT`, `DAEMON_START_LOCK_TIMEOUT`) |
@@ -40,30 +42,29 @@ class CrontickClient {
 | `listJobs` | `(): Promise<Job[]>` | Array of `Job` | `CrontickError` |
 | `getJob` | `(id: string): Promise<Job>` | `Job` | `CrontickError` (`NOT_FOUND`) |
 | `updateJob` | `(id: string, patch: JobPatchInput, options?: NormalizeJobInputOptions): Promise<Job>` | Updated `Job` | `CrontickError` (`VALIDATION_ERROR`, `ENV_FILE_ERROR`, `NOT_FOUND`, `DAEMON_REQUEST_FAILED`) |
-| `deleteJob` | `(id: string): Promise<{ ok: true; canceledRun: boolean }>` | `{ ok: true, canceledRun }` — `canceledRun` is `true` when the job had an in-flight run that was canceled as part of the delete | `CrontickError` (`NOT_FOUND`) |
+| `deleteJob` | `(id?: string, options?: { all?: boolean; force?: boolean }): Promise<{ ok: true } \| { ok: true; deleted: number }>` | `{ ok: true }` for a single delete, or `{ ok: true, deleted }` when `all` is set (requires `force`) | `CrontickError` (`VALIDATION_ERROR`, `NOT_FOUND`) |
 | `enableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
 | `disableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
 | `runNow` | `(id: string): Promise<{ runId: string }>` | `{ runId }` | `CrontickError` |
 | `cancelRun` | `(runId: string): Promise<{ ok: true; canceled: boolean }>` | Cancel result | `CrontickError` |
 | `getRun` | `(runId: string): Promise<unknown>` | Run object | `CrontickError` |
 | `listRuns` | `(options?: { jobId?: string; limit?: number; since?: number; status?: string }): Promise<unknown[]>` | Array of runs | `CrontickError` |
-| `getLogs` | `(runId: string, options?: { lines?: number }): Promise<LogsResult>` | `LogsResult` | `CrontickError` |
+| `getLogs` | `(runId: string, options?: { lines?: number; source?: 'all' \| 'engine' \| 'crontick' }): Promise<LogsResult>` | `LogsResult` | `CrontickError` (`VALIDATION_ERROR` on an invalid `source`) |
 | `exportJobs` | `(options?: { includeRuns?: boolean }): Promise<{ jobs: Job[]; runs?: unknown[] }>` | Export payload; `runs` present only when `includeRuns` is set | `CrontickError` |
 | `importJobs` | `(jobs: unknown[], options?: NormalizeJobInputOptions & { runs?: unknown[] }): Promise<unknown>` | Import result, including `runsImported`/`runsSkipped` when `options.runs` is passed | `CrontickError` |
 | `validateSchedule` | `(schedule: Schedule): Promise<unknown>` | Validation result | `CrontickError` |
 | `previewSchedule` | `(input: { schedule: Schedule; n?: number; tz?: string }): Promise<unknown>` | Fire times | `CrontickError` |
+| `jobSchedule` | `(id: string, options?: { n?: number }): Promise<unknown>` | Upcoming fire times for an existing job (id or alias); powers `crontick jobs schedule` and `crontick_job_schedule` | `CrontickError` (`NOT_FOUND`) |
 | `statsSummary` | `(): Promise<StatsSummary>` | `StatsSummary` | `CrontickError` |
 | `statsJob` | `(id: string): Promise<JobStats>` | `JobStats` | `CrontickError` |
-| `daemonStart` | `(options?: { foreground?: boolean }): Promise<DaemonStartResult>` | Start result | `CrontickError` |
+| `daemonStart` | `(options?: { foreground?: boolean }): Promise<DaemonStartResult>` | Start result (library-only after round-2 simplification) | `CrontickError` |
 | `daemonStop` | `(): Promise<DaemonStopResult>` | Stop result — see [DaemonStopResult](#daemonstopresult) | `CrontickError` |
-| `daemonRestart` | `(): Promise<DaemonRestartResult>` | `{ ok: true, baseUrl, port?, pid?, started, stopped, previousPid? }` — the stop phase escalates internally the same way as `daemonStop`, but only `stopped`/`previousPid` are surfaced (no `mode`/`activeRuns`) | `CrontickError` |
+| `daemonRestart` | `(): Promise<DaemonRestartResult>` | `{ ok: true, baseUrl, port?, pid?, started, stopped, previousPid? }` — library-only after round-2 simplification; the stop phase escalates internally the same way as `daemonStop`, but only `stopped`/`previousPid` are surfaced (no `mode`/`activeRuns`) | `CrontickError` |
 | `daemonReload` | `(): Promise<{ ok: true }>` | `{ ok: true }` | `CrontickError` |
-| `daemonStatus` | `(): Promise<DaemonStatus>` | `DaemonStatus` | `CrontickError` |
+| `daemonStatus` | `(): Promise<DaemonStatus>` | `DaemonStatus` — library-only after round-2 simplification | `CrontickError` |
 | `doctor` | `(options?: DoctorOptions): Promise<DoctorResult>` | `DoctorResult` | `CrontickError` |
-| `dashboardStart` | `(): Promise<DashboardStartResult>` | `DashboardStartResult` | `CrontickError` |
-| `dashboardStop` | `(): Promise<DashboardStopResult>` | Stop result | `CrontickError` |
-| `dashboardStatus` | `(): Promise<DashboardStatus>` | `DashboardStatus` | `CrontickError` |
-| `dashboardData` | `(options?: DashboardOptions): Promise<DashboardData>` | `DashboardData` | `CrontickError` |
+| `dashboardStatus` | `(): Promise<DashboardStatus>` | `DashboardStatus` — library-only; the dashboard is served by the daemon | `CrontickError` |
+| `dashboardData` | `(options?: DashboardOptions): Promise<DashboardData>` | `DashboardData` — library-only; the dashboard is served by the daemon | `CrontickError` |
 | `jobJsonSchema` | `(): unknown` | JSON Schema object | — |
 | `getConfig` | `(): CrontickConfig` | `CrontickConfig` | `CrontickError` |
 | `getConfigValue` | `(path?: string): unknown` | Config value | `CrontickError` (`CONFIG_KEY_NOT_FOUND`) |
@@ -75,10 +76,12 @@ class CrontickClient {
 | `removeEngine` | `(name: string): CrontickConfig` | Updated config | `CrontickError` (`CONFIG_ENGINE_NOT_FOUND`, `CONFIG_BUILTIN_ENGINE`) |
 | `initConfig` | `(options?: { force?: boolean }): { path: string; config: CrontickConfig; created: boolean }` | Init result | `CrontickError` (`CONFIG_EXISTS`) |
 | `validateConfig` | `(path?: string): ConfigValidationResult` | Validation result | `CrontickError` |
+| `configPath` | `(): ConfigPathInfo` | `{ path, note }` — library-only helper mirrored by `info().configPath` | — |
+| `info` | `(): Promise<CrontickInfo>` | `{ version, node, platform, configPath, paths, daemon, dashboardUrl }` — powers `crontick info` and `crontick_info`; `dashboardUrl` is the daemon-served dashboard URL when running, otherwise `null` | `CrontickError` |
 | `drainNotices` | `(): string[]` | Accumulated notices | — |
 | `isVerbose` | `(): boolean` | Verbose flag | — |
 
-**Library-only methods (not in `SURFACE_CAPABILITIES`, no CLI/MCP equivalent):** `ensure`, `health`, `createJobFromCliOptions`, `jobJsonSchema`, `getConfig`, `drainNotices`, `isVerbose`. These are intentionally excluded from the parity contract because they serve internal wiring, direct-use library scenarios, or launch infrastructure rather than proxying a daemon operation.
+**Library-only methods (retained in the client but no longer part of `SURFACE_CAPABILITIES`, so they have no CLI/MCP equivalent):** `ensure`, `health`, `createJobFromCliOptions`, `jobJsonSchema`, `getConfig`, `drainNotices`, `isVerbose`, `daemonStart`, `daemonStatus`, `daemonRestart`, `configPath`, `validateSchedule`, `previewSchedule`, `dashboardStatus`, `dashboardData`, and the config/engine helpers (`getConfigValue`, `setConfigValue`, `removeConfigValue`, `listEngines`, `addEngine`, `updateEngine`, `removeEngine`, `initConfig`, `validateConfig`). These are intentionally excluded from the parity contract because they serve internal wiring, direct-use library scenarios, or launch infrastructure rather than proxying a daemon operation exposed on every surface. The `dashboard` command group and MCP tools were removed because the dashboard is always served by the daemon; `dashboardStart`/`dashboardStop` were removed entirely (they only made sense as commands), while `dashboardStatus`/`dashboardData` remain for direct library use.
 
 Read methods that surface config values or captured text (`getConfigValue`, `getRun`,
 `listRuns`, `getLogs`, and `dashboardData`) apply the shared redaction contract before
@@ -173,6 +176,16 @@ interface LogsResult {
   lines: LogEntry[];
 }
 ```
+
+### LogSource / LOG_SOURCES
+
+```ts
+const LOG_SOURCES = ['all', 'engine', 'crontick'] as const;
+type LogSource = (typeof LOG_SOURCES)[number];
+```
+
+The canonical set of accepted `getLogs` / `runs logs` sources. `getLogs` validates its `source`
+argument against this set and throws `CrontickError` (`VALIDATION_ERROR`) for any other value.
 
 ### StatsSummary
 
@@ -287,7 +300,7 @@ interface DaemonStopResult {
 }
 ```
 
-Returned by `daemonStop` (`CrontickClient`) and by `crontick daemon stop`. `mode` reports how the daemon was actually stopped: `'graceful'` if the
+Returned by `daemonStop` (`CrontickClient`) and by `crontick info daemon stop`. `mode` reports how the daemon was actually stopped: `'graceful'` if the
 `POST /api/daemon/stop` route accepted the request and the process exited before the poll
 timeout; `'hard-kill'` if that stalled or the route was unreachable and `stopDaemon()` had to
 escalate to `SIGTERM` then `SIGKILL`; `'already-stopped'` if no daemon was running. `activeRuns`
@@ -306,7 +319,7 @@ interface DaemonRestartResult extends DaemonInfo { // { baseUrl, port?, pid?, st
 }
 ```
 
-Returned by `daemonRestart`/`crontick daemon restart`. The stop phase (`stopDaemon()`) runs the
+Returned by the library-only `daemonRestart()` helper. The stop phase (`stopDaemon()`) runs the
 same graceful-then-escalate sequence as [`DaemonStopResult`](#daemonstopresult), but only
 `stopped` (whether the previous daemon actually exited) and `previousPid` are surfaced here —
 `mode` and `activeRuns` are not part of this result.
@@ -330,8 +343,7 @@ interface DaemonStatus {
 }
 ```
 
-Returned by `daemonStatus` (`CrontickClient`), `crontick daemon status`, and
-`crontick_daemon_status`. `baseUrl` is always the daemon's loopback listener URL
+Returned by the library-only `daemonStatus()` helper. `crontick info` / `crontick_info` expose the lighter `{ running, pid?, port? }` daemon summary instead. `baseUrl` is always the daemon's loopback listener URL
 (`http://127.0.0.1:<port>`), so scripts can discover the daemon endpoint without reading internal
 state files.
 
@@ -413,6 +425,8 @@ interface DashboardJob {
 interface DashboardRun {
   id: string;
   jobId: string;
+  /** The referenced job's alias at snapshot time; null if the job has no alias. */
+  jobAlias: string | null;
   status: string;
   startedAt: number;
   endedAt: number | null;
@@ -432,14 +446,6 @@ interface DashboardStatus {
   port?: number;
   pid?: number;
   daemon: unknown;
-}
-```
-
-### DashboardStartResult
-
-```ts
-interface DashboardStartResult extends DashboardStatus {
-  startedDaemon: boolean;
 }
 ```
 
@@ -616,6 +622,37 @@ function normalizeJobInput(input: JobCreateInput, options?: NormalizeJobInputOpt
 function normalizeJobPatch(id: string, existing: Job, patch: JobPatchInput, options?: NormalizeJobInputOptions): Job;
 ```
 
+### generateAlias
+
+```ts
+function generateAlias(isTaken: (candidate: string) => boolean, options?: GenerateAliasOptions): string;
+```
+
+Auto-generates a unique job alias (`<word>-<1-1000>`, retrying on collision) when the caller doesn't supply one on create. `isTaken` should check the candidate against both existing job ids and aliases. `options.words` and `options.random` are injectable (default to `DEFAULT_ALIAS_WORDS` and `Math.random`) so callers/tests can control the output deterministically. Throws `CrontickError('ALIAS_GENERATION_FAILED', ...)` if no unique candidate is found after 50 attempts.
+
+```ts
+interface GenerateAliasOptions {
+  words?: readonly string[]; // defaults to DEFAULT_ALIAS_WORDS
+  random?: () => number;     // defaults to Math.random; must return a float in [0, 1)
+}
+```
+
+### DEFAULT_ALIAS_WORDS
+
+```ts
+const DEFAULT_ALIAS_WORDS: readonly string[];
+```
+
+The built-in word list `generateAlias` draws from by default.
+
+### JOB_ALIAS_PATTERN
+
+```ts
+const JOB_ALIAS_PATTERN: RegExp; // /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+```
+
+The kebab-case pattern a job's `alias` must match when supplied.
+
 ### jobJsonSchema
 
 ```ts
@@ -680,7 +717,7 @@ const BUILT_IN_CONFIG: CrontickConfig;
 const SURFACE_CAPABILITIES: readonly SurfaceCapability[];
 ```
 
-37-element array mapping every capability to its client method, CLI command path, and
+21-element array mapping every capability to its client method, CLI command path, and
 MCP tool name. The existing `create-job` capability row also records its parity-coupled
 `force` option via `optionNames: ['force']`.
 

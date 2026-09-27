@@ -117,7 +117,7 @@ describe('Integration: prompt job session capture through a live daemon', () => 
     const jobId = 'prompt-e2e-job';
     const runAt = new Date(Date.now() + 500).toISOString();
     const created = await apiCall(port, 'POST', '/api/jobs', {
-      id: jobId,
+      alias: jobId,
       schedule: { kind: 'one-shot', runAt },
       action: { kind: 'prompt', prompt: 'hello', engine: 'stub', args: [], reuseSession: true },
     });
@@ -128,12 +128,20 @@ describe('Integration: prompt job session capture through a live daemon', () => 
     expect(runs[0].status).toBe('success');
 
     const { data: logs } = await apiCall(port, 'GET', `/api/runs/${runs[0].id}/logs`);
-    const stdoutText = (logs as Array<{ stream: string; data: string }>)
+    const typedLogs = logs as Array<{ stream: string; data: string }>;
+    const stdoutText = typedLogs
       .filter((l) => l.stream === 'stdout')
       .map((l) => l.data)
       .join('');
+    const crontickText = typedLogs
+      .filter((l) => l.stream === 'crontick')
+      .map((l) => l.data)
+      .join('');
     expect(stdoutText).toContain('stub engine ran');
-    expect(stdoutText).toContain(`[crontick] captured session id: ${STUB_SESSION_ID}`);
+    // The captured-session-id lifecycle line is a crontick-side event and must
+    // land on the crontick stream, not stdout/stderr (see runner.ts).
+    expect(crontickText).toContain(`[crontick] captured session id: ${STUB_SESSION_ID}`);
+    expect(stdoutText).not.toContain('captured session id');
 
     // Session id captured from the stub's transcript is persisted onto the
     // job definition, and reuseSession flips false (capture-once semantics).

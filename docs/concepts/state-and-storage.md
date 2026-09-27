@@ -74,10 +74,10 @@ When a job's terminal run count (runs not currently `running` or `queued`)
 exceeds the cap, the oldest terminal runs are deleted, along with their
 `run_logs`. Active runs are never evicted. Pruning runs on every new run, and
 also as a startup pass (`pruneAllJobsRunHistory()`) that catches a job whose
-cap was just lowered via `crontick daemon reload` but that hasn't ticked since
+cap was just lowered via `crontick info daemon reload` but that hasn't ticked since
 -- not an upgrade or backfill step. Pruning is best-effort: a pruning failure
 is logged but never fails a run or blocks daemon startup. Lowering or raising
-`retention.maxRunsPerJob` takes effect on `crontick daemon reload`, without a
+`retention.maxRunsPerJob` takes effect on `crontick info daemon reload`, without a
 restart. See [storage internals](../internals/storage.md) for the eviction algorithm.
 
 **Design boundaries** (deliberate, not oversights):
@@ -86,8 +86,8 @@ restart. See [storage internals](../internals/storage.md) for the eviction algor
   minute keeps roughly 100 minutes of history; a job that fires monthly keeps years of history
   under the same cap.
 - Eviction is a hard delete with no dry-run or confirmation prompt. If you need to keep runs
-  beyond the cap, back them up first with `crontick export --include-runs` (round-trips via
-  `crontick import`), or raise `retention.maxRunsPerJob` before the cap would evict them.
+  beyond the cap, back them up first with `crontick share export --include-runs` (round-trips via
+  `crontick share import`), or raise `retention.maxRunsPerJob` before the cap would evict them.
 
 A single run's own captured stdout/stderr is bounded separately by
 `retention.maxOutputBytesPerRun` (default 2,000,000 bytes, range `1024..1_000_000_000`); once a
@@ -102,7 +102,7 @@ count-based rather than age-based, and why eviction is best-effort.
 
 `retention.maxLogFiles` (default `30`, configurable `1..3650`) bounds how many daily
 `logs/daemon-YYYY-MM-DD.log` files are kept; the oldest files beyond the cap are deleted, keeping
-the newest. Applied at daemon startup and again on `crontick daemon reload` (a lowered value
+the newest. Applied at daemon startup and again on `crontick info daemon reload` (a lowered value
 takes effect immediately, without a restart). Pruning is best-effort: a failure is logged but
 never blocks startup or reload. See [configuration reference](../reference/configuration.md#retentionconfig).
 
@@ -121,10 +121,10 @@ cat <dataDir>/logs/daemon-$(date +%F).log | jq .
 
 ## Resetting state safely
 
-1. **Stop the daemon first**: `crontick daemon stop`
+1. **Stop the daemon first**: `crontick info daemon stop`
 2. **Delete runs only**: remove `runs.db` (the daemon recreates it with a fresh schema on next start).
 3. **Delete everything**: remove the entire data directory. Jobs, runs, logs, and config will all be lost.
-4. **Delete one job**: `crontick delete <id>` removes the JSON file, schema sidecar, and SQLite
+4. **Delete one job**: `crontick jobs delete <id>` removes the JSON file, schema sidecar, and SQLite
    row, and cancels the job's in-flight run if it has one -- see
    [jobs.md](./jobs.md#lifecycle-create-update-remove).
 

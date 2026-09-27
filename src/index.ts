@@ -4,20 +4,25 @@
  * re-exported from this file is internal and may change without notice.
  *
  * Some CrontickClient methods (getConfig, health, ensure, drainNotices,
- * isVerbose, jobJsonSchema, createJobFromCliOptions) are intentionally
- * library-only — they serve internal wiring or direct-use scenarios and are
- * outside the surface-parity contract enforced by tests/surface-drift.test.ts.
+ * isVerbose, jobJsonSchema, createJobFromCliOptions, configPath, daemonStart,
+ * daemonStatus, daemonRestart) are intentionally library-only — they serve
+ * internal wiring or direct-use scenarios and are outside the surface-parity
+ * contract enforced by tests/surface-drift.test.ts.
  */
 
 export { VERSION } from './version.js';
 export { CrontickError, ORPHAN_RUN_ERROR_CODE, ORPHAN_RUN_ERROR_MESSAGE } from './errors.js';
-export { CrontickClient, createClient } from './client.js';
+export { CrontickClient, createClient, LOG_SOURCES } from './client.js';
 export type {
+  ConfigPathInfo,
   CreateJobOptions,
   CrontickClientOptions,
+  CrontickInfo,
+  CrontickInfoPaths,
   DaemonStatus,
   JobStats,
   LogEntry,
+  LogSource,
   LogsResult,
   StatsSummary,
 } from './client.js';
@@ -25,11 +30,14 @@ export {
   buildJobFromCreateOptions,
   buildJobPatchFromUpdateOptions,
   applyConfigDefaults,
+  generateAlias,
   normalizeJobInput,
   normalizeJobPatch,
+  DEFAULT_ALIAS_WORDS,
 } from './job-input.js';
 export type {
   ActionInput,
+  GenerateAliasOptions,
   JobCreateCliOptions,
   JobCreateInput,
   JobPatchCliOptions,
@@ -59,6 +67,7 @@ export { ConfigSchema, EngineConfigSchema, RetentionConfigSchema } from './schem
 export type { CrontickConfig, EngineConfig, RetentionConfig } from './schemas/config.js';
 export {
   JobSchema,
+  JOB_ALIAS_PATTERN,
   PromptActionSchema,
   PromptEngineSchema,
   ScheduleSchema,
@@ -70,10 +79,8 @@ export type {
   DashboardJob,
   DashboardOptions,
   DashboardRun,
-  DashboardStartResult,
   DashboardStats,
   DashboardStatus,
-  DashboardStopResult,
 } from './dashboard.js';
 export { SURFACE_CAPABILITIES } from './surface.js';
 export type { SurfaceCapability } from './surface.js';

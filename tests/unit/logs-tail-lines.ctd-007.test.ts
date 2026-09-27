@@ -63,7 +63,7 @@ function json(res: http.ServerResponse, status: number, body: unknown): void {
 
 async function cli(args: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> {
   return new Promise((resolveCli, rejectCli) => {
-    const child = spawn(process.execPath, [CLI, '--json', ...args], {
+    const child = spawn(process.execPath, [CLI, ...args], {
       env: {
         ...process.env,
         CRONTICK_DAEMON_URL: baseUrl,
@@ -86,6 +86,16 @@ async function cli(args: string[]): Promise<{ status: number | null; stdout: str
   });
 }
 
+function parseCliLogData(stdout: string): string[] {
+  const prefix = /\[(stdout|stderr|crontick)\] /g;
+  const matches = [...stdout.matchAll(prefix)];
+  return matches.map((match, index) => {
+    const start = (match.index ?? 0) + match[0].length;
+    const end = index + 1 < matches.length ? matches[index + 1]!.index ?? stdout.length : stdout.length;
+    return stdout.slice(start, end);
+  });
+}
+
 async function callTool(name: string, args: Record<string, unknown>): Promise<{ json: unknown; isError: boolean }> {
   const raw = await mcpClient.callTool({ name, arguments: args });
   const result = raw as { content: Array<{ text?: string }>; isError?: boolean };
@@ -102,11 +112,9 @@ async function expectTailAcrossClientCliAndMcp(runId: string, lines: number, exp
   expect(clientTail.runId).toBe(runId);
   expect(clientTail.lines.map((line) => line.data)).toEqual(expected);
 
-  const cliResult = await cli(['logs', runId, '--tail', String(lines)]);
+  const cliResult = await cli(['runs', 'logs', runId, '--tail', String(lines)]);
   expect(cliResult.status, cliResult.stderr).toBe(0);
-  const cliJson = JSON.parse(cliResult.stdout) as { runId: string; lines: Array<{ data: string }> };
-  expect(cliJson.runId).toBe(runId);
-  expect(cliJson.lines.map((line) => line.data)).toEqual(expected);
+  expect(parseCliLogData(cliResult.stdout)).toEqual(expected);
 
   const { json: mcpJson, isError } = await callTool('crontick_run_logs_tail', { id: runId, lines });
   expect(isError).toBe(false);

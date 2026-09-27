@@ -5,7 +5,7 @@ The `crontick` plugin installs the [crontick](https://www.npmjs.com/package/cron
 ## What It Does
 
 1. **Installs `crontick` globally** via `npm install -g crontick` (if not already present)
-2. **Runs `crontick doctor`** to verify Node.js, SQLite, and the data directory
+2. **Runs `crontick info doctor`** to verify Node.js, SQLite, and the data directory
 3. **Copies `SKILL.md`** to `~/.copilot/skills/crontick/` so Copilot learns to schedule jobs
 
 ## Manual Installation
@@ -30,8 +30,8 @@ CRONTICK_PLUGIN_NONINTERACTIVE=1 node plugin/install.mjs
 
 ## After Installation
 
-1. Schedule a script job: `crontick new my-job --cron "0 9 * * *" --script "echo hello"`
-2. Schedule a prompt job: `crontick new daily-summary --cron "0 9 * * *" --prompt "Summarize repo status" -- --silent`
+1. Schedule a prompt job: `crontick jobs new --cron "0 9 * * *" --prompt "Summarize repo status" --alias daily-summary`
+2. Schedule a script or exec job from JSON: `crontick jobs new --file job.json`
 3. Configure your MCP host to use `crontick mcp` as an MCP server
 
 See the [README](../README.md) for full documentation.

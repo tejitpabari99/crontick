@@ -67,3 +67,9 @@ NNNN-kebab-case-title.md
 | 0019 | `--arg` is the primary way to pass arguments to `--exec`/`--prompt` | Accepted | 2026-07-27 |
 | 0020 | Do not detach pwsh/powershell.exe script jobs on Windows | Accepted | 2026-07-27 |
 | 0021 | Duplicate job create requires explicit force | Accepted | 2026-07-28 |
+| 0022 | Keep secret redaction as one shared streaming contract | Accepted | 2026-07-30 |
+| 0023 | Prefer precision over recall for AWS secret redaction | Accepted | 2026-07-31 |
+| 0024 | Reorganize CLI commands and narrow high-risk exposure | Accepted | 2026-08-02 |
+| 0025 | GUID job identity with an optional human-friendly alias | Accepted | 2026-08-02 |
+| 0026 | Simplify round-2 commands by folding admin reads into info | Accepted | 2026-08-03 |
+| 0027 | Remove pre-production migration, legacy, and back-compatibility code | Accepted | 2026-08-03 |

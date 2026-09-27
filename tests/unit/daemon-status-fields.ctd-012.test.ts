@@ -26,6 +26,12 @@ type StatusPayload = {
   };
 };
 
+type InfoPayload = {
+  daemon: { running: boolean; pid?: number; port?: number };
+  dashboardUrl: string | null;
+  configPath: string;
+};
+
 type ToolCallJson = { error?: string; [key: string]: unknown };
 
 let home = '';
@@ -87,7 +93,7 @@ function waitForPidExit(pid: number, maxMs = 5_000): void {
 }
 
 function stopDaemon(): void {
-  try { cli(['--json', 'daemon', 'stop'], baseUrl ? { CRONTICK_DAEMON_URL: baseUrl } : {}); } catch { /* ignore */ }
+  try { cli(['info', 'daemon', 'stop'], baseUrl ? { CRONTICK_DAEMON_URL: baseUrl } : {}); } catch { /* ignore */ }
   const pid = readNumber(pidFile());
   if (pid === undefined) return;
   try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
@@ -121,14 +127,13 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<{ 
 beforeEach(async () => {
   home = join(SCRATCH_ROOT, randomUUID());
   resetHome();
-  const started = cli(['--json', 'daemon', 'start']);
+  const started = cli(['jobs', 'list']);
   if (started.status !== 0) {
     throw new Error(`daemon start failed (${started.status}): ${started.stderr}`);
   }
 
-  const payload = JSON.parse(started.stdout) as { baseUrl?: string; port?: number };
-  port = payload.port ?? waitForPort();
-  baseUrl = payload.baseUrl ?? `http://127.0.0.1:${port}`;
+  port = waitForPort();
+  baseUrl = `http://127.0.0.1:${port}`;
 
   mcpTransport = new StdioClientTransport({
     command: process.execPath,
@@ -155,7 +160,7 @@ afterEach(async () => {
 });
 
 describe('CTD-012 daemon status discovery fields', () => {
-  it('surfaces port and baseUrl across client, CLI text/json, and MCP', async () => {
+  it('surfaces daemon port and dashboard URL across library, CLI info, and MCP info', async () => {
     const client = createClient({ daemonUrl: baseUrl, startDaemon: false });
     const clientStatus = await client.daemonStatus() as StatusPayload;
 
@@ -174,23 +179,24 @@ describe('CTD-012 daemon status discovery fields', () => {
       },
     });
 
-    const textStatus = cli(['daemon', 'status'], { CRONTICK_DAEMON_URL: baseUrl });
-    expect(textStatus.status, textStatus.stderr).toBe(0);
-    expect(textStatus.stdout).toContain(`port: ${String(port)}`);
-    expect(textStatus.stdout).toContain(`baseUrl: ${baseUrl}`);
+    const textInfo = cli(['info'], { CRONTICK_DAEMON_URL: baseUrl });
+    expect(textInfo.status, textInfo.stderr).toBe(0);
+    expect(textInfo.stdout).toContain(`daemon     running (pid ${String(clientStatus.pid)}, port ${String(port)})`);
+    expect(textInfo.stdout).toContain(`dashboard  ${baseUrl}/dashboard`);
 
-    const jsonStatus = cli(['--json', 'daemon', 'status'], { CRONTICK_DAEMON_URL: baseUrl });
-    expect(jsonStatus.status, jsonStatus.stderr).toBe(0);
-    expect(JSON.parse(jsonStatus.stdout)).toMatchObject({ port, baseUrl });
+    const infoPayload = await client.info() as InfoPayload;
+    expect(infoPayload).toMatchObject({
+      daemon: { running: true, pid: clientStatus.pid, port },
+      dashboardUrl: `${baseUrl}/dashboard`,
+      configPath: expect.any(String),
+    });
 
-    const { json: mcpJson, isError } = await callTool('crontick_daemon_status', {});
+    const { json: mcpJson, isError } = await callTool('crontick_info', {});
     expect(isError).toBe(false);
     expect(mcpJson).toMatchObject({
-      pid: clientStatus.pid,
-      version: clientStatus.version,
-      port,
-      baseUrl,
-      missedFires: clientStatus.missedFires,
+      daemon: { running: true, pid: clientStatus.pid, port },
+      dashboardUrl: `${baseUrl}/dashboard`,
+      configPath: expect.any(String),
     });
   }, 20_000);
 });

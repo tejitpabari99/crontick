@@ -16,8 +16,9 @@
     <div class="toolbar">
       <button id="btn-refresh" class="btn">↻ Refresh</button>
       <label>Runs: <input id="runs-limit" type="number" min="1" value="100"></label>
-      <label>Job filter: <input id="job-filter" type="text" placeholder="job ID…"></label>
     </div>
+
+    <div id="inline-error" class="inline-error" hidden></div>
 
     <section class="summary" id="summary"></section>
 
@@ -26,13 +27,14 @@
       <table>
         <thead>
           <tr>
+            <th>Alias</th>
             <th>ID</th>
             <th>Description</th>
             <th>Schedule</th>
             <th>Action</th>
-            <th>Enabled</th>
             <th>Last status</th>
             <th>Next run</th>
+            <th class="actions-col">Actions</th>
           </tr>
         </thead>
         <tbody id="jobs-tbody"></tbody>
@@ -40,11 +42,38 @@
     </section>
 
     <section class="page active">
-      <h2>Recent runs</h2>
+      <div class="section-head">
+        <h2>Recent runs</h2>
+        <div class="runs-toolbar">
+          <label>Filter Job:
+            <select id="filter-job"></select>
+          </label>
+          <label>Filter Status:
+            <select id="filter-status">
+              <option value="">All</option>
+              <option value="success">success</option>
+              <option value="failed">failed</option>
+              <option value="running">running</option>
+              <option value="canceled">canceled</option>
+              <option value="timeout">timeout</option>
+              <option value="queued">queued</option>
+            </select>
+          </label>
+          <label>Sort:
+            <select id="sort-runs">
+              <option value="started-desc">Time ↓</option>
+              <option value="started-asc">Time ↑</option>
+              <option value="duration-desc">Duration ↓</option>
+              <option value="duration-asc">Duration ↑</option>
+            </select>
+          </label>
+        </div>
+      </div>
       <table>
         <thead>
           <tr>
             <th>Run ID</th>
+            <th>Session ID</th>
             <th>Job</th>
             <th>Status</th>
             <th>Started</th>
@@ -55,6 +84,21 @@
       </table>
     </section>
   </main>
+
+  <div id="log-modal" class="modal-backdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-header">
+        <h3 id="modal-title">Run logs</h3>
+        <button id="modal-close" class="icon-btn" title="Close" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <h4>Output</h4>
+        <pre id="modal-output" class="log-pane"></pre>
+        <h4>Error</h4>
+        <pre id="modal-error" class="log-pane"></pre>
+      </div>
+    </div>
+  </div>
 
   <script src="/dashboard/dashboard.js"></script>
 </body>

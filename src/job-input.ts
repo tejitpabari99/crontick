@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { CrontickError } from './errors.js';
 import {
   ExecActionSchema,
+  JOB_ALIAS_PATTERN,
   JobSchema,
   PromptActionBaseSchema,
   ScheduleSchema,
@@ -103,6 +104,8 @@ const RetryPatchSchema = z.object({
 });
 
 export const JobPatchInputSchema = z.object({
+  /** Alias is user-editable after creation; `id` (the GUID) is never patchable. */
+  alias: z.string().regex(JOB_ALIAS_PATTERN, 'Job alias must be kebab-case (e.g. "my-job")').optional(),
   description: z.string().optional(),
   enabled: z.boolean().optional(),
   schedule: ScheduleSchema.optional(),
@@ -125,7 +128,8 @@ export interface NormalizeJobInputOptions {
 }
 
 export interface JobCreateCliOptions {
-  id: string;
+  /** Explicit alias on create; the only way to name a job's alias. When omitted, one is auto-generated (see generateAlias). Also the only way to rename a job's alias on update. */
+  alias?: string;
   engineArgs?: string[];
   rawArgs?: string[];
   /**
@@ -156,10 +160,14 @@ export interface JobCreateCliOptions {
   retry?: number;
   desc?: string;
   enabled?: boolean;
+  /** CLI `--enable` flag (update only). Mutually exclusive with `disable`; resolved to `enabled` by buildJobPatchFromUpdateOptions. */
+  enable?: boolean;
+  /** CLI `--disable` flag (update only). Mutually exclusive with `enable`. */
+  disable?: boolean;
   force?: boolean;
 }
 
-export type JobPatchCliOptions = Omit<JobCreateCliOptions, 'id'>;
+export type JobPatchCliOptions = JobCreateCliOptions;
 
 const DEFAULT_MAX_PROMPT_FILE_BYTES = 1024 * 1024;
 
@@ -178,6 +186,48 @@ export function normalizeJobInput(
     throw new CrontickError('VALIDATION_ERROR', 'Invalid job', parsed.error.format());
   }
   return parsed.data;
+}
+
+/**
+ * Built-in word list used to auto-generate a job alias when the caller
+ * doesn't supply one (see generateAlias). Deliberately small and simple
+ * (short nouns), not meant to be exhaustive -- collision avoidance comes
+ * from combining a word with a random 1-1000 suffix and retrying on
+ * collision, not from the size of the word list itself.
+ */
+export const DEFAULT_ALIAS_WORDS: readonly string[] = [
+  'atlas', 'aurora', 'birch', 'comet', 'cove', 'dune', 'ember', 'falcon',
+  'fern', 'harbor', 'juniper', 'lumen', 'meadow', 'nimbus', 'orbit', 'pixel',
+  'quartz', 'raven', 'reef', 'summit', 'tundra', 'vale', 'willow', 'zephyr',
+];
+
+const MAX_ALIAS_GENERATION_ATTEMPTS = 50;
+
+export interface GenerateAliasOptions {
+  /** Word list to draw the alias prefix from. Defaults to DEFAULT_ALIAS_WORDS. Injectable so tests can control output deterministically. */
+  words?: readonly string[];
+  /** Returns a float in [0, 1); defaults to Math.random. Injectable for deterministic tests. */
+  random?: () => number;
+}
+
+/**
+ * Auto-generates a unique job alias: `<word>-<1-1000>`, retrying on
+ * collision. `isTaken` is injected (checked against currently-live jobs by
+ * id AND alias) so this module has no direct dependency on the store.
+ */
+export function generateAlias(isTaken: (candidate: string) => boolean, options: GenerateAliasOptions = {}): string {
+  const words = options.words && options.words.length > 0 ? options.words : DEFAULT_ALIAS_WORDS;
+  const random = options.random ?? Math.random;
+  for (let attempt = 0; attempt < MAX_ALIAS_GENERATION_ATTEMPTS; attempt++) {
+    const word = words[Math.floor(random() * words.length)];
+    const suffix = 1 + Math.floor(random() * 1000);
+    const candidate = `${word}-${suffix}`;
+    if (!isTaken(candidate)) return candidate;
+  }
+  throw new CrontickError(
+    'ALIAS_GENERATION_FAILED',
+    `Could not generate a unique job alias after ${MAX_ALIAS_GENERATION_ATTEMPTS} attempts. Provide an explicit alias.`,
+  );
 }
 
 /** Fills in the default engine for prompt jobs that omit it (derived field, not user-supplied). */
@@ -210,7 +260,7 @@ export function normalizeJobPatch(
   if (patch.retry) {
     normalizedPatch = { ...normalizedPatch, retry: mergeDefinedFields(existing.retry, patch.retry) as Job['retry'] };
   }
-  const parsed = JobSchema.safeParse({ ...existing, ...normalizedPatch, id });
+  const parsed = JobSchema.safeParse({ ...existing, ...normalizedPatch, id: existing.id });
   if (!parsed.success) {
     throw new CrontickError('VALIDATION_ERROR', 'Invalid job', parsed.error.format());
   }
@@ -276,11 +326,11 @@ function withEngineDefaultForNewPromptAction(
 }
 
 /**
- * Resolves the effective args for --exec/--prompt actions from the two
+ * Resolves the effective args for exec/prompt actions from the two
  * mutually exclusive CLI sources: explicit repeatable `--arg <value>` flags
  * (always correct, shim-independent) and legacy `--` positional args (a
  * convenience that only survives intact on invocations where the shell/shim
- * doesn't mangle it — see cli/index.ts's --exec help text). Combining both in
+ * doesn't mangle it). Combining both in
  * the same command is rejected rather than silently picking one, since that
  * combination is never what the user intended.
  */
@@ -316,7 +366,7 @@ export function buildJobFromCreateOptions(
   }
 
   const jobData = {
-    id: input.id,
+    alias: input.alias,
     description: input.desc,
     enabled: input.enabled,
     schedule: buildSchedule(input),
@@ -331,6 +381,12 @@ export function buildJobPatchFromUpdateOptions(
   input: JobPatchCliOptions,
   options: NormalizeJobInputOptions = {},
 ): JobPatchInput {
+  // Domain rule enforced in core (not the CLI shim): --enable and --disable
+  // are mutually exclusive. Resolved to a single `enabled` boolean below.
+  if (input.enable && input.disable) {
+    throw new CrontickError('VALIDATION_ERROR', '--enable and --disable are mutually exclusive');
+  }
+  const enabled = input.enabled ?? (input.enable ? true : input.disable ? false : undefined);
   const resolvedArgs = resolveActionArgs(input);
   if (input.file) {
     assertFileModeExclusive(input, resolvedArgs);
@@ -347,8 +403,9 @@ export function buildJobPatchFromUpdateOptions(
   }
 
   const patch: JobPatchInput = {};
+  if (input.alias !== undefined) patch.alias = input.alias;
   if (input.desc !== undefined) patch.description = input.desc;
-  if (input.enabled !== undefined) patch.enabled = input.enabled;
+  if (enabled !== undefined) patch.enabled = enabled;
   const schedule = maybeBuildSchedule(input, true);
   if (schedule !== undefined) patch.schedule = schedule;
   const action = maybeBuildAction(input, resolvedArgs, true);
@@ -489,7 +546,7 @@ function maybeBuildSchedule(input: JobPatchCliOptions, strictUpdate = false): Jo
 
 function buildAction(input: JobCreateCliOptions, rawArgs: string[]): ActionInput {
   const action = maybeBuildAction(input, rawArgs);
-  if (!action) throw new CrontickError('MISSING_ARG', 'Provide --script, --exec, --prompt, or --prompt-file');
+  if (!action) throw new CrontickError('MISSING_ARG', 'Provide --prompt or --prompt-file for a prompt job, or --file <json> for a full job definition (including script/exec actions)');
   return action;
 }
 
@@ -502,7 +559,7 @@ function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[], strictUp
     if (strictUpdate && modifierFlags.length > 0) {
       throw new CrontickError(
         'VALIDATION_ERROR',
-        `${formatCliFlagList(modifierFlags)} ${modifierFlags.length === 1 ? 'requires' : 'require'} an action source on update. Repeat the existing action with one of --script, --exec, --prompt, or --prompt-file, or remove ${formatCliFlagList(modifierFlags)}.`,
+        `${formatCliFlagList(modifierFlags)} ${modifierFlags.length === 1 ? 'requires' : 'require'} an action source on update. Repeat the existing action with --prompt or --prompt-file, or remove ${formatCliFlagList(modifierFlags)}.`,
       );
     }
     if (rawArgs.length > 0) {
@@ -596,7 +653,8 @@ function assertFileModeExclusive(opts: JobPatchCliOptions, rawArgs: string[]): v
     || opts.overlap !== undefined
     || opts.retry !== undefined
     || opts.desc !== undefined
-    || opts.enabled !== undefined;
+    || opts.enabled !== undefined
+    || opts.alias !== undefined;
 
   if (conflicting) {
     throw new CrontickError(

@@ -8,7 +8,11 @@ A job binds an **action** (what to do) to a **schedule** (when to do it) along w
 
 ## Identity and naming
 
-Every job has a unique `id` that must be kebab-case (`/^[a-z0-9]+(?:-[a-z0-9]+)*$/`). The id is permanent and acts as the primary key in both JSON persistence and the SQLite cache. Renaming a job requires deleting and recreating it.
+Every job has an immutable `id`: a GUID (`node:crypto` `randomUUID()`) assigned automatically at creation. It is never user-supplied, is the primary key in both JSON persistence and the SQLite cache, and is the value `run.jobId` references -- this guarantees a deleted-and-recreated job never inherits a previous job's run history or dashboard "last status", even if it reuses the same alias.
+
+Every job also has an optional, user-editable `alias`: a kebab-case (`/^[a-z0-9]+(?:-[a-z0-9]+)*$/`) human-friendly name, unique among all currently-defined (non-deleted) jobs. When you don't supply one on create, crontick auto-generates `<word>-<1-1000>` from a small built-in word list, retrying on collision. You can rename a job by editing its `alias` later via `update` -- no delete/recreate required.
+
+Anywhere a job identifier is accepted (CLI positional `<id>`, MCP `id` params, HTTP path segments), you may pass EITHER the GUID `id` OR the `alias`; crontick resolves an exact GUID match first, then falls back to an alias lookup, and returns `JOB_NOT_FOUND` if neither matches.
 
 ## The three action kinds
 
@@ -57,7 +61,7 @@ Overlap values: `skip` (discard the new run), `queue` (wait for the active run t
    leaves an orphaned process running against a definition that no longer exists; the response
    reports whether a run was actually canceled (`canceledRun: boolean`). See
    [reference/mcp-tools.md](../reference/mcp-tools.md#jobs) and
-   [reference/cli.md](../reference/cli.md#crontick-delete).
+   [reference/cli.md](../reference/cli.md#crontick-jobs-delete).
 
 ## What is persisted vs derived
 

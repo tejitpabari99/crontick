@@ -35,7 +35,7 @@ the listener bound), not a second, differently-behaved shutdown path.
 
 **Keep signals only; document that Windows does a hard kill.** This was the status quo.
 Rejected because it meant a real, user-visible platform asymmetry: identical commands
-(`crontick daemon stop`) had different safety guarantees depending on OS, and there was no
+(`crontick info daemon stop`) had different safety guarantees depending on OS, and there was no
 way for the CLI to detect or report which one happened.
 
 **A Windows named pipe or platform-specific IPC just for stop.** Would fix the platform gap
@@ -52,7 +52,7 @@ cooperative or forced. Rejected as more fragile than reusing the daemon's existi
 
 **Easier:**
 
-- `crontick daemon stop` has one code path and one observable contract
+- `crontick info daemon stop` has one code path and one observable contract
   (`mode: "graceful" | "hard-kill" | "already-stopped"`) on every platform.
 - The CLI, MCP tool, and library API all get a real answer to "did it shut down cleanly"
   instead of assuming success.

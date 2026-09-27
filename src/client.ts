@@ -10,6 +10,7 @@
  */
 import http from 'node:http';
 import { CrontickError } from './errors.js';
+import { LOG_SOURCES, type LogSource } from './log-source.js';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -35,9 +36,7 @@ import {
   dashboardDaemonDownError,
   type DashboardData,
   type DashboardOptions,
-  type DashboardStartResult,
   type DashboardStatus,
-  type DashboardStopResult,
 } from './dashboard.js';
 import {
   addEngine,
@@ -51,11 +50,14 @@ import {
   setConfigValue,
   updateEngine,
   validateConfigFile,
+  configFilePath,
   type ConfigValidationResult,
   type CrontickConfig,
   type EngineConfig,
 } from './config.js';
 import { createLogger, isVerboseEnv, type Logger, type LogSink } from './logger.js';
+import { dataDir, jobsDir, logsDir, pidFilePath, portFilePath, runsDbPath } from './paths.js';
+import { VERSION } from './version.js';
 
 export interface CrontickClientOptions extends Omit<EnsureDaemonOptions, 'startDaemon' | 'logger'> {
   requestTimeoutMs?: number;
@@ -100,6 +102,9 @@ export interface LogsResult {
   lines: LogEntry[];
 }
 
+export { LOG_SOURCES };
+export type { LogSource };
+
 export interface StatsSummary {
   totalJobs: number;
   enabledJobs: number;
@@ -134,6 +139,37 @@ export interface DaemonStatus {
   jobs: number;
   missedFires: DaemonMissedFiresSummary;
 }
+
+export interface CrontickInfoPaths {
+  dataDir: string;
+  jobsDir: string;
+  runsDb: string;
+  logsDir: string;
+  configFile: string;
+  portFile: string;
+  pidFile: string;
+}
+
+export interface CrontickInfo {
+  version: string;
+  node: string;
+  platform: string;
+  configPath: string;
+  paths: CrontickInfoPaths;
+  daemon: { running: boolean; pid?: number; port?: number };
+  /**
+   * URL of the daemon-served dashboard, or null when it cannot be resolved
+   * (no running daemon and no readable port file). The dashboard is always
+   * served by the daemon whenever it is up; `info` never starts the daemon.
+   */
+  dashboardUrl: string | null;
+}
+
+export interface ConfigPathInfo {
+  path: string;
+  note: string;
+}
+
 
 interface HttpTextResponse {
   status: number;
@@ -205,29 +241,43 @@ export class CrontickClient {
     return this.request<Job[]>('GET', '/api/jobs');
   }
 
+  /** `id` accepts either the job's GUID id or its alias (see docs/concepts/jobs.md#identity). */
   async getJob(id: string): Promise<Job> {
     return this.request<Job>('GET', `/api/jobs/${encodeURIComponent(id)}`);
   }
 
-  /** Fetches the existing job first so the patch is applied over the current state. */
+  /** Fetches the existing job first so the patch is applied over the current state. `id` accepts either the job's GUID id or its alias -- the daemon resolves it (see docs/concepts/jobs.md#identity). */
   async updateJob(id: string, patch: JobPatchInput, options: NormalizeJobInputOptions = {}): Promise<Job> {
     const existing = await this.getJob(id);
     const normalized = normalizeJobPatch(id, existing, patch, this.normalizeOptions(options));
     return this.request<Job>('PUT', `/api/jobs/${encodeURIComponent(id)}`, normalized);
   }
 
-  async deleteJob(id: string): Promise<{ ok: true }> {
+  /** `id` accepts either the job's GUID id or its alias. */
+  async deleteJob(id?: string, options: { all?: boolean; force?: boolean } = {}): Promise<{ ok: true } | { ok: true; deleted: number }> {
+    if (options.all) {
+      if (!options.force) throw new CrontickError('VALIDATION_ERROR', 'Deleting all jobs requires force:true');
+      // Single atomic daemon call: DELETE /api/jobs wipes every job (and its
+      // runs/logs/schedule-state) in one store transaction. Avoids the old
+      // per-job loop, which had no atomicity and could report success after a
+      // partial failure.
+      return this.request<{ ok: true; deleted: number }>('DELETE', '/api/jobs?force=1');
+    }
+    if (!id) throw new CrontickError('VALIDATION_ERROR', 'Provide a job id or alias, or set all:true (with force:true) to delete every job');
     return this.request<{ ok: true }>('DELETE', `/api/jobs/${encodeURIComponent(id)}`);
   }
 
+  /** `id` accepts either the job's GUID id or its alias. */
   async enableJob(id: string): Promise<Job> {
     return this.request<Job>('POST', `/api/jobs/${encodeURIComponent(id)}/enable`);
   }
 
+  /** `id` accepts either the job's GUID id or its alias. */
   async disableJob(id: string): Promise<Job> {
     return this.request<Job>('POST', `/api/jobs/${encodeURIComponent(id)}/disable`);
   }
 
+  /** `id` accepts either the job's GUID id or its alias. */
   async runNow(id: string): Promise<{ runId: string }> {
     return this.request<{ runId: string }>('POST', `/api/jobs/${encodeURIComponent(id)}/run`);
   }
@@ -236,10 +286,12 @@ export class CrontickClient {
     return this.request<{ ok: true; canceled: boolean }>('POST', `/api/runs/${encodeURIComponent(runId)}/cancel`);
   }
 
+
   async getRun(runId: string): Promise<unknown> {
     return this.request('GET', `/api/runs/${encodeURIComponent(runId)}`);
   }
 
+  /** `options.jobId` accepts either the job's GUID id or its alias. */
   async listRuns(options: { jobId?: string; limit?: number; since?: number; status?: string } = {}): Promise<unknown[]> {
     const params = new URLSearchParams();
     if (options.jobId) params.set('jobId', options.jobId);
@@ -250,8 +302,19 @@ export class CrontickClient {
     return this.request<unknown[]>('GET', `/api/runs${qs ? `?${qs}` : ''}`);
   }
 
-  async getLogs(runId: string, options: { lines?: number } = {}): Promise<LogsResult> {
-    const logs = await this.request<LogEntry[]>('GET', `/api/runs/${encodeURIComponent(runId)}/logs`);
+  async getLogs(runId: string, options: { lines?: number; source?: LogSource | (string & {}) } = {}): Promise<LogsResult> {
+    const source = options.source;
+    // Core is the single source of truth for `source` validation: the CLI/MCP
+    // shims forward the value unchecked and the daemon defensively normalizes
+    // unknowns, so the user-facing rejection must originate here.
+    if (source !== undefined && !LOG_SOURCES.includes(source as LogSource)) {
+      throw new CrontickError(
+        'VALIDATION_ERROR',
+        `Invalid source '${source}'. Expected one of: ${LOG_SOURCES.join(', ')}.`,
+      );
+    }
+    const query = source && source !== 'all' ? `?source=${source}` : '';
+    const logs = await this.request<LogEntry[]>('GET', `/api/runs/${encodeURIComponent(runId)}/logs${query}`);
     const logicalLines = reconstructLogicalLogLines(logs);
     const lines = options.lines !== undefined ? logicalLines.slice(-options.lines) : logicalLines;
     return { runId, lines };
@@ -270,12 +333,23 @@ export class CrontickClient {
     return this.request('POST', '/api/schedules/validate', ScheduleSchema.parse(schedule));
   }
 
+  /** Library-only: preview upcoming fire times for a raw schedule object. Surfaced via jobSchedule (per-job). */
   async previewSchedule(input: { schedule: Schedule; n?: number; tz?: string }): Promise<unknown> {
     return this.request('POST', '/api/schedules/preview', {
       ...input,
       n: input.n ?? 5,
       schedule: ScheduleSchema.parse(input.schedule),
     });
+  }
+
+  /**
+   * Show upcoming fire times for an existing job (id or alias). Resolves the
+   * job, then previews the next `n` fires (default 5) of its schedule.
+   */
+  async jobSchedule(id: string, options: { n?: number } = {}): Promise<unknown> {
+    const job = await this.getJob(id);
+    const preview = await this.previewSchedule({ schedule: job.schedule, n: options.n });
+    return { jobId: job.id, alias: job.alias ?? null, schedule: job.schedule, ...(preview as Record<string, unknown>) };
   }
 
   async statsSummary(): Promise<StatsSummary> {
@@ -320,16 +394,6 @@ export class CrontickClient {
     });
   }
 
-  async dashboardStart(): Promise<DashboardStartResult> {
-    const info = await this.ensure();
-    const status = await this.request<DashboardStatus>('GET', '/api/dashboard/status', undefined, { ensure: false });
-    return { ...status, startedDaemon: info.started };
-  }
-
-  async dashboardStop(): Promise<DashboardStopResult> {
-    return this.daemonStop();
-  }
-
   async dashboardStatus(): Promise<DashboardStatus> {
     try {
       return await this.request<DashboardStatus>('GET', '/api/dashboard/status', undefined, { ensure: false });
@@ -355,6 +419,57 @@ export class CrontickClient {
   /** Returns the JSON Schema derived from Zod JobSchema. Library-only (not in surface parity). */
   jobJsonSchema(): unknown {
     return jobJsonSchema();
+  }
+
+  /**
+   * Read-only environment/paths summary: crontick + node version, platform,
+   * where all state is stored, and best-effort daemon running status. Never
+   * starts the daemon.
+   */
+  async info(): Promise<CrontickInfo> {
+    const env = this.effectiveEnv() ?? process.env;
+    const config = this.configPath();
+    let daemon: CrontickInfo['daemon'] = { running: false };
+    let dashboardUrl: string | null = null;
+    try {
+      const status = await this.request<DaemonStatus>('GET', '/api/daemon/status', undefined, { ensure: false });
+      daemon = { running: true, pid: status.pid, port: status.port };
+      dashboardUrl = status.port ? `http://127.0.0.1:${String(status.port)}/dashboard` : null;
+    } catch {
+      daemon = { running: false };
+      dashboardUrl = null;
+    }
+    return {
+      version: VERSION,
+      node: process.version,
+      platform: process.platform,
+      configPath: config.path,
+      paths: {
+        dataDir: dataDir(env),
+        jobsDir: jobsDir(env),
+        runsDb: runsDbPath(env),
+        logsDir: logsDir(env),
+        configFile: config.path,
+        portFile: portFilePath(env),
+        pidFile: pidFilePath(env),
+      },
+      daemon,
+      dashboardUrl,
+    };
+  }
+
+  /**
+   * Returns the config file path plus a note on how edits take effect. The
+   * config file is edited directly by the user; crontick has no set/unset
+   * commands. Library-friendly; surfaced directly by `info` and kept as a
+   * library-only helper after the command simplification.
+   */
+  configPath(): ConfigPathInfo {
+    return {
+      path: configFilePath({ env: this.effectiveEnv() }),
+      note:
+        'Edit this file to change the config. Engine, logging, and per-run retention settings apply automatically on the next run; the store retention cap (retention.maxRunsPerJob) is read at daemon start, so changing it requires a daemon restart — from the CLI, run `crontick info daemon stop` and then any daemon-backed command to start it again.',
+    };
   }
 
   /** Library-only: loads config without daemon (local-only operation). */

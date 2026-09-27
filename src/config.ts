@@ -16,17 +16,19 @@ import {
   ConfigKeySchema,
   ConfigSchema,
   EngineConfigSchema,
+  LoggingConfigSchema,
   PersistedConfigSchema,
   RetentionConfigSchema,
   type CrontickConfig,
   type EngineConfig,
+  type LoggingConfig,
   type PersistedConfig,
   type RetentionConfig,
 } from './schemas/config.js';
 import type { PromptAction } from './schemas/job.js';
 import { nullLogger, redactValue, type Logger } from './logger.js';
 
-export { ConfigSchema, EngineConfigSchema, RetentionConfigSchema, type CrontickConfig, type EngineConfig, type RetentionConfig };
+export { ConfigSchema, EngineConfigSchema, LoggingConfigSchema, RetentionConfigSchema, type CrontickConfig, type EngineConfig, type LoggingConfig, type RetentionConfig };
 
 export interface ConfigOptions {
   env?: NodeJS.ProcessEnv;
@@ -59,6 +61,7 @@ export const BUILT_IN_CONFIG: CrontickConfig = Object.freeze({
     copilot: Object.freeze({ command: 'copilot', args: ['--allow-all-tools', '-p'], env: {} }),
   },
   retention: Object.freeze({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 }),
+  logging: Object.freeze({ fileEnabled: true }),
 });
 
 export function redactConfigForRead(config: CrontickConfig): CrontickConfig {

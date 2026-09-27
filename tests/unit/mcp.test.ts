@@ -18,6 +18,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { jobJsonSchemaText } from '../../src/schema-json.js';
+import { MCP_TOOLS } from '../../src/surface.js';
 
 const DAEMON_SCRIPT = join(process.cwd(), 'dist', 'daemon', 'index.js');
 const MCP_SCRIPT = join(process.cwd(), 'dist', 'mcp', 'index.js');
@@ -147,50 +148,12 @@ describe('MCP server — full contract', () => {
 
   // ── Tools list ──────────────────────────────────────────────────────────────
 
-  const EXPECTED_TOOLS = [
-    'crontick_job_create',
-    'crontick_job_list',
-    'crontick_job_get',
-    'crontick_job_update',
-    'crontick_job_delete',
-    'crontick_job_enable',
-    'crontick_job_disable',
-    'crontick_job_run_now',
-    'crontick_job_cancel_run',
-    'crontick_run_list',
-    'crontick_run_get',
-    'crontick_run_logs_tail',
-    'crontick_schedule_preview',
-    'crontick_schedule_validate',
-    'crontick_stats_summary',
-    'crontick_stats_job',
-    'crontick_daemon_status',
-    'crontick_daemon_reload',
-    'crontick_daemon_restart',
-    'crontick_export',
-    'crontick_import',
-    'crontick_dashboard_start',
-    'crontick_dashboard_status',
-    'crontick_dashboard_data',
-    'crontick_dashboard_stop',
-    'crontick_doctor',
-    'crontick_config_get',
-    'crontick_config_set',
-    'crontick_config_unset',
-    'crontick_config_engine_list',
-    'crontick_config_engine_add',
-    'crontick_config_engine_update',
-    'crontick_config_engine_remove',
-    'crontick_config_init',
-    'crontick_config_validate',
-  ];
+  const EXPECTED_TOOLS = MCP_TOOLS;
 
   it('tools/list returns all catalog tools with crontick_ prefix', async () => {
     const result = await client.listTools();
     const names = result.tools.map((t) => t.name);
-    for (const expected of EXPECTED_TOOLS) {
-      expect(names, `missing tool: ${expected}`).toContain(expected);
-    }
+    expect(names.sort()).toEqual([...EXPECTED_TOOLS].sort());
     for (const tool of result.tools) {
       expect(tool.name).toMatch(/^crontick_/);
       expect(tool.name).not.toContain('auto' + 'start');
@@ -208,15 +171,25 @@ describe('MCP server — full contract', () => {
     const result = await client.listTools();
     const byName = new Map(result.tools.map((t) => [t.name, t]));
 
-    const readOnlyTools = ['crontick_job_list', 'crontick_job_get', 'crontick_run_list', 'crontick_stats_summary', 'crontick_doctor'];
+    const readOnlyTools = [
+      'crontick_job_list',
+      'crontick_job_get',
+      'crontick_job_schedule',
+      'crontick_run_list',
+      'crontick_run_get',
+      'crontick_run_logs_tail',
+      'crontick_stats_summary',
+      'crontick_doctor',
+      'crontick_info',
+    ];
     for (const name of readOnlyTools) {
       expect(byName.get(name)?.annotations?.readOnlyHint, `${name} should be readOnlyHint`).toBe(true);
     }
 
-    const destructiveTools = ['crontick_job_create', 'crontick_job_update', 'crontick_job_run_now', 'crontick_job_delete', 'crontick_import'];
+    const destructiveTools = ['crontick_job_create', 'crontick_job_update', 'crontick_job_run_now', 'crontick_job_delete', 'crontick_import', 'crontick_daemon_stop'];
     for (const name of destructiveTools) {
       const annotations = byName.get(name)?.annotations;
-      expect(annotations?.readOnlyHint, `${name} should not be readOnlyHint`).toBe(false);
+      expect(annotations?.readOnlyHint === true, `${name} should not be readOnlyHint`).toBe(false);
       expect(annotations?.destructiveHint, `${name} should be destructiveHint`).toBe(true);
     }
   });
@@ -237,20 +210,21 @@ describe('MCP server — full contract', () => {
 
   it('crontick_job_create creates a job', async () => {
     const { json, isError } = await callTool(client, 'crontick_job_create', {
-      id: testJobId,
+      alias: testJobId,
       description: 'MCP contract test job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: { kind: 'exec', command: 'echo', args: ['hello'] },
     });
     expect(isError).toBe(false);
-    expect((json as { id: string }).id).toBe(testJobId);
-    expect(readFileSync(join(dir, 'jobs', `${testJobId}.schema.json`), 'utf-8')).toBe(jobJsonSchemaText());
+    const createdJobId = (json as { id: string; alias?: string }).id;
+    expect((json as { alias?: string }).alias).toBe(testJobId);
+    expect(readFileSync(join(dir, 'jobs', `${createdJobId}.schema.json`), 'utf-8')).toBe(jobJsonSchemaText());
   });
 
   it('crontick_job_create requires force to replace an existing job', async () => {
     const jobId = 'mcp-duplicate-create-job';
     const original = await callTool(client, 'crontick_job_create', {
-      id: jobId,
+      alias: jobId,
       description: 'original mcp definition',
       schedule: { kind: 'interval', everySec: 60 },
       action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
@@ -258,7 +232,7 @@ describe('MCP server — full contract', () => {
     expect(original.isError).toBe(false);
 
     const duplicate = await callTool(client, 'crontick_job_create', {
-      id: jobId,
+      alias: jobId,
       description: 'replacement mcp definition',
       schedule: { kind: 'cron', cron: '15 6 * * *' },
       action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(1)'] },
@@ -274,7 +248,7 @@ describe('MCP server — full contract', () => {
     });
 
     const forced = await callTool(client, 'crontick_job_create', {
-      id: jobId,
+      alias: jobId,
       force: true,
       description: 'replacement mcp definition',
       schedule: { kind: 'cron', cron: '15 6 * * *' },
@@ -294,7 +268,7 @@ describe('MCP server — full contract', () => {
   it('crontick_job_create round-trips an exec arg with spaces, embedded double quotes, and a leading dash', async () => {
     const tricky = '-flag with spaces and "embedded quotes"';
     const { json, isError } = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-arg-tricky-job',
+      alias: 'mcp-arg-tricky-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: { kind: 'exec', command: 'echo', args: [tricky] },
     });
@@ -302,10 +276,9 @@ describe('MCP server — full contract', () => {
     expect((json as { action: unknown }).action).toMatchObject({ kind: 'exec', command: 'echo', args: [tricky] });
   });
 
-  it('crontick_job_create preserves env-file error paths in MCP responses', async () => {
-    const missingEnvFile = join(dir, 'missing-mcp.env');
+  it('crontick_job_create redacts env-file absolute paths in MCP responses', async () => {
     const result = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-missing-env-job',
+      alias: 'mcp-missing-env-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: {
         kind: 'exec',
@@ -317,19 +290,21 @@ describe('MCP server — full contract', () => {
     });
     expect(result.isError).toBe(true);
     expect((result.json as { error: string }).error).toContain('Failed to load envFile');
-    expect((result.json as { error: string }).error).toContain(missingEnvFile);
+    // ENV_FILE_ERROR messages embed the resolved absolute path; the MCP surface
+    // must redact it so no machine-specific path leaks to the LLM host.
+    expect((result.json as { error: string }).error).not.toContain(dir);
+    expect((result.json as { error: string }).error).toContain('<path>');
   });
 
 
   it('crontick_job_update preserves the previous job when env-file preflight fails', async () => {
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-missing-env-update-job',
+      alias: 'mcp-missing-env-update-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: { kind: 'script', script: 'echo before' },
     });
     expect(created.isError).toBe(false);
 
-    const missingEnvFile = join(dir, 'missing-mcp-update.env');
     const result = await callTool(client, 'crontick_job_update', {
       id: 'mcp-missing-env-update-job',
       action: {
@@ -342,19 +317,21 @@ describe('MCP server — full contract', () => {
     });
     expect(result.isError).toBe(true);
     expect((result.json as { error: string }).error).toContain('Failed to load envFile');
-    expect((result.json as { error: string }).error).toContain(missingEnvFile);
+    // The env-file absolute path is redacted (see redactedErrorMessage in mcp/index.ts).
+    expect((result.json as { error: string }).error).not.toContain(dir);
+    expect((result.json as { error: string }).error).toContain('<path>');
 
     const fetched = await callTool(client, 'crontick_job_get', { id: 'mcp-missing-env-update-job' });
     expect(fetched.isError).toBe(false);
     expect(fetched.json).toMatchObject({
-      id: 'mcp-missing-env-update-job',
+      alias: 'mcp-missing-env-update-job',
       action: { kind: 'script', script: 'echo before' },
     });
   });
 
   it('crontick_job_update merges a partial patch onto the existing definition rather than replacing it', async () => {
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-merge-job',
+      alias: 'mcp-merge-job',
       schedule: { kind: 'interval', everySec: 120 },
       action: { kind: 'exec', command: 'echo', args: ['x'] },
       overlap: 'cancel-previous',
@@ -384,7 +361,7 @@ describe('MCP server — full contract', () => {
 
   it('crontick_job_update sets overlap to skip when explicitly provided', async () => {
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-overlap-skip-job',
+      alias: 'mcp-overlap-skip-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'exec', command: 'echo', args: ['hi'] },
       overlap: 'queue',
@@ -402,7 +379,7 @@ describe('MCP server — full contract', () => {
 
   it('crontick_job_update sets overlap to cancel-previous when explicitly provided', async () => {
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-overlap-cancel-job',
+      alias: 'mcp-overlap-cancel-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'exec', command: 'echo', args: ['hi'] },
       overlap: 'queue',
@@ -419,7 +396,7 @@ describe('MCP server — full contract', () => {
 
   it('crontick_job_update omitting overlap leaves the existing value alone', async () => {
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-overlap-preserve-job',
+      alias: 'mcp-overlap-preserve-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'exec', command: 'echo', args: ['hi'] },
       overlap: 'cancel-previous',
@@ -438,7 +415,7 @@ describe('MCP server — full contract', () => {
 
   it('crontick_job_update applies explicit cron timezone updates', async () => {
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-cron-tz-update-job',
+      alias: 'mcp-cron-tz-update-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'exec', command: 'echo', args: ['hi'] },
     });
@@ -457,7 +434,7 @@ describe('MCP server — full contract', () => {
     writeFileSync(envFilePath, 'FOO=bar\n', 'utf-8');
 
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-action-modifier-update-job',
+      alias: 'mcp-action-modifier-update-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'script', script: 'echo hi', shell: 'cmd', envFile: envFilePath, timeoutSec: 30 },
     });
@@ -487,7 +464,7 @@ describe('MCP server — full contract', () => {
     writeFileSync(join(dir, '.env.test'), 'FOO=bar\n', 'utf-8');
 
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-shell-preserve-job',
+      alias: 'mcp-shell-preserve-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'script', script: 'echo hi', shell: 'cmd', cwd: dir, envFile: '.env.test', timeoutSec: 30 },
     });
@@ -507,7 +484,7 @@ describe('MCP server — full contract', () => {
     writeFileSync(join(dir, '.env.shell-explicit.test'), 'FOO=bar\n', 'utf-8');
 
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-shell-explicit-job',
+      alias: 'mcp-shell-explicit-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'script', script: 'echo hi', shell: 'cmd', cwd: dir, envFile: '.env.shell-explicit.test', timeoutSec: 30 },
     });
@@ -525,7 +502,7 @@ describe('MCP server — full contract', () => {
     writeFileSync(join(dir, '.env.shell-replace.test'), 'FOO=bar\n', 'utf-8');
 
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-shell-replace-job',
+      alias: 'mcp-shell-replace-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'script', script: 'echo hi', shell: 'cmd', cwd: dir, envFile: '.env.shell-replace.test', timeoutSec: 30 },
     });
@@ -552,7 +529,7 @@ describe('MCP server — full contract', () => {
     writeFileSync(join(dir, '.env.new'), 'FOO=bar\n', 'utf-8');
 
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-exec-args-preserve-job',
+      alias: 'mcp-exec-args-preserve-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'exec', command: 'echo', args: ['a', 'b'], cwd: dir },
     });
@@ -570,7 +547,7 @@ describe('MCP server — full contract', () => {
 
   it('crontick_job_update applies explicit exec args when provided', async () => {
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-exec-args-explicit-job',
+      alias: 'mcp-exec-args-explicit-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'exec', command: 'echo', args: ['a', 'b'], cwd: dir },
     });
@@ -586,7 +563,7 @@ describe('MCP server — full contract', () => {
 
   it('crontick_job_update preserves prompt args and reuseSession when the patch only changes prompt text', async () => {
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-prompt-args-preserve-job',
+      alias: 'mcp-prompt-args-preserve-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'prompt', prompt: 'old', args: ['--flag'], reuseSession: true },
     });
@@ -604,7 +581,7 @@ describe('MCP server — full contract', () => {
 
   it('crontick_job_update applies explicit prompt args/reuseSession when provided', async () => {
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-prompt-args-explicit-job',
+      alias: 'mcp-prompt-args-explicit-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'prompt', prompt: 'old', args: ['--flag'], reuseSession: true },
     });
@@ -620,7 +597,7 @@ describe('MCP server — full contract', () => {
 
   it('crontick_job_update preserves a custom engine on a same-kind prompt update that omits engine', async () => {
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-prompt-engine-job',
+      alias: 'mcp-prompt-engine-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'prompt', prompt: 'old', engine: 'agency' },
     });
@@ -636,7 +613,7 @@ describe('MCP server — full contract', () => {
 
   it('crontick_job_update fills the configured default engine for a new prompt action introduced via a kind change', async () => {
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-kind-change-engine-job',
+      alias: 'mcp-kind-change-engine-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'exec', command: 'echo' },
     });
@@ -654,7 +631,7 @@ describe('MCP server — full contract', () => {
 
   it('crontick_job_update preserves retry.backoffSec when the patch only sets max', async () => {
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-retry-preserve-job',
+      alias: 'mcp-retry-preserve-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'exec', command: 'echo' },
       retry: { max: 1, backoffSec: 90 },
@@ -671,7 +648,7 @@ describe('MCP server — full contract', () => {
 
   it('crontick_job_update applies an explicit backoffSec over the preserved retry fields', async () => {
     const created = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-retry-explicit-job',
+      alias: 'mcp-retry-explicit-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'exec', command: 'echo' },
       retry: { max: 1, backoffSec: 90 },
@@ -688,7 +665,7 @@ describe('MCP server — full contract', () => {
 
   it('crontick_job_create accepts prompt actions', async () => {
     const { json, isError } = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-prompt-job',
+      alias: 'mcp-prompt-job',
       description: 'MCP prompt job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'prompt', prompt: 'hello', engine: 'copilot', args: ['--silent'] },
@@ -704,7 +681,7 @@ describe('MCP server — full contract', () => {
 
   it('crontick_job_create reports session precedence notices from core', async () => {
     const { json, isError } = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-session-precedence-job',
+      alias: 'mcp-session-precedence-job',
       description: 'MCP prompt session precedence job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
       action: { kind: 'prompt', prompt: 'hello', sessionId: 'sess-mcpprec1', reuseSession: true },
@@ -726,7 +703,7 @@ describe('MCP server — full contract', () => {
     const promptPath = join(dir, 'mcp-prompt.txt');
     writeFileSync(promptPath, 'hello from mcp prompt file', 'utf-8');
     const { json, isError } = await callTool(client, 'crontick_job_create', {
-      id: 'mcp-prompt-file-job',
+      alias: 'mcp-prompt-file-job',
       description: 'MCP prompt file job',
       schedule: { kind: 'cron', cron: '0 10 * * *' },
       action: { kind: 'prompt', promptFile: promptPath, engine: 'copilot' },
@@ -746,7 +723,7 @@ describe('MCP server — full contract', () => {
     const updateSecret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
 
     let result = await callTool(client, 'crontick_job_create', {
-      id: jobId,
+      alias: jobId,
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: {
         kind: 'exec',
@@ -758,7 +735,7 @@ describe('MCP server — full contract', () => {
     expect(result.isError).toBe(false);
     expect(JSON.stringify(result.json)).not.toContain(createSecret);
     expect(result.json).toMatchObject({
-      id: jobId,
+      alias: jobId,
       action: { env: { OPENAI_API_KEY: '[REDACTED]', NON_SECRET: 'https://example.test/mcp-visible' } },
     });
 
@@ -766,7 +743,7 @@ describe('MCP server — full contract', () => {
     expect(result.isError).toBe(false);
     expect(JSON.stringify(result.json)).not.toContain(createSecret);
     expect(result.json).toMatchObject({
-      id: jobId,
+      alias: jobId,
       action: { env: { OPENAI_API_KEY: '[REDACTED]', NON_SECRET: 'https://example.test/mcp-visible' } },
     });
 
@@ -774,7 +751,7 @@ describe('MCP server — full contract', () => {
     expect(result.isError).toBe(false);
     expect(JSON.stringify(result.json)).not.toContain(createSecret);
     expect(result.json).toContainEqual(expect.objectContaining({
-      id: jobId,
+      alias: jobId,
       action: expect.objectContaining({ env: expect.objectContaining({ OPENAI_API_KEY: '[REDACTED]', NON_SECRET: 'https://example.test/mcp-visible' }) }),
     }));
 
@@ -790,7 +767,7 @@ describe('MCP server — full contract', () => {
     expect(result.isError).toBe(false);
     expect(JSON.stringify(result.json)).not.toContain(updateSecret);
     expect(result.json).toMatchObject({
-      id: jobId,
+      alias: jobId,
       action: { env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
     });
 
@@ -798,7 +775,7 @@ describe('MCP server — full contract', () => {
     expect(result.isError).toBe(false);
     expect(JSON.stringify(result.json)).not.toContain(updateSecret);
     expect(result.json).toMatchObject({
-      id: jobId,
+      alias: jobId,
       enabled: false,
       action: { env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
     });
@@ -807,7 +784,7 @@ describe('MCP server — full contract', () => {
     expect(result.isError).toBe(false);
     expect(JSON.stringify(result.json)).not.toContain(updateSecret);
     expect(result.json).toMatchObject({
-      id: jobId,
+      alias: jobId,
       enabled: true,
       action: { env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
     });
@@ -816,16 +793,16 @@ describe('MCP server — full contract', () => {
   it('crontick_job_list returns the created job', async () => {
     const { json, isError } = await callTool(client, 'crontick_job_list');
     expect(isError).toBe(false);
-    const jobs = json as Array<{ id: string }>;
+    const jobs = json as Array<{ id: string; alias?: string }>;
     expect(Array.isArray(jobs)).toBe(true);
-    expect(jobs.some((j) => j.id === testJobId)).toBe(true);
+    expect(jobs.some((j) => j.alias === testJobId)).toBe(true);
   });
 
   it('crontick_job_get returns full job definition', async () => {
     const { json, isError } = await callTool(client, 'crontick_job_get', { id: testJobId });
     expect(isError).toBe(false);
-    const job = json as { id: string; schedule: unknown };
-    expect(job.id).toBe(testJobId);
+    const job = json as { id: string; alias?: string; schedule: unknown };
+    expect(job.alias).toBe(testJobId);
     expect(job.schedule).toBeDefined();
   });
 
@@ -864,12 +841,13 @@ describe('MCP server — full contract', () => {
     expect(Array.isArray(logsData.lines)).toBe(true);
   }, 10_000);
 
+
   it('crontick_run_list filters by status', async () => {
     // A dedicated node-exec job so the run deterministically succeeds, unlike
     // the shared echo-based testJobId (echo isn't a real executable, shell:false).
     const jobId = 'mcp-run-status-job';
     await callTool(client, 'crontick_job_create', {
-      id: jobId,
+      alias: jobId,
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
     });
@@ -898,58 +876,34 @@ describe('MCP server — full contract', () => {
 
   // ── Schedule tools ──────────────────────────────────────────────────────────
 
-  it('crontick_schedule_validate rejects garbage', async () => {
-    const { json, isError } = await callTool(client, 'crontick_schedule_validate', {
-      schedule: { kind: 'cron', cron: 'not-a-cron' },
-    });
-    // Either isError:true or ok:false in the response
-    if (!isError) {
-      expect((json as { ok?: boolean }).ok).toBe(false);
-    } else {
-      expect(isError).toBe(true);
-    }
-  });
-
-  it('crontick_schedule_validate accepts "0 9 * * *"', async () => {
-    const { json, isError } = await callTool(client, 'crontick_schedule_validate', {
+  it('crontick_job_schedule returns N future ISO timestamps for an existing job', async () => {
+    const jobId = 'mcp-schedule-job';
+    const created = await callTool(client, 'crontick_job_create', {
+      alias: jobId,
       schedule: { kind: 'cron', cron: '0 9 * * *' },
+      action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
     });
-    expect(isError).toBe(false);
-    expect((json as { ok: boolean }).ok).toBe(true);
-  });
+    expect(created.isError).toBe(false);
+    const createdId = (created.json as { id: string }).id;
 
-  it('crontick_schedule_preview returns N future ISO timestamps', async () => {
-    const { json, isError } = await callTool(client, 'crontick_schedule_preview', {
-      schedule: { kind: 'cron', cron: '0 9 * * *' },
-      n: 3,
-    });
+    const { json, isError } = await callTool(client, 'crontick_job_schedule', { id: jobId, n: 3 });
     expect(isError).toBe(false);
-    const data = json as { next: string[] };
+    const data = json as { jobId: string; alias?: string; schedule: unknown; next: string[] };
+    expect(data.jobId).toBe(createdId);
+    expect(data.alias).toBe(jobId);
+    expect(data.schedule).toEqual({ kind: 'cron', cron: '0 9 * * *' });
     expect(Array.isArray(data.next)).toBe(true);
     expect(data.next).toHaveLength(3);
     for (const ts of data.next) {
       expect(typeof ts).toBe('string');
       expect(new Date(ts).getTime()).not.toBeNaN();
     }
+
+    await callTool(client, 'crontick_job_delete', { id: jobId });
   });
 
   // ── Daemon tools ─────────────────────────────────────────────────────────────
 
-  it('crontick_daemon_status returns healthy', async () => {
-    const { json, isError } = await callTool(client, 'crontick_daemon_status');
-    expect(isError).toBe(false);
-    const data = json as { pid: number; version: string; missedFires: Record<string, number> };
-    expect(typeof data.pid).toBe('number');
-    expect(data.pid).toBeGreaterThan(0);
-    expect(typeof data.version).toBe('string');
-    // L2: missedFires mirrors the CLI's daemon status output (see tests/cli.test.ts).
-    expect(data.missedFires).toMatchObject({
-      jobsWithMissedFires: expect.any(Number),
-      missedRunsRecorded: expect.any(Number),
-      jobsCapped: expect.any(Number),
-      capPerJob: expect.any(Number),
-    });
-  });
 
   it('crontick_daemon_reload returns ok', async () => {
     const { json, isError } = await callTool(client, 'crontick_daemon_reload');
@@ -965,22 +919,6 @@ describe('MCP server — full contract', () => {
     expect(typeof (json as { totalJobs: number }).totalJobs).toBe('number');
   });
 
-  // ── Dashboard tools ─────────────────────────────────────────────────────────
-
-  it('dashboard tools expose start/status/data through the same response shapes', async () => {
-    const start = await callTool(client, 'crontick_dashboard_start');
-    expect(start.isError).toBe(false);
-    expect(start.json).toMatchObject({ ok: true, running: true, url: expect.stringContaining('/dashboard') });
-
-    const status = await callTool(client, 'crontick_dashboard_status');
-    expect(status.isError).toBe(false);
-    expect(status.json).toMatchObject({ ok: true, running: true, url: expect.stringContaining('/dashboard') });
-
-    const data = await callTool(client, 'crontick_dashboard_data', { runsLimit: 5 });
-    expect(data.isError).toBe(false);
-    expect(data.json).toMatchObject({ stats: { totalJobs: expect.any(Number) }, jobs: expect.any(Array), runs: expect.any(Array) });
-  });
-
   // ── Admin tools ──────────────────────────────────────────────────────────────
 
   it('crontick_export returns jobs array', async () => {
@@ -993,18 +931,19 @@ describe('MCP server — full contract', () => {
 
   it('L7: crontick_export includeRuns and crontick_import round-trip run history', async () => {
     const jobId = 'mcp-export-runs-job';
-    await callTool(client, 'crontick_job_create', {
-      id: jobId,
+    const created = await callTool(client, 'crontick_job_create', {
+      alias: jobId,
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
     });
+    const createdId = (created.json as { id: string }).id;
     await callTool(client, 'crontick_job_run_now', { id: jobId });
     await new Promise((resolve) => setTimeout(resolve, 2000)); // let the exec job finish
 
     const { json: exportJson, isError: exportErr } = await callTool(client, 'crontick_export', { includeRuns: true });
     expect(exportErr).toBe(false);
-    const exported = exportJson as { jobs: Array<{ id: string }>; runs: Array<{ id: string; jobId: string }> };
-    expect(exported.runs.some((r) => r.jobId === jobId)).toBe(true);
+    const exported = exportJson as { jobs: Array<{ id: string; alias?: string }>; runs: Array<{ id: string; jobId: string }> };
+    expect(exported.runs.some((r) => r.jobId === createdId)).toBe(true);
 
     // Delete the job (job history rows are untouched by job delete -- that's
     // exactly the retention gap L7 exists to mitigate), then restore both the
@@ -1012,7 +951,7 @@ describe('MCP server — full contract', () => {
     // export produces is exactly what import consumes, end to end.
     await callTool(client, 'crontick_job_delete', { id: jobId });
     const { json: importJson, isError: importErr } = await callTool(client, 'crontick_import', {
-      jobs: exported.jobs.filter((j) => j.id === jobId),
+      jobs: exported.jobs.filter((j) => j.id === createdId),
       runs: exported.runs,
     });
     expect(importErr).toBe(false);
@@ -1035,101 +974,69 @@ describe('MCP server — full contract', () => {
     expect(data.checks.length).toBeGreaterThan(0);
   });
 
-  it('config tools can initialize, edit, validate, and list engines', async () => {
-    expect((await callTool(client, 'crontick_config_get')).isError).toBe(false);
-    expect((await callTool(client, 'crontick_config_init', { force: true })).isError).toBe(false);
-    expect((await callTool(client, 'crontick_config_engine_add', {
-      name: 'agency',
-      engine: { command: 'agency', args: ['cp'], env: { LOGS: 'XYZ' } },
-    })).isError).toBe(false);
-    const engines = await callTool(client, 'crontick_config_engine_list');
-    expect(engines.isError).toBe(false);
-    expect((engines.json as Record<string, unknown>)).toHaveProperty('agency');
-    expect((await callTool(client, 'crontick_config_set', { path: 'defaultEngine', value: 'agency' })).isError).toBe(false);
-    expect((await callTool(client, 'crontick_config_unset', { path: 'engines.agency.env' })).isError).toBe(false);
-    expect((await callTool(client, 'crontick_config_validate')).json).toMatchObject({ ok: true });
+  it('crontick_job_delete deletes one job or every job with all:true plus force:true', async () => {
+    const singleId = 'mcp-job-delete-single';
+    const bulkIds = ['mcp-job-delete-all-a', 'mcp-job-delete-all-b'] as const;
+
+    for (const id of [singleId, ...bulkIds]) {
+      const created = await callTool(client, 'crontick_job_create', {
+        alias: id,
+        schedule: { kind: 'cron', cron: '0 0 * * *' },
+        action: { kind: 'exec', command: process.execPath, args: ['-e', 'process.exit(0)'] },
+      });
+      expect(created.isError).toBe(false);
+    }
+
+    const singleDeleted = await callTool(client, 'crontick_job_delete', { id: singleId });
+    expect(singleDeleted.isError).toBe(false);
+    expect(singleDeleted.json).toMatchObject({ ok: true });
+
+    const missingForce = await callTool(client, 'crontick_job_delete', { all: true });
+    expect(missingForce.isError).toBe(true);
+    expect(String((missingForce.json as { error?: string }).error ?? '')).toContain('force:true');
+
+    const bulkDeleted = await callTool(client, 'crontick_job_delete', { all: true, force: true });
+    expect(bulkDeleted.isError).toBe(false);
+    expect(bulkDeleted.json).toMatchObject({ ok: true, deleted: expect.any(Number) });
+
+    const listed = await callTool(client, 'crontick_job_list');
+    expect(listed.isError).toBe(false);
+    const aliases = new Set((listed.json as Array<{ alias?: string | null }>).map((job) => job.alias ?? null));
+    expect(aliases.has(singleId)).toBe(false);
+    expect(aliases.has(bulkIds[0])).toBe(false);
+    expect(aliases.has(bulkIds[1])).toBe(false);
   });
 
 
-  it('config mutation tools redact secret engine env values in their responses while preserving benign trap keys', async () => {
-    const secret = `sk-proj-${'V'.repeat(28)}`;
-    const updatedSecret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
-    expect((await callTool(client, 'crontick_config_init', { force: true })).isError).toBe(false);
-
-    let result = await callTool(client, 'crontick_config_set', {
-      path: 'engines.copilot.env',
-      value: { OPENAI_API_KEY: secret, NON_SECRET: String.raw`C:\Users\Example\mcp-benign` },
-    });
-    expect(result.isError).toBe(false);
-    expect(JSON.stringify(result.json)).not.toContain(secret);
-    expect(result.json).toMatchObject({
-      engines: { copilot: { env: { OPENAI_API_KEY: '[REDACTED]', NON_SECRET: String.raw`C:\Users\Example\mcp-benign` } } },
-    });
-
-    result = await callTool(client, 'crontick_config_engine_add', {
-      name: 'mcp-redaction-engine',
-      engine: {
-        command: 'agency',
-        args: ['cp'],
-        env: { OPENAI_API_KEY: secret, NON_SECRET: 'https://example.test/mcp-visible' },
+  it('crontick_info returns environment and daemon information', async () => {
+    const { json, isError } = await callTool(client, 'crontick_info');
+    expect(isError).toBe(false);
+    expect(json).toMatchObject({
+      version: expect.any(String),
+      node: expect.stringMatching(/^v/),
+      platform: expect.any(String),
+      configPath: expect.any(String),
+      paths: {
+        dataDir: expect.any(String),
+        jobsDir: expect.any(String),
+        runsDb: expect.any(String),
+        logsDir: expect.any(String),
+        configFile: expect.any(String),
+        portFile: expect.any(String),
+        pidFile: expect.any(String),
       },
+      daemon: { running: expect.any(Boolean) },
     });
-    expect(result.isError).toBe(false);
-    expect(JSON.stringify(result.json)).not.toContain(secret);
-    expect(result.json).toMatchObject({
-      engines: {
-        'mcp-redaction-engine': {
-          env: { OPENAI_API_KEY: '[REDACTED]', NON_SECRET: 'https://example.test/mcp-visible' },
-        },
-      },
-    });
-
-    result = await callTool(client, 'crontick_config_engine_update', {
-      name: 'mcp-redaction-engine',
-      engine: { env: { AWS_SECRET_ACCESS_KEY: updatedSecret, NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' } },
-    });
-    expect(result.isError).toBe(false);
-    expect(JSON.stringify(result.json)).not.toContain(updatedSecret);
-    expect(result.json).toMatchObject({
-      engines: {
-        'mcp-redaction-engine': {
-          env: { AWS_SECRET_ACCESS_KEY: '[REDACTED]', NO_PASSWORD: 'Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0KkLl1Mm2Nn' },
-        },
-      },
-    });
-  });
-
-  it('config read tools redact secret engine env values', async () => {
-    const secret = `sk-proj-${'T'.repeat(28)}`;
-    expect((await callTool(client, 'crontick_config_init', { force: true })).isError).toBe(false);
-    expect((await callTool(client, 'crontick_config_set', {
-      path: 'engines.copilot.env.OPENAI_API_KEY',
-      value: secret,
-    })).isError).toBe(false);
-
-    const engines = await callTool(client, 'crontick_config_engine_list');
-    expect(engines.isError).toBe(false);
-    const enginesText = JSON.stringify(engines.json);
-    expect(enginesText).not.toContain(secret);
-    expect(engines.json).toMatchObject({
-      copilot: { env: { OPENAI_API_KEY: '[REDACTED]' } },
-    });
-
-    const validated = await callTool(client, 'crontick_config_validate');
-    expect(validated.isError).toBe(false);
-    const validatedText = JSON.stringify(validated.json);
-    expect(validatedText).not.toContain(secret);
-    expect(validated.json).toMatchObject({
-      ok: true,
-      config: { engines: { copilot: { env: { OPENAI_API_KEY: '[REDACTED]' } } } },
-    });
+    // The dashboard is always served by the daemon; info surfaces its URL.
+    const { dashboardUrl } = json as { dashboardUrl: unknown };
+    expect(dashboardUrl === null || (typeof dashboardUrl === 'string' && dashboardUrl.endsWith('/dashboard'))).toBe(true);
   });
 
   it('tool verbose option returns MCP diagnostics without stderr protocol pollution', async () => {
-    const { json, isError } = await callTool(client, 'crontick_config_get', { verbose: true });
+    const { json, isError } = await callTool(client, 'crontick_job_list', { verbose: true });
     expect(isError).toBe(false);
     expect(json).toMatchObject({
-      result: { engines: expect.any(Object) },
+      result: expect.any(Array),
       diagnostics: expect.any(Array),
     });
     expect((json as { diagnostics: Array<{ level: string }> }).diagnostics.some((event) => event.level === 'debug')).toBe(true);
@@ -1170,20 +1077,12 @@ describe('MCP server — full contract', () => {
       expect(err).toBeDefined();
     }
   });
-
-  it('crontick_dashboard_stop stops the daemon-backed dashboard server', async () => {
-    const { json, isError } = await callTool(client, 'crontick_dashboard_stop');
-    expect(isError).toBe(false);
-    // dashboardStop delegates to daemonStop(); mode surfaces the L1 HTTP-first
-    // shutdown handshake result (see src/daemon/lifecycle.ts DaemonStopResult).
-    expect(json).toMatchObject({ ok: true, stopped: expect.any(Boolean), mode: expect.stringMatching(/^(graceful|hard-kill|already-stopped)$/) });
-  });
 });
 
 // ── Daemon-start-off path ────────────────────────────────────────────────────
 
 describe('MCP server — CRONTICK_MCP_START_DAEMON path', () => {
-  it('daemon status reports not running without starting the daemon', async () => {
+  it('crontick_info reports not running without starting the daemon', async () => {
     const isolatedDir = makeTmpDir();
     let isolatedTransport: StdioClientTransport | undefined;
     let isolatedClient: Client | undefined;
@@ -1206,9 +1105,9 @@ describe('MCP server — CRONTICK_MCP_START_DAEMON path', () => {
       );
       await isolatedClient.connect(isolatedTransport);
 
-      const { json, text, isError } = await callTool(isolatedClient, 'crontick_daemon_status');
+      const { json, text, isError } = await callTool(isolatedClient, 'crontick_info');
       expect(isError).toBe(false);
-      expect((json as { running?: boolean }).running).toBe(false);
+      expect((json as { daemon?: { running?: boolean } }).daemon?.running).toBe(false);
       // Must NOT leak 127.0.0.1:port to the LLM
       expect(text).not.toMatch(/127\.0\.0\.1:\d+/);
       expect(existsSync(join(isolatedDir, 'daemon.port'))).toBe(false);

@@ -10,10 +10,9 @@ import { z } from 'zod';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve as pathResolve } from 'node:path';
 import { VERSION } from '../version.js';
-import { ScheduleSchema } from '../schemas/job.js';
-import { EngineConfigSchema } from '../schemas/config.js';
 import { JobCreateInputSchema, JobPatchInputSchema } from '../job-input.js';
 import { createClient, type CrontickClient } from '../client.js';
+import { LOG_SOURCES } from '../log-source.js';
 import { isVerboseEnv, type LogEvent } from '../logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -76,13 +75,19 @@ function okResult(data: unknown, diagnostics: LogEvent[] = [], verbose = false):
  */
 export function redactForLlm(msg: string): string {
   return msg
-    // Loopback address:port
+    // IPv4 loopback address:port
     .replace(/127\.0\.0\.1:\d+/g, '<daemon-addr>')
+    // IPv6 loopback: [::1]:port, ::1:port, or bare ::1 (bracketed form first
+    // so its :port isn't swallowed by the bare-::1 pass).
+    .replace(/\[::1\](?::\d+)?/g, '<daemon-addr>')
+    .replace(/::1(?::\d+)?/g, '<daemon-addr>')
     // Windows absolute paths: C:\foo\bar  (must have at least one separator)
     .replace(/[A-Za-z]:\\[^\s"']+/g, '<path>')
-    // POSIX absolute paths: only when preceded by start-of-string, whitespace,
-    // (, [, or a quote — to avoid matching /path inside http://host/path URLs.
-    .replace(/(^|[\s(["'])\/(?:[^\s"'/]+\/)+[^\s"'/]+/g, '$1<path>');
+    // POSIX absolute paths, including single-segment roots like /tmp, /etc,
+    // /home: only when preceded by start-of-string, whitespace, (, [, or a
+    // quote — to avoid matching /path inside http://host/path URLs. The
+    // segment group is `*` (not `+`) so `/tmp` matches, not just `/a/b`.
+    .replace(/(^|[\s(["'])\/(?:[^\s"'/]+\/)*[^\s"'/]+/g, '$1<path>');
 }
 
 function errResult(err: unknown, diagnostics: LogEvent[] = [], verbose = false): ToolResult {
@@ -96,9 +101,11 @@ function errResult(err: unknown, diagnostics: LogEvent[] = [], verbose = false):
   };
 }
 
-function redactedErrorMessage(err: unknown): string {
+/** Redact an error's message for return to the LLM host. Exported for testing. */
+export function redactedErrorMessage(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
-  if (err instanceof Error && 'code' in err && err.code === 'ENV_FILE_ERROR') return msg;
+  // ENV_FILE_ERROR messages embed the resolved env-file absolute path; redact
+  // it too so no machine-specific path leaks into the LLM host context.
   return redactForLlm(msg);
 }
 
@@ -139,7 +146,7 @@ export function createMcpServer(): McpServer {
     'crontick_job_create',
     {
       description:
-        'Create and schedule a new cron job. This executes arbitrary commands, scripts, or prompts on the user\'s machine on a recurring or future schedule that persists and outlives this session -- confirm the job definition (schedule and action) with the user before calling. Provide the full job definition including id, schedule (kind: cron|interval|one-shot), and action (kind: script|exec|prompt). Prompt actions use prompt, optional configured engine name, args, sessionId, or reuseSession. Validate the schedule first with crontick_schedule_validate.',
+        'Create and schedule a new cron job. This executes arbitrary commands, scripts, or prompts on the user\'s machine on a recurring or future schedule that persists and outlives this session -- confirm the job definition (schedule and action) with the user before calling. Provide the job definition: schedule (kind: cron|interval|one-shot) and action (kind: script|exec|prompt) are required; id (GUID) is generated automatically and should be omitted; alias is an optional, unique, human-friendly identifier -- when omitted, one is auto-generated. Prompt actions use prompt, optional configured engine name, args, sessionId, or reuseSession. After creating, use crontick_job_schedule to preview the job\'s upcoming fire times.',
       inputSchema: withVerbose({
         ...JobCreateInputSchema.shape,
         force: z.boolean().optional(),
@@ -166,8 +173,8 @@ export function createMcpServer(): McpServer {
   server.registerTool(
     'crontick_job_get',
     {
-      description: 'Get the full definition and status of a specific job by ID.',
-      inputSchema: withVerbose({ id: z.string() }),
+      description: 'Get the full definition and status of a specific job by id or alias.',
+      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (args) => toolWrap(args, (client) => client.getJob(args.id)),
@@ -177,9 +184,9 @@ export function createMcpServer(): McpServer {
     'crontick_job_update',
     {
       description:
-        'Update an existing job. Provide the job ID and any fields to change (partial update is merged with existing definition). Action can be script, exec, or prompt.',
+        'Update an existing job (id or alias). Provide the job identifier and any fields to change (partial update is merged with existing definition); alias can be changed here (must remain unique). Action can be script, exec, or prompt.',
       inputSchema: withVerbose({
-id: z.string(),
+        id: z.string().describe('Job id (GUID) or alias'),
         ...JobPatchInputSchema.shape,
       }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
@@ -197,7 +204,7 @@ id: z.string(),
           return errResult(new Error('Invalid action patch: envFile and timeoutSec require a command source on update'));
         }
       }
-return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
+      return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     },
   );
 
@@ -205,18 +212,29 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     'crontick_job_delete',
     {
       description:
-        'Permanently delete a job definition. Archived runs and logs remain directly queryable by run ID, but live aggregates exclude them. This may cancel an in-flight run and cannot be undone -- confirm with the user first.',
-      inputSchema: withVerbose({ id: z.string() }),
+        'Permanently delete one job definition by id/alias, or delete every job with all:true plus force:true. Archived runs and logs remain directly queryable by run ID, but live aggregates exclude deleted jobs. This may cancel an in-flight run and cannot be undone -- confirm with the user first.',
+      inputSchema: withVerbose({
+        id: z.string().describe('Job id (GUID) or alias to delete individually').optional(),
+        all: z.boolean().optional().describe('Delete every job. Requires force:true.'),
+        force: z.boolean().optional().describe('Confirm a bulk delete when all:true.'),
+      }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.deleteJob(args.id)),
+    async (args) => {
+      if (args.all) {
+        if (args.id) return errResult(new Error('Provide either id or all:true, not both'));
+        return toolWrap(args, (client) => client.deleteJob(undefined, { all: true, force: args.force }));
+      }
+      if (!args.id) return errResult(new Error('Provide id, or set all:true with force:true to delete every job'));
+      return toolWrap(args, (client) => client.deleteJob(args.id));
+    },
   );
 
   server.registerTool(
     'crontick_job_enable',
     {
-      description: 'Enable a disabled job so it will run on its next scheduled time.',
-      inputSchema: withVerbose({ id: z.string() }),
+      description: 'Enable a disabled job (id or alias) so it will run on its next scheduled time.',
+      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => toolWrap(args, (client) => client.enableJob(args.id)),
@@ -225,8 +243,8 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
   server.registerTool(
     'crontick_job_disable',
     {
-      description: 'Disable a job so it will not run until re-enabled.',
-      inputSchema: withVerbose({ id: z.string() }),
+      description: 'Disable a job (id or alias) so it will not run until re-enabled.',
+      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => toolWrap(args, (client) => client.disableJob(args.id)),
@@ -236,8 +254,8 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     'crontick_job_run_now',
     {
       description:
-        'Trigger an immediate run of a job, bypassing its schedule. This executes the job\'s command, script, or prompt on the user\'s machine right now -- confirm with the user before calling. Returns a runId to track progress with crontick_run_get.',
-      inputSchema: withVerbose({ id: z.string() }),
+        'Trigger an immediate run of a job (id or alias), bypassing its schedule. This executes the job\'s command, script, or prompt on the user\'s machine right now -- confirm with the user before calling. Returns a runId to track progress with crontick_run_get.',
+      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async (args) => toolWrap(args, (client) => client.runNow(args.id)),
@@ -258,9 +276,9 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
   server.registerTool(
     'crontick_run_list',
     {
-      description: 'List recent runs, optionally filtered by job ID and/or status. Status includes the terminal "missed" state for schedule fires that were recorded but never executed because the daemon was down.',
+      description: 'List recent runs, optionally filtered by job (id or alias) and/or status. Status includes the terminal "missed" state for schedule fires that were recorded but never executed because the daemon was down.',
       inputSchema: withVerbose({
-        jobId: z.string().optional(),
+        jobId: z.string().describe('Job id (GUID) or alias').optional(),
         limit: z.number().int().positive().optional(),
         since: z.number().int().optional(),
         status: z.enum(['queued', 'running', 'success', 'failed', 'canceled', 'timeout', 'missed']).optional(),
@@ -284,44 +302,30 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     'crontick_run_logs_tail',
     {
       description:
-        'Get the last N lines of output for a run. Useful for diagnosing failures.',
+        'Get the last N lines of output for a run. Useful for diagnosing failures. Use the source filter to select engine output (stdout+stderr), crontick scheduling/execution events, or all (default).',
       inputSchema: withVerbose({
         id: z.string(),
         lines: z.number().int().positive().default(50),
+        source: z.enum(LOG_SOURCES).optional(),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.getLogs(args.id, { lines: args.lines })),
+    async (args) => toolWrap(args, (client) => client.getLogs(args.id, { lines: args.lines, source: args.source })),
   );
 
-  // ── Schedules ─────────────────────────────────────────────────────────────
 
   server.registerTool(
-    'crontick_schedule_validate',
+    'crontick_job_schedule',
     {
       description:
-        'Validate a schedule definition. Returns ok:true and human-readable description on success, or an error message on failure. Always call this before creating a job.',
+        'Show the next N upcoming fire times for an existing job (id or alias). Useful to confirm a job\'s schedule is what the user expects.',
       inputSchema: withVerbose({
-        schedule: ScheduleSchema,
-      }),
-      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => client.validateSchedule(args.schedule)),
-  );
-
-  server.registerTool(
-    'crontick_schedule_preview',
-    {
-      description:
-        'Preview the next N fire times for a schedule. Useful to confirm the schedule is what the user expects before creating the job.',
-      inputSchema: withVerbose({
-        schedule: ScheduleSchema,
+        id: z.string().describe('Job id (GUID) or alias'),
         n: z.number().int().positive().max(20).default(5),
-        tz: z.string().optional(),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.previewSchedule({ schedule: args.schedule, n: args.n, tz: args.tz })),
+    async (args) => toolWrap(args, (client) => client.jobSchedule(args.id, { n: args.n })),
   );
 
   // ── Stats ──────────────────────────────────────────────────────────────────
@@ -340,8 +344,8 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
   server.registerTool(
     'crontick_stats_job',
     {
-      description: 'Get run statistics for a specific job: total runs, success/failure rates, last status.',
-      inputSchema: withVerbose({ id: z.string() }),
+      description: 'Get run statistics for a specific job (id or alias): total runs, success/failure rates, last status.',
+      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (args) => toolWrap(args, (client) => client.statsJob(args.id)),
@@ -349,16 +353,6 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
 
   // ── Daemon ─────────────────────────────────────────────────────────────────
 
-  server.registerTool(
-    'crontick_daemon_start',
-    {
-      description:
-        'Start the local crontick daemon. Returns the daemon port and whether this call started a new process.',
-      inputSchema: withVerbose({}),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => client.daemonStart()),
-  );
 
   server.registerTool(
     'crontick_daemon_stop',
@@ -371,28 +365,6 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     async (args) => toolWrap(args, (client) => client.daemonStop(), false),
   );
 
-  server.registerTool(
-    'crontick_daemon_status',
-    {
-      description:
-        'Get the daemon process status: PID, version, loopback baseUrl/port, uptime, job counts, and a missedFires summary (jobs whose schedule missed fires while the daemon was down since the last start — report-only, never auto-executed; see crontick_run_list with status "missed").',
-      inputSchema: withVerbose({}),
-      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    // daemon_status returns a soft error object instead of isError:true — the
-    // LLM should know the daemon is down without treating it as a tool failure.
-    async (args) => {
-      const diagnostics: LogEvent[] = [];
-      const verbose = mcpVerbose(args);
-      const client = mcpClient(false, { verbose, diagnostics });
-      try {
-        return okResult(await client.daemonStatus(), diagnostics, verbose);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return okResult({ running: false, error: redactForLlm(msg) }, diagnostics, verbose);
-      }
-    },
-  );
 
   server.registerTool(
     'crontick_daemon_reload',
@@ -405,16 +377,6 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     async (args) => toolWrap(args, (client) => client.daemonReload()),
   );
 
-  server.registerTool(
-    'crontick_daemon_restart',
-    {
-      description:
-        'Restart the crontick daemon (stop + start). Running jobs will be interrupted. Confirm with the user before calling.',
-      inputSchema: withVerbose({}),
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => client.daemonRestart()),
-  );
 
   // ── Admin ──────────────────────────────────────────────────────────────────
 
@@ -446,53 +408,6 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
   );
 
   server.registerTool(
-    'crontick_dashboard_start',
-    {
-      description:
-        'Start the crontick dashboard server and return its URL. The dashboard is served by the local daemon.',
-      inputSchema: withVerbose({}),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => client.dashboardStart()),
-  );
-
-  server.registerTool(
-    'crontick_dashboard_status',
-    {
-      description:
-        'Return dashboard server status without starting it. If it is down, start it with crontick_dashboard_start.',
-      inputSchema: withVerbose({}),
-      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => client.dashboardStatus(), false),
-  );
-
-  server.registerTool(
-    'crontick_dashboard_data',
-    {
-      description:
-        'Return the core dashboard data model: health, aggregate stats, jobs, and recent runs.',
-      inputSchema: withVerbose({
-        jobId: z.string().optional(),
-        runsLimit: z.number().int().positive().optional(),
-      }),
-      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => client.dashboardData(withoutVerbose(args)), false),
-  );
-
-  server.registerTool(
-    'crontick_dashboard_stop',
-    {
-      description:
-        'Stop the daemon-backed dashboard server. This also stops the local daemon because the dashboard is served by it.',
-      inputSchema: withVerbose({}),
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => client.dashboardStop(), false),
-  );
-
-  server.registerTool(
     'crontick_doctor',
     {
       description:
@@ -503,96 +418,16 @@ return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
     async (args) => toolWrap(args, (client) => client.doctor({ mcpScript: mcpScript() }), false),
   );
 
-  // ── Config ─────────────────────────────────────────────────────────────────
 
   server.registerTool(
-    'crontick_config_get',
+    'crontick_info',
     {
-      description: 'Get the effective crontick config, or a single value by dot-separated path.',
-      inputSchema: withVerbose({ path: z.string().optional() }),
-      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.getConfigValue(args.path)), false),
-  );
-
-  server.registerTool(
-    'crontick_config_set',
-    {
-      description: 'Set one crontick config value by dot-separated path. The updated config is validated and returned.',
-      inputSchema: withVerbose({ path: z.string(), value: z.unknown() }),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.setConfigValue(args.path, args.value)), false),
-  );
-
-  server.registerTool(
-    'crontick_config_unset',
-    {
-      description: 'Remove one crontick config value by dot-separated path. The updated config is validated and returned.',
-      inputSchema: withVerbose({ path: z.string() }),
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.removeConfigValue(args.path)), false),
-  );
-
-  server.registerTool(
-    'crontick_config_engine_list',
-    {
-      description: 'List configured prompt engines from the effective crontick config.',
+      description:
+        'Return crontick environment info: crontick and Node versions, configPath, all on-disk file locations (data dir, jobs dir, logs dir, runs DB, config file, port file, daemon pid file), the dashboard URL (dashboardUrl), and daemon running status. The dashboard is always served by the daemon; open dashboardUrl in a browser.',
       inputSchema: withVerbose({}),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.listEngines()), false),
-  );
-
-  server.registerTool(
-    'crontick_config_engine_add',
-    {
-      description: 'Add a prompt engine. The engine defines the command, default args, and default env used when prompt jobs run.',
-      inputSchema: withVerbose({ name: z.string(), engine: EngineConfigSchema }),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.addEngine(args.name, args.engine)), false),
-  );
-
-  server.registerTool(
-    'crontick_config_engine_update',
-    {
-      description: 'Update a prompt engine. Provided fields replace the existing command, args, or env.',
-      inputSchema: withVerbose({ name: z.string(), engine: EngineConfigSchema.partial() }),
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.updateEngine(args.name, args.engine)), false),
-  );
-
-  server.registerTool(
-    'crontick_config_engine_remove',
-    {
-      description: 'Remove a prompt engine. You cannot remove the current defaultEngine.',
-      inputSchema: withVerbose({ name: z.string() }),
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.removeEngine(args.name)), false),
-  );
-
-  server.registerTool(
-    'crontick_config_init',
-    {
-      description: 'Create the default crontick config file. Use force:true to replace an existing file.',
-      inputSchema: withVerbose({ force: z.boolean().optional() }),
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.initConfig({ force: args.force })), false),
-  );
-
-  server.registerTool(
-    'crontick_config_validate',
-    {
-      description: 'Validate the current crontick config file, or a specific config file path.',
-      inputSchema: withVerbose({ path: z.string().optional() }),
-      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => Promise.resolve(client.validateConfig(args.path)), false),
+    async (args) => toolWrap(args, (client) => client.info(), false),
   );
 
   // ── Resources ─────────────────────────────────────────────────────────────

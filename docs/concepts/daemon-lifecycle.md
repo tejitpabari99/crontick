@@ -50,7 +50,7 @@ On startup the daemon reads `daemon.pid`. If the PID is alive (`process.kill(pid
 
 ## Shutdown
 
-`crontick daemon stop` (`stopDaemon()` in `src/daemon/lifecycle.ts`) prefers an **in-process
+`crontick info daemon stop` (`stopDaemon()` in `src/daemon/lifecycle.ts`) prefers an **in-process
 HTTP shutdown** over OS signals, because it is the only mechanism that behaves identically on
 every platform:
 
@@ -88,7 +88,7 @@ In-flight child processes are deliberately left running across shutdown (with th
 PowerShell exception noted below) -- see [the next section](#what-happens-while-the-daemon-is-down)
 for why, and how they are reconciled on the next start. `POST /api/daemon/stop`'s response
 includes any runs still `running` at the moment of shutdown (`activeRuns: [{ id, jobId }]`), and
-`crontick daemon stop` folds that into its message, so a stop never silently leaves work running
+`crontick info daemon stop` folds that into its message, so a stop never silently leaves work running
 without saying so.
 
 ## What happens while the daemon is down
@@ -103,7 +103,7 @@ without saying so.
   next start, for every enabled job with a prior watermark, the daemon works out which fires the
   schedule *would* have produced between that watermark and now and records each one as a
   terminal `missed` run (`Store.recordMissedRun()`), capped at 500 per job to bound startup work
-  for a long-idle install. `crontick daemon status` / `GET /api/daemon/status` summarizes this as
+  for a long-idle install. `crontick info` / `GET /api/daemon/status` summarizes the daemon state as
   `missedFires: { jobsWithMissedFires, missedRunsRecorded, jobsCapped, capPerJob }`, and
   `crontick runs list --status missed` (or `crontick_run_list` with `status: "missed"`) lists the
   individual rows. crontick deliberately does **not** run the missed fires -- see

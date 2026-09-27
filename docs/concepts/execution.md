@@ -84,13 +84,9 @@ The temp file is deleted after the process exits (or on error).
 
 The `command` is spawned directly with `args`. No shell interpretation occurs. `command` is used
 verbatim -- it is never split on whitespace -- so a command string containing spaces (e.g. a path)
-is passed through unchanged as a single argv element. `args` come from whatever a surface passes
-through -- for the CLI, from repeatable `--arg <value>` (primary) or, as a convenience, everything
-after a literal `--` -- so an individual argument containing spaces is preserved intact rather
-than being re-split. See [cli.md](../reference/cli.md#crontick-new) for the CLI's `--arg`/`--`
-syntax and the Windows shim behavior matrix, and
-[ADR 0019](../decisions/0019-arg-flag-primary-for-exec-and-prompt-args.md) for why `--arg` is
-primary.
+is passed through unchanged as a single argv element. `args` come from the job schema (for example,
+a JSON file passed to `crontick jobs new --file <job.json>`) or the library API, so an individual
+argument containing spaces is preserved intact rather than being re-split.
 
 ### Prompt jobs
 
@@ -110,6 +106,29 @@ Environment variables are merged in priority order (last wins):
 4. `action.env` (inline env from the job definition)
 
 The `envFile` is resolved relative to `action.cwd` (or `process.cwd()`) when not an absolute path.
+
+## Log streams: engine vs crontick
+
+Each run's logs combine two kinds of entries, distinguished by their stream name in `run_logs`:
+
+- **Engine streams** (`stdout`, `stderr`): the job process's own output (see below).
+- **Crontick stream** (`crontick`): crontick's own scheduling/execution lifecycle events for the
+  run -- run started, executing (with the redacted command), run finished (status/exit/duration),
+  overlap skips, retry backoffs, and session capture. Each event is a redacted `[crontick] ...`
+  line.
+
+Log retrieval accepts a `source` filter (`all` -- default, `engine` = `stdout`+`stderr`, or
+`crontick`) across the CLI (`crontick runs logs <runId> [engine|crontick]`), the MCP tool `crontick_run_logs_tail`, the
+client `getLogs()`, and the daemon `GET /api/runs/:id/logs?source=` route.
+
+### Per-job log file
+
+In addition to the SQLite `run_logs` store, every run's logs (engine output **and** crontick
+lifecycle events, interleaved) are mirrored to a per-job file at `<dataDir>/logs/<jobId>.log`
+(overridable via `logging.dir`; disable with `logging.fileEnabled: false`). File writes are
+best-effort and never block or fail a run. See
+[internals/executors.md](../internals/executors.md#per-job-log-file) and the
+[configuration reference](../reference/configuration.md#loggingconfig).
 
 ## Stdout/stderr capture
 
@@ -160,7 +179,7 @@ Beyond the spawn mechanics, prompt jobs have additional behavior:
 
 - **Engine resolution**: the configured engine is looked up from `config.json` using `action.engine` (or `defaultEngine` if omitted). The resulting command line follows the pattern: `<engine.command> <engine.args...> <prompt> <action.args...> [--session-id=<id>]`.
 - **Session precedence**: explicit `sessionId` is used every run. If both `sessionId` and `reuseSession` are supplied, `sessionId` wins and crontick stores `reuseSession: false` with a notice.
-- **Session capture**: when `reuseSession` is true and no `sessionId` is set, the Runner monitors the engine's combined stdout/stderr output (up to 128 KB tail) and extracts a session ID via regex after a successful exit. The captured ID is persisted back into the job definition so subsequent runs reuse the same session.
+- **Session capture**: when `reuseSession` is true and no `sessionId` is set, the Runner monitors the engine's combined stdout/stderr output (up to 128 KB tail) and extracts a session ID via regex after a successful exit. The extractor matches the Copilot CLI's real stats-footer resume hint (`--resume=<uuid>`) as well as `--session-id=<id>`/`--session-id <id>` and generic `session id: <id>` forms. The captured ID is persisted back into the job definition so subsequent runs reuse the same session, **and** onto the run record (`run.sessionId`, surfaced by `runs get` and the dashboard). An explicitly provided `sessionId` is also recorded on the run record.
 - **Engine resolution failure**: if the engine binary is not on PATH, the run fails with a descriptive error naming the engine and suggesting config changes.
 - **promptFile sugar**: CLI and programmatic input may use `promptFile` as creation sugar. It must point to a UTF-8 `.txt` file; the file is read before persistence and exports contain only `prompt`.
 

@@ -25,6 +25,25 @@ const NON_PARITY_CLIENT_METHODS = new Set([
   'effectiveEnv',
   'fetchRequest',
   'daemonRequestError',
+  // Library-only helpers retained after the CLI/MCP command reorganization
+  // (their surface was narrowed, but the client methods stay for library use).
+  'validateSchedule',
+  'previewSchedule',
+  'dashboardStatus',
+  'dashboardData',
+  'daemonStart',
+  'daemonStatus',
+  'daemonRestart',
+  'configPath',
+  'getConfigValue',
+  'setConfigValue',
+  'removeConfigValue',
+  'listEngines',
+  'addEngine',
+  'updateEngine',
+  'removeEngine',
+  'initConfig',
+  'validateConfig',
 ]);
 
 function scratchHome(): string {

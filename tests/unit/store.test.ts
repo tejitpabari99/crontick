@@ -156,6 +156,56 @@ describe('Store', () => {
     expect(store.deleteJob('ghost')).toBe(false);
   });
 
+  it('deleteAllJobs atomically removes every job plus its runs, logs, schedule state, and files, returning the count', () => {
+    store.upsertJob(execJob('bulk-a'));
+    store.upsertJob(execJob('bulk-b'));
+    const runA = store.insertRun('bulk-a');
+    store.appendLog(runA.id, 'stdout', Buffer.from('hi\n'));
+    store.recordTick('bulk-a', 1000);
+    const runB = store.insertRun('bulk-b');
+    store.appendLog(runB.id, 'stderr', Buffer.from('err\n'));
+
+    expect(store.listJobs()).toHaveLength(2);
+
+    const deleted = store.deleteAllJobs();
+    expect(deleted).toBe(2);
+    expect(store.listJobs()).toEqual([]);
+    expect(store.listRuns({})).toEqual([]);
+    expect(store.getLogs(runA.id)).toEqual([]);
+    expect(store.getLogs(runB.id)).toEqual([]);
+    expect(store.getScheduleState('bulk-a')).toBeUndefined();
+    expect(existsSync(join(dir, 'jobs', 'bulk-a.json'))).toBe(false);
+    expect(existsSync(join(dir, 'jobs', 'bulk-b.json'))).toBe(false);
+    expect(existsSync(join(dir, 'jobs', 'bulk-a.schema.json'))).toBe(false);
+  });
+
+  it('deleteAllJobs on an empty store returns 0', () => {
+    expect(store.deleteAllJobs()).toBe(0);
+  });
+
+  it('deleteAllJobs still removes every DB row and returns the count when a job-file unlink fails', () => {
+    // File removal is best-effort/post-commit, so an unlink failure must not
+    // abort the wipe. Simulate a failure by replacing the persisted job JSON
+    // with a directory of the same name: existsSync() is true but unlinkSync()
+    // throws (caught internally by removeJobFiles).
+    store.upsertJob(execJob('unlink-fail-a'));
+    store.upsertJob(execJob('unlink-fail-b'));
+    const runA = store.insertRun('unlink-fail-a');
+    store.appendLog(runA.id, 'stdout', Buffer.from('hi\n'));
+
+    const jobFile = join(dir, 'jobs', 'unlink-fail-a.json');
+    rmSync(jobFile, { force: true });
+    mkdirSync(jobFile); // now a directory: unlinkSync() will throw EPERM/EISDIR
+
+    const deleted = store.deleteAllJobs();
+    expect(deleted).toBe(2);
+    expect(store.listJobs()).toEqual([]);
+    expect(store.listRuns({})).toEqual([]);
+    expect(store.getLogs(runA.id)).toEqual([]);
+    // The un-unlinkable path is left behind (best-effort), but the wipe still succeeded.
+    expect(existsSync(jobFile)).toBe(true);
+  });
+
   it('upsertJob is idempotent — updates in place', () => {
     store.upsertJob(execJob('idem-job'));
     store.upsertJob({ ...execJob('idem-job'), enabled: false });
@@ -361,6 +411,55 @@ describe('Store', () => {
     expect(logs[1].stream).toBe('stderr');
   });
 
+  it('getLogs source filter: all/engine/crontick select the right streams', () => {
+    const run = store.insertRun('log-source-job');
+    store.appendLog(run.id, 'stdout', Buffer.from('out\n'));
+    store.appendLog(run.id, 'stderr', Buffer.from('err\n'));
+    store.appendLog(run.id, 'crontick', Buffer.from('[crontick] run started\n'));
+
+    expect(store.getLogs(run.id).map((l) => l.stream)).toEqual(['stdout', 'stderr', 'crontick']);
+    expect(store.getLogs(run.id, 'all').map((l) => l.stream)).toEqual(['stdout', 'stderr', 'crontick']);
+    expect(store.getLogs(run.id, 'engine').map((l) => l.stream)).toEqual(['stdout', 'stderr']);
+    expect(store.getLogs(run.id, 'crontick').map((l) => l.stream)).toEqual(['crontick']);
+    expect(store.getLogs(run.id, 'crontick')[0].chunk.toString('utf-8')).toBe('[crontick] run started\n');
+  });
+
+  it('updateRun persists sessionId and getRun/listRuns surface it', () => {
+    const run = store.insertRun('session-run-job');
+    expect(store.getRun(run.id)?.sessionId).toBeUndefined();
+    store.updateRun(run.id, { sessionId: 'sess-persisted-1' });
+    expect(store.getRun(run.id)?.sessionId).toBe('sess-persisted-1');
+    expect(store.listRuns({ jobId: 'session-run-job' })[0].sessionId).toBe('sess-persisted-1');
+  });
+
+  it('updateRun persists command and getRun/listRuns surface it', () => {
+    const run = store.insertRun('command-run-job');
+    expect(store.getRun(run.id)?.command).toBeUndefined();
+    store.updateRun(run.id, { command: 'node script.js --flag' });
+    expect(store.getRun(run.id)?.command).toBe('node script.js --flag');
+    expect(store.listRuns({ jobId: 'command-run-job' })[0].command).toBe('node script.js --flag');
+  });
+
+  it('creates a fresh schema whose jobs/runs tables include the alias, session_id, and command columns', () => {
+    // The schema is created directly in its final shape (no migrations), so a
+    // brand-new database already carries every column. Assert against the
+    // on-disk file via an independent read connection.
+    const db = new DatabaseSync(join(dir, 'runs.db'));
+    try {
+      const jobsCols = (db.prepare('PRAGMA table_info(jobs)').all() as Array<{ name: string }>).map((c) => c.name);
+      const runsCols = (db.prepare('PRAGMA table_info(runs)').all() as Array<{ name: string }>).map((c) => c.name);
+      expect(jobsCols).toContain('alias');
+      expect(runsCols).toContain('session_id');
+      expect(runsCols).toContain('command');
+      const indexes = db.prepare('PRAGMA index_list(jobs)').all() as Array<{ name: string; unique: number }>;
+      expect(indexes.map((i) => i.name)).toContain('idx_jobs_alias');
+      // The alias index must be UNIQUE (enforces the one-alias-per-job invariant).
+      expect(indexes.find((i) => i.name === 'idx_jobs_alias')?.unique).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
   it('tailLogs returns only logs after sinceTs', async () => {
     const run = store.insertRun('tail-job');
     store.appendLog(run.id, 'stdout', Buffer.from('before\n'));
@@ -383,14 +482,16 @@ describe('Store', () => {
 
   // ── File persistence ────────────────────────────────────────────────────────
 
-  it('loadJobsFromDisk picks up JSON files', () => {
+  it('loadJobsFromDisk picks up JSON files and resolves by id and alias', () => {
     const jobsPath = join(dir, 'jobs');
-    const jobJson = JSON.stringify(execJob('disk-job'));
-    writeFileSync(join(jobsPath, 'disk-job.json'), jobJson);
+    const id = '11111111-1111-4111-8111-111111111111';
+    const job = { ...execJob(id), alias: 'disk-job' } as Job;
+    writeFileSync(join(jobsPath, `${id}.json`), JSON.stringify(job));
 
     const store2 = makeStore(dir);
     store2.open();
     store2.loadJobsFromDisk();
+    expect(store2.getJob(id)).toBeTruthy();
     expect(store2.getJob('disk-job')).toBeTruthy();
     store2.close();
   });
