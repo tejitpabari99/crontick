@@ -1,8 +1,28 @@
 name: Release
 
+# Manual-only: nothing publishes automatically on merge to main. See
+# RELEASING.md for the full walkthrough.
+#
+# mode: version -- runs `changeset version` and opens/updates the
+#   "Version Packages" pull request against main. Does not publish.
+# mode: publish -- publishes the version already committed on main to npm
+#   (run this after merging the Version Packages PR).
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'version: open/update the Version Packages PR. publish: publish the version already on main to npm.'
+        type: choice
+        options:
+          - version
+          - publish
+        default: version
+        required: true
+      allow_major:
+        description: 'Allow a pending major-bump changeset to proceed (blocked by default; see scripts/check-changeset-bumps.mjs)'
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: write
@@ -44,7 +64,7 @@ jobs:
         run: npm run verify-package-install
 
   release:
-    name: Release
+    name: Release (${{ inputs.mode }})
     needs: verify-package
     runs-on: ubuntu-latest
     steps:
@@ -61,14 +81,32 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
-        run: npm run build
+      - name: Guard against unintended major version bumps
+        run: npm run check:changesets
+        env:
+          ALLOW_MAJOR: ${{ inputs.allow_major }}
 
-      - name: Create Release Pull Request or Publish
+      - name: Open or update Version Packages PR
+        if: ${{ inputs.mode == 'version' }}
         uses: changesets/action@v1
         with:
-          publish: npx changeset publish
+          version: npx changeset version
+          commit: 'chore: version packages'
+          title: 'chore: version packages'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build
+        if: ${{ inputs.mode == 'publish' }}
+        run: npm run build
+
+      - name: Publish to npm
+        if: ${{ inputs.mode == 'publish' }}
+        run: npx changeset publish
+        env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Push release tags
+        if: ${{ inputs.mode == 'publish' }}
+        run: git push --follow-tags

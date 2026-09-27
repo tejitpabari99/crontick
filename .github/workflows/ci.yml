@@ -28,6 +28,9 @@ jobs:
       - name: Verify lockfile coverage
         run: node scripts/verify-no-lockfile-tampering.mjs
 
+      - name: Guard against unintended major changeset bumps
+        run: npm run check:changesets
+
       - name: Typecheck
         run: npm run typecheck
 

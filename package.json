@@ -46,6 +46,7 @@
     "typecheck:examples": "tsc --project docs/examples/tsconfig.json",
     "typecheck:examples:dist": "node scripts/check-dist-built.mjs && tsc --project docs/examples/tsconfig.dist.json",
     "verify-package-install": "node scripts/verify-package-install.mjs",
+    "check:changesets": "node scripts/check-changeset-bumps.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "vitest run",
