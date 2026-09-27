@@ -1,6 +1,6 @@
 ---
 name: crontick
-description: Schedule and manage AI cron jobs on the local machine with the crontick CLI. Use when asked to run a Copilot/AI prompt on a cron, interval, or one-shot schedule, or to inspect, trigger, or clean up those scheduled jobs and their run history.
+description: Schedule and manage AI cron jobs on the local machine with the crontick CLI. Use when asked to run an AI prompt on a cron, interval, or one-shot schedule, or to inspect, trigger, or clean up those scheduled jobs and their run history.
 allowed-tools: shell
 ---
 
@@ -8,7 +8,7 @@ allowed-tools: shell
 
 ## Purpose / when to use
 
-This **crontick** skill lets you schedule and manage AI cron jobs on the local machine from the shell. Use it when asked to run a Copilot/AI prompt on a cron, interval, or one-shot schedule, or to inspect, trigger, or clean up those scheduled jobs and their run history.
+This **crontick** skill lets you schedule and manage AI cron jobs on the local machine from the shell. Use it when asked to run an AI prompt on a cron, interval, or one-shot schedule, or to inspect, trigger, or clean up those scheduled jobs and their run history.
 
 crontick is **AI-native local cron**: a demand-started local daemon plus a `crontick` CLI (and MCP server). The default job is a **prompt job** — a natural-language prompt scheduled to run against an AI **engine** (`copilot` by default, i.e. `copilot --allow-all-tools -p "<prompt>"`). Everything runs on one machine; the daemon auto-starts on first use.
 
@@ -137,12 +137,7 @@ crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident qu
 - Each run captures engine stdout/stderr, a separate `crontick` lifecycle log stream, and the engine session id (visible in `runs get`).
 - Confirm before `jobs delete`, `jobs update --disable`, or any `jobs delete all --force` clear.
 - `info` prints the config path — there are no `config get/set/engines` subcommands; edit `config.json` by hand.
-- Advanced `script`/`exec` jobs (shell commands, raw executables) have **no** CLI flags. Create them only via `crontick jobs new --file <job.json>` or the Node.js library:
-
-  ```json
-  { "alias": "backup", "schedule": { "kind": "cron", "cron": "0 2 * * *" },
-    "action": { "kind": "script", "script": "pg_dump mydb > /backups/db.sql" } }
-  ```
+- crontick is prompt-only: every job's action is `kind: "prompt"`. There is no shell-script or raw-executable action kind.
 
 ## Prompt action shape / session continuity
 
@@ -175,7 +170,7 @@ crontick jobs run-now daily-standup         # run it immediately once
 
 ## Safe shell invocation
 
-When wrapping a crontick call (or a job's own `script`/`exec` body) in a shell script, make the shell fail fast so errors surface as run failures:
+When wrapping a crontick call in a shell script, make the shell fail fast so errors surface as run failures:
 
 ```sh
 #!/usr/bin/env bash

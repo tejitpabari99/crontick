@@ -89,7 +89,7 @@ When public behavior changes:
 ## Packaging rules
 
 1. Run `npm run validate` (must pass).
-2. Run `npm pack --dry-run` and confirm only intended files are included per the `files` allowlist in `package.json`: `dist`, `plugin/**`, `src/skill/SKILL.md`, `README.md`, `LICENSE`.
+2. Run `npm pack --dry-run` and confirm only intended files are included per the `files` allowlist in `package.json`: `dist`, `src/skill/SKILL.md`, `README.md`, `LICENSE`.
 3. Run `npm pack` to produce the tarball.
 4. Install the tarball in a scratch directory (`npm install ./crontick-*.tgz`).
 5. Exercise every documented public import (`import { createClient } from 'crontick'`) and each bin. `crontick --help` works (Commander-parsed); `crontick-daemon` and `crontick-mcp` do **not** parse `--help` or any other argv flag at all -- they always start as long-running servers, so the only exercisable check for those two bins is that the process launches and stays up (confirmed by `scripts/verify-package-install.mjs`, which starts each under a timeout and then stops it).
