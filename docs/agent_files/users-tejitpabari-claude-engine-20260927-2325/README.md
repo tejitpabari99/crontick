@@ -10,7 +10,7 @@ date: 2026-09-28
 
 | # | Name | Phase | Depends on | Status | Scope | Link |
 |---|------|-------|------------|--------|-------|------|
-| SP01 | Engine framework + Claude adapter | 1 | none | approved | Pluggable `EngineAdapter` contract/registry; session-aware, usage-aware `ClaudeAdapter`; `RawAdapter` preserves today's generic behavior; run-record + storage delta. | [01-claude-code-engine/PRD.md](01-claude-code-engine/PRD.md) |
+| SP01 | Engine framework + Claude adapter | 1 | none | done | Pluggable `EngineAdapter` contract/registry; session-aware, usage-aware `ClaudeAdapter`; `RawAdapter` preserves today's generic behavior; run-record + storage delta. | [01-claude-code-engine/PRD.md](01-claude-code-engine/PRD.md) |
 | SP02 | Code cleanup + doc rewrite | 2 | SP01 | approved | Consolidate constants/helpers into `src/constants/`+`src/utils/`; audit/rename/trim tests; fix `validate` build-before-test ordering; rewrite `docs/` for the prompt-only + Claude-adapter end state. | [02-cleanup-and-docs/PRD.md](02-cleanup-and-docs/PRD.md) |
 
 ## Dependency graph
@@ -54,4 +54,4 @@ SP02 documents SP01's shipped shape; it does not redesign `src/engines/`, `promp
 
 ---
 
-Next: run dev-tasks against both approved PRDs.
+Next: implement SP02 from its approved [TASKS.md](02-cleanup-and-docs/TASKS.md).

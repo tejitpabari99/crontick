@@ -9,19 +9,19 @@ Source of truth: `docs/agent_files/users-tejitpabari-claude-engine-20260927-2325
 
 | # | Task | Depends on | Status |
 |---|---|---|---|
-| 1 | Adapter contract, registry, and `EngineConfigSchema.type` | none | todo |
-| 2 | Extract `RawAdapter`; core dispatches via registry | 1 | todo |
-| 3 | `ClaudeAdapter.buildInvocation` + session-id pre-assignment + fake-claude helper | 1, 2 | todo |
-| 4 | `ClaudeAdapter.parseResult`: stream-json, cost/turns/usage, success/failure rule | 3 | todo |
-| 5 | Resume-target safety: transcript preflight, `SESSION_NOT_FOUND`, stdin ignore | 4 | todo |
-| 6 | Run-record + storage delta for engine fields, surfaced across CLI/MCP/library | 4 | todo |
-| 7 | Default engine becomes `claude`; `copilot` removed entirely | 3 | todo |
-| 8 | `skipped` run status + `reuseSession`-requires-`overlap:skip` refinement | 6 | todo |
-| 9 | Reserved-arg extension + argument passthrough | 3 | todo |
-| 10 | `config.json` `defaults` section (overlap/timeoutSec/retry), snapshotted | 1 | todo |
-| 11 | CLI flag renames: `--alias`→`--name`, `--engine`→`--runner` | 9, 10 | todo |
-| 12 | Completion-marker `SessionEnd` hook + restart-reconciliation fallback | 3, 5 | todo |
-| 13 | Documentation, spec, ADR, and changeset wrap-up | 1-12 | todo |
+| 1 | Adapter contract, registry, and `EngineConfigSchema.type` | none | done |
+| 2 | Extract `RawAdapter`; core dispatches via registry | 1 | done |
+| 3 | `ClaudeAdapter.buildInvocation` + session-id pre-assignment + fake-claude helper | 1, 2 | done |
+| 4 | `ClaudeAdapter.parseResult`: stream-json, cost/turns/usage, success/failure rule | 3 | done |
+| 5 | Resume-target safety: transcript preflight, `SESSION_NOT_FOUND`, stdin ignore | 4 | done |
+| 6 | Run-record + storage delta for engine fields, surfaced across CLI/MCP/library | 4 | done |
+| 7 | Default engine becomes `claude`; `copilot` removed entirely | 3 | done |
+| 8 | `skipped` run status + `reuseSession`-requires-`overlap:skip` refinement | 6 | done |
+| 9 | Reserved-arg extension + argument passthrough | 3 | done |
+| 10 | `config.json` `defaults` section (overlap/timeoutSec/retry), snapshotted | 1 | done |
+| 11 | CLI flag renames: `--alias`→`--name`, `--engine`→`--runner` | 9, 10 | done |
+| 12 | Completion-marker `SessionEnd` hook + restart-reconciliation fallback | 3, 5 | done |
+| 13 | Documentation, spec, ADR, and changeset wrap-up | 1-12 | done |
 
 ## Task 1 — Adapter contract, registry, and `EngineConfigSchema.type`
 What it is / what it means: Establishes the template-method seam design-principles.md #1 requires: an `EngineAdapter` abstract contract and a registry mapping `EngineConfig.type` to an adapter instance, so the core never branches on engine name (Decision 1/2).
