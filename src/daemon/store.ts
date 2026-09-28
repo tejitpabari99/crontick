@@ -14,6 +14,7 @@ import { nullLogger, type Logger } from '../logger.js';
 import type { LogSource } from '../log-source.js';
 import { readClaudeCompletionMarker } from '../claude-completion-marker.js';
 import { loadConfig } from '../config.js';
+import { getEngineAdapter } from '../engines/registry.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -283,12 +284,24 @@ export class Store {
     this.logger.debug('Persisted job files', { jobId: persisted.id, alias: persisted.alias, filePath, schemaPath });
   }
 
-  /** Imported Claude sessions lack trustworthy job-to-transcript provenance. */
+  /**
+   * Imported sessions lack trustworthy job-to-transcript provenance.
+   *
+   * This resets `sessionId` only for engines whose resume is transcript-backed
+   * (today: Claude) -- routed through the adapter registry, per design
+   * principle #1, rather than a literal `engine.type === 'claude'` branch.
+   * `resumeTranscriptPath(...) !== undefined` is the same signal runner.ts's
+   * own resume preflight uses to decide whether provenance-gating applies at
+   * all (an adapter without transcript-backed resume, like RawAdapter,
+   * returns undefined and its sessionId is left untouched).
+   */
   prepareImportedJob(job: Job): Job {
     if (job.action.kind !== 'prompt' || !job.action.sessionId) return job;
     const config = loadConfig({ path: join(dirname(this.dbPath), 'config.json') });
     const engine = config.engines[job.action.engine ?? config.defaultEngine];
-    if (engine?.type !== 'claude' || this.hasCompletedClaudeSession(job.id, job.action.sessionId)) return job;
+    const requiresResumeProvenance = engine !== undefined
+      && getEngineAdapter(engine.type).resumeTranscriptPath(job.action.cwd ?? process.cwd(), job.action.sessionId) !== undefined;
+    if (!requiresResumeProvenance || this.hasCompletedClaudeSession(job.id, job.action.sessionId)) return job;
     const action = { ...job.action };
     delete action.sessionId;
     return {
@@ -599,11 +612,28 @@ export class Store {
     if (result.changes === 0) throw new CrontickError('NOT_FOUND', `Run ${runId} not found`);
   }
 
-  /** Preflight eligibility requires a completed prior run for this job and ID. */
+  /**
+   * Preflight eligibility requires a completed prior run for this job and ID.
+   *
+   * Keyed purely off `claude_result_completed` (set only after a real parsed
+   * `result` line, see markCompletedClaudeSession()) -- NOT the run row's
+   * terminal `status` column. A retry loop reuses the same run row across
+   * attempts and only calls finalizeRun() (which writes the terminal status)
+   * after the whole loop ends, so a mid-loop resume preflight would otherwise
+   * see `status: 'running'` on a row whose transcript was already written and
+   * wrongly conclude the session doesn't exist (see tests/unit/claude-adapter.test.ts
+   * "resumes across a retry within the same run"). A row can only ever reach
+   * claude_result_completed = 1 via markCompletedClaudeSession(), which itself
+   * only fires after parseResult() found a complete `result` line -- proof the
+   * transcript was written -- regardless of what status the row later settles
+   * on (even 'canceled'/'timeout' if a later attempt in the same run aborts).
+   * The transcript-existence preflight (resumeTranscriptPath + transcriptExists
+   * in runner.ts) still applies on top of this and is the actual guard against
+   * a pruned/missing transcript.
+   */
   hasCompletedClaudeSession(jobId: string, sessionId: string): boolean {
     return this.db.prepare(`SELECT 1 FROM runs
-      WHERE job_id = ? AND session_id = ? AND claude_result_completed = 1
-        AND status IN ('success', 'failed') LIMIT 1`).get(jobId, sessionId) !== undefined;
+      WHERE job_id = ? AND session_id = ? AND claude_result_completed = 1 LIMIT 1`).get(jobId, sessionId) !== undefined;
   }
 
 

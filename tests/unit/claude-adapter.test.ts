@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawn as nodeSpawn, spawnSync } from 'node:child_process';
 import { ClaudeAdapter } from '../../src/engines/claude-adapter.js';
-import { resolveTranscriptPath } from '../../src/engines/claude-transcript.js';
+import { isUnsafeSessionId, resolveTranscriptPath } from '../../src/engines/claude-transcript.js';
 import { Runner } from '../../src/daemon/runner.js';
 import { Store } from '../../src/daemon/store.js';
 import type { Job } from '../../src/schemas/job.js';
@@ -181,6 +181,41 @@ describe('Claude resume safety', () => {
       expect(spawnSpy).toHaveBeenCalledOnce();
       expect(spawnSpy.mock.calls[0]?.[2]).toMatchObject({ stdio: ['ignore', 'pipe', 'pipe'] });
       expect(fixture.store.getRun(fixture.run.id)?.status).toBe('success');
+    } finally { fixture.cleanup(); }
+  });
+
+  // Hardening: JobSchema's sessionId has no format restriction (kept broad
+  // deliberately, see claude-transcript.ts). Defense in depth against a
+  // sessionId crafted to escape the intended transcript directory.
+  it('never lets a path-traversal sessionId escape the transcript directory', () => {
+    for (const evil of ['../../etc/passwd', '..\\..\\evil', 'a/../../b', 'nul\0byte', '/etc/passwd', '\\\\host\\share']) {
+      expect(isUnsafeSessionId(evil)).toBe(true);
+    }
+    expect(isUnsafeSessionId('94697a61-f71d-450b-87bb-a82463a2a6b1')).toBe(false);
+
+    const cwd = '/some/project';
+    const homeDir = '/home/tester';
+    const path = resolveTranscriptPath(cwd, '../../../etc/passwd', homeDir);
+    expect(path.startsWith(join(homeDir, '.claude', 'projects'))).toBe(true);
+    expect(path).not.toContain('..');
+    expect(path).not.toContain('etc');
+  });
+
+  it('fails closed before spawn for a path-traversal sessionId, even when marked completed', async () => {
+    const fixture = await setup();
+    try {
+      const evilId = '../../etc/passwd';
+      const evilJob: Job = { ...fixture.job, action: { ...fixture.job.action, sessionId: evilId } };
+      fixture.store.upsertJob(evilJob);
+      // Simulate a (hypothetically forged or corrupted) row that claims
+      // completion for this id -- the path check must still fail closed.
+      fixture.store.markCompletedClaudeSession(fixture.run.id, evilId);
+      const spawnSpy = vi.fn((command: string, args: readonly string[], opts: Parameters<typeof nodeSpawn>[2]) => nodeSpawn(command, args, opts));
+      // Deliberately uses the REAL transcriptFileExists (no stub) to prove no
+      // traversal-crafted path is ever handed to the filesystem as "found".
+      await new Runner(spawnSpy as unknown as typeof nodeSpawn).run(evilJob, fixture.run.id, fixture.store);
+      expect(spawnSpy).not.toHaveBeenCalled();
+      expect(fixture.store.getRun(fixture.run.id)).toMatchObject({ status: 'failed', error: expect.stringContaining('SESSION_NOT_FOUND') });
     } finally { fixture.cleanup(); }
   });
 });
@@ -439,6 +474,70 @@ describe('Claude run session assignment', () => {
       expect(attempts).toBe(2);
       expect(recorded).toMatchObject({ status: 'success', costUsd: 0.02, turns: 2 });
       expect(JSON.parse(recorded.usageJson!)).toEqual({ input_tokens: 30, output_tokens: 12, api_key: '[REDACTED]' });
+    } finally {
+      store.close();
+      if (priorHome === undefined) delete process.env['CRONTICK_HOME'];
+      else process.env['CRONTICK_HOME'] = priorHome;
+    }
+  });
+
+  // Regression for: hasCompletedClaudeSession() used to also require
+  // status IN ('success','failed') on the run row that captured the session.
+  // A retry reuses the SAME run row across attempts and only reaches a
+  // terminal status via finalizeRun() after the whole retry loop ends, so
+  // attempt 1's captured, completed session was wrongly rejected by attempt
+  // 2's resume preflight (row still 'running') -- aborting the retry after
+  // one attempt instead of resuming into the session attempt 1 captured.
+  it('resumes across a retry within the same run when reuseSession captures a session mid-loop', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'crontick-claude-reuse-retry-'));
+    dirs.push(dir);
+    const priorHome = process.env['CRONTICK_HOME'];
+    process.env['CRONTICK_HOME'] = dir;
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({
+      defaultEngine: 'test-claude', engines: { 'test-claude': fakeClaudeEngineConfig() },
+    }));
+    mkdirSync(join(dir, 'jobs'));
+    const store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
+    store.open();
+    try {
+      const job: Job = {
+        id: 'reuse-retry-job', enabled: true, schedule: { kind: 'cron', cron: '* * * * *' },
+        action: { kind: 'prompt', prompt: 'hello', engine: 'test-claude', args: [], reuseSession: true, cwd: dir },
+        overlap: 'skip', retry: { max: 1, backoffSec: 0 },
+      };
+      store.upsertJob(job);
+      const run = store.insertRun(job.id);
+      let attempts = 0;
+      let firstSessionId: string | undefined;
+      const spawnWithRetry: typeof nodeSpawn = ((command: string, args: readonly string[], opts: Parameters<typeof nodeSpawn>[2]) => {
+        attempts++;
+        const argv = args as string[];
+        const flagValue = (name: string) => argv[argv.indexOf(name) + 1];
+        if (attempts === 1) {
+          firstSessionId = flagValue('--session-id');
+          expect(firstSessionId).toMatch(uuidPattern);
+          // Simulate Claude having written its own transcript for this
+          // session for real, before attempt 2's resume preflight checks for
+          // it -- exercising the actual (non-stubbed) transcriptFileExists.
+          const transcriptPath = resolveTranscriptPath(dir, firstSessionId!);
+          mkdirSync(dirname(transcriptPath), { recursive: true });
+          writeFileSync(transcriptPath, JSON.stringify({ type: 'user', sessionId: firstSessionId }) + '\n');
+          return nodeSpawn(command, args, {
+            ...opts,
+            env: { ...opts?.env, CRONTICK_FAKE_CLAUDE_OPTIONS: JSON.stringify({ isError: true }) },
+          });
+        }
+        // Attempt 2 must resume the exact session id captured from attempt 1's result line.
+        expect(argv).toContain('--resume');
+        expect(flagValue('--resume')).toBe(firstSessionId);
+        expect(argv).not.toContain('--session-id');
+        return nodeSpawn(command, args, opts);
+      }) as typeof nodeSpawn;
+      await new Runner(spawnWithRetry).run(job, run.id, store);
+      expect(attempts).toBe(2);
+      const recorded = store.getRun(run.id)!;
+      expect(recorded.status).toBe('success');
+      expect(recorded.sessionId).toBe(firstSessionId);
     } finally {
       store.close();
       if (priorHome === undefined) delete process.env['CRONTICK_HOME'];
