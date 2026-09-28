@@ -85,15 +85,15 @@ Create and schedule a new job.
 | `description` | `string` | no | — | Job description |
 | `enabled` | `boolean` | no | `true` | Whether job is active |
 | `schedule` | `Schedule` | yes | — | Schedule object (see [job-schema.md](job-schema.md)) |
-| `action` | `ActionInput` | yes | — | Action with `kind` discriminator (`script`, `exec`, or `prompt`) |
-| `overlap` | `"skip"\|"queue"\|"cancel-previous"` | no | `"skip"` | Overlap policy |
-| `retry` | `{ max?: number, backoffSec?: number }` | no | `{ max: 0, backoffSec: 30 }` | Retry config |
+| `action` | `ActionInput` | yes | — | Prompt action with `kind: "prompt"` |
+| `overlap` | `"skip"\|"queue"\|"cancel-previous"` | no | config `defaults.overlap`, then `"skip"` | Overlap policy |
+| `retry` | `{ max?: number, backoffSec?: number }` | no | config `defaults.retry`, then `{ max: 0, backoffSec: 30 }` | Retry config |
 | `force` | `boolean` | no | `false` | Replace an existing job with the same alias/id |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** The created `Job` object, with secret-like `action.env` values redacted.
 
-If `action.reuseSession` is `true`, `overlap` must be `skip` (its default). Other overlap values return `VALIDATION_ERROR`.
+If `action.reuseSession` is `true`, resolved `overlap` must be `skip`. Other overlap values return `VALIDATION_ERROR`.
 
 ---
 
@@ -133,7 +133,7 @@ Update an existing job by GUID or alias. The patch is merged with the existing d
 | `description` | `string` | no | — | Job description |
 | `enabled` | `boolean` | no | — | Enable/disable |
 | `schedule` | `Schedule` | no | — | New schedule |
-| `action` | `ActionInput` | no | — | New or patched action (`script`, `exec`, or `prompt`) |
+| `action` | `ActionInput` | no | — | New or patched prompt action |
 | `overlap` | `"skip"\|"queue"\|"cancel-previous"` | no | — | Overlap policy |
 | `retry` | `{ max?: number, backoffSec?: number }` | no | — | Retry config |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |

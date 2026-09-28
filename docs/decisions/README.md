@@ -78,3 +78,4 @@ NNNN-kebab-case-title.md
 | 0030 | Forward unknown long options to prompt engines | Accepted | 2026-09-28 |
 | 0031 | Rename job CLI flags to name and runner | Accepted | 2026-09-28 |
 | 0032 | Use Claude completion markers only for restart recovery | Accepted | 2026-09-28 |
+| 0033 | Select prompt behavior through engine adapters | Accepted | 2026-09-28 |

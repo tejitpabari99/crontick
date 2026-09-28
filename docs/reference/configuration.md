@@ -32,7 +32,8 @@ The data directory is resolved by (in order):
     "<name>": {
       "command": "<executable>",
       "args": ["<arg>", "..."],
-      "env": { "<KEY>": "<VALUE>" }
+      "env": { "<KEY>": "<VALUE>" },
+      "type": "raw"
     }
   },
   "retention": {
@@ -46,7 +47,6 @@ The data directory is resolved by (in order):
   },
   "defaults": {
     "overlap": "skip",
-    "timeoutSec": 120,
     "retry": { "max": 0, "backoffSec": 30 }
   }
 }
@@ -54,8 +54,8 @@ The data directory is resolved by (in order):
 
 | Field | Type | Required | Default | Constraints |
 |-------|------|----------|---------|-------------|
-| `defaultEngine` | `string` | no | `"copilot"` | Must match a key in `engines`; regex `^[A-Za-z0-9_.-]+$` |
-| `engines` | `Record<string, EngineConfig>` | no | built-in `copilot` engine | At least one engine must be defined |
+| `defaultEngine` | `string` | no | `"claude"` | Must match a key in `engines`; regex `^[A-Za-z0-9_.-]+$` |
+| `engines` | `Record<string, EngineConfig>` | no | built-in `claude` engine | At least one engine must be defined |
 | `retention` | `RetentionConfig` | no | `{ maxRunsPerJob: 100, maxOutputBytesPerRun: 2000000, maxLogFiles: 30 }` | See below |
 | `logging` | `LoggingConfig` | no | `{ fileEnabled: true }` | See below |
 | `defaults` | `JobDefaultsConfig` | no | `{ overlap: "skip", retry: { max: 0, backoffSec: 30 } }` | See below; `timeoutSec` is unset by default |
@@ -64,9 +64,9 @@ The data directory is resolved by (in order):
 
 ```json
 {
-  "defaultEngine": "copilot",
+  "defaultEngine": "claude",
   "engines": {
-    "copilot": { "command": "copilot", "args": ["--allow-all-tools", "-p"], "env": {}, "type": "raw" }
+    "claude": { "command": "claude", "args": [], "env": {}, "type": "claude" }
   },
   "retention": {
     "maxRunsPerJob": 100,
@@ -103,13 +103,14 @@ On creation, each omitted job field takes its value from `config.json` `defaults
 Most config is read fresh for each run and applies automatically on the **next run** without `crontick info daemon reload` or a restart:
 
 - engine definitions under `engines`
-- `defaultEngine`
 - the resolved prompt command built by `buildPromptRunCommand()`
 - logging settings (`logging.fileEnabled`, `logging.dir`)
 - per-run output retention (`retention.maxOutputBytesPerRun`)
 - daemon log-file retention (`retention.maxLogFiles`) the next time log retention is applied
 
-`defaults.overlap`, `defaults.timeoutSec`, and `defaults.retry` are read when a job is created. Existing jobs keep the values saved in their job files after a config edit.
+`defaultEngine` and `defaults.overlap`, `defaults.timeoutSec`, and
+`defaults.retry` are read when a job is created. Existing jobs keep the
+engine and default values saved in their job files after a config edit.
 
 The exception is `retention.maxRunsPerJob`. The daemon's Store reads and caches that value at daemon startup. Changing `retention.maxRunsPerJob` requires:
 
@@ -164,48 +165,47 @@ Schema is `.strict()` — no extra fields allowed.
 
 ### Prompt-engine argv ordering
 
-`buildPromptRunCommand()` emits prompt-engine argv as:
+`buildPromptRunCommand()` dispatches by engine `type`. A custom engine with
+an omitted `type` uses the `raw` adapter, which emits:
 
 ```text
-[..., ...engine.args, prompt, ...action.args]
+[...engine.args, prompt, ...action.args, --session-id=<id>?]
 ```
 
-If an engine requires an explicit prompt-taking flag for non-interactive use, that flag must be the final entry in `engine.args` so the appended prompt text becomes its value. For the built-in Copilot engine, the default is `['--allow-all-tools', '-p']`, producing:
+If a raw engine requires an explicit prompt-taking flag, put it last in
+`engine.args` so the appended prompt becomes its value. The built-in Claude
+adapter instead produces:
 
 ```text
-copilot --allow-all-tools -p <prompt>
+claude -p <prompt> --output-format stream-json --verbose --session-id <uuid> ...action.args --settings <json>
 ```
 
 ### Multi-engine example
 
 ```json
 {
-  "defaultEngine": "copilot",
+  "defaultEngine": "claude",
   "engines": {
-    "copilot": {
-      "command": "copilot",
-      "args": ["--allow-all-tools", "-p"],
-      "env": {}
+    "claude": {
+      "command": "claude",
+      "args": [],
+      "env": {},
+      "type": "claude"
     },
     "agency": {
       "command": "agency",
       "args": ["cp", "--logs-dir=Q:\\Repos\\crontick\\.crontick\\agency-logs"],
-      "env": {}
+      "env": {},
+      "type": "raw"
     }
   }
 }
 ```
 
-Custom engines are configurable entries. Only `command` must be on `PATH`.
-
----
-
-## Script and Exec Actions
-
-Script and exec action kinds remain fully supported in the job schema, daemon executors, and core client. Their dedicated CLI flags and MCP convenience parameters were removed to keep the shims focused on the common prompt workflow. To create script or exec jobs:
-
-- use a full job-definition JSON file with `crontick jobs new --file <job.json>`; or
-- call `client.createJob()` from the library with `action.kind: "script"` or `action.kind: "exec"`.
+Custom engines are configurable entries. Their commands must be installed and
+available on `PATH`. Claude requires the Claude Code CLI. Crontick does not add
+permission flags by default; use job `action.args` (or CLI passthrough) to opt
+into a permission mode or to set `--max-budget-usd`.
 
 ---
 

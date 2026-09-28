@@ -79,17 +79,17 @@ crontick jobs new [engineArgs...]
 | `--prompt-file <path>` | string | — | UTF-8 text file to read into the prompt |
 | `--runner <runner>` | string | config `defaultEngine` | Configured prompt engine name; saved as `action.engine` |
 | `--session-id <id>` | string | — | Reuse this prompt engine session every run |
-| `--reuse-session` | boolean | `false` | Capture a reusable session ID; requires `--overlap skip` (the default) |
-| `--file <path>` | string | — | Create the job from a full job-definition JSON file (advanced; supports all action kinds including `script` and `exec`) |
+| `--reuse-session` | boolean | `false` | Capture a reusable session ID; resolved overlap must be `skip` |
+| `--file <path>` | string | — | Create the job from a full prompt-job JSON file |
 | `--name <name>` | string | auto-generated | Human-friendly, unique, kebab-case job identifier; saved as `alias` |
-| `--timeout <sec>` | integer | none / unbounded | Per-run timeout in seconds |
-| `--overlap <policy>` | `skip` \| `queue` \| `cancel-previous` | `skip` | Overlap policy |
-| `--retry <max>` | integer | `0` | Retry count on failure |
+| `--timeout <sec>` | integer | config `defaults.timeoutSec` (unset by default) | Per-run timeout in seconds |
+| `--overlap <policy>` | `skip` \| `queue` \| `cancel-previous` | config `defaults.overlap` (`skip` by default) | Overlap policy |
+| `--retry <max>` | integer | config `defaults.retry.max` (`0` by default) | Retry count on failure |
 | `--force` | boolean | `false` | Replace an existing job when the same alias already exists |
 
 Exactly one schedule source (`--cron`, `--every`, `--at`) and one prompt source (`--prompt`, `--prompt-file`) are required unless `--file` is used. Bare `--every` numbers remain seconds; suffixes `s`, `m`, `h`, and `d` mean seconds, minutes, hours, and days. Unrecognized long flags, with a following value when that token is not flag-shaped, are stored verbatim in `action.args`. The same flags work after `--`, which also accepts positional arguments. Their order is preserved. Flags that crontick manages for the engine (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, and the short forms `-p` and `-r`) are rejected, including `--flag=value` forms. Removed `--alias` and `--engine` switches are rejected as unknown options, including after `--`. If a token after `--` matches a crontick long flag, the CLI rejects it rather than silently storing it as a literal prompt arg.
 
-Dedicated `--script`, `--exec`, `--arg`, `--shell`, and `--job-env-file` flags are not exposed on the CLI. Script and exec actions remain supported by the job schema, daemon executors, and library API; create them with `crontick jobs new --file <job.json>` or `client.createJob()`.
+Dedicated `--script`, `--exec`, `--arg`, `--shell`, and `--job-env-file` flags are not exposed on the CLI. The job schema supports prompt actions only; `--file` accepts a complete prompt-job definition.
 
 ```bash
 crontick jobs new --every 30m --prompt "Summarize the current repository status" --name repo-summary --runner claude

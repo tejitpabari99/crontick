@@ -193,7 +193,7 @@ class CrontickError extends Error {
 
 | | |
 |---|---|
-| **When** | Attempting to remove a built-in engine (e.g., `copilot`) |
+| **When** | Attempting to remove a built-in engine (currently `claude`) |
 | **Message shape** | `Engine "<name>" is a built-in fallback engine and cannot be removed...` |
 | **Details** | `{ path, key }` |
 
@@ -248,6 +248,7 @@ an unrelated, run-scoped vocabulary; do not conflate the two.
 | `run exceeded timeoutSec (<n>s)` | `Runner`'s per-action timer (`src/daemon/runner.ts`) | The job's `timeoutSec` elapsed before the process exited; the runner sent `SIGTERM` itself and recorded `status: 'timeout'`. Distinct from `status: 'canceled'`, which is a user- or overlap-policy-initiated stop — see [concepts/execution.md](../concepts/execution.md#timeouts). |
 | `RUNNER_CALLBACK_FAILED: ...` | `src/daemon/runner.ts` | A user-supplied run callback threw. |
 | `SESSION_ID_NOT_FOUND: ...` | `src/daemon/runner.ts` | `reuseSession` capture found no session id in prompt engine output. |
+| `SESSION_NOT_FOUND: ...` | `src/daemon/runner.ts` | Claude resume was rejected before spawn because no completed result for this job or no transcript exists for the session. |
 | `SESSION_PERSIST_FAILED: ...` | `src/daemon/runner.ts` | Persisting a captured session id back to the job file failed. |
 
 See [error-model.md](../concepts/error-model.md#stored-runserror-values-are-not-crontickerror-codes)

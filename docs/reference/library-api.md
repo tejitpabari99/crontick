@@ -250,29 +250,30 @@ interface CreateJobOptions extends NormalizeJobInputOptions {
 
 ```ts
 interface JobCreateCliOptions {
-  id: string;
+  alias?: string;
   engineArgs?: string[];
   rawArgs?: string[];
+  passthroughArgs?: string[];
+  cliArgvOrder?: string[];
   args?: string[];
   file?: string;
   cron?: string;
   every?: number;
   at?: string;
   tz?: string;
-  script?: string;
-  exec?: string;
   prompt?: string;
   promptFile?: string;
   engine?: string;
   sessionId?: string;
   reuseSession?: boolean;
-  shell?: string;
   envFile?: string;
   timeout?: number;
   overlap?: string;
   retry?: number;
   desc?: string;
   enabled?: boolean;
+  enable?: boolean;
+  disable?: boolean;
   force?: boolean;
 }
 ```
@@ -280,7 +281,7 @@ interface JobCreateCliOptions {
 ### JobPatchCliOptions
 
 ```ts
-type JobPatchCliOptions = Omit<JobCreateCliOptions, 'id'>;
+type JobPatchCliOptions = JobCreateCliOptions;
 ```
 
 `createJobFromCliOptions()` inherits the CLI file-loading behavior: `input.file` accepts
@@ -308,7 +309,7 @@ timeout; `'hard-kill'` if that stalled or the route was unreachable and `stopDae
 escalate to `SIGTERM` then `SIGKILL`; `'already-stopped'` if no daemon was running. `activeRuns`
 lists any runs still `status: 'running'` at the moment the stop was accepted — they are not
 canceled by a stop, since [detached children survive daemon shutdown by design](../concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down)
-(with one Windows exception, see [ADR 0020](../decisions/0020-no-detach-powershell-script-jobs-windows.md)).
+(PowerShell-hosted commands retain the exception described in [ADR 0028](../decisions/0028-prompt-only-jobs.md)).
 See [cli.md](./cli.md#daemon-stop) and [internals/daemon.md](../internals/daemon.md#shutdown).
 
 ### DaemonRestartResult
@@ -413,7 +414,7 @@ interface DashboardJob {
   description: string | null;
   enabled: boolean;
   scheduleLabel: string;
-  actionKind: 'script' | 'exec' | 'prompt';
+  actionKind: 'prompt';
   lastStatus: string | null;
   lastRunAt: number | null;
   nextRunAt: string | null;
@@ -618,6 +619,9 @@ Fills `action.engine` from config `defaultEngine` if unset on prompt actions.
 function normalizeJobInput(input: JobCreateInput, options?: NormalizeJobInputOptions): Job;
 ```
 
+On creation, omitted overlap, retry, and timeout values are copied from
+`config.defaults` into the stored job; later config edits do not rewrite it.
+
 ### normalizeJobPatch
 
 ```ts
@@ -710,7 +714,7 @@ const BUILT_IN_CONFIG: CrontickConfig;
 ```
 
 ```json
-{ "defaultEngine": "copilot", "engines": { "copilot": { "command": "copilot", "args": ["--allow-all-tools", "-p"], "env": {} } }, "retention": { "maxRunsPerJob": 100, "maxOutputBytesPerRun": 2000000, "maxLogFiles": 30 } }
+{ "defaultEngine": "claude", "engines": { "claude": { "command": "claude", "args": [], "env": {}, "type": "claude" } }, "retention": { "maxRunsPerJob": 100, "maxOutputBytesPerRun": 2000000, "maxLogFiles": 30 }, "logging": { "fileEnabled": true }, "defaults": { "overlap": "skip", "retry": { "max": 0, "backoffSec": 30 } } }
 ```
 
 ### SURFACE_CAPABILITIES

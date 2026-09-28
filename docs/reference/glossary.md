@@ -7,8 +7,8 @@ Short definitions of crontick terms.
 | **job** | A named unit of scheduled work: an ID, a schedule, an action, and policies (overlap, retry). Persisted as `<dataDir>/jobs/<id>.json`. |
 | **run** | A single execution instance of a job. Tracked in SQLite with status, timestamps, exit code, and logs. |
 | **schedule** | The timing rule attached to a job. One of `cron`, `interval`, or `one-shot`. |
-| **action** | What a job does when it fires. One of `script` (inline shell), `exec` (binary command), or `prompt` (LLM engine invocation). |
-| **engine** | A configured command-line tool used to execute prompt actions (e.g., `copilot`). Defined in `config.json` under `engines`. |
+| **action** | What a job does when it fires. The supported kind is `prompt` (CLI engine invocation). |
+| **engine** | A configured command-line tool used to execute prompt actions (e.g., `claude`). Defined in `config.json` under `engines`. |
 | **surface** | One of the three public interfaces: CLI, MCP server, or library/package API. All surfaces are thin shims over `CrontickClient`. |
 | **shim** | A thin adapter layer (CLI, MCP, or package export) that delegates to `CrontickClient` without adding proprietary logic. |
 | **daemon** | A long-running background Node.js process that hosts the scheduler, runner, HTTP API, and SQLite store. Started on-demand. |
