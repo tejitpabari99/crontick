@@ -369,6 +369,31 @@ describe('Store', () => {
     expect(store.getRun(run.id)?.status).toBe('canceled');
   });
 
+  it('reconcileOrphanRuns uses a valid Claude marker for a run that finished while daemon was down', () => {
+    const run = store.insertRun('orphan-hook');
+    store.updateRun(run.id, { status: 'running', pid: 12345, sessionId: 'claude-session' });
+    mkdirSync(join(dir, 'runs'));
+    writeFileSync(join(dir, 'runs', `${run.id}.claude-hook.json`),
+      JSON.stringify({ exitStatus: 0, sessionId: 'claude-session' }));
+
+    const result = store.reconcileOrphanRuns({ isRunAlive: () => false });
+    expect(result.canceled).toBe(0);
+    expect(result.adopted).toEqual([]);
+    expect(store.getRun(run.id)).toMatchObject({ status: 'success', exitCode: 0, sessionId: 'claude-session' });
+  });
+
+  it('reconcileOrphanRuns ignores a marker for another session', () => {
+    const run = store.insertRun('orphan-stale-hook');
+    store.updateRun(run.id, { status: 'running', pid: 12345, sessionId: 'current-session' });
+    mkdirSync(join(dir, 'runs'));
+    writeFileSync(join(dir, 'runs', `${run.id}.claude-hook.json`),
+      JSON.stringify({ exitStatus: 0, sessionId: 'other-session' }));
+
+    const result = store.reconcileOrphanRuns({ isRunAlive: () => false });
+    expect(result.canceled).toBe(1);
+    expect(store.getRun(run.id)?.status).toBe('canceled');
+  });
+
   it('reconcileOrphanRuns adopts (favors not double-running) when the checker is inconclusive', () => {
     const run = store.insertRun('orphan-inconclusive');
     store.updateRun(run.id, { status: 'running', pid: 12345 });

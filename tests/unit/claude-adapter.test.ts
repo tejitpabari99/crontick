@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn as nodeSpawn } from 'node:child_process';
+import { spawn as nodeSpawn, spawnSync } from 'node:child_process';
 import { ClaudeAdapter } from '../../src/engines/claude-adapter.js';
 import { resolveTranscriptPath } from '../../src/engines/claude-transcript.js';
 import { Runner } from '../../src/daemon/runner.js';
@@ -23,20 +23,44 @@ describe('Claude invocation', () => {
     const invocation = adapter.buildInvocation('do work', options);
     expect(invocation.sessionId).toMatch(uuidPattern);
     expect(invocation).toMatchObject({ command: 'claude', env: { SAMPLE: 'yes' } });
-    expect(invocation.args).toEqual([
+    expect(invocation.args.slice(0, -1)).toEqual([
       '-p', 'do work', '--output-format', 'stream-json', '--verbose',
-      '--session-id', invocation.sessionId, '--max-budget-usd', '1', '--settings', '{}',
+      '--session-id', invocation.sessionId, '--max-budget-usd', '1', '--settings',
     ]);
+    expect(JSON.parse(invocation.args.at(-1)!)).toHaveProperty('hooks.SessionEnd');
   });
 
   it('resumes the given session without assigning another ID', () => {
     const sessionId = '94697a61-f71d-450b-87bb-a82463a2a6b1';
     const invocation = adapter.buildInvocation('continue', { ...options, sessionId });
     expect(invocation.sessionId).toBe(sessionId);
-    expect(invocation.args).toEqual([
+    expect(invocation.args.slice(0, -1)).toEqual([
       '-p', 'continue', '--output-format', 'stream-json', '--verbose',
-      '--resume', sessionId, '--max-budget-usd', '1', '--settings', '{}',
+      '--resume', sessionId, '--max-budget-usd', '1', '--settings',
     ]);
+    expect(JSON.parse(invocation.args.at(-1)!)).toHaveProperty('hooks.SessionEnd');
+  });
+
+  it('registers an ephemeral SessionEnd hook that writes the run marker from hook stdin', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'crontick-hook-'));
+    try {
+      const invocation = adapter.buildInvocation('do work', { ...options, dataDir: dir });
+      const settings = JSON.parse(invocation.args.at(-1)!) as {
+        hooks: { SessionEnd: Array<{ hooks: Array<{ type: string; command: string }> }> };
+      };
+      const hook = settings.hooks.SessionEnd[0]?.hooks[0];
+      expect(hook?.type).toBe('command');
+      const result = spawnSync(hook!.command, {
+        shell: true,
+        input: JSON.stringify({ exit_status: 0, session_id: invocation.sessionId }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(JSON.parse(readFileSync(join(dir, 'runs', 'run-1.claude-hook.json'), 'utf8')))
+        .toEqual({ exitStatus: 0, sessionId: invocation.sessionId });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -193,10 +217,11 @@ describe('Claude run session assignment', () => {
       expect(sessionAtFirstOutput).toMatch(uuidPattern);
       expect(persisted?.sessionId).toBe(sessionAtFirstOutput);
       expect(persisted?.status).toBe('success');
-      expect(spawnedArgs.slice(fake.args.length)).toEqual([
+      expect(spawnedArgs.slice(fake.args.length, -1)).toEqual([
         '-p', 'hello', '--output-format', 'stream-json', '--verbose',
-        '--session-id', sessionAtFirstOutput, '--settings', '{}',
+        '--session-id', sessionAtFirstOutput, '--settings',
       ]);
+      expect(JSON.parse(spawnedArgs.at(-1)!)).toHaveProperty('hooks.SessionEnd');
 
       const resumeRun = store.insertRun(job.id);
       const resumeJob: Job = { ...job, action: { ...job.action, sessionId: persisted?.sessionId } };
@@ -206,10 +231,11 @@ describe('Claude run session assignment', () => {
         return nodeSpawn(command, args, opts);
       }) as typeof nodeSpawn;
       await new Runner(resumeSpawnFn, undefined, undefined, undefined, undefined, () => true).run(resumeJob, resumeRun.id, store);
-      expect(resumeArgs.slice(fake.args.length)).toEqual([
+      expect(resumeArgs.slice(fake.args.length, -1)).toEqual([
         '-p', 'hello', '--output-format', 'stream-json', '--verbose',
-        '--resume', persisted?.sessionId, '--settings', '{}',
+        '--resume', persisted?.sessionId, '--settings',
       ]);
+      expect(JSON.parse(resumeArgs.at(-1)!)).toHaveProperty('hooks.SessionEnd');
       expect(store.getRun(resumeRun.id)?.sessionId).toBe(persisted?.sessionId);
     } finally {
       store.close();
@@ -236,8 +262,18 @@ describe('Claude run session assignment', () => {
       };
       store.upsertJob(job);
       const run = store.insertRun(job.id);
-      await new Runner(nodeSpawn).run(job, run.id, store);
+      const markerPath = join(dir, 'runs', `${run.id}.claude-hook.json`);
+      const spawnWithMarker: typeof nodeSpawn = ((command: string, args: readonly string[], opts: Parameters<typeof nodeSpawn>[2]) => {
+        const child = nodeSpawn(command, args, opts);
+        child.once('close', () => {
+          mkdirSync(join(dir, 'runs'), { recursive: true });
+          writeFileSync(markerPath, JSON.stringify({ exitStatus: 0, sessionId: store.getRun(run.id)?.sessionId }));
+        });
+        return child;
+      }) as typeof nodeSpawn;
+      await new Runner(spawnWithMarker).run(job, run.id, store);
       expect(store.getRun(run.id)).toMatchObject({ status: 'failed', exitCode: 0, error: 'tool failed' });
+      expect(existsSync(markerPath)).toBe(false);
     } finally {
       store.close();
       if (priorHome === undefined) delete process.env['CRONTICK_HOME'];

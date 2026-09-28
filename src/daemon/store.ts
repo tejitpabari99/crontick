@@ -4,7 +4,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { writeFileSync, readFileSync, unlinkSync, readdirSync, existsSync, chmodSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { runsDbPath, jobsDir } from '../paths.js';
 import { JobSchema, type Job, type PromptAction } from '../schemas/job.js';
@@ -12,6 +12,7 @@ import { CrontickError, ORPHAN_RUN_ERROR_MESSAGE } from '../errors.js';
 import { jobJsonSchemaText } from '../schema-json.js';
 import { nullLogger, type Logger } from '../logger.js';
 import type { LogSource } from '../log-source.js';
+import { readClaudeCompletionMarker } from '../claude-completion-marker.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -821,6 +822,18 @@ export class Store {
         const alive = check.isRunAlive(row.pid, row.started_at);
         if (alive !== false) {
           adopted.push({ runId: row.id, jobId: row.job_id, pid: row.pid });
+          continue;
+        }
+      }
+      if (row.status === 'running') {
+        const marker = readClaudeCompletionMarker(dirname(this.dbPath), row.id, row.session_id ?? undefined);
+        if (marker) {
+          this.updateRun(row.id, {
+            status: marker.exitStatus === 0 ? 'success' : 'failed',
+            exitCode: marker.exitStatus,
+            ...(marker.exitStatus === 0 ? {} : { error: `CLAUDE_HOOK: SessionEnd reported exit status ${marker.exitStatus}` }),
+            endedAt: Date.now(),
+          });
           continue;
         }
       }

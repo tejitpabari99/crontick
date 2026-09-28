@@ -853,6 +853,34 @@ describe('Runner', () => {
   // ── L3/L4: adoptRun restores overlap invariants across a restart ─────────────
 
   describe('adoptRun', () => {
+    it('uses a Claude marker after an adopted process exits instead of the unknown-exit fallback', async () => {
+      const jobId = 'adopt-hook';
+      const child = nodeSpawn(node, ['-e', 'setTimeout(() => process.exit(0), 10000)']);
+      const adoptedRun = store.insertRun(jobId);
+      store.updateRun(adoptedRun.id, { status: 'running', pid: child.pid!, sessionId: 'claude-session' });
+      const markerDir = join(dir, 'runs');
+      mkdirSync(markerDir);
+      const priorHome = process.env['CRONTICK_HOME'];
+      process.env['CRONTICK_HOME'] = dir;
+      try {
+        writeFileSync(join(markerDir, `${adoptedRun.id}.claude-hook.json`),
+          JSON.stringify({ exitStatus: 7, sessionId: 'claude-session' }));
+        runner = new Runner(undefined, undefined, undefined, 50);
+        runner.adoptRun(jobId, adoptedRun.id, child.pid!, store);
+        child.kill();
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline && store.getRun(adoptedRun.id)!.status === 'running') {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        expect(store.getRun(adoptedRun.id)).toMatchObject({ status: 'failed', exitCode: 7 });
+        expect(store.getRun(adoptedRun.id)?.error).not.toBe(ADOPTED_RUN_EXITED_MESSAGE);
+      } finally {
+        child.kill();
+        if (priorHome === undefined) delete process.env['CRONTICK_HOME'];
+        else process.env['CRONTICK_HOME'] = priorHome;
+      }
+    }, 15_000);
+
     it('overlap=skip: a job with an adopted, still-alive run skips new ticks until the adopted process exits', async () => {
       const jobId = 'adopt-skip';
       const child = nodeSpawn(node, ['-e', 'setTimeout(() => process.exit(0), 10000)']);

@@ -36,7 +36,8 @@ describe('CTD-016 built-in engine defaults', () => {
     expect(invocation.args.slice(0, 7)).toEqual([
       '-p', 'Say hello in exactly one word.', '--output-format', 'stream-json', '--verbose', '--session-id', invocation.sessionId,
     ]);
-    expect(invocation.args.slice(7)).toEqual(['--model', 'gpt-5.4', '--settings', '{}']);
+    expect(invocation.args.slice(7, -1)).toEqual(['--model', 'gpt-5.4', '--settings']);
+    expect(JSON.parse(invocation.args.at(-1)!)).toHaveProperty('hooks.SessionEnd');
   });
 
   it("keeps the prompt immediately after a custom engine's final prompt-taking flag", () => {

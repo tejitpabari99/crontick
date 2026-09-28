@@ -14,6 +14,7 @@ import { createStreamingTextRedactor, nullLogger, redactText, redactValue, type 
 import { isProcessAlive, isSameRunProcess } from '../process-liveness.js';
 import { readEnvFileForAction } from './env-file.js';
 import { createJobLogFileFactory, type JobLogFile, type JobLogFileFactory } from './job-log-file.js';
+import { readClaudeCompletionMarker, removeClaudeCompletionMarker } from '../claude-completion-marker.js';
 
 // ── Output cap (L5) ───────────────────────────────────────────────────────────
 
@@ -282,9 +283,13 @@ export class Runner {
       try {
         const run = store.getRun(runId);
         if (run && run.status === 'running') {
+          const marker = canceledByAbort ? undefined : readClaudeCompletionMarker(dataDir(), runId, run.sessionId);
           store.updateRun(runId, {
-            status: 'canceled',
-            error: canceledByAbort ? 'DAEMON_RESTART: adopted run was terminated' : ADOPTED_RUN_EXITED_MESSAGE,
+            status: marker ? (marker.exitStatus === 0 ? 'success' : 'failed') : 'canceled',
+            ...(marker ? { exitCode: marker.exitStatus } : {}),
+            error: canceledByAbort ? 'DAEMON_RESTART: adopted run was terminated'
+              : marker ? (marker.exitStatus === 0 ? undefined : `CLAUDE_HOOK: SessionEnd reported exit status ${marker.exitStatus}`)
+                : ADOPTED_RUN_EXITED_MESSAGE,
             endedAt: Date.now(),
           });
         }
@@ -403,6 +408,10 @@ export class Runner {
             error: lastResult.error,
           });
           if (err instanceof CrontickError && err.code === 'SESSION_NOT_FOUND') break;
+        } finally {
+          // A daemon that observed the child finish has the definitive
+          // parseResult outcome; remove any best-effort marker before retry.
+          removeClaudeCompletionMarker(dataDir(), runId);
         }
         this.logger.debug('Run attempt completed', { jobId: job.id, runId, attempt, status: lastResult.status, exitCode: lastResult.exitCode });
         this.appendDiagnosticLog(log, 'attempt completed', { attempt, status: lastResult.status, exitCode: lastResult.exitCode });

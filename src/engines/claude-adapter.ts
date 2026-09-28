@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { claudeCompletionMarkerPath } from '../claude-completion-marker.js';
 import { EngineAdapter, type EngineInvocation, type EngineOptions, type EngineResult } from './types.js';
 import { resolveTranscriptPath } from './claude-transcript.js';
 
@@ -10,6 +11,31 @@ export class ClaudeAdapter extends EngineAdapter {
 
   buildInvocation(prompt: string, opts: EngineOptions): EngineInvocation {
     const sessionId = opts.sessionId ?? randomUUID();
+    // Internal command previews may omit run context; only an actual runner
+    // supplies the stable run ID that restart reconciliation can look up.
+    const markerPath = claudeCompletionMarkerPath(opts.dataDir || '.', opts.runId || randomUUID());
+    // Claude runs command hooks through the platform shell. Base64 keeps paths
+    // and user-controlled data out of shell syntax; the hook itself uses only
+    // Node platform APIs and writes a private file. It never edits user settings.
+    const script = `try {
+      const fs = require('node:fs');
+      const path = require('node:path');
+      const markerPath = ${JSON.stringify(markerPath)};
+      const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+      const raw = input.exit_status ?? input.exitStatus ?? input.exit_code ?? input.exitCode ?? null;
+      const exitStatus = Number.isInteger(raw) && raw >= 0 && raw <= 255 ? raw : null;
+      const sessionId = typeof input.session_id === 'string' ? input.session_id :
+        (typeof input.sessionId === 'string' ? input.sessionId : null);
+      fs.mkdirSync(path.dirname(markerPath), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(markerPath, JSON.stringify({ exitStatus, sessionId }), { mode: 0o600 });
+    } catch { /* A best-effort hook must not change Claude's outcome. */ }`;
+    const encoded = Buffer.from(script, 'utf8').toString('base64');
+    const nodeCommand = process.platform === 'win32'
+      ? `"${process.execPath}"`
+      : `'${process.execPath.replaceAll("'", "'\\''")}'`;
+    const settings = JSON.stringify({
+      hooks: { SessionEnd: [{ hooks: [{ type: 'command', command: `${nodeCommand} -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"` }] }] },
+    });
     return {
       command: opts.command,
       args: [
@@ -19,8 +45,7 @@ export class ClaudeAdapter extends EngineAdapter {
         '--verbose',
         ...(opts.sessionId ? ['--resume', sessionId] : ['--session-id', sessionId]),
         ...opts.args,
-        // Task 12 replaces this neutral setting with the SessionEnd hook.
-        '--settings', '{}',
+        '--settings', settings,
       ],
       env: { ...opts.env },
       sessionId,

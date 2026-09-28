@@ -43,6 +43,10 @@ determined is still alive in a previous daemon's child process (see
   same process-liveness check (see [Process Liveness](#process-liveness) below) instead of
   listening for an `'exit'` event, and finalizes the run (`status`, `ended_at`, `duration_ms`)
   once the poll observes the process has exited.
+- For Claude runs, the poll checks `<dataDir>/runs/<runId>.claude-hook.json` after observing
+  exit. A valid marker with the recorded session ID and integer exit status records
+  `success`/`failed` and the exit code; otherwise the run keeps the existing
+  `ADOPTED_RUN_EXITED_MESSAGE` fallback. An explicit cancellation remains a cancellation.
 - `cancelRun`/`cancelJob` on an adopted run sends `SIGTERM` directly to the recorded `pid`
   (there is no `AbortController`-driven `spawn` to abort), since the daemon does not own the
   child's stdio streams to signal it another way.
@@ -50,6 +54,14 @@ determined is still alive in a previous daemon's child process (see
 This is what makes `overlap: 'skip'` and `overlap: 'cancel-previous'` hold across a daemon
 restart instead of only within a single daemon process's lifetime — see
 [concepts/execution.md](../concepts/execution.md#overlap-policies).
+
+Claude's adapter appends an inline `--settings` JSON with a `SessionEnd` command hook.
+The hook writes the private marker file using Node, without changing the user's Claude
+settings. It reads `exit_status`/`exit_code` and `session_id` from hook stdin when
+available. The marker is only a best-effort restart signal: a normal run's outcome,
+usage, and session metadata still come from the subprocess stream-json result.
+The runner removes a marker after each normal attempt, before any retry, so a
+previous attempt cannot be mistaken for the later attempt's outcome.
 
 ---
 

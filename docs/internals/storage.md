@@ -202,7 +202,10 @@ On daemon startup, `reconcileOrphanRuns(check?)` walks every run left in status 
     stays `running`; the daemon hands its `(jobId, runId, pid)` to `Runner.adoptRun()` so overlap
     tracking (`skip`/`cancel-previous`) and log tailing resume as if the daemon never restarted.
   - `false` (process confirmed dead, or a different process now holds that pid -- detected by
-    comparing recorded vs. actual start time) -> **canceled**, same as a `queued` run.
+    comparing recorded vs. actual start time) -> for a Claude run with a valid
+    `<dataDir>/runs/<runId>.claude-hook.json` marker matching its persisted session ID,
+    **success** or **failed** from the marker's integer exit status; otherwise
+    **canceled**, same as a `queued` run.
   - `undefined` (liveness cannot be determined -- e.g. a platform call failed) -> **adopted**.
     Reconciliation is deliberately optimistic on inconclusive checks: adopting a run that already
     finished only costs one wasted poll before the adoption loop notices it exited, while
