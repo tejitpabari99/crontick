@@ -11,7 +11,7 @@ import { isProcessAlive } from '../../src/process-liveness.js';
 import { Store } from '../../src/daemon/store.js';
 import type { Job } from '../../src/schemas/job.js';
 import { JobSchema } from '../../src/schemas/job.js';
-import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
+import { FAKE_ENGINE_CONFIG, FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 
 const node = process.execPath;
 
@@ -127,11 +127,11 @@ describe('Runner', () => {
     mkdirSync(join(dir, 'jobs'), { recursive: true });
     previousHome = process.env['CRONTICK_HOME'];
     process.env['CRONTICK_HOME'] = dir;
-    // Registers FAKE_ENGINE_NAME ('node -e <prompt>') alongside the built-in
-    // `copilot` engine, so execJob()'s real-spawn fixtures resolve without a
-    // real engine CLI installed, while promptJob()'s `engine: 'copilot'`
-    // default (used by the fakeSpawn-based tests below) is untouched.
-    writeFakeEngineConfig(dir);
+    // Keep these raw-engine fixtures independent of the built-in Claude adapter.
+    writeFakeEngineConfig(dir, { engines: {
+      [FAKE_ENGINE_NAME]: FAKE_ENGINE_CONFIG,
+      copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {}, type: 'raw' },
+    } });
     store = makeStore(dir);
     runner = new Runner();
   });

@@ -30,7 +30,7 @@ export const FAKE_ENGINE_CONFIG = Object.freeze({
 /**
  * Writes a crontick `config.json` into `dir` (a CRONTICK_HOME-style data
  * directory) that registers the fake engine as an available engine (NOT as
- * `defaultEngine` -- that stays `copilot`, from `BUILT_IN_CONFIG`, so tests
+ * `defaultEngine` -- that stays `claude`, from `BUILT_IN_CONFIG`, so tests
  * asserting the built-in default engine name are unaffected). Callers that
  * need the fake engine must reference it explicitly via `engine:
  * FAKE_ENGINE_NAME`. `overrides` is shallow-merged over the top-level config

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
@@ -87,6 +87,9 @@ describe('Runner missing cwd preflight (CTD-011)', () => {
     mkdirSync(join(dir, 'jobs'), { recursive: true });
     previousHome = process.env['CRONTICK_HOME'];
     process.env['CRONTICK_HOME'] = dir;
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ engines: {
+      copilot: { command: 'copilot', args: [], type: 'raw' },
+    } }), 'utf-8');
     store = makeStore(dir);
   });
 

@@ -15,6 +15,9 @@ function makeTmpDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'crontick-runner-ctd-001-'));
   mkdirSync(join(dir, 'jobs'), { recursive: true });
   mkdirSync(join(dir, 'logs'), { recursive: true });
+  writeFileSync(join(dir, 'config.json'), JSON.stringify({ engines: {
+    copilot: { command: 'copilot', args: [], type: 'raw' },
+  } }), 'utf-8');
   return dir;
 }
 
@@ -28,8 +31,8 @@ function makeStore(dir: string): Store {
  * A minimal prompt-action job fixture. These tests exercise failure paths
  * that finalize (or reject) before a real engine process would ever be
  * spawned (envFile load failure, engine-not-found, a synchronously-throwing
- * spawnFn, a mocked runner), so the built-in `copilot` engine default is
- * enough -- no real engine binary or fake-engine config needed.
+ * spawnFn, a mocked runner). The fixture registers `copilot` as a custom raw
+ * engine; no real engine binary is needed.
  */
 function execJob(id: string, opts: Partial<Extract<Job['action'], { kind: 'prompt' }>> = {}): Job {
   return {

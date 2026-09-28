@@ -18,21 +18,25 @@ afterEach(() => {
   for (const dir of cleanupDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-describe('CTD-016 built-in copilot engine defaults', () => {
-  it("appends the prompt after Copilot's non-interactive flags", () => {
-    expect(BUILT_IN_CONFIG.engines.copilot.args).toEqual(['--allow-all-tools', '-p']);
+describe('CTD-016 built-in engine defaults', () => {
+  it('uses the Claude adapter for the built-in engine', () => {
+    expect(BUILT_IN_CONFIG.engines.claude).toEqual({ command: 'claude', args: [], env: {}, type: 'claude' });
 
-    expect(buildPromptRunCommand({
+    const invocation = buildPromptRunCommand({
       kind: 'prompt',
       prompt: 'Say hello in exactly one word.',
       args: ['--model', 'gpt-5.4'],
       reuseSession: false,
-    }, { env: makeHome() })).toEqual({
-      command: 'copilot',
-      args: ['--allow-all-tools', '-p', 'Say hello in exactly one word.', '--model', 'gpt-5.4'],
+    }, { env: makeHome() });
+    expect(invocation).toMatchObject({
+      command: 'claude',
       env: {},
-      engine: 'copilot',
+      engine: 'claude',
     });
+    expect(invocation.args.slice(0, 7)).toEqual([
+      '-p', 'Say hello in exactly one word.', '--output-format', 'stream-json', '--verbose', '--session-id', invocation.sessionId,
+    ]);
+    expect(invocation.args.slice(7)).toEqual(['--model', 'gpt-5.4', '--settings', '{}']);
   });
 
   it("keeps the prompt immediately after a custom engine's final prompt-taking flag", () => {

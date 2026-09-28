@@ -209,7 +209,7 @@ describe('normalizeJobInput', () => {
     expect(job.action).toEqual({
       kind: 'prompt',
       prompt: 'Summarize',
-      engine: 'copilot',
+      engine: 'claude',
       args: [],
       reuseSession: false,
     });

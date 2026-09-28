@@ -284,6 +284,7 @@ function makeHome(prefix: string): string {
   const dir = resolve(SCRATCH_ROOT, `${prefix}-${randomUUID()}`);
   mkdirSync(join(dir, 'jobs'), { recursive: true });
   mkdirSync(join(dir, 'logs'), { recursive: true });
+  writeConfig(dir, {});
   return dir;
 }
 
@@ -384,6 +385,8 @@ function writeConfig(dir: string, env: Record<string, string>): void {
 
 async function createFixture(prefix: string) {
   const dir = makeHome(prefix);
+  const previousHome = process.env['CRONTICK_HOME'];
+  process.env['CRONTICK_HOME'] = dir;
   const store = makeStore(dir);
   const scheduler = new Scheduler();
   const ctx = {
@@ -414,6 +417,8 @@ async function createFixture(prefix: string) {
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
       scheduler.unscheduleAll();
       store.close();
+      if (previousHome === undefined) delete process.env['CRONTICK_HOME'];
+      else process.env['CRONTICK_HOME'] = previousHome;
       rmSync(dir, { recursive: true, force: true });
     },
   };
@@ -694,12 +699,12 @@ describe('CTD-003 shared secret redaction', () => {
     try {
       fixture.client.initConfig({ force: true });
 
-      const setResult = fixture.client.setConfigValue('engines.copilot.env', {
+      const setResult = fixture.client.setConfigValue('engines.claude.env', {
         OPENAI_API_KEY: OPENAI_GENERIC,
         NON_SECRET: BENIGN_WINDOWS_PATH,
       });
       expect(JSON.stringify(setResult)).not.toContain(OPENAI_GENERIC);
-      expect(setResult.engines.copilot.env).toMatchObject({
+      expect(setResult.engines.claude.env).toMatchObject({
         OPENAI_API_KEY: '[REDACTED]',
         NON_SECRET: BENIGN_WINDOWS_PATH,
       });
@@ -905,5 +910,3 @@ describe('CTD-003 shared secret redaction', () => {
     }
   }, 10_000);
 });
-
-

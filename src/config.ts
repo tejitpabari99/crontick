@@ -1,7 +1,7 @@
 /**
  * Configuration management for crontick. Handles `config.json` read/write, engine
  * CRUD, and config key-path operations. The built-in default config provides the
- * `copilot` engine; file config is deep-merged over it.
+ * `claude` engine; file config is deep-merged over it.
  *
  * Precedence for engine resolution: file config > BUILT_IN_CONFIG.
  * Writes use atomic rename (write-to-tmp, rename) for crash safety.
@@ -66,9 +66,9 @@ export interface ResolvedPromptRunCommand {
 
 /** Built-in fallback config used when no file exists; also serves as the merge base. */
 export const BUILT_IN_CONFIG: CrontickConfig = Object.freeze({
-  defaultEngine: 'copilot',
+  defaultEngine: 'claude',
   engines: {
-    copilot: Object.freeze({ command: 'copilot', args: ['--allow-all-tools', '-p'], env: {}, type: 'raw' }),
+    claude: Object.freeze({ command: 'claude', args: [], env: {}, type: 'claude' }),
   },
   retention: Object.freeze({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 }),
   logging: Object.freeze({ fileEnabled: true }),
@@ -386,7 +386,7 @@ function parseKeyPath(path: string): string[] {
   if (!parsed.success) {
     throw new CrontickError(
       'CONFIG_KEY_ERROR',
-      `Invalid config key path "${path}". Use dot-separated keys such as defaultEngine or engines.copilot.command.`,
+      `Invalid config key path "${path}". Use dot-separated keys such as defaultEngine or engines.claude.command.`,
       { key: path },
     );
   }

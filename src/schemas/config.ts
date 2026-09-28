@@ -70,9 +70,9 @@ export const LoggingConfigSchema = z.object({
  * `defaultEngine` actually exists in `engines`.
  */
 export const ConfigSchema = z.object({
-  defaultEngine: EngineNameSchema.default('copilot'),
+  defaultEngine: EngineNameSchema.default('claude'),
   engines: z.record(EngineNameSchema, EngineConfigSchema).default({
-    copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {}, type: 'raw' },
+    claude: { command: 'claude', args: [], env: {}, type: 'claude' },
   }),
   retention: RetentionConfigSchema.default({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 }),
   logging: LoggingConfigSchema.default({ fileEnabled: true }),
@@ -107,7 +107,7 @@ export type LoggingConfig = z.infer<typeof LoggingConfigSchema>;
  * Without this split, every write path (`config set`/`config unset`/engine
  * CRUD) round-tripped through the effective, fully-defaulted config and
  * re-persisted it, so `.default(...)` values (defaultEngine, retention.*, the
- * built-in copilot engine's fields) were baked back into the file on every
+ * built-in Claude engine's fields) were baked back into the file on every
  * write — making `config unset` a no-op for any key that has a built-in
  * fallback. Write paths must build on these Persisted* schemas (see
  * `readRawStoredConfig`/`persistRawConfig` in src/config.ts) so that removing
