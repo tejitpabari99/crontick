@@ -94,6 +94,10 @@ are only cleared if they still point to the completing run (prevents races when
    - Break on `success`, `canceled`, or `timeout`.
 4. Finalize run with `updateRun(status, exitCode, error, endedAt, durationMs)`.
 
+For Claude results, each attempt contributes its reported cost, turns, and
+numeric usage counters to the final run record. Status and engine status still
+come from the final attempt.
+
 ---
 
 ## Spawn Details

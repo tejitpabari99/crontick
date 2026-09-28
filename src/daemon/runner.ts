@@ -69,6 +69,25 @@ interface RunResult {
   engineStatus?: string;
 }
 
+/** Claude result usage is per attempt; retries belong to one crontick run. */
+function mergeUsageJson(previous: string | undefined, next: string | undefined): string | undefined {
+  if (next === undefined) return previous;
+  if (previous === undefined) return next;
+  const merge = (left: unknown, right: unknown): unknown => {
+    if (typeof left === 'number' && typeof right === 'number' && Number.isFinite(left) && Number.isFinite(right)) {
+      return left + right;
+    }
+    if (left !== null && right !== null && typeof left === 'object' && typeof right === 'object'
+      && !Array.isArray(left) && !Array.isArray(right)) {
+      const result: Record<string, unknown> = { ...left };
+      for (const [key, value] of Object.entries(right)) result[key] = key in result ? merge(result[key], value) : value;
+      return result;
+    }
+    return right;
+  };
+  return JSON.stringify(merge(JSON.parse(previous) as unknown, JSON.parse(next) as unknown));
+}
+
 type QueueEntry = () => Promise<void>;
 
 interface SafeRedactResult {
@@ -371,6 +390,9 @@ export class Runner {
     const maxRetries = job.retry?.max ?? 0;
     const backoffSec = job.retry?.backoffSec ?? 30;
     let lastResult: RunResult = { status: 'failed', error: 'not started' };
+    let totalCostUsd: number | undefined;
+    let totalTurns: number | undefined;
+    let combinedUsageJson: string | undefined;
 
     store.updateRun(runId, { status: 'running' });
     log.crontick('run started', { jobId: job.id, action: job.action.kind, overlap: job.overlap ?? 'skip', retryMax: maxRetries });
@@ -413,6 +435,9 @@ export class Runner {
           // parseResult outcome; remove any best-effort marker before retry.
           removeClaudeCompletionMarker(dataDir(), runId);
         }
+        if (lastResult.costUsd !== undefined) totalCostUsd = (totalCostUsd ?? 0) + lastResult.costUsd;
+        if (lastResult.turns !== undefined) totalTurns = (totalTurns ?? 0) + lastResult.turns;
+        combinedUsageJson = mergeUsageJson(combinedUsageJson, lastResult.usageJson);
         this.logger.debug('Run attempt completed', { jobId: job.id, runId, attempt, status: lastResult.status, exitCode: lastResult.exitCode });
         this.appendDiagnosticLog(log, 'attempt completed', { attempt, status: lastResult.status, exitCode: lastResult.exitCode });
         if (lastResult.status === 'success') break;
@@ -425,7 +450,12 @@ export class Runner {
       if (this.activeRunIds.get(job.id) === runId) this.activeRunIds.delete(job.id);
     }
 
-    await this.finalizeRun(store, runId, lastResult, log);
+    await this.finalizeRun(store, runId, {
+      ...lastResult,
+      costUsd: totalCostUsd,
+      turns: totalTurns,
+      usageJson: combinedUsageJson,
+    }, log);
   }
 
   private async spawn(

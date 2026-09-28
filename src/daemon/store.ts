@@ -13,6 +13,7 @@ import { jobJsonSchemaText } from '../schema-json.js';
 import { nullLogger, type Logger } from '../logger.js';
 import type { LogSource } from '../log-source.js';
 import { readClaudeCompletionMarker } from '../claude-completion-marker.js';
+import { loadConfig } from '../config.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -282,6 +283,23 @@ export class Store {
     this.logger.debug('Persisted job files', { jobId: persisted.id, alias: persisted.alias, filePath, schemaPath });
   }
 
+  /** Imported Claude sessions lack trustworthy job-to-transcript provenance. */
+  prepareImportedJob(job: Job): Job {
+    if (job.action.kind !== 'prompt' || !job.action.sessionId) return job;
+    const config = loadConfig({ path: join(dirname(this.dbPath), 'config.json') });
+    const engine = config.engines[job.action.engine ?? config.defaultEngine];
+    if (engine?.type !== 'claude' || this.hasCompletedClaudeSession(job.id, job.action.sessionId)) return job;
+    const action = { ...job.action };
+    delete action.sessionId;
+    return {
+      ...job,
+      action: {
+        ...action,
+        reuseSession: (job.overlap ?? 'skip') === 'skip',
+      },
+    };
+  }
+
   /**
    * Persist a captured session ID back into the job definition.
    * Guards against races: only writes if the job still matches the expected action state.
@@ -529,6 +547,10 @@ export class Store {
       values.push(update.outputTruncated ? 1 : 0);
     }
     if (update.sessionId !== undefined) {
+      // A retry can assign a fresh Claude session to the same run row. Its
+      // earlier result must never certify the new, possibly incomplete ID.
+      fields.push('claude_result_completed = CASE WHEN session_id = ? THEN claude_result_completed ELSE 0 END');
+      values.push(update.sessionId);
       fields.push('session_id = ?');
       values.push(update.sessionId ?? null);
     }

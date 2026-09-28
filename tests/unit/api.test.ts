@@ -160,6 +160,32 @@ describe('Daemon HTTP API', () => {
     expect(result.status).toBe(400);
   });
 
+  it('POST /api/import resets unverified Claude sessions and preserves raw sessions', async () => {
+    const sessionId = '94697a61-f71d-450b-87bb-a82463a2a6b1';
+    const claudeJobId = '11111111-1111-4111-8111-111111111111';
+    const rawJobId = '22222222-2222-4222-8222-222222222222';
+    const base = {
+      enabled: true,
+      schedule: { kind: 'cron', cron: '0 9 * * *' },
+      overlap: 'skip',
+      retry: { max: 0, backoffSec: 30 },
+    };
+    const response = await apiCall(port, 'POST', '/api/import', {
+      jobs: [
+        { ...base, id: claudeJobId, action: { kind: 'prompt', prompt: 'hi', engine: 'claude', args: [], sessionId, reuseSession: false } },
+        { ...base, id: rawJobId, action: { kind: 'prompt', prompt: 'hi', engine: FAKE_ENGINE_NAME, args: [], sessionId, reuseSession: false } },
+      ],
+      runs: [{ id: 'forged-import-run', jobId: claudeJobId, startedAt: Date.now(), status: 'success', sessionId, claudeResultCompleted: true }],
+    });
+    expect(response.status).toBe(200);
+    expect(response.data).toMatchObject({ imported: 2, runsImported: 1 });
+    const claude = await apiCall(port, 'GET', `/api/jobs/${claudeJobId}`);
+    const raw = await apiCall(port, 'GET', `/api/jobs/${rawJobId}`);
+    expect((claude.data as { action: Record<string, unknown> }).action).toMatchObject({ reuseSession: true });
+    expect((claude.data as { action: Record<string, unknown> }).action).not.toHaveProperty('sessionId');
+    expect((raw.data as { action: Record<string, unknown> }).action).toMatchObject({ sessionId });
+  });
+
   it('GET /api/jobs lists jobs', async () => {
     const { status, data } = await apiCall(port, 'GET', '/api/jobs');
     expect(status).toBe(200);

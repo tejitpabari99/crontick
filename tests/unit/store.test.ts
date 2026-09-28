@@ -862,3 +862,25 @@ describe('Store.importRuns', () => {
     }
   });
 });
+
+it('does not carry Claude completion evidence onto a different retry session', () => {
+  const dir = makeTmpDir();
+  mkdirSync(join(dir, 'jobs'));
+  const store = makeStore(dir);
+  store.open();
+  try {
+    const job = execJob('retry-session-job');
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+    store.updateRun(run.id, { status: 'failed' });
+    store.markCompletedClaudeSession(run.id, 'session-1');
+    store.updateRun(run.id, { sessionId: 'session-1' });
+    expect(store.hasCompletedClaudeSession(job.id, 'session-1')).toBe(true);
+    store.updateRun(run.id, { sessionId: 'session-2' });
+    expect(store.hasCompletedClaudeSession(job.id, 'session-2')).toBe(false);
+    expect(store.listRuns({})[0]).not.toHaveProperty('claudeResultCompleted');
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

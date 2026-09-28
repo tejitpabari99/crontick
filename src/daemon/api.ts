@@ -431,6 +431,7 @@ async function handleRequest(
           const existing = (job.alias ? ctx.store.getJob(job.alias) : undefined) ?? ctx.store.getJob(job.id);
           if (existing) job = { ...job, id: existing.id };
           try {
+            job = ctx.store.prepareImportedJob(job);
             // Best-effort: the alias-uniqueness DB index (see store.ts) can
             // still reject an import row whose alias collides with a
             // DIFFERENT already-live job; skip that one row rather than

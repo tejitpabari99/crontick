@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { spawn as nodeSpawn, spawnSync } from 'node:child_process';
 import { ClaudeAdapter } from '../../src/engines/claude-adapter.js';
 import { resolveTranscriptPath } from '../../src/engines/claude-transcript.js';
@@ -67,6 +67,11 @@ describe('Claude invocation', () => {
 it('resolves Claude transcripts with slash and dot cwd encoding', () => {
   expect(resolveTranscriptPath('/root/projects/crontick/.worktrees/claude-engine', 'session-1', '/home/tester'))
     .toBe('/home/tester/.claude/projects/-root-projects-crontick--worktrees-claude-engine/session-1.jsonl');
+});
+
+it('resolves Windows Claude transcripts using the drive and separators', () => {
+  const result = resolveTranscriptPath('C:\\Users\\tester\\my.project', 'session-1', '/home/tester');
+  expect(result.replaceAll('\\', '/')).toBe('/home/tester/.claude/projects/C--Users-tester-my-project/session-1.jsonl');
 });
 
 describe('Claude stream-json result parsing', () => {
@@ -323,6 +328,121 @@ describe('Claude run session assignment', () => {
         if (priorHome === undefined) delete process.env['CRONTICK_HOME'];
         else process.env['CRONTICK_HOME'] = priorHome;
       }
+    }
+  });
+
+  it('imports Claude history without trusting a forged cross-job completion claim', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'crontick-claude-export-'));
+    dirs.push(dir);
+    const priorHome = process.env['CRONTICK_HOME'];
+    process.env['CRONTICK_HOME'] = dir;
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({
+      defaultEngine: 'test-claude', engines: {
+        'test-claude': fakeClaudeEngineConfig(),
+        raw: { command: process.execPath, args: [], env: {}, type: 'raw' },
+      },
+    }));
+    mkdirSync(join(dir, 'jobs'));
+    mkdirSync(join(dir, 'restored-jobs'));
+    const source = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
+    const restored = new Store(join(dir, 'restored.db'), join(dir, 'restored-jobs'));
+    source.open();
+    restored.open();
+    try {
+      const job: Job = {
+        id: 'export-job', enabled: true, schedule: { kind: 'cron', cron: '* * * * *' },
+        action: { kind: 'prompt', prompt: 'hello', engine: 'test-claude', args: [], reuseSession: true, cwd: dir },
+        overlap: 'skip', retry: { max: 0, backoffSec: 0 },
+      };
+      source.upsertJob(job);
+      const first = source.insertRun(job.id);
+      await new Runner(nodeSpawn).run(job, first.id, source);
+      const reusableJob = source.getJob(job.id)!;
+      const sessionId = reusableJob.action.sessionId!;
+      const transcriptPath = resolveTranscriptPath(dir, sessionId);
+      mkdirSync(dirname(transcriptPath), { recursive: true });
+      writeFileSync(transcriptPath, JSON.stringify({ type: 'user', sessionId }) + '\n');
+      const exported = source.listRuns({});
+      expect(exported).toEqual([expect.objectContaining({ sessionId })]);
+      expect(exported[0]?.transcriptPath).toBe(transcriptPath);
+
+      const resetJob = restored.prepareImportedJob(reusableJob);
+      expect(resetJob.action).toMatchObject({ reuseSession: true });
+      expect(resetJob.action).not.toHaveProperty('sessionId');
+      restored.upsertJob(resetJob);
+      expect(restored.importRuns(exported)).toMatchObject({ imported: 1, skipped: [] });
+      expect(restored.hasCompletedClaudeSession(job.id, sessionId)).toBe(false);
+      const next = restored.insertRun(job.id);
+      const spawnSpy = vi.fn((command: string, args: readonly string[], opts: Parameters<typeof nodeSpawn>[2]) => nodeSpawn(command, args, opts));
+      await new Runner(spawnSpy as unknown as typeof nodeSpawn).run(resetJob, next.id, restored);
+      expect(spawnSpy).toHaveBeenCalledOnce();
+      expect(restored.getRun(next.id)?.status).toBe('success');
+      expect(restored.getRun(next.id)?.sessionId).not.toBe(sessionId);
+
+      const untrusted = new Store(join(dir, 'untrusted.db'), join(dir, 'untrusted-jobs'));
+      mkdirSync(join(dir, 'untrusted-jobs'));
+      untrusted.open();
+      try {
+        const otherJob: Job = { ...reusableJob, id: 'other-job' };
+        untrusted.upsertJob(otherJob);
+        expect(untrusted.importRuns([{
+          ...exported[0], id: 'forged-cross-job', jobId: otherJob.id, claudeResultCompleted: true,
+        }]).imported).toBe(1);
+        expect(untrusted.hasCompletedClaudeSession(otherJob.id, sessionId)).toBe(false);
+        expect(untrusted.prepareImportedJob(otherJob).action).not.toHaveProperty('sessionId');
+
+        const rawJob: Job = { ...reusableJob, id: 'raw-import', action: { ...reusableJob.action, engine: 'raw' } };
+        expect(untrusted.prepareImportedJob(rawJob).action).toMatchObject({ engine: 'raw', sessionId });
+      } finally { untrusted.close(); }
+    } finally {
+      source.close();
+      restored.close();
+      if (priorHome === undefined) delete process.env['CRONTICK_HOME'];
+      else process.env['CRONTICK_HOME'] = priorHome;
+    }
+  });
+
+  it('sums billable usage across a failed Claude attempt and its successful retry', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'crontick-claude-retry-'));
+    dirs.push(dir);
+    const priorHome = process.env['CRONTICK_HOME'];
+    process.env['CRONTICK_HOME'] = dir;
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({
+      defaultEngine: 'test-claude', engines: { 'test-claude': fakeClaudeEngineConfig() },
+    }));
+    mkdirSync(join(dir, 'jobs'));
+    const store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
+    store.open();
+    try {
+      const job: Job = {
+        id: 'retry-cost-job', enabled: true, schedule: { kind: 'cron', cron: '* * * * *' },
+        action: { kind: 'prompt', prompt: 'hello', engine: 'test-claude', args: [], reuseSession: false, cwd: dir },
+        overlap: 'skip', retry: { max: 1, backoffSec: 0 },
+      };
+      store.upsertJob(job);
+      const run = store.insertRun(job.id);
+      let attempts = 0;
+      const spawnWithOutcomes: typeof nodeSpawn = ((command: string, args: readonly string[], opts: Parameters<typeof nodeSpawn>[2]) => {
+        attempts++;
+        return nodeSpawn(command, args, {
+          ...opts,
+          env: {
+            ...opts?.env,
+            CRONTICK_FAKE_CLAUDE_OPTIONS: JSON.stringify(attempts === 1
+              ? { isError: true, usage: { input_tokens: 10, output_tokens: 5, api_key: 'first-secret' } }
+              : { usage: { input_tokens: 20, output_tokens: 7, api_key: 'second-secret' } }),
+          },
+        });
+      }) as typeof nodeSpawn;
+      await new Runner(spawnWithOutcomes).run(job, run.id, store);
+      const recorded = store.getRun(run.id)!;
+      expect(attempts).toBe(2);
+      expect(recorded).toMatchObject({ status: 'success', costUsd: 0.02, turns: 2 });
+      expect(JSON.parse(recorded.usageJson!)).toEqual({ input_tokens: 30, output_tokens: 12, api_key: '[REDACTED]' });
+    } finally {
+      store.close();
+      if (priorHome === undefined) delete process.env['CRONTICK_HOME'];
+      else process.env['CRONTICK_HOME'] = priorHome;
     }
   });
 });

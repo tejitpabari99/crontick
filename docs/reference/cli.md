@@ -293,6 +293,9 @@ crontick share export
 | `--include-runs` | boolean | `false` | Also include run history |
 
 When `--out` is omitted, JSON is printed to stdout.
+With `--include-runs`, run history is exported for archival restore. Imported
+history cannot establish which crontick job created a Claude transcript, so
+it does not authorize Claude session reuse.
 
 ### crontick share import
 
@@ -303,6 +306,10 @@ crontick share import <file>
 ```
 
 Jobs are upserted. If the file includes exported run history, runs are restored archivally; they are not re-executed and do not affect the scheduler.
+An imported Claude job with an unverified stored session starts a fresh
+session. With `overlap: skip`, it captures that new session for later runs.
+Raw-engine session IDs are preserved. Existing locally verified Claude
+sessions remain eligible, subject to the transcript preflight.
 
 ---
 

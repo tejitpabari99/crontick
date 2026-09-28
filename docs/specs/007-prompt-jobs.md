@@ -74,7 +74,8 @@ run, including when `reuseSession` is false. It never scrapes Claude output
 for the initial ID. Before `--resume`, preflight confirms an earlier completed
 Claude result for this job and a transcript at
 `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`; the absolute cwd is
-encoded by replacing every `/` and `.` with `-`. A missing eligible run or
+encoded by replacing every `/`, `\\`, `:`, and `.` with `-` (so a Windows
+`C:\\Users\\me` cwd maps to `C--Users-me`). A missing eligible run or
 transcript fails with `SESSION_NOT_FOUND` before spawn. There is no fallback
 to a fresh session under the same ID.
 
@@ -94,6 +95,13 @@ exposes these on library, CLI, and MCP surfaces. `stats summary` and
 `stats job` sum recorded cost and turns as `totalCostUsd` and `totalTurns`;
 missing values contribute zero. They also report `canceled` and `skipped`
 separately. `runs list` accepts a `skipped` status filter on each surface.
+When a Claude run retries, cost, turns, and numeric usage counters accumulate
+across attempts; the final attempt determines the run status and engine status.
+Imported run history never grants Claude resume eligibility: a transcript can
+prove its session ID but cannot prove which crontick job produced it. On import,
+a Claude job with an untrusted stored session ID starts a fresh session. When
+its overlap policy is `skip`, the new session is captured for later reuse.
+An already-local completed run can still authorize its known session ID.
 
 Crontick's `timeoutSec` and SIGTERM remain the run timeout. Jobs may pass
 Claude's `--max-budget-usd` through `action.args` to cap cost. The adapter

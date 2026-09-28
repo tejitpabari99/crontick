@@ -82,6 +82,10 @@ PRAGMA foreign_keys=ON;
 | `transcript_path` | TEXT | nullable (pointer to Claude's session transcript) |
 | `engine_status` | TEXT | nullable (Claude result subtype) |
 
+Imported run rows never restore `claude_result_completed`; a Claude transcript
+has no crontick job provenance. Import clears unverified stored Claude session
+IDs so those jobs can start fresh. Locally completed runs retain their marker.
+
 #### `run_logs`
 
 | Column | Type | Constraints |
