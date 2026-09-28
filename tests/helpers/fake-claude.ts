@@ -4,6 +4,7 @@ export interface FakeClaudeOptions {
   isError?: boolean;
   delayMs?: number;
   result?: string;
+  omitResult?: boolean;
 }
 
 const fakeClaudeProgram = String.raw`
@@ -15,9 +16,11 @@ const emit = (value) => process.stdout.write(JSON.stringify(value) + '\n');
 setTimeout(() => {
   emit({ type: 'system', subtype: 'init', session_id: sessionId });
   emit({ type: 'assistant', session_id: sessionId, message: { role: 'assistant', content: [{ type: 'text', text: 'fake reply' }] } });
-  emit({ type: 'result', subtype: config.isError ? 'error_during_execution' : 'success', is_error: !!config.isError,
-    session_id: sessionId, total_cost_usd: 0.01, num_turns: 1,
-    usage: { input_tokens: 10, output_tokens: 5 }, result: config.result || 'fake reply' });
+  if (!config.omitResult) {
+    emit({ type: 'result', subtype: config.isError ? 'error_during_execution' : 'success', is_error: !!config.isError,
+      session_id: sessionId, total_cost_usd: 0.01, num_turns: 1,
+      usage: { input_tokens: 10, output_tokens: 5 }, result: config.result || 'fake reply' });
+  }
   process.exitCode = config.exitCode ?? 0;
 }, config.delayMs ?? 0);
 `;

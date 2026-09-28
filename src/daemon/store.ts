@@ -214,6 +214,7 @@ export class Store {
         pid INTEGER,
         output_truncated INTEGER NOT NULL DEFAULT 0,
         session_id TEXT,
+        claude_result_completed INTEGER NOT NULL DEFAULT 0,
         command TEXT
       );
 
@@ -531,6 +532,20 @@ export class Store {
       .prepare('SELECT * FROM runs WHERE id = ?')
       .get(id) as DbRunRow | undefined;
     return row ? rowToRun(row) : undefined;
+  }
+
+  /** Records evidence that Claude produced a complete result for this session. */
+  markCompletedClaudeSession(runId: string, sessionId: string): void {
+    const result = this.db.prepare('UPDATE runs SET session_id = ?, claude_result_completed = 1 WHERE id = ?')
+      .run(sessionId, runId) as { changes: number };
+    if (result.changes === 0) throw new CrontickError('NOT_FOUND', `Run ${runId} not found`);
+  }
+
+  /** Preflight eligibility requires a completed prior run for this job and ID. */
+  hasCompletedClaudeSession(jobId: string, sessionId: string): boolean {
+    return this.db.prepare(`SELECT 1 FROM runs
+      WHERE job_id = ? AND session_id = ? AND claude_result_completed = 1
+        AND status IN ('success', 'failed') LIMIT 1`).get(jobId, sessionId) !== undefined;
   }
 
 

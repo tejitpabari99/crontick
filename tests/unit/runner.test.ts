@@ -465,6 +465,7 @@ describe('Runner', () => {
     expect(fake.calls).toHaveLength(2);
     expect(fake.calls[0].args).toEqual(['--allow-all-tools', '-p', 'hello', '--silent', '--session-id=sess-12345678']);
     expect(fake.calls[1].args).toEqual(['--allow-all-tools', '-p', 'hello', '--silent', '--session-id=sess-12345678']);
+    expect(fake.calls[0].opts?.stdio).toEqual(['ignore', 'pipe', 'pipe']);
   });
 
   it('prompt: explicit session id wins over reuseSession and logs a notice', async () => {

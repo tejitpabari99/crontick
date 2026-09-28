@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { ClaudeAdapter } from '../../src/engines/claude-adapter.js';
+import { resolveTranscriptPath } from '../../src/engines/claude-transcript.js';
 import { Runner } from '../../src/daemon/runner.js';
 import { Store } from '../../src/daemon/store.js';
 import type { Job } from '../../src/schemas/job.js';
@@ -39,6 +40,11 @@ describe('Claude invocation', () => {
   });
 });
 
+it('resolves Claude transcripts with slash and dot cwd encoding', () => {
+  expect(resolveTranscriptPath('/root/projects/crontick/.worktrees/claude-engine', 'session-1', '/home/tester'))
+    .toBe('/home/tester/.claude/projects/-root-projects-crontick--worktrees-claude-engine/session-1.jsonl');
+});
+
 describe('Claude stream-json result parsing', () => {
   const adapter = new ClaudeAdapter();
 
@@ -68,6 +74,85 @@ describe('Claude stream-json result parsing', () => {
     expect(adapter.parseResult(0, tail, '')).toEqual({ status: 'success', exitCode: 0 });
     expect(adapter.parseResult(9, tail, '')).toEqual({ status: 'failed', exitCode: 9 });
     expect(adapter.parseResult(null, tail, '')).toEqual({ status: 'failed', error: 'process exited without code' });
+  });
+});
+
+describe('Claude resume safety', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function setup(options: Parameters<typeof fakeClaudeEngineConfig>[0] = {}) {
+    const dir = mkdtempSync(join(tmpdir(), 'crontick-claude-resume-'));
+    dirs.push(dir);
+    const priorHome = process.env['CRONTICK_HOME'];
+    process.env['CRONTICK_HOME'] = dir;
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ defaultEngine: 'test-claude', engines: { 'test-claude': fakeClaudeEngineConfig(options) } }));
+    mkdirSync(join(dir, 'jobs'));
+    const store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
+    store.open();
+    const job: Job = {
+      id: 'resume-job', enabled: true, schedule: { kind: 'cron', cron: '* * * * *' },
+      action: { kind: 'prompt', prompt: 'hello', engine: 'test-claude', args: [], reuseSession: false, sessionId: 'session-1', cwd: dir },
+      overlap: 'skip', retry: { max: 2, backoffSec: 0 },
+    };
+    store.upsertJob(job);
+    const run = store.insertRun(job.id);
+    return { dir, store, job, run, cleanup: () => {
+      store.close();
+      if (priorHome === undefined) delete process.env['CRONTICK_HOME'];
+      else process.env['CRONTICK_HOME'] = priorHome;
+    } };
+  }
+
+  async function seedEligible(fixture: Awaited<ReturnType<typeof setup>>) {
+    const freshJob: Job = { ...fixture.job, action: { ...fixture.job.action, sessionId: undefined } };
+    fixture.store.upsertJob(freshJob);
+    const priorRun = fixture.store.insertRun(freshJob.id);
+    await new Runner(nodeSpawn).run(freshJob, priorRun.id, fixture.store);
+    const sessionId = fixture.store.getRun(priorRun.id)?.sessionId;
+    expect(sessionId).toMatch(uuidPattern);
+    const resumeJob: Job = { ...fixture.job, action: { ...fixture.job.action, sessionId } };
+    fixture.store.upsertJob(resumeJob);
+    return { resumeJob, sessionId };
+  }
+
+  it('fails before spawn when the resume transcript is missing, without retrying', async () => {
+    const fixture = await setup();
+    try {
+      const { resumeJob, sessionId } = await seedEligible(fixture);
+      const spawnSpy = vi.fn((command: string, args: readonly string[], opts: Parameters<typeof nodeSpawn>[2]) => nodeSpawn(command, args, opts));
+      const transcriptExists = vi.fn(() => false);
+      await new Runner(spawnSpy as unknown as typeof nodeSpawn, undefined, undefined, undefined, undefined, transcriptExists).run(resumeJob, fixture.run.id, fixture.store);
+      expect(spawnSpy).not.toHaveBeenCalled();
+      expect(transcriptExists).toHaveBeenCalledWith(resolveTranscriptPath(fixture.dir, sessionId!));
+      expect(transcriptExists).toHaveBeenCalledTimes(1);
+      expect(fixture.store.getRun(fixture.run.id)).toMatchObject({ status: 'failed', error: expect.stringContaining('SESSION_NOT_FOUND') });
+    } finally { fixture.cleanup(); }
+  });
+
+  it('rejects an explicit ID even when its transcript exists if no completed run captured it', async () => {
+    const fixture = await setup();
+    try {
+      const spawnSpy = vi.fn((command: string, args: readonly string[], opts: Parameters<typeof nodeSpawn>[2]) => nodeSpawn(command, args, opts));
+      const transcriptExists = vi.fn(() => true);
+      await new Runner(spawnSpy as unknown as typeof nodeSpawn, undefined, undefined, undefined, undefined, transcriptExists).run(fixture.job, fixture.run.id, fixture.store);
+      expect(spawnSpy).not.toHaveBeenCalled();
+      expect(fixture.store.getRun(fixture.run.id)).toMatchObject({ status: 'failed', error: expect.stringContaining('SESSION_NOT_FOUND') });
+    } finally { fixture.cleanup(); }
+  });
+
+  it('spawns with ignored stdin when the resume transcript exists', async () => {
+    const fixture = await setup();
+    try {
+      const { resumeJob } = await seedEligible(fixture);
+      const spawnSpy = vi.fn((command: string, args: readonly string[], opts: Parameters<typeof nodeSpawn>[2]) => nodeSpawn(command, args, opts));
+      await new Runner(spawnSpy as unknown as typeof nodeSpawn, undefined, undefined, undefined, undefined, () => true).run(resumeJob, fixture.run.id, fixture.store);
+      expect(spawnSpy).toHaveBeenCalledOnce();
+      expect(spawnSpy.mock.calls[0]?.[2]).toMatchObject({ stdio: ['ignore', 'pipe', 'pipe'] });
+      expect(fixture.store.getRun(fixture.run.id)?.status).toBe('success');
+    } finally { fixture.cleanup(); }
   });
 });
 
@@ -120,7 +205,7 @@ describe('Claude run session assignment', () => {
         resumeArgs = args;
         return nodeSpawn(command, args, opts);
       }) as typeof nodeSpawn;
-      await new Runner(resumeSpawnFn).run(resumeJob, resumeRun.id, store);
+      await new Runner(resumeSpawnFn, undefined, undefined, undefined, undefined, () => true).run(resumeJob, resumeRun.id, store);
       expect(resumeArgs.slice(fake.args.length)).toEqual([
         '-p', 'hello', '--output-format', 'stream-json', '--verbose',
         '--resume', persisted?.sessionId, '--settings', '{}',
@@ -157,6 +242,51 @@ describe('Claude run session assignment', () => {
       store.close();
       if (priorHome === undefined) delete process.env['CRONTICK_HOME'];
       else process.env['CRONTICK_HOME'] = priorHome;
+    }
+  });
+
+  it('captures a reusable session only after a result line, including a failed result', async () => {
+    for (const [suffix, fakeOptions, expectCapture] of [
+      ['missing-result', { omitResult: true }, false],
+      ['failed-result', { isError: true }, true],
+    ] as const) {
+      const dir = mkdtempSync(join(tmpdir(), `crontick-claude-${suffix}-`));
+      dirs.push(dir);
+      const priorHome = process.env['CRONTICK_HOME'];
+      process.env['CRONTICK_HOME'] = dir;
+      writeFileSync(join(dir, 'config.json'), JSON.stringify({ defaultEngine: 'test-claude', engines: { 'test-claude': fakeClaudeEngineConfig(fakeOptions) } }));
+      mkdirSync(join(dir, 'jobs'));
+      const store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
+      store.open();
+      try {
+        const job: Job = {
+          id: suffix, enabled: true, schedule: { kind: 'cron', cron: '* * * * *' },
+          action: { kind: 'prompt', prompt: 'hello', engine: 'test-claude', args: [], reuseSession: true },
+          overlap: 'skip', retry: { max: 0, backoffSec: 0 },
+        };
+        store.upsertJob(job);
+        const run = store.insertRun(job.id);
+        await new Runner(nodeSpawn).run(job, run.id, store);
+        expect(store.getJob(job.id)?.action.sessionId !== undefined).toBe(expectCapture);
+        expect(store.getRun(run.id)?.sessionId).toMatch(uuidPattern);
+        const priorSessionId = store.getRun(run.id)!.sessionId!;
+        const resumeJob: Job = expectCapture
+          ? store.getJob(job.id)!
+          : { ...job, action: { ...job.action, sessionId: priorSessionId, reuseSession: false } };
+        if (!expectCapture) store.upsertJob(resumeJob);
+        const resumeRun = store.insertRun(job.id);
+        const spawnSpy = vi.fn((command: string, args: readonly string[], opts: Parameters<typeof nodeSpawn>[2]) => nodeSpawn(command, args, opts));
+        await new Runner(spawnSpy as unknown as typeof nodeSpawn, undefined, undefined, undefined, undefined, () => true)
+          .run(resumeJob, resumeRun.id, store);
+        expect(spawnSpy).toHaveBeenCalledTimes(expectCapture ? 1 : 0);
+        if (!expectCapture) {
+          expect(store.getRun(resumeRun.id)).toMatchObject({ status: 'failed', error: expect.stringContaining('SESSION_NOT_FOUND') });
+        }
+      } finally {
+        store.close();
+        if (priorHome === undefined) delete process.env['CRONTICK_HOME'];
+        else process.env['CRONTICK_HOME'] = priorHome;
+      }
     }
   });
 });

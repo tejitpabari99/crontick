@@ -133,7 +133,7 @@ Priority (highest wins):
 4. `process.env` (inherited)
 
 `spawn` options: `{ cwd: action.cwd ?? process.cwd(), shell: false, signal, detached:
-!isWindowsPowerShellHost, windowsHide: true }`. The runner reaches this point only after the
+!isWindowsPowerShellHost, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }`. The runner reaches this point only after the
 shared `action.cwd` preflight above succeeds; otherwise the run finalizes `failed` before any
 spawn attempt occurs. `detached` is always set except for the one
 `pwsh`/`powershell.exe`-on-Windows exception — see

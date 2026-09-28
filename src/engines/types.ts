@@ -35,4 +35,22 @@ export abstract class EngineAdapter {
   abstract buildInvocation(prompt: string, opts: EngineOptions): EngineInvocation;
   abstract parseResult(exitCode: number | null, stdout: string, stderr: string): EngineResult;
   abstract resolveSessionId(opts: EngineOptions, result: EngineResult): string | undefined;
+
+  /** Raw engines retain their original success-only session capture rule. */
+  canCaptureSession(result: EngineResult): boolean {
+    return result.status === 'success';
+  }
+
+  /** Only adapters with transcript-backed resume return a path to preflight. */
+  resumeTranscriptPath(cwd: string, sessionId: string): string | undefined {
+    void cwd;
+    void sessionId;
+    return undefined;
+  }
+
+  /** A completed result whose session may become an eligible resume target. */
+  resumableSessionId(result: EngineResult): string | undefined {
+    void result;
+    return undefined;
+  }
 }

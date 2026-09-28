@@ -101,10 +101,12 @@ Schema is `.strict()` — no extra fields allowed. Executed with `shell: false`.
 | `prompt` | `string` | yes | — | Min length 1 | Prompt text sent to the engine |
 | `engine` | `string` | no | config `defaultEngine` | Regex: `^[A-Za-z0-9_.-]+$` | Engine name from config |
 | `args` | `string[]` | no | `[]` | — | Extra arguments passed to the engine |
-| `sessionId` | `string` | no | — | Min length 1 | Fixed session ID to reuse across runs |
-| `reuseSession` | `boolean` | no | `false` | — | Capture first successful session ID and reuse it |
+| `sessionId` | `string` | no | — | Min length 1 | Fixed session ID to reuse across runs; Claude requires its transcript file to exist before resuming |
+| `reuseSession` | `boolean` | no | `false` | — | Capture a reusable session ID (Claude requires a completed result line) |
 
 Schema is `.strict()` — no extra fields allowed. Executed with `shell: false`. Subject to `promptRuntimeValidationMessage` refinement (Windows cmd-line length check, reserved arg detection).
+
+For a Claude engine, `sessionId` must also match a completed prior run for the same job whose Claude result was parsed. A missing eligible run or transcript fails with `SESSION_NOT_FOUND` before the CLI starts. The transcript path is `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`, where every `/` and `.` in the absolute working directory becomes `-`. Prompt jobs run with stdin ignored.
 
 ---
 

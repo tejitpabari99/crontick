@@ -40,8 +40,8 @@ reuse enables multi-turn conversations across runs.
 - **R-007-7**: The `args` field MUST NOT contain reserved prompt args: `-p`, `--prompt`, `--session-id`, `-r`, `--resume`, `--continue`, `--connect`, or their `=`-prefixed variants.
 - **R-007-8**: Validation MUST reject args containing reserved flags with a descriptive error.
 - **R-007-9**: On Windows, the total estimated command-line length (prompt + engine args + session flag) MUST NOT exceed 30,000 characters. Validation MUST reject with an actionable message if exceeded.
-- **R-007-10**: When `reuseSession=true` and no `sessionId` is set, the runner MUST capture the session ID from engine stdout/stderr output after a successful run.
-- **R-007-11**: Session ID extraction MUST use the regex patterns in `extractSessionId()` against the last 128KB of combined output. The patterns MUST match the Copilot CLI's real stats-footer resume hint form `--resume=<id>` (verified against Copilot CLI v1.0.78-2, which emits the session id ONLY as `Resume     copilot --resume=<uuid>` on stderr), as well as `--session-id=<id>`/`--session-id <id>` and generic `session id: <id>` forms, tolerating crontick's `[stderr] ` prefix and surrounding stats lines.
+- **R-007-10**: When `reuseSession=true` and no `sessionId` is set, the runner MUST capture a reusable session ID. Raw engines capture it after a successful run; Claude captures it only from a complete result line, including a failed result.
+- **R-007-11**: Raw-engine session ID extraction MUST use the regex patterns in `extractSessionId()` against the last 128KB of combined output. The patterns MUST match `--session-id=<id>`/`--session-id <id>` and generic `session id: <id>` forms, tolerating crontick's `[stderr] ` prefix and surrounding stats lines.
 - **R-007-12**: If session capture succeeds, the job definition MUST be updated: `sessionId` set to the captured value and `reuseSession` set to `false`.
 - **R-007-13**: If `reuseSession=true` but session ID extraction fails (output does not contain a session ID), the run MUST be marked `failed` with error `SESSION_ID_NOT_FOUND`.
 - **R-007-14**: If an explicit `sessionId` is already set and `reuseSession=true`, a notice MUST be logged to stderr but session capture MUST NOT occur.
@@ -54,6 +54,7 @@ reuse enables multi-turn conversations across runs.
 - **R-007-20**: `addEngine` MUST reject if the engine name already exists; `updateEngine` MUST reject if it does not exist.
 - **R-007-21**: Removing the `defaultEngine` MUST be rejected with `CONFIG_VALIDATION_ERROR`.
 - **R-007-24**: An engine config MAY set `type` to `raw` or `claude`; when omitted, it MUST parse to `raw` so existing custom-engine configs remain valid.
+- **R-007-25**: A Claude session ID MUST be captured onto a reusable job only after a complete `stream-json` result line is parsed (including a failed result). Before a Claude run uses `--resume`, the runner MUST confirm both that an earlier success/failed run for this job parsed a complete result with that ID and that the corresponding `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl` file exists. An ineligible or missing session MUST fail the run with `SESSION_NOT_FOUND` before spawning, without retrying. Prompt children MUST have stdin ignored.
 
 ### Non-functional requirements
 
@@ -97,7 +98,8 @@ reuse enables multi-turn conversations across runs.
 - Session ID not found in output: Run marked failed with `SESSION_ID_NOT_FOUND`.
 - Session capture race (job modified between run start and capture): `tryCapturePromptSession` returns false; no mutation.
 - Engine produces no output: Session capture fails if reuseSession=true.
-- Engine exits non-zero: No session capture attempted; run is `failed`.
+- Raw engine exits non-zero: No session capture attempted; run is `failed`. Claude may capture a session from a complete failed result.
+- Claude resume transcript missing, or ID without an eligible completed prior run for the job: Run fails with `SESSION_NOT_FOUND` before any child is started. The cwd portion of the transcript directory replaces each `/` and `.` in the absolute cwd with `-`.
 
 ## Acceptance criteria
 

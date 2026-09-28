@@ -74,6 +74,7 @@ PRAGMA foreign_keys=ON;
 | `pid` | INTEGER | nullable (set once the child process is spawned; absent for `missed` runs, which never spawn a process) |
 | `output_truncated` | INTEGER | NOT NULL DEFAULT 0 (0/1; set once captured output hits `retention.maxOutputBytesPerRun`) |
 | `session_id` | TEXT | nullable (prompt-engine session id captured for this run, or explicitly provided; absent for non-prompt runs) |
+| `claude_result_completed` | INTEGER | NOT NULL DEFAULT 0; internal resume eligibility evidence set only after parsing a complete Claude result |
 | `command` | TEXT | nullable (redacted resolved command line actually spawned for this run; absent for `queued`/`missed` runs) |
 
 #### `run_logs`

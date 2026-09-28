@@ -28,7 +28,7 @@ reconciliation behavior.
 
 ## Process spawn
 
-All action kinds spawn a child process with `shell: false` using Node.js `child_process.spawn`. The spawn options are:
+Prompt jobs spawn a child process with `shell: false` using Node.js `child_process.spawn`. The spawn options are:
 
 ```typescript
 {
@@ -38,6 +38,7 @@ All action kinds spawn a child process with `shell: false` using Node.js `child_
   shell: false,
   detached: !isWindowsPowerShellHost,
   windowsHide: true,
+  stdio: ['ignore', 'pipe', 'pipe'],
 }
 ```
 
@@ -179,7 +180,8 @@ Beyond the spawn mechanics, prompt jobs have additional behavior:
 
 - **Engine resolution**: the configured engine is looked up from `config.json` using `action.engine` (or `defaultEngine` if omitted). The resulting command line follows the pattern: `<engine.command> <engine.args...> <prompt> <action.args...> [--session-id=<id>]`.
 - **Session precedence**: explicit `sessionId` is used every run. If both `sessionId` and `reuseSession` are supplied, `sessionId` wins and crontick stores `reuseSession: false` with a notice.
-- **Session capture**: when `reuseSession` is true and no `sessionId` is set, the Runner monitors the engine's combined stdout/stderr output (up to 128 KB tail) and extracts a session ID via regex after a successful exit. The extractor matches the Copilot CLI's real stats-footer resume hint (`--resume=<uuid>`) as well as `--session-id=<id>`/`--session-id <id>` and generic `session id: <id>` forms. The captured ID is persisted back into the job definition so subsequent runs reuse the same session, **and** onto the run record (`run.sessionId`, surfaced by `runs get` and the dashboard). An explicitly provided `sessionId` is also recorded on the run record.
+- **Session capture**: when `reuseSession` is true and no `sessionId` is set, the Runner monitors the engine's combined stdout/stderr output (up to 128 KB tail). Raw engines extract a session ID via regex after a successful exit. Claude uses the session ID in a complete `stream-json` result line, including a failed result. The captured ID is persisted back into the job definition so subsequent runs reuse the same session, **and** onto the run record (`run.sessionId`, surfaced by `runs get` and the dashboard). An explicitly provided `sessionId` is also recorded on the run record.
+- **Claude resume safety**: Claude sessions become reusable only after a complete result line is parsed, whether the result succeeded or failed. Before a run invokes `--resume`, crontick checks that an earlier run for the same job completed with that parsed session ID and that its transcript exists under `~/.claude/projects/`. An ineligible ID or missing file fails with `SESSION_NOT_FOUND` before any process starts. Prompt child processes have stdin ignored.
 - **Engine resolution failure**: if the engine binary is not on PATH, the run fails with a descriptive error naming the engine and suggesting config changes.
 - **promptFile sugar**: CLI and programmatic input may use `promptFile` as creation sugar. It must point to a UTF-8 `.txt` file; the file is read before persistence and exports contain only `prompt`.
 

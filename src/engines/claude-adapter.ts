@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { EngineAdapter, type EngineInvocation, type EngineOptions, type EngineResult } from './types.js';
+import { resolveTranscriptPath } from './claude-transcript.js';
 
 /** Claude Code's non-interactive stream-json invocation. */
 export class ClaudeAdapter extends EngineAdapter {
@@ -68,7 +69,20 @@ export class ClaudeAdapter extends EngineAdapter {
     return fallback;
   }
 
-  resolveSessionId(opts: EngineOptions, result: EngineResult): string | undefined {
-    return result.sessionId ?? opts.sessionId;
+  resolveSessionId(_opts: EngineOptions, result: EngineResult): string | undefined {
+    return result.sessionId;
+  }
+
+  canCaptureSession(result: EngineResult): boolean {
+    // parseResult only supplies an id after finding a complete result line.
+    return this.resumableSessionId(result) !== undefined;
+  }
+
+  resumeTranscriptPath(cwd: string, sessionId: string): string {
+    return resolveTranscriptPath(cwd, sessionId);
+  }
+
+  resumableSessionId(result: EngineResult): string | undefined {
+    return result.sessionId;
   }
 }

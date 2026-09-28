@@ -151,6 +151,15 @@ function validateActionCwd(action: Job['action']): void {
   }
 }
 
+function transcriptFileExists(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch (err) {
+    if (['ENOENT', 'ENOTDIR'].includes((err as NodeJS.ErrnoException).code ?? '')) return false;
+    throw err;
+  }
+}
+
 // ── Per-run log writer ──────────────────────────────────────────────────────
 
 /**
@@ -210,6 +219,8 @@ export class Runner {
     private readonly adoptedPollMsOverride?: number,
     /** Injectable per-job log-file factory (defaults to the real fs-backed sink). */
     jobLogFiles?: JobLogFileFactory,
+    /** Injectable file check so a resume miss can be tested without touching ~/.claude. */
+    private readonly transcriptExists: (path: string) => boolean = transcriptFileExists,
   ) {
     this.logger = logger.child('runner');
     this.jobLogFiles = jobLogFiles ?? createJobLogFileFactory(this.logger);
@@ -386,6 +397,7 @@ export class Runner {
             status: lastResult.status,
             error: lastResult.error,
           });
+          if (err instanceof CrontickError && err.code === 'SESSION_NOT_FOUND') break;
         }
         this.logger.debug('Run attempt completed', { jobId: job.id, runId, attempt, status: lastResult.status, exitCode: lastResult.exitCode });
         this.appendDiagnosticLog(log, 'attempt completed', { attempt, status: lastResult.status, exitCode: lastResult.exitCode });
@@ -449,6 +461,22 @@ export class Runner {
     this.logger.debug('Resolved prompt run command', { jobId: job.id, runId, engine: promptEngineBinary, command: cmd, args, envKeys: Object.keys(promptEnv) });
     this.appendDiagnosticLog(log, 'resolved prompt command', { engine: promptEngineBinary, command: cmd, args, envKeys: Object.keys(promptEnv) });
 
+    if (sessionId) {
+      const transcriptPath = adapter.resumeTranscriptPath(action.cwd ?? process.cwd(), sessionId);
+      if (transcriptPath && !store.hasCompletedClaudeSession(job.id, sessionId)) {
+        throw new CrontickError(
+          'SESSION_NOT_FOUND',
+          `SESSION_NOT_FOUND: session "${sessionId}" has no completed Claude run for this job. Start a new session before retrying.`,
+        );
+      }
+      if (transcriptPath && !this.transcriptExists(transcriptPath)) {
+        throw new CrontickError(
+          'SESSION_NOT_FOUND',
+          `SESSION_NOT_FOUND: session transcript is missing: "${transcriptPath}". Restore it or start a new session before retrying.`,
+        );
+      }
+    }
+
     log.crontick('executing', { command: cmd, args });
 
     // Persist the redacted resolved command onto the run record so
@@ -493,6 +521,7 @@ export class Runner {
       shell: false,
       detached: !isWindowsPowerShellHost,
       windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
     };
     if (isWindowsPowerShellHost) {
       this.appendDiagnosticLog(log, 'detached disabled for pwsh/powershell.exe on Windows (output-capture trade-off, see runner.ts)');
@@ -691,12 +720,20 @@ export class Runner {
           finish({ status: 'canceled', error: `killed by signal ${sig}` });
         } else {
           const parsed = adapter.parseResult(code, readTranscriptTail(), '');
+          const resumableSessionId = adapter.resumableSessionId(parsed);
+          if (resumableSessionId) {
+            try {
+              store.markCompletedClaudeSession(runId, resumableSessionId);
+            } catch (err) {
+              this.logger.error('Failed to mark Claude session as completed', { jobId: job.id, runId, error: String(err) });
+            }
+          }
           const result: RunResult = {
             status: parsed.status,
             exitCode: parsed.exitCode,
             error: parsed.error,
           };
-          if (result.status === 'success' && capturePromptSession) {
+          if (capturePromptSession && adapter.canCaptureSession(parsed)) {
             const resolvedSessionId = adapter.resolveSessionId(engineOptions, parsed);
             if (!resolvedSessionId) {
               this.logger.debug('Session id capture failed', { jobId: job.id, runId });
