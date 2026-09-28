@@ -20,6 +20,7 @@ export const EngineConfigSchema = z.object({
   command: z.string().min(1),
   args: z.array(z.string()).default([]),
   env: z.record(z.string(), z.string()).default({}),
+  type: z.enum(['claude', 'raw']).default('raw'),
 }).strict();
 
 /**
@@ -71,7 +72,7 @@ export const LoggingConfigSchema = z.object({
 export const ConfigSchema = z.object({
   defaultEngine: EngineNameSchema.default('copilot'),
   engines: z.record(EngineNameSchema, EngineConfigSchema).default({
-    copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {} },
+    copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {}, type: 'raw' },
   }),
   retention: RetentionConfigSchema.default({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 }),
   logging: LoggingConfigSchema.default({ fileEnabled: true }),
@@ -117,6 +118,7 @@ export const PersistedEngineConfigSchema = z.object({
   command: z.string().min(1),
   args: z.array(z.string()).optional(),
   env: z.record(z.string(), z.string()).optional(),
+  type: z.enum(['claude', 'raw']).optional(),
 }).strict();
 
 export const PersistedRetentionConfigSchema = z.object({
@@ -138,4 +140,3 @@ export const PersistedConfigSchema = z.object({
 }).strict();
 
 export type PersistedConfig = z.infer<typeof PersistedConfigSchema>;
-

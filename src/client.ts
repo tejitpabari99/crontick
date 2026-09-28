@@ -493,7 +493,7 @@ export class CrontickClient {
     return listEngines({ env: this.effectiveEnv(), logger: this.logger.child('config') });
   }
 
-  addEngine(name: string, engine: EngineConfig): CrontickConfig {
+  addEngine(name: string, engine: Omit<EngineConfig, 'type'> & { type?: EngineConfig['type'] }): CrontickConfig {
     return addEngine(name, engine, { env: this.effectiveEnv(), logger: this.logger.child('config') });
   }
 

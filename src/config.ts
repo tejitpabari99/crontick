@@ -58,7 +58,7 @@ export interface PromptRunCommand {
 export const BUILT_IN_CONFIG: CrontickConfig = Object.freeze({
   defaultEngine: 'copilot',
   engines: {
-    copilot: Object.freeze({ command: 'copilot', args: ['--allow-all-tools', '-p'], env: {} }),
+    copilot: Object.freeze({ command: 'copilot', args: ['--allow-all-tools', '-p'], env: {}, type: 'raw' }),
   },
   retention: Object.freeze({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 }),
   logging: Object.freeze({ fileEnabled: true }),

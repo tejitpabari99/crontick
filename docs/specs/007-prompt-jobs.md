@@ -22,7 +22,7 @@ reuse enables multi-turn conversations across runs.
 | Term | Definition |
 |------|-----------|
 | Prompt engine | An external CLI binary (e.g., `copilot`) invoked with the prompt text. |
-| Engine config | `{ command, args, env }` defining how to invoke an engine. |
+| Engine config | `{ command, args, env, type? }` defining how to invoke an engine; omitted `type` resolves to `raw`. |
 | Session ID | An opaque string identifying a conversation session for multi-turn reuse. |
 | Session capture | Extracting a session ID from engine output on first run to persist for future runs. |
 | Reserved args | Prompt/session flags managed by crontick that users MUST NOT pass in `args`. |
@@ -53,6 +53,7 @@ reuse enables multi-turn conversations across runs.
 - **R-007-19**: The built-in `copilot` engine MUST NOT be removable via `removeEngine`.
 - **R-007-20**: `addEngine` MUST reject if the engine name already exists; `updateEngine` MUST reject if it does not exist.
 - **R-007-21**: Removing the `defaultEngine` MUST be rejected with `CONFIG_VALIDATION_ERROR`.
+- **R-007-24**: An engine config MAY set `type` to `raw` or `claude`; when omitted, it MUST parse to `raw` so existing custom-engine configs remain valid.
 
 ### Non-functional requirements
 

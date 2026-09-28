@@ -66,7 +66,7 @@ describe('crontick config core', () => {
 
     expect(loadConfig({ env })).toEqual({
       defaultEngine: 'copilot',
-      engines: { copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {} } },
+      engines: { copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {}, type: 'raw' } },
       retention: { maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 },
       logging: { fileEnabled: true },
     });
@@ -375,11 +375,10 @@ describe('crontick config core', () => {
 
       expect(getConfigValue(undefined, { env })).toEqual({
         defaultEngine: 'copilot',
-        engines: { copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {} } },
+        engines: { copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {}, type: 'raw' } },
         retention: { maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 },
         logging: { fileEnabled: true },
       });
     });
   });
 });
-

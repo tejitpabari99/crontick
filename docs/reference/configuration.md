@@ -60,7 +60,7 @@ The data directory is resolved by (in order):
 {
   "defaultEngine": "copilot",
   "engines": {
-    "copilot": { "command": "copilot", "args": ["--allow-all-tools", "-p"], "env": {} }
+    "copilot": { "command": "copilot", "args": ["--allow-all-tools", "-p"], "env": {}, "type": "raw" }
   },
   "retention": {
     "maxRunsPerJob": 100,
@@ -135,6 +135,7 @@ Every run's logs are stored in SQLite and can be read with `crontick runs logs`.
 | `command` | `string` | yes | — | Min length 1 |
 | `args` | `string[]` | no | `[]` | — |
 | `env` | `Record<string, string>` | no | `{}` | — |
+| `type` | `"raw" \| "claude"` | no | `"raw"` | Selects the engine adapter; omitted custom engines resolve to `raw` |
 
 Schema is `.strict()` — no extra fields allowed.
 

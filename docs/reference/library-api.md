@@ -71,7 +71,7 @@ Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `setConfigValue` | `(path: string, value: unknown): CrontickConfig` | Updated config | `CrontickError` |
 | `removeConfigValue` | `(path: string): CrontickConfig` | Updated config | `CrontickError` |
 | `listEngines` | `(): Record<string, EngineConfig>` | Engines map | `CrontickError` |
-| `addEngine` | `(name: string, engine: EngineConfig): CrontickConfig` | Updated config | `CrontickError` (`CONFIG_ENGINE_EXISTS`) |
+| `addEngine` | `(name: string, engine: Omit<EngineConfig, 'type'> & { type?: EngineConfig['type'] }): CrontickConfig` | Updated config | `CrontickError` (`CONFIG_ENGINE_EXISTS`) |
 | `updateEngine` | `(name: string, engine: Partial<EngineConfig>): CrontickConfig` | Updated config | `CrontickError` (`CONFIG_ENGINE_NOT_FOUND`) |
 | `removeEngine` | `(name: string): CrontickConfig` | Updated config | `CrontickError` (`CONFIG_ENGINE_NOT_FOUND`, `CONFIG_BUILTIN_ENGINE`) |
 | `initConfig` | `(options?: { force?: boolean }): { path: string; config: CrontickConfig; created: boolean }` | Init result | `CrontickError` (`CONFIG_EXISTS`) |
@@ -756,4 +756,3 @@ The full stored `runs.error` value written by `reconcileOrphanRuns()`.
 | `ConfigSchema` | `z.ZodObject` | Config file schema |
 | `EngineConfigSchema` | `z.ZodObject` | Single engine config |
 | `RetentionConfigSchema` | `z.ZodObject` | `{ maxRunsPerJob: number; maxOutputBytesPerRun: number; maxLogFiles: number }`, `.strict()`, defaults `100`/`2_000_000`/`30` |
-
