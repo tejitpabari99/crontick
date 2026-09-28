@@ -28,41 +28,44 @@ crontick jobs new --cron '0 9 * * 1-5' --tz America/New_York --prompt 'Write a m
 
 Expected: job with `schedule.kind: "cron"`, `schedule.tz: "America/New_York"`, and `action.kind: "prompt"`.
 
-### Script job via JSON file
+### Prompt job via JSON file
 
-Create `script-job.json`:
+Create `release-notes-job.json`:
 
 ```json
 {
-  "alias": "script-demo",
-  "schedule": { "kind": "interval", "everySec": 60 },
-  "action": { "kind": "script", "script": "echo \"hello from crontick\"" }
+  "alias": "release-notes",
+  "schedule": { "kind": "interval", "everySec": 3600 },
+  "action": { "kind": "prompt", "prompt": "Draft release notes from recent commits", "engine": "claude" }
 }
 ```
 
 Then run:
 
 ```sh
-crontick jobs new --file script-job.json
+crontick jobs new --file release-notes-job.json
 ```
 
-### Exec job via JSON file
+### Prompt job with session reuse via JSON file
 
-Create `exec-job.json`:
+Create `incident-triage-job.json`:
 
 ```json
 {
-  "alias": "node-hello",
-  "schedule": { "kind": "interval", "everySec": 30 },
-  "action": { "kind": "exec", "command": "node", "args": ["-e", "console.log('hi')"] }
+  "alias": "incident-triage",
+  "schedule": { "kind": "interval", "everySec": 1800 },
+  "action": { "kind": "prompt", "prompt": "Continue triaging the incident queue", "engine": "claude", "reuseSession": true },
+  "overlap": "skip"
 }
 ```
 
 Then run:
 
 ```sh
-crontick jobs new --file exec-job.json
+crontick jobs new --file incident-triage-job.json
 ```
+
+`reuseSession` captures the engine session id after a run so the agent keeps conversational context on the next fire; it requires `overlap: "skip"` (the default).
 
 ### One-shot prompt job
 

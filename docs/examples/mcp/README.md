@@ -134,8 +134,9 @@ Tool call:
       "everySec": 60
     },
     "action": {
-      "kind": "script",
-      "script": "echo \"hello from MCP\""
+      "kind": "prompt",
+      "prompt": "Summarize recent activity",
+      "engine": "claude"
     }
   }
 }
@@ -200,6 +201,32 @@ Response:
   "name": "crontick_job_delete",
   "arguments": {
     "id": "mcp-demo"
+  }
+}
+```
+
+---
+
+## Alternate: prompt job with session reuse
+
+A prompt job can carry an engine session across runs so the agent keeps prior context. This requires `overlap: "skip"` (the default):
+
+```json
+{
+  "name": "crontick_job_create",
+  "arguments": {
+    "alias": "mcp-session-demo",
+    "schedule": {
+      "kind": "interval",
+      "everySec": 3600
+    },
+    "action": {
+      "kind": "prompt",
+      "prompt": "Continue reviewing open PRs",
+      "engine": "claude",
+      "reuseSession": true
+    },
+    "overlap": "skip"
   }
 }
 ```
