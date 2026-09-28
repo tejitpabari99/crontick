@@ -79,7 +79,7 @@ crontick jobs new [engineArgs...]
 | `--prompt-file <path>` | string | — | UTF-8 text file to read into the prompt |
 | `--engine <engine>` | string | config `defaultEngine` | Configured prompt engine name |
 | `--session-id <id>` | string | — | Reuse this prompt engine session every run |
-| `--reuse-session` | boolean | `false` | Capture the first successful run session id and reuse it |
+| `--reuse-session` | boolean | `false` | Capture a reusable session ID; requires `--overlap skip` (the default) |
 | `--file <path>` | string | — | Create the job from a full job-definition JSON file (advanced; supports all action kinds including `script` and `exec`) |
 | `--alias <alias>` | string | auto-generated | Human-friendly, unique, kebab-case job identifier |
 | `--timeout <sec>` | integer | none / unbounded | Per-run timeout in seconds |
@@ -203,7 +203,7 @@ crontick runs list
 | `--job <id>` | string | — | Filter by job GUID or alias |
 | `--limit <n>` | integer | — | Maximum runs to return |
 | `--since <ms>` | integer | — | Only runs since epoch milliseconds |
-| `--status <status>` | string | — | Filter by run status: `queued`\|`running`\|`success`\|`failed`\|`canceled`\|`timeout`\|`missed` |
+| `--status <status>` | string | — | Filter by run status: `queued`\|`running`\|`success`\|`failed`\|`canceled`\|`skipped`\|`timeout`\|`missed` |
 
 ---
 
@@ -261,7 +261,7 @@ crontick stats summary
 ```
 
 Only runs whose parent job still exists are counted.
-The response includes `totalCostUsd` and `totalTurns` summed over the included runs; runs without usage contribute zero.
+The response includes separate `canceled` and `skipped` counts, plus `totalCostUsd` and `totalTurns` summed over the included runs; runs without usage contribute zero.
 
 ### crontick stats job
 
@@ -271,7 +271,7 @@ Show statistics for one job.
 crontick stats job <id>
 ```
 
-The response includes `totalCostUsd` and `totalTurns` summed over that job's recent runs.
+The response includes separate `canceled` and `skipped` counts, plus `totalCostUsd` and `totalTurns` summed over that job's recent runs.
 
 ---
 

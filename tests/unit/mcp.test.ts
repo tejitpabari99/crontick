@@ -162,6 +162,15 @@ describe('MCP server — full contract', () => {
     }
   });
 
+  it('crontick_run_list accepts skipped as a status filter', async () => {
+    const result = await client.listTools();
+    const runList = result.tools.find((tool) => tool.name === 'crontick_run_list');
+    expect(runList?.inputSchema.properties?.status).toMatchObject({ enum: expect.arrayContaining(['skipped']) });
+    const { isError, json } = await callTool(client, 'crontick_run_list', { status: 'skipped' });
+    expect(isError).toBe(false);
+    expect(Array.isArray(json)).toBe(true);
+  });
+
   it('all tools have a non-empty description', async () => {
     const result = await client.listTools();
     for (const tool of result.tools) {

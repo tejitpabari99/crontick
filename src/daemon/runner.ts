@@ -311,10 +311,10 @@ export class Runner {
     if (overlap === 'skip' && isActive) {
       log.crontick('run skipped: overlap=skip, another run is already active', { jobId: job.id });
       await this.finalizeRun(store, runId, {
-        status: 'canceled',
+        status: 'skipped',
         error: 'overlap=skip: another run is already active',
       }, log);
-      this.logger.debug('Canceled run due to overlap=skip', { jobId: job.id, runId });
+      this.logger.debug('Skipped run due to overlap=skip', { jobId: job.id, runId });
       return;
     }
 

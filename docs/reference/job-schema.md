@@ -102,9 +102,11 @@ Schema is `.strict()` — no extra fields allowed. Executed with `shell: false`.
 | `engine` | `string` | no | config `defaultEngine` | Regex: `^[A-Za-z0-9_.-]+$` | Engine name from config |
 | `args` | `string[]` | no | `[]` | — | Extra arguments passed to the engine |
 | `sessionId` | `string` | no | — | Min length 1 | Fixed session ID to reuse across runs; Claude requires its transcript file to exist before resuming |
-| `reuseSession` | `boolean` | no | `false` | — | Capture a reusable session ID (Claude requires a completed result line) |
+| `reuseSession` | `boolean` | no | `false` | Requires `overlap: "skip"` | Capture a reusable session ID (Claude requires a completed result line) |
 
 Schema is `.strict()` — no extra fields allowed. Executed with `shell: false`. Subject to `promptRuntimeValidationMessage` refinement (Windows cmd-line length check, reserved arg detection).
+
+When `reuseSession` is `true`, the job's `overlap` must be `skip`. Omitting `overlap` uses that default. `queue` and `cancel-previous` fail job validation so an in-flight reused session cannot receive another turn or be canceled by an overlapping fire.
 
 For a Claude engine, `sessionId` must also match a completed prior run for the same job whose Claude result was parsed. A missing eligible run or transcript fails with `SESSION_NOT_FOUND` before the CLI starts. The transcript path is `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`, where every `/` and `.` in the absolute working directory becomes `-`. Prompt jobs run with stdin ignored.
 
@@ -243,6 +245,7 @@ Runs stored in SQLite use these status values:
 | `running` | Currently executing |
 | `success` | Completed with exit code 0 |
 | `failed` | Completed with non-zero exit code or error |
-| `canceled` | Canceled by user, overlap policy `cancel-previous`, or a confirmed-dead orphan on daemon restart |
+| `canceled` | Canceled by user, overlap policy `cancel-previous`, or orphan reconciliation on daemon restart (which can include queued runs) |
+| `skipped` | A fire that never ran because another run was already active (`overlap: "skip"`); distinct from an active run terminated by cancellation |
 | `timeout` | Killed due to `timeoutSec` |
 | `missed` | No process ever ran: recorded at daemon startup for a fire that occurred while no daemon was running. See [concepts/daemon-lifecycle.md](../concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down) |

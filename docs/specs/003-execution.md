@@ -22,7 +22,7 @@ preserving observability through captured logs and structured run records.
 | Term | Definition |
 |------|-----------|
 | Run | A single execution attempt of a job, identified by a UUID. |
-| Run status | One of: `queued`, `running`, `success`, `failed`, `canceled`, `timeout`. (A seventh status, `missed`, is inserted directly by daemon startup for a fire that occurred while no daemon was running -- see spec 004 R-004-28. It is never produced by the runner and is out of scope for this spec.) |
+| Run status | One of: `queued`, `running`, `success`, `failed`, `canceled`, `skipped`, `timeout`. `missed` is inserted directly by daemon startup for a fire that occurred while no daemon was running (spec 004 R-004-28). |
 | Overlap policy | `skip`: drop new tick if active; `queue`: serialize; `cancel-previous`: abort active. |
 | Retry | Re-attempt after backoff on failure (not on cancel/timeout). |
 
@@ -32,7 +32,7 @@ preserving observability through captured logs and structured run records.
 
 - **R-003-1**: On tick, the daemon MUST insert a run with status `queued` via `Store.insertRun()` before invoking the runner.
 - **R-003-2**: The runner MUST transition the run to `running` before spawning the child process.
-- **R-003-3**: `overlap=skip`: If a run for the same job is already active, the new run MUST be immediately finalized as `canceled` with the error `"overlap=skip: another run is already active"`.
+- **R-003-3**: `overlap=skip`: If a run for the same job is already active, the new run MUST be immediately finalized as `skipped` with the error `"overlap=skip: another run is already active"`; it MUST NOT start a process or cancel the active run.
 - **R-003-4**: `overlap=cancel-previous`: If a run for the same job is active, the runner MUST abort it (via `AbortController`) before starting the new run.
 - **R-003-5**: `overlap=queue`: Runs MUST be serialized in FIFO order per job; the queue drains sequentially.
 - **R-003-6**: For `script` actions, the runner MUST write the script to a temp file under the managed data root (`<dataDir>/tmp/scripts/`), resolve the shell (`auto` -> pwsh on Windows, bash elsewhere), and spawn the shell with the temp file as argument. When the resolved shell is PowerShell (`pwsh`/`powershell`), the runner MUST invoke a wrapper script (also under `<dataDir>/tmp/scripts/`) that preserves an explicit user `exit N`, promotes PowerShell/native failures to a truthful non-zero exit status, and sets UTF-8 output encoding before the user script runs.
@@ -103,7 +103,7 @@ preserving observability through captured logs and structured run records.
 
 ## Acceptance criteria
 
-- [x] overlap=skip cancels new run when active (test file: `tests/integration.overlap.test.ts`)
+- [x] overlap=skip records the new run as `skipped` when active (test files: `tests/unit/integration.overlap.test.ts`, `tests/unit/runner.test.ts`)
 - [x] overlap=queue serializes runs FIFO (test file: `tests/integration.overlap.test.ts`)
 - [x] overlap=cancel-previous aborts active run (test file: `tests/integration.overlap.test.ts`)
 - [x] Timeout fires and produces status=timeout, distinct from a user/overlap cancellation (test file: `tests/integration.timeout.test.ts`; exact-status assertion in `tests/runner.test.ts`, "exec: timeout cancels long-running job")

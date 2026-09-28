@@ -50,7 +50,7 @@ contains:
 | `run_logs` | Stdout/stderr chunks per run, ordered by insertion |
 | `job_schedule_state` | Per-job "last observed ticking" watermark, used to compute missed fires on restart |
 
-Run statuses: `queued`, `running`, `success`, `failed`, `canceled`, `timeout`, `missed` (a fire
+Run statuses: `queued`, `running`, `success`, `failed`, `canceled`, `skipped`, `timeout`, `missed` (a fire
 the schedule would have produced while the daemon was not running, recorded but never executed --
 see [daemon-lifecycle.md](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down)).
 

@@ -19,7 +19,7 @@ import type { LogSource } from '../log-source.js';
 // fire the daemon was down for. It is never a success or a failure — it is
 // its own outcome — but it IS terminal for retention purposes (see
 // pruneRunsForJob(), which excludes only 'running'/'queued').
-export type RunStatus = 'queued' | 'running' | 'success' | 'failed' | 'canceled' | 'timeout' | 'missed';
+export type RunStatus = 'queued' | 'running' | 'success' | 'failed' | 'canceled' | 'skipped' | 'timeout' | 'missed';
 
 export interface Run {
   id: string;
@@ -44,7 +44,7 @@ export interface Run {
 /** Every RunStatus value, kept as a runtime array so RunImportSchema's z.enum
  *  stays in sync with the RunStatus type union above without hand-duplication
  *  drifting out of date. */
-const RUN_STATUS_VALUES = ['queued', 'running', 'success', 'failed', 'canceled', 'timeout', 'missed'] as const;
+const RUN_STATUS_VALUES = ['queued', 'running', 'success', 'failed', 'canceled', 'skipped', 'timeout', 'missed'] as const;
 
 /**
  * Validates one row of a `runs` import payload (see importRuns()). Mirrors

@@ -13,7 +13,7 @@ After reading this page you will understand how crontick turns a scheduled tick 
 
 Before spawning, the Runner checks the job's `overlap` policy:
 
-- **skip**: if another run for this job is active, the new run is immediately finalized as `canceled`.
+- **skip**: if another run for this job is active, the new run is immediately finalized as `skipped` without starting a process.
 - **cancel-previous**: the active run's `AbortController` is signaled, then the new run proceeds.
 - **queue**: the new run is placed in a per-job FIFO queue; a drain loop executes entries sequentially.
 

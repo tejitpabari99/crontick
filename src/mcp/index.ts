@@ -270,7 +270,7 @@ export function createMcpServer(): McpServer {
         jobId: z.string().describe('Job id (GUID) or alias').optional(),
         limit: z.number().int().positive().optional(),
         since: z.number().int().optional(),
-        status: z.enum(['queued', 'running', 'success', 'failed', 'canceled', 'timeout', 'missed']).optional(),
+        status: z.enum(['queued', 'running', 'success', 'failed', 'canceled', 'skipped', 'timeout', 'missed']).optional(),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },

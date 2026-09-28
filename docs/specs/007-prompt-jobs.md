@@ -41,6 +41,7 @@ reuse enables multi-turn conversations across runs.
 - **R-007-8**: Validation MUST reject args containing reserved flags with a descriptive error.
 - **R-007-9**: On Windows, the total estimated command-line length (prompt + engine args + session flag) MUST NOT exceed 30,000 characters. Validation MUST reject with an actionable message if exceeded.
 - **R-007-10**: When `reuseSession=true` and no `sessionId` is set, the runner MUST capture a reusable session ID. Raw engines capture it after a successful run; Claude captures it only from a complete result line, including a failed result.
+- **R-007-10a**: A prompt job with `reuseSession=true` MUST use `overlap=skip` (including the default). An overlapping fire MUST be recorded `skipped` without canceling the active turn; `queue` and `cancel-previous` MUST fail job validation.
 - **R-007-11**: Raw-engine session ID extraction MUST use the regex patterns in `extractSessionId()` against the last 128KB of combined output. The patterns MUST match `--session-id=<id>`/`--session-id <id>` and generic `session id: <id>` forms, tolerating crontick's `[stderr] ` prefix and surrounding stats lines.
 - **R-007-12**: If session capture succeeds, the job definition MUST be updated: `sessionId` set to the captured value and `reuseSession` set to `false`.
 - **R-007-13**: If `reuseSession=true` but session ID extraction fails (output does not contain a session ID), the run MUST be marked `failed` with error `SESSION_ID_NOT_FOUND`.

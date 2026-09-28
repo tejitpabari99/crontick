@@ -117,7 +117,7 @@ describe('core dashboard data model', () => {
   // ones whose durationMs is 0 — up to 500 missed rows could drag the
   // reported average toward zero. It must instead average only over runs
   // that actually executed to completion.
-  it('excludes missed/queued/running/canceled runs from avgDurationMs (Minor 5)', () => {
+  it('excludes missed/queued/running/canceled/skipped runs from avgDurationMs (Minor 5)', () => {
     dir = makeScratchDir('avg-duration');
     store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
     scheduler = new Scheduler();
@@ -151,12 +151,15 @@ describe('core dashboard data model', () => {
     store.updateRun(running.id, { status: 'running' });
     const canceled = store.insertRun(job.id, Date.now() - 1000);
     store.updateRun(canceled.id, { status: 'canceled', durationMs: 0 });
+    const skipped = store.insertRun(job.id, Date.now() - 1000);
+    store.updateRun(skipped.id, { status: 'skipped', durationMs: 0 });
 
     const data = buildDashboardData({ store, scheduler, startedAt: new Date(Date.now() - 5000), port: 12345, pid: 6789 }, { runsLimit: 100 });
 
     // (50 + 150) / 2 = 100 — not dragged toward 0 by the 23 non-executed rows.
     expect(data.stats.avgDurationMs).toBe(100);
-    expect(data.stats.totalRuns).toBe(25);
+    expect(data.stats.totalRuns).toBe(26);
+    expect(data.stats).toMatchObject({ canceled: 1, skipped: 1 });
   });
 });
 

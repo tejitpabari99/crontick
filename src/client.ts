@@ -111,6 +111,8 @@ export interface StatsSummary {
   totalRuns: number;
   succeeded: number;
   failed: number;
+  canceled: number;
+  skipped: number;
   avgDurationMs: number | null;
   totalCostUsd: number;
   totalTurns: number;
@@ -142,6 +144,8 @@ export interface JobStats {
   totalRuns: number;
   succeeded: number;
   failed: number;
+  canceled: number;
+  skipped: number;
   lastStatus: string | null;
   lastRunAt: number | null;
   totalCostUsd: number;

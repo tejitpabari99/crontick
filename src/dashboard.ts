@@ -43,6 +43,8 @@ export interface DashboardStats {
   totalRuns: number;
   succeeded: number;
   failed: number;
+  canceled: number;
+  skipped: number;
   avgDurationMs: number | null;
   totalCostUsd: number;
   totalTurns: number;
@@ -179,6 +181,8 @@ export function buildDashboardStats(jobs: Job[], runs: Run[]): DashboardStats {
     totalRuns: runs.length,
     succeeded,
     failed,
+    canceled: runs.filter((run) => run.status === 'canceled').length,
+    skipped: runs.filter((run) => run.status === 'skipped').length,
     totalCostUsd: runs.reduce((sum, run) => sum + (run.costUsd ?? 0), 0),
     totalTurns: runs.reduce((sum, run) => sum + (run.turns ?? 0), 0),
     avgDurationMs: executedRuns.length > 0

@@ -93,6 +93,8 @@ Create and schedule a new job.
 
 **Result:** The created `Job` object, with secret-like `action.env` values redacted.
 
+If `action.reuseSession` is `true`, `overlap` must be `skip` (its default). Other overlap values return `VALIDATION_ERROR`.
+
 ---
 
 ### crontick_job_list
@@ -137,6 +139,8 @@ Update an existing job by GUID or alias. The patch is merged with the existing d
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Updated `Job` object.
+
+The merged job must still use `overlap: "skip"` when `action.reuseSession` is `true`; incompatible updates return `VALIDATION_ERROR`.
 
 ---
 
@@ -230,7 +234,7 @@ List recent runs, optionally filtered by job and/or status.
 | `jobId` | `string` | no | — | Job GUID or alias |
 | `limit` | `integer` (positive) | no | — | Maximum runs to return |
 | `since` | `integer` | no | — | Only runs since epoch milliseconds |
-| `status` | `enum` | no | — | `queued`, `running`, `success`, `failed`, `canceled`, `timeout`, or `missed` |
+| `status` | `enum` | no | — | `queued`, `running`, `success`, `failed`, `canceled`, `skipped`, `timeout`, or `missed` |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Array of run objects.
@@ -273,7 +277,7 @@ Get aggregate summary of all jobs.
 |-----------|------|----------|---------|-------------|
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ totalJobs, enabledJobs, totalRuns, succeeded, failed, avgDurationMs, totalCostUsd, totalTurns }`. Cost and turns sum the included runs; missing usage contributes zero.
+**Result:** `{ totalJobs, enabledJobs, totalRuns, succeeded, failed, canceled, skipped, avgDurationMs, totalCostUsd, totalTurns }`. `skipped` counts fires that never ran due to overlap; `canceled` counts terminated runs. Cost and turns sum the included runs; missing usage contributes zero.
 
 ---
 
@@ -286,7 +290,7 @@ Get run statistics for a specific job.
 | `id` | `string` | yes | — | Job GUID or alias |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ jobId, totalRuns, succeeded, failed, lastStatus, lastRunAt, totalCostUsd, totalTurns }`.
+**Result:** `{ jobId, totalRuns, succeeded, failed, canceled, skipped, lastStatus, lastRunAt, totalCostUsd, totalTurns }`.
 
 ---
 

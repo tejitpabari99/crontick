@@ -59,7 +59,7 @@ When the scheduler emits a tick but the job's previous run has not finished:
 
 | `overlap` | Behavior |
 |-----------|----------|
-| `skip` | New run is immediately finalized as `canceled` with error `overlap=skip: another run is already active` |
+| `skip` | New run is immediately finalized as `skipped` with error `overlap=skip: another run is already active`; no process starts |
 | `queue` | New run is placed in a per-job FIFO queue and executed after the active run completes |
 | `cancel-previous` | The active run's abort controller is triggered, and the new run starts |
 

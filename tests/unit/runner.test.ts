@@ -8,7 +8,7 @@ import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { Runner, DEFAULT_MAX_OUTPUT_BYTES_PER_RUN, truncationMarker, ADOPTED_RUN_EXITED_MESSAGE, truncateToUtf8Boundary } from '../../src/daemon/runner.js';
 import { isProcessAlive } from '../../src/process-liveness.js';
-import { Store } from '../../src/daemon/store.js';
+import { Store, RunImportSchema } from '../../src/daemon/store.js';
 import type { Job } from '../../src/schemas/job.js';
 import { JobSchema } from '../../src/schemas/job.js';
 import { FAKE_ENGINE_CONFIG, FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
@@ -226,7 +226,7 @@ describe('Runner', () => {
 
   // ── Overlap ──────────────────────────────────────────────────────────────────
 
-  it('overlap=skip: second run is canceled when first is active', async () => {
+  it('overlap=skip: second run is skipped when first is active', async () => {
     const job = execJob(
       'overlap-skip',
       node,
@@ -243,7 +243,10 @@ describe('Runner', () => {
     await new Promise((r) => setTimeout(r, 50));
     await runner.run(job, run2.id, store);
 
-    expect(store.getRun(run2.id)?.status).toBe('canceled');
+    expect(store.getRun(run2.id)).toMatchObject({ status: 'skipped', error: 'overlap=skip: another run is already active' });
+    expect(store.getRun(run2.id)?.pid).toBeUndefined();
+    expect(RunImportSchema.safeParse(store.getRun(run2.id)).success).toBe(true);
+    expect(store.listRuns({ jobId: job.id, status: 'skipped' }).map((run) => run.id)).toContain(run2.id);
 
     // Cancel first run to clean up
     runner.cancelRun(run1.id);
@@ -863,7 +866,7 @@ describe('Runner', () => {
       const skippedRun = store.insertRun(jobId);
       await runner.run(job, skippedRun.id, store);
       expect(store.getRun(skippedRun.id)).toMatchObject({
-        status: 'canceled',
+        status: 'skipped',
         error: expect.stringContaining('overlap=skip'),
       });
 

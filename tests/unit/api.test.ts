@@ -338,7 +338,7 @@ describe('Daemon HTTP API', () => {
     expect(imported.status).toBe(200);
     expect((imported.data as { action: unknown }).action).toMatchObject({
       kind: 'prompt',
-      engine: 'copilot',
+      engine: 'claude',
     });
   });
 

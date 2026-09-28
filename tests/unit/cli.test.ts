@@ -295,7 +295,7 @@ describe('CLI e2e with daemon', () => {
   it('jobs new creates prompt jobs with aliases, defaults, prompt files, passthrough args, and session notices', () => {
     let r = cli(['jobs', 'new', '--alias', 'prompt-cli-job', '--cron', '0 9 * * *', '--prompt', 'Summarize'], env());
     expect(r.status, r.stderr).toBe(0);
-    expect(parseCliObject(r.stdout).action).toMatchObject({ kind: 'prompt', prompt: 'Summarize', engine: 'copilot', args: [], reuseSession: false });
+    expect(parseCliObject(r.stdout).action).toMatchObject({ kind: 'prompt', prompt: 'Summarize', engine: 'claude', args: [], reuseSession: false });
 
     r = cli(['jobs', 'new', '--alias', 'prompt-leading-dash-cli-job', '--cron', '0 9 * * *', '--prompt=- summarize'], env());
     expect(r.status, r.stderr).toBe(0);
@@ -312,6 +312,39 @@ describe('CLI e2e with daemon', () => {
     expect(r.stderr).toContain('reuseSession was ignored');
     expect(parseCliObject(r.stdout).action).toMatchObject({ sessionId: 'sess-12345678', reuseSession: false });
   });
+
+  it('requires overlap skip for reuse-session and reports overlapping fires as skipped', () => {
+    const base = ['jobs', 'new', '--alias', 'cli-skipped-run-job', '--cron', '0 0 * * *', '--prompt', 'setTimeout(() => process.exit(0), 10000)', '--engine', FAKE_ENGINE_NAME, '--reuse-session'];
+    for (const policy of ['queue', 'cancel-previous']) {
+      const rejected = cli([...base, '--overlap', policy], env());
+      expectCleanError(rejected, 'VALIDATION_ERROR');
+    }
+    const created = cli(base, env());
+    expect(created.status, created.stderr).toBe(0);
+    expect(parseCliObject(created.stdout)).toMatchObject({ overlap: 'skip', action: expect.objectContaining({ reuseSession: true }) });
+    const invalidUpdate = cli(['jobs', 'update', 'cli-skipped-run-job', '--overlap', 'queue'], env());
+    expectCleanError(invalidUpdate, 'VALIDATION_ERROR');
+    expect(parseCliObject(cli(['jobs', 'get', 'cli-skipped-run-job'], env()).stdout).overlap).toBe('skip');
+
+    const first = cli(['jobs', 'run-now', 'cli-skipped-run-job'], env());
+    expect(first.status, first.stderr).toBe(0);
+    const firstId = parseCliObject(first.stdout).runId;
+    expect(typeof firstId).toBe('string');
+    const second = cli(['jobs', 'run-now', 'cli-skipped-run-job'], env());
+    expect(second.status, second.stderr).toBe(0);
+    const secondId = parseCliObject(second.stdout).runId;
+    const skipped = cli(['runs', 'list', '--job', 'cli-skipped-run-job', '--status', 'skipped'], env());
+    expect(skipped.status, skipped.stderr).toBe(0);
+    expect(parseCliTable(skipped.stdout)).toEqual(expect.arrayContaining([expect.objectContaining({ id: secondId, status: 'skipped' })]));
+    const summary = parseCliObject(cli(['stats', 'summary'], env()).stdout);
+    const jobStats = parseCliObject(cli(['stats', 'job', 'cli-skipped-run-job'], env()).stdout);
+    expect(summary).toMatchObject({ skipped: expect.any(Number), canceled: expect.any(Number) });
+    expect(jobStats).toMatchObject({ skipped: 1, canceled: expect.any(Number) });
+    expect(Number(summary.skipped)).toBeGreaterThanOrEqual(1);
+
+    const cancel = cli(['runs', 'cancel', String(firstId)], env());
+    expect(cancel.status, cancel.stderr).toBe(0);
+  }, 30_000);
 
   it('jobs new reports validation errors for missing action, raw prompt/session collisions, oversize prompt, and --file conflicts', () => {
     const missing = cli(['jobs', 'new', '--alias', 'missing-action-job', '--cron', '0 0 * * *'], env());

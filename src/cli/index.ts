@@ -420,7 +420,7 @@ jobs.command('run-now <id>').description('Trigger an immediate run of a job (id 
 });
 
 // ── runs ─────────────────────────────────────────────────────────────────────
-const RUN_STATUSES = ['queued', 'running', 'success', 'failed', 'canceled', 'timeout', 'missed'] as const;
+const RUN_STATUSES = ['queued', 'running', 'success', 'failed', 'canceled', 'skipped', 'timeout', 'missed'] as const;
 
 const runs = groupHelp(program.command('runs').description('Inspect and manage run history'));
 runs.command('list')
@@ -597,4 +597,3 @@ async function main(): Promise<void> {
 }
 
 void main();
-

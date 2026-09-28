@@ -102,7 +102,7 @@ export const JOB_ALIAS_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
  * fresh id is generated -- collision-free for practical purposes without
  * needing to consult existing jobs (unlike `alias`, which does).
  */
-export const JobSchema = z.object({
+export const JobBaseSchema = z.object({
   id: z.string().uuid().default(() => randomUUID()),
   /**
    * Human-friendly, user-editable, OPTIONAL identifier. Enforced unique only
@@ -120,6 +120,17 @@ export const JobSchema = z.object({
   /** Default 'skip' means new ticks are discarded when a run is already active. */
   overlap: z.enum(['skip', 'queue', 'cancel-previous']).default('skip'),
   retry: RetrySchema.default({ max: 0, backoffSec: 30 }),
+});
+
+/** A reused session may have only one in-flight turn. */
+export const JobSchema = JobBaseSchema.superRefine((job, ctx) => {
+  if (job.action.reuseSession && job.overlap !== 'skip') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['overlap'],
+      message: 'reuseSession requires overlap: skip',
+    });
+  }
 });
 
 export type Job = z.infer<typeof JobSchema>;

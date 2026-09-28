@@ -93,4 +93,20 @@ describe('property: JobSchema', () => {
       action: { kind: 'prompt', prompt: 'hello', promptFile: 'x.txt' },
     }).success).toBe(false);
   });
+
+  it('requires overlap skip when a prompt reuses a session', () => {
+    const input = {
+      schedule: { kind: 'cron', cron: '* * * * *' },
+      action: { kind: 'prompt', prompt: 'hello', reuseSession: true },
+    };
+    expect(JobSchema.parse(input).overlap).toBe('skip');
+    for (const overlap of ['queue', 'cancel-previous']) {
+      const result = JobSchema.safeParse({ ...input, overlap });
+      expect(result.success).toBe(false);
+      if (!result.success) expect(result.error.issues).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: ['overlap'], message: expect.stringContaining('reuseSession') }),
+      ]));
+    }
+    expect(JobSchema.safeParse({ ...input, action: { ...input.action, reuseSession: false }, overlap: 'queue' }).success).toBe(true);
+  });
 });

@@ -346,6 +346,8 @@ async function handleRequest(
         totalRuns: runs.length,
         succeeded: runs.filter((r) => r.status === 'success').length,
         failed: runs.filter((r) => r.status === 'failed').length,
+        canceled: runs.filter((r) => r.status === 'canceled').length,
+        skipped: runs.filter((r) => r.status === 'skipped').length,
         totalCostUsd: runs.reduce((sum, run) => sum + (run.costUsd ?? 0), 0),
         totalTurns: runs.reduce((sum, run) => sum + (run.turns ?? 0), 0),
         lastStatus: runs[0]?.status ?? null,
@@ -563,7 +565,7 @@ function streamLogs(
       if (log.ts > lastTs) lastTs = log.ts;
     }
 
-    const terminal = new Set(['success', 'failed', 'canceled', 'timeout', 'missed']);
+    const terminal = new Set(['success', 'failed', 'canceled', 'skipped', 'timeout', 'missed']);
     if (!run || terminal.has(run.status)) {
       sseEvent(res, { done: true, status: run?.status });
       clearInterval(poll);

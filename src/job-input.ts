@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { CrontickError } from './errors.js';
 import {
   JOB_ALIAS_PATTERN,
+  JobBaseSchema,
   JobSchema,
   PromptActionBaseSchema,
   ScheduleSchema,
@@ -55,7 +56,7 @@ const ActionPatchInputSchema = z.discriminatedUnion('kind', [
   PromptActionPatchSchema,
 ]);
 
-export const JobCreateInputSchema = JobSchema.omit({ action: true }).extend({
+export const JobCreateInputSchema = JobBaseSchema.omit({ action: true }).extend({
   action: ActionInputSchema,
 });
 

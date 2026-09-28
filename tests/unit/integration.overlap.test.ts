@@ -57,7 +57,7 @@ describe('Integration: overlap policies stress', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('overlap=skip: only the first run completes; the rest are canceled', async () => {
+  it('overlap=skip: only the first run completes; the rest are skipped', async () => {
     const count = 10;
     const job = makeJob('skip-job', 'skip', 500);
     const runIds = Array.from({ length: count }, () => store.insertRun(job.id).id);
@@ -71,10 +71,10 @@ describe('Integration: overlap policies stress', () => {
 
     const statuses = runIds.map((id) => store.getRun(id)?.status);
     const completed = statuses.filter((status) => status === 'success' || status === 'failed').length;
-    const canceled = statuses.filter((status) => status === 'canceled').length;
+    const skipped = statuses.filter((status) => status === 'skipped').length;
 
     expect(completed).toBeGreaterThanOrEqual(1);
-    expect(canceled).toBeGreaterThanOrEqual(count - 2);
+    expect(skipped).toBeGreaterThanOrEqual(count - 2);
   }, 30_000);
 
   it('overlap=queue: all runs complete in order', async () => {

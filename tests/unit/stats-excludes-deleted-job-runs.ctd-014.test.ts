@@ -185,6 +185,8 @@ describe('CTD-014 deleted-job aggregates', () => {
       totalRuns: 1,
       succeeded: 1,
       failed: 0,
+      canceled: 0,
+      skipped: 0,
       avgDurationMs: expect.any(Number),
       totalCostUsd: 0,
       totalTurns: 0,
