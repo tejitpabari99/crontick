@@ -8,8 +8,8 @@ import { basename } from 'node:path';
 import type { Job, PromptAction } from '../schemas/job.js';
 import type { Store, RunStatus, LogStream } from './store.js';
 import { CrontickError } from '../errors.js';
-import { extractSessionId } from './prompt-session.js';
-import { buildPromptRunCommand, loadConfig } from '../config.js';
+import { resolvePromptRunCommand, loadConfig } from '../config.js';
+import { dataDir } from '../paths.js';
 import { createStreamingTextRedactor, nullLogger, redactText, type Logger, type StreamingTextRedactor } from '../logger.js';
 import { isProcessAlive, isSameRunProcess } from '../process-liveness.js';
 import { readEnvFileForAction } from './env-file.js';
@@ -437,7 +437,11 @@ export class Runner {
       }
     }
 
-    const runCommand = buildPromptRunCommand({ ...latestAction, sessionId }, { logger: this.logger });
+    const { invocation: runCommand, adapter, engineOptions } = resolvePromptRunCommand(
+      { ...latestAction, sessionId },
+      { logger: this.logger },
+      { runId, jobId: job.id, dataDir: dataDir() },
+    );
     const cmd = runCommand.command;
     const promptEngineBinary = runCommand.engine;
     const args = runCommand.args;
@@ -518,7 +522,7 @@ export class Runner {
     let timedOut = false;
     let timeoutHandle: NodeJS.Timeout | undefined;
 
-    // Prompt session ID extraction only needs the last ~128 KB of combined
+    // Adapter result parsing only needs the last ~128 KB of combined
     // output. Rather than reallocating (concat + subarray) on every stdout
     // chunk — O(n^2) for chatty prompts — we retain incoming chunks in an
     // array and drop whole leading chunks once the buffered bytes still cover
@@ -528,7 +532,6 @@ export class Runner {
     const transcriptChunks: Buffer[] = [];
     let transcriptBytes = 0;
     const appendTranscript = (chunk: Buffer) => {
-      if (!capturePromptSession) return;
       transcriptChunks.push(chunk);
       transcriptBytes += chunk.byteLength;
       // Evict leading chunks while the remainder still fully covers the cap,
@@ -677,20 +680,20 @@ export class Runner {
           finish({ status: 'timeout', error: `run exceeded timeoutSec (${action.timeoutSec}s)` });
         } else if (sig === 'SIGTERM' || sig === 'SIGKILL') {
           finish({ status: 'canceled', error: `killed by signal ${sig}` });
-        } else if (code === null) {
-          finish({ status: 'failed', error: 'process exited without code' });
         } else {
+          const parsed = adapter.parseResult(code, readTranscriptTail(), '');
           const result: RunResult = {
-            status: code === 0 ? 'success' : 'failed',
-            exitCode: code,
+            status: parsed.status,
+            exitCode: parsed.exitCode,
+            error: parsed.error,
           };
           if (result.status === 'success' && capturePromptSession) {
-            const sessionId = extractSessionId(readTranscriptTail());
-            if (!sessionId) {
+            const resolvedSessionId = adapter.resolveSessionId(engineOptions, parsed);
+            if (!resolvedSessionId) {
               this.logger.debug('Session id capture failed', { jobId: job.id, runId });
               finish({
                 status: 'failed',
-                exitCode: code,
+                exitCode: result.exitCode,
                 error: 'SESSION_ID_NOT_FOUND: prompt engine output did not include a session id. Configure an explicit session id with --session-id <id>, or disable reuseSession.',
               });
               return;
@@ -699,18 +702,18 @@ export class Runner {
             // dashboard and `runs get`), independent of whether the job-level
             // capture below wins its race.
             try {
-              store.updateRun(runId, { sessionId });
+              store.updateRun(runId, { sessionId: resolvedSessionId });
             } catch (err) {
               this.logger.error('Failed to persist run sessionId', { jobId: job.id, runId, error: String(err) });
             }
             if (captureAction) {
               let persisted = false;
               try {
-                persisted = store.tryCapturePromptSession(job.id, captureAction, sessionId);
+                persisted = store.tryCapturePromptSession(job.id, captureAction, resolvedSessionId);
               } catch (err) {
                 finish({
                   status: 'failed',
-                  exitCode: code,
+                  exitCode: result.exitCode,
                   error: `SESSION_PERSIST_FAILED: ${errorMessage(err)}`,
                 });
                 return;
@@ -718,11 +721,11 @@ export class Runner {
               if (persisted) {
                 this.logger.debug('Session id captured and persisted', { jobId: job.id, runId });
                 try {
-                  log.append('crontick', Buffer.from(`[crontick] captured session id: ${sessionId}\n`, 'utf-8'));
+                  log.append('crontick', Buffer.from(`[crontick] captured session id: ${resolvedSessionId}\n`, 'utf-8'));
                 } catch (err) {
                   finish({
                     status: 'failed',
-                    exitCode: code,
+                    exitCode: result.exitCode,
                     error: `SESSION_PERSIST_FAILED: ${errorMessage(err)}`,
                   });
                   return;
@@ -825,4 +828,3 @@ function sleep(ms: number): Promise<void> {
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
-

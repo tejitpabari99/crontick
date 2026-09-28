@@ -27,6 +27,8 @@ import {
 } from './schemas/config.js';
 import type { PromptAction } from './schemas/job.js';
 import { nullLogger, redactValue, type Logger } from './logger.js';
+import { getEngineAdapter } from './engines/registry.js';
+import type { EngineOptions } from './engines/types.js';
 
 export { ConfigSchema, EngineConfigSchema, LoggingConfigSchema, RetentionConfigSchema, type CrontickConfig, type EngineConfig, type LoggingConfig, type RetentionConfig };
 
@@ -52,6 +54,13 @@ export interface PromptRunCommand {
   args: string[];
   env: Record<string, string>;
   engine: string;
+}
+
+/** Internal execution bundle: invocation and parser share one config read. */
+export interface ResolvedPromptRunCommand {
+  invocation: PromptRunCommand;
+  adapter: ReturnType<typeof getEngineAdapter>;
+  engineOptions: EngineOptions;
 }
 
 /** Built-in fallback config used when no file exists; also serves as the merge base. */
@@ -209,7 +218,20 @@ export function removeEngine(name: string, options: ConfigOptions = {}): Crontic
  * Builds the full command+args for executing a prompt action via its engine.
  * Merges engine-level args, the prompt text, job-level args, and optional sessionId.
  */
-export function buildPromptRunCommand(action: PromptAction, options: ConfigOptions = {}): PromptRunCommand {
+export function buildPromptRunCommand(
+  action: PromptAction,
+  options: ConfigOptions = {},
+  context: Partial<Pick<EngineOptions, 'runId' | 'jobId' | 'dataDir'>> = {},
+): PromptRunCommand {
+  return resolvePromptRunCommand(action, options, context).invocation;
+}
+
+/** Resolves the invocation and its adapter from a single engine config snapshot. */
+export function resolvePromptRunCommand(
+  action: PromptAction,
+  options: ConfigOptions = {},
+  context: Partial<Pick<EngineOptions, 'runId' | 'jobId' | 'dataDir'>> = {},
+): ResolvedPromptRunCommand {
   const logger = (options.logger ?? nullLogger).child('config');
   const config = loadConfig(options);
   const engineName = action.engine ?? config.defaultEngine;
@@ -221,16 +243,21 @@ export function buildPromptRunCommand(action: PromptAction, options: ConfigOptio
       { path: configFilePath(options), key: `engines.${engineName}` },
     );
   }
-  const args = [
-    ...(engine.args ?? []),
-    action.prompt,
-    ...(action.args ?? []),
-  ];
-  if (action.sessionId) args.push(`--session-id=${action.sessionId}`);
-  const result = {
+  const adapter = getEngineAdapter(engine.type);
+  const engineOptions: EngineOptions = {
     command: engine.command,
-    args,
-    env: { ...(engine.env ?? {}) },
+    engineArgs: engine.args ?? [],
+    runId: context.runId ?? '',
+    jobId: context.jobId ?? '',
+    dataDir: context.dataDir ?? '',
+    sessionId: action.sessionId,
+    reuseSession: action.reuseSession,
+    args: action.args ?? [],
+    env: engine.env ?? {},
+  };
+  const invocation = adapter.buildInvocation(action.prompt, engineOptions);
+  const result = {
+    ...invocation,
     engine: engineName,
   };
   logger.debug('Resolved prompt engine command', {
@@ -240,7 +267,7 @@ export function buildPromptRunCommand(action: PromptAction, options: ConfigOptio
     args: result.args,
     envKeys: Object.keys(result.env),
   });
-  return result;
+  return { invocation: result, adapter, engineOptions };
 }
 
 function setEngine(name: string, engine: unknown, mustExist: boolean, options: ConfigOptions): CrontickConfig {

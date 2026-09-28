@@ -1,5 +1,7 @@
 /** Shared inputs and outputs for engine-specific prompt execution. */
 export interface EngineOptions {
+  command: string;
+  engineArgs: string[];
   runId: string;
   jobId: string;
   dataDir: string;
