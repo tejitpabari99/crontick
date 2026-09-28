@@ -8,3 +8,4 @@
 - Prefer reading `docs/internals/` for module design over re-reading the full source tree.
 - Run `npm run validate` as a single verification step rather than individual checks.
 - When adding a capability, start from the `SURFACE_CAPABILITIES` entry and work outward to each shim.
+- Check `docs/tech/design-principles.md` before any structural change.

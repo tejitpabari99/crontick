@@ -10,6 +10,7 @@ Read the relevant docs before modifying the corresponding area:
 
 | Area | Read first |
 |------|-----------|
+| Mission and design principles | `docs/tech/` |
 | High-level design | `docs/architecture.md` |
 | Concepts (jobs, scheduling, execution, parity) | `docs/concepts/` |
 | Internal module design | `docs/internals/` |
@@ -38,7 +39,10 @@ npm run verify-package-install  # CI-only, not part of validate: packs+installs 
 - `src/client.ts` -- `CrontickClient`: all business logic lives here or in modules it calls.
 - `src/cli/` -- CLI shim (thin adapter over client). No business logic.
 - `src/mcp/` -- MCP server shim (thin adapter over client). No business logic.
-- `src/daemon/` -- Daemon process (HTTP server, scheduler, executors).
+- `src/daemon/` -- Daemon process (HTTP server, scheduler, prompt execution/runner).
+- `src/engines/` -- Engine adapter contract and registry (raw and Claude adapters).
+- `src/constants/` -- Constants used in more than one file, grouped by domain.
+- `src/utils/` -- Reusable, pure helper functions.
 - `src/surface.ts` -- `SURFACE_CAPABILITIES` constant: canonical list of all operations.
 - `src/index.ts` -- Public API boundary. Only symbols exported here are public.
 - `tests/` -- All tests live at root `tests/` (not co-located).
@@ -55,6 +59,7 @@ Do not import from `src/daemon/`, `src/cli/`, or `src/mcp/` internals outside th
 6. Keep filesystem, network, and timing side effects behind injectable interfaces.
 7. Shims contain zero business logic -- all behavior lives in the core client and daemon modules.
 8. A feature removed from the product (guarded by a regression test, e.g. `tests/autostart-removal.test.ts`) MUST NOT be reintroduced without explicit sign-off in the PR description explaining why the original removal rationale no longer applies.
+9. Constants used in more than one file live in `src/constants/`; reusable logic lives in `src/utils/`.
 
 ## Surface parity rule
 

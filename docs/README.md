@@ -10,6 +10,7 @@ where new content belongs.
 
 | Area | Answers | Audience |
 |------|---------|----------|
+| [docs/tech/](tech/) | Guiding docs: mission/tenets and design principles every change is checked against | Contributors and coding agents |
 | [docs/architecture.md](architecture.md) | High-level design: how the system fits together | Everyone |
 | [docs/concepts/](concepts/) | "How should I think about this?" -- behavior that crosses components | Users and contributors |
 | [docs/internals/](internals/) | "How is this implemented?" -- private implementation details | Maintainers and coding agents |
@@ -40,6 +41,13 @@ observable behavior without updating relevant docs is incomplete.
 ---
 
 ## Full index
+
+### docs/tech/
+
+| File | Description |
+|------|-------------|
+| [mission.md](tech/mission.md) | Mission, problem statement, and tenets design decisions are checked against |
+| [design-principles.md](tech/design-principles.md) | Rules every design and implementation must follow |
 
 ### docs/ (top-level)
 
