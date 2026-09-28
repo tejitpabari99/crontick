@@ -397,6 +397,27 @@ describe('buildJobFromCreateOptions — explicit --arg (Blocker 1)', () => {
       }),
     ).toThrow(/Cannot combine --arg/);
   });
+
+  it('merges unknown flag passthrough with either argument source without relaxing their exclusion', () => {
+    const base = { cron: '0 9 * * *', prompt: 'hi', passthroughArgs: ['--allow-all', '--permission-mode', 'acceptEdits'] };
+    expect(buildJobFromCreateOptions({ ...base, rawArgs: ['literal'] }).action)
+      .toMatchObject({ args: ['literal', '--allow-all', '--permission-mode', 'acceptEdits'] });
+    expect(buildJobFromCreateOptions({ ...base, args: ['literal'] }).action)
+      .toMatchObject({ args: ['literal', '--allow-all', '--permission-mode', 'acceptEdits'] });
+    expect(buildJobFromCreateOptions({ ...base, rawArgs: ['literal'], cliArgvOrder: ['--allow-all', 'literal', '--permission-mode', 'acceptEdits'] }).action)
+      .toMatchObject({ args: ['--allow-all', 'literal', '--permission-mode', 'acceptEdits'] });
+    expect(() => buildJobFromCreateOptions({ ...base, args: ['one'], rawArgs: ['two'] }))
+      .toThrow(/Cannot combine --arg/);
+  });
+
+  it.each(['--output-format', '--output-format=json', '--settings', '--settings={}', '--session-id=mine'])(
+    'rejects reserved passthrough argument %s', (arg) => {
+      expect(() => buildJobFromCreateOptions({ cron: '0 9 * * *', prompt: 'hi', passthroughArgs: [arg] }))
+        .toThrow(/Raw prompt engine args cannot include crontick-managed prompt\/session flag/);
+      expect(() => buildJobPatchFromUpdateOptions({ prompt: 'hi', passthroughArgs: [arg] }))
+        .toThrow(/Raw prompt engine args cannot include crontick-managed prompt\/session flag/);
+    },
+  );
 });
 
 // ── normalizeJobPatch / mergeActionPatch (Blockers 1 & 2) ──────────────────────

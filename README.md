@@ -137,6 +137,8 @@ Select an engine per job with `--engine`:
 crontick jobs new --every 3600 --prompt "Review recent commits for risky changes" --engine claude --alias review
 ```
 
+Pass engine options as unknown long flags on `jobs new` or `jobs update`, for example `--permission-mode acceptEdits`. Crontick stores them in the job's `action.args` and forwards them to the engine. It rejects flags it manages itself, including `--output-format` and `--settings`.
+
 ### Multi-turn continuity
 
 Prompt jobs can carry an AI session across runs so the agent remembers prior context:

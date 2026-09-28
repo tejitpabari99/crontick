@@ -231,10 +231,12 @@ function commonJobOptions(command: Command): Command {
     .option('--retry <max>', 'Retry count on failure (default: 0; omit on update to leave unchanged)', parseInteger);
 }
 
-function collectJobOptions(engineArgs: string[], opts: Record<string, unknown>): JobCreateCliOptions {
+function collectJobOptions(engineArgs: string[], passthroughArgs: string[], cliArgvOrder: string[], opts: Record<string, unknown>): JobCreateCliOptions {
   return {
     alias: stringOption(opts.alias),
     rawArgs: Array.isArray(engineArgs) ? engineArgs : [],
+    passthroughArgs,
+    cliArgvOrder,
     file: stringOption(opts.file),
     cron: stringOption(opts.cron),
     every: numberOption(opts.every),
@@ -253,10 +255,12 @@ function collectJobOptions(engineArgs: string[], opts: Record<string, unknown>):
   };
 }
 
-function collectPatchOptions(engineArgs: string[], opts: Record<string, unknown>): JobPatchCliOptions {
+function collectPatchOptions(engineArgs: string[], passthroughArgs: string[], cliArgvOrder: string[], opts: Record<string, unknown>): JobPatchCliOptions {
   return {
     alias: stringOption(opts.alias),
     rawArgs: Array.isArray(engineArgs) ? engineArgs : [],
+    passthroughArgs,
+    cliArgvOrder,
     file: stringOption(opts.file),
     cron: stringOption(opts.cron),
     every: numberOption(opts.every),
@@ -321,6 +325,44 @@ function assertNoCrontickFlagCollision(rawArgs: string[], cmd: Command): void {
   );
 }
 
+/** Separate unrecognized long flags from positional args that Commander leaves in one array. */
+function splitPromptEngineArgs(engineArgs: string[]): { rawArgs: string[]; passthroughArgs: string[] } {
+  const separator = process.argv.indexOf('--', 2);
+  const afterSeparator = separator < 0 ? [] : process.argv.slice(separator + 1);
+  // A literal `--` may itself be a known option's value. In that case it did
+  // not start a positional suffix and should not affect this split.
+  const hasSeparator = separator >= 0
+    && afterSeparator.length <= engineArgs.length
+    && afterSeparator.every((arg, i) => arg === engineArgs[engineArgs.length - afterSeparator.length + i]);
+  const beforeSeparator = hasSeparator && afterSeparator.length > 0
+    ? engineArgs.slice(0, -afterSeparator.length)
+    : engineArgs;
+  const rawArgs: string[] = [];
+  const passthroughArgs: string[] = [];
+
+  for (const tokens of [beforeSeparator, hasSeparator ? afterSeparator : []]) {
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i]!;
+      if (token.startsWith('--') && token.length > 2) {
+        // The removed crontick environment-file switch must remain an error;
+        // forwarding it would bypass its explicit removal regression guard.
+        if (token === '--job-env-file' || token.startsWith('--job-env-file=')) {
+          throw new Error("unknown option '--job-env-file'");
+        }
+        passthroughArgs.push(token);
+        if (!token.includes('=') && i + 1 < tokens.length && !tokens[i + 1]!.startsWith('-')) {
+          passthroughArgs.push(tokens[++i]!);
+        }
+      } else if (tokens === beforeSeparator && token.startsWith('-')) {
+        throw new CrontickError('VALIDATION_ERROR', `Unknown short option: ${token}`);
+      } else {
+        rawArgs.push(token);
+      }
+    }
+  }
+  return { rawArgs, passthroughArgs };
+}
+
 const program = new Command();
 
 // exitOverride + a silenced writeErr let us catch Commander usage errors
@@ -352,12 +394,14 @@ program
 const jobs = groupHelp(program.command('jobs').description('Create, inspect, and manage scheduled jobs'));
 
 commonJobOptions(jobs.command('new [engineArgs...]').description('Create a new job (alias auto-generated when --alias is omitted)'))
+  .allowUnknownOption()
   .option('--force', 'Replace an existing job when the same alias already exists')
   .action(async (engineArgs: string[], opts, cmd: Command) => {
     const c = client();
     try {
       assertNoCrontickFlagCollision(engineArgs, cmd);
-      const result = await c.createJobFromCliOptions(collectJobOptions(engineArgs, opts));
+      const { rawArgs, passthroughArgs } = splitPromptEngineArgs(engineArgs);
+      const result = await c.createJobFromCliOptions(collectJobOptions(rawArgs, passthroughArgs, engineArgs, opts));
       printNotices(c);
       print(result);
     } catch (err) {
@@ -366,6 +410,7 @@ commonJobOptions(jobs.command('new [engineArgs...]').description('Create a new j
   });
 
 commonJobOptions(jobs.command('update <id> [engineArgs...]').description('Update an existing job (id or alias)'))
+  .allowUnknownOption()
   .option('--enable', 'Enable the job')
   .option('--disable', 'Disable the job')
   .action(async (id: string, engineArgs: string[], opts, cmd: Command) => {
@@ -373,7 +418,8 @@ commonJobOptions(jobs.command('update <id> [engineArgs...]').description('Update
     const notices: string[] = [];
     try {
       assertNoCrontickFlagCollision(engineArgs, cmd);
-      const patch = buildJobPatchFromUpdateOptions(collectPatchOptions(engineArgs, opts), {
+      const { rawArgs, passthroughArgs } = splitPromptEngineArgs(engineArgs);
+      const patch = buildJobPatchFromUpdateOptions(collectPatchOptions(rawArgs, passthroughArgs, engineArgs, opts), {
         cwd: process.cwd(),
         onNotice: (message) => notices.push(message),
       });

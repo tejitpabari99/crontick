@@ -101,6 +101,10 @@ export interface JobCreateCliOptions {
   alias?: string;
   engineArgs?: string[];
   rawArgs?: string[];
+  /** Unknown long-form CLI flags and their values, kept in argv order. */
+  passthroughArgs?: string[];
+  /** Original order when the CLI interleaves positional and unknown-flag tokens. */
+  cliArgvOrder?: string[];
   /**
    * Explicit, repeatable `--arg <value>` values for prompt actions.
    * This is the always-correct, shim-independent way to pass arguments: it
@@ -296,7 +300,8 @@ function withEngineDefaultForNewPromptAction(
  * convenience that only survives intact on invocations where the shell/shim
  * doesn't mangle it). Combining both in
  * the same command is rejected rather than silently picking one, since that
- * combination is never what the user intended.
+ * combination is never what the user intended. Unknown long-form flags are
+ * independent and follow either source in the stored argument list.
  */
 function resolveActionArgs(input: JobPatchCliOptions): string[] {
   const rawArgs = input.rawArgs ?? input.engineArgs ?? [];
@@ -307,7 +312,8 @@ function resolveActionArgs(input: JobPatchCliOptions): string[] {
       'Cannot combine --arg with -- positional arguments in the same command. Use repeatable --arg <value> (always correct) or -- (convenience) but not both.',
     );
   }
-  return explicitArgs.length > 0 ? explicitArgs : rawArgs;
+  if (explicitArgs.length === 0 && input.cliArgvOrder) return input.cliArgvOrder;
+  return [...(explicitArgs.length > 0 ? explicitArgs : rawArgs), ...(input.passthroughArgs ?? [])];
 }
 
 /** Constructs a full Job from CLI flags; supports --file (JSON) as an alternative to flags. */

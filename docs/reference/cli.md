@@ -87,12 +87,13 @@ crontick jobs new [engineArgs...]
 | `--retry <max>` | integer | `0` | Retry count on failure |
 | `--force` | boolean | `false` | Replace an existing job when the same alias already exists |
 
-Exactly one schedule source (`--cron`, `--every`, `--at`) and one prompt source (`--prompt`, `--prompt-file`) are required unless `--file` is used. Values after the command are stored as prompt action arguments (`action.args`). If a token after the positional separator matches a crontick long flag, the CLI rejects it rather than silently storing it as a literal prompt arg.
+Exactly one schedule source (`--cron`, `--every`, `--at`) and one prompt source (`--prompt`, `--prompt-file`) are required unless `--file` is used. Unrecognized long flags, with a following value when that token is not flag-shaped, are stored verbatim in `action.args`. The same flags work after `--`, which also accepts positional arguments. Their order is preserved. Flags that crontick manages for the engine (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, and the short forms `-p` and `-r`) are rejected, including `--name=value` forms. If a token after `--` matches a crontick long flag, the CLI rejects it rather than silently storing it as a literal prompt arg.
 
 Dedicated `--script`, `--exec`, `--arg`, `--shell`, and `--job-env-file` flags are not exposed on the CLI. Script and exec actions remain supported by the job schema, daemon executors, and library API; create them with `crontick jobs new --file <job.json>` or `client.createJob()`.
 
 ```bash
 crontick jobs new --every 300 --prompt "Summarize the current repository status" --alias repo-summary
+crontick jobs new --every 300 --prompt "Review this repository" --permission-mode acceptEdits
 crontick jobs new --file .\job.json
 ```
 
@@ -114,6 +115,7 @@ crontick jobs update <id> [engineArgs...]
 | `--disable` | boolean | — | Disable the job |
 
 Omitted options leave the existing job unchanged. `--enable` and `--disable` are mutually exclusive.
+Unknown long flags use the same argument passthrough as `jobs new`; include `--prompt` or `--prompt-file` when updating engine arguments.
 
 ```bash
 crontick jobs update repo-summary --cron "0 9 * * 1-5" --tz America/Los_Angeles

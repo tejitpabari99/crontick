@@ -313,6 +313,56 @@ describe('CLI e2e with daemon', () => {
     expect(parseCliObject(r.stdout).action).toMatchObject({ sessionId: 'sess-12345678', reuseSession: false });
   });
 
+  it('jobs new and update forward unknown long flags and values in argv order', () => {
+    const created = cli([
+      'jobs', 'new', '--alias', 'unknown-flags-job', '--every', '300', '--prompt', 'hello',
+      '--allow-all', '--permission-mode', 'acceptEdits', '--max-budget-usd=2',
+    ], env());
+    expect(created.status, created.stderr).toBe(0);
+    expect(parseCliObject(created.stdout).action).toMatchObject({
+      args: ['--allow-all', '--permission-mode', 'acceptEdits', '--max-budget-usd=2'],
+    });
+
+    const updated = cli([
+      'jobs', 'update', 'unknown-flags-job', '--prompt', 'hello again',
+      '--allowedTools', 'Read,Edit', '--dangerously-skip-permissions',
+    ], env());
+    expect(updated.status, updated.stderr).toBe(0);
+    expect(parseCliObject(updated.stdout).action).toMatchObject({
+      args: ['--allowedTools', 'Read,Edit', '--dangerously-skip-permissions'],
+    });
+
+    const afterSeparator = cli([
+      'jobs', 'update', 'unknown-flags-job', '--prompt', 'hello again', '--',
+      '--permission-mode', 'bypassPermissions', '--max-budget-usd=3',
+    ], env());
+    expect(afterSeparator.status, afterSeparator.stderr).toBe(0);
+    expect(parseCliObject(afterSeparator.stdout).action).toMatchObject({
+      args: ['--permission-mode', 'bypassPermissions', '--max-budget-usd=3'],
+    });
+
+    const interleaved = cli([
+      'jobs', 'update', 'unknown-flags-job', '--prompt', 'hello again', '--',
+      'literal', '--allow-all', '--permission-mode', 'acceptEdits', 'tail',
+    ], env());
+    expect(interleaved.status, interleaved.stderr).toBe(0);
+    expect(parseCliObject(interleaved.stdout).action).toMatchObject({
+      args: ['literal', '--allow-all', '--permission-mode', 'acceptEdits', 'tail'],
+    });
+  });
+
+  it('rejects reserved unknown long flags on create and update', () => {
+    const created = cli(['jobs', 'new', '--alias', 'reserved-unknown-job', '--every', '300', '--prompt', 'hi', '--settings', '{}'], env());
+    expectCleanError(created, 'VALIDATION_ERROR');
+    expect(created.stderr).toContain('crontick-managed prompt/session flag: --settings');
+
+    const valid = cli(['jobs', 'new', '--alias', 'reserved-unknown-job', '--every', '300', '--prompt', 'hi'], env());
+    expect(valid.status, valid.stderr).toBe(0);
+    const updated = cli(['jobs', 'update', 'reserved-unknown-job', '--prompt', 'hi', '--output-format=json'], env());
+    expectCleanError(updated, 'VALIDATION_ERROR');
+    expect(updated.stderr).toContain('crontick-managed prompt/session flag: --output-format=json');
+  });
+
   it('requires overlap skip for reuse-session and reports overlapping fires as skipped', () => {
     const base = ['jobs', 'new', '--alias', 'cli-skipped-run-job', '--cron', '0 0 * * *', '--prompt', 'setTimeout(() => process.exit(0), 10000)', '--engine', FAKE_ENGINE_NAME, '--reuse-session'];
     for (const policy of ['queue', 'cancel-previous']) {

@@ -16,6 +16,8 @@ const RESERVED_PROMPT_ARGS = new Set([
   '--resume',
   '--continue',
   '--connect',
+  '--output-format',
+  '--settings',
 ]);
 
 interface PromptRuntimeValidationInput {
@@ -49,10 +51,7 @@ function promptRuntimeArgv(action: PromptRuntimeValidationInput): string[] {
 
 function isReservedPromptArg(arg: string): boolean {
   return RESERVED_PROMPT_ARGS.has(arg)
-    || arg.startsWith('--prompt=')
-    || arg.startsWith('--session-id=')
-    || arg.startsWith('--resume=')
-    || arg.startsWith('--connect=');
+    || (arg.startsWith('--') && arg.includes('=') && RESERVED_PROMPT_ARGS.has(arg.slice(0, arg.indexOf('='))));
 }
 
 function estimateWindowsCommandLineLength(argv: string[]): number {

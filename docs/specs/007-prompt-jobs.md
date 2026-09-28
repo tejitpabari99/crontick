@@ -37,7 +37,7 @@ reuse enables multi-turn conversations across runs.
 - **R-007-4**: `buildPromptRunCommand()` MUST construct the command line as: `[engine.command, ...engine.args, action.prompt, ...action.args]`. Because `action.prompt` is appended immediately after `engine.args`, any engine that requires an explicit prompt-taking flag (for example `copilot -p` / `copilot --prompt`) MUST place that flag as the final configured engine arg, with any other non-interactive flags before it. If `action.sessionId` is set, `--session-id=<id>` MUST be appended.
 - **R-007-5**: The spawned process MUST use `shell: false`; the engine command is invoked directly.
 - **R-007-6**: Engine environment variables (`engine.env`) MUST be merged into the spawn env (below `action.env`, above `process.env`).
-- **R-007-7**: The `args` field MUST NOT contain reserved prompt args: `-p`, `--prompt`, `--session-id`, `-r`, `--resume`, `--continue`, `--connect`, or their `=`-prefixed variants.
+- **R-007-7**: The `args` field MUST NOT contain reserved prompt args: `-p`, `--prompt`, `--session-id`, `-r`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, or long `--flag=value` variants.
 - **R-007-8**: Validation MUST reject args containing reserved flags with a descriptive error.
 - **R-007-9**: On Windows, the total estimated command-line length (prompt + engine args + session flag) MUST NOT exceed 30,000 characters. Validation MUST reject with an actionable message if exceeded.
 - **R-007-10**: When `reuseSession=true` and no `sessionId` is set, the runner MUST capture a reusable session ID. Raw engines capture it after a successful run; Claude captures it only from a complete result line, including a failed result.
@@ -57,6 +57,7 @@ reuse enables multi-turn conversations across runs.
 - **R-007-24**: An engine config MAY set `type` to `raw` or `claude`; when omitted, it MUST parse to `raw` so existing custom-engine configs remain valid.
 - **R-007-25**: A Claude session ID MUST be captured onto a reusable job only after a complete `stream-json` result line is parsed (including a failed result). Before a Claude run uses `--resume`, the runner MUST confirm both that an earlier success/failed run for this job parsed a complete result with that ID and that the corresponding `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl` file exists. An ineligible or missing session MUST fail the run with `SESSION_NOT_FOUND` before spawning, without retrying. Prompt children MUST have stdin ignored.
 - **R-007-26**: Runs with a complete Claude result MUST persist optional `costUsd`, `turns`, redacted `usageJson`, `transcriptPath`, and `engineStatus` fields. Raw-engine runs MUST omit these fields. `runs get` MUST return them on CLI, MCP, and library surfaces. `stats summary` and `stats job` MUST include summed `totalCostUsd` and `totalTurns`, treating missing values as zero.
+- **R-007-27**: `jobs new` and `jobs update` MUST forward unrecognized long CLI flags and their following non-flag-shaped values into `action.args` in argv order, with or without a `--` separator. The shared reserved-arg validation MUST reject crontick-managed flags from this path on create and update. The core `--arg` and `--` sources remain mutually exclusive; unknown-flag passthrough is independent.
 
 ### Non-functional requirements
 

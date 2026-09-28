@@ -104,7 +104,7 @@ Schema is `.strict()` — no extra fields allowed. Executed with `shell: false`.
 | `sessionId` | `string` | no | — | Min length 1 | Fixed session ID to reuse across runs; Claude requires its transcript file to exist before resuming |
 | `reuseSession` | `boolean` | no | `false` | Requires `overlap: "skip"` | Capture a reusable session ID (Claude requires a completed result line) |
 
-Schema is `.strict()` — no extra fields allowed. Executed with `shell: false`. Subject to `promptRuntimeValidationMessage` refinement (Windows cmd-line length check, reserved arg detection).
+Schema is `.strict()` — no extra fields allowed. Executed with `shell: false`. Subject to `promptRuntimeValidationMessage` refinement (Windows cmd-line length check, reserved arg detection). Reserved `action.args` flags include `-p`, `-r`, `--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, and `--settings`; long `--flag=value` forms are also rejected.
 
 When `reuseSession` is `true`, the job's `overlap` must be `skip`. Omitting `overlap` uses that default. `queue` and `cancel-previous` fail job validation so an in-flight reused session cannot receive another turn or be canceled by an overlapping fire.
 
