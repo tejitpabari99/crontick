@@ -22,7 +22,7 @@ Anywhere a job identifier is accepted (CLI positional `<id>`, MCP `id` params, H
 ## The job's action: `prompt`
 
 `action.kind` is a discriminant with a single member today, `"prompt"` (`script` and `exec` were
-removed -- see [ADR 0028](../decisions/0028-prompt-only-jobs.md)). A prompt action sends
+removed -- see [ADR 0002](../decisions/0002-prompt-only-jobs-and-engine-adapters.md)). A prompt action sends
 `prompt` text to a configured LLM engine on the job's schedule:
 
 | Field | Purpose |

@@ -50,7 +50,7 @@ Done when: a job with a `sessionId` whose transcript file is missing fails fast 
 
 ## Task 6 — Run-record + storage delta for engine fields, surfaced across CLI/MCP/library
 What it is / what it means: Delivers R4's storage fields and R6's surface-parity requirement together, since they're one observable change: every run can carry `costUsd`, `turns`, `usageJson` (redacted raw `usage` block), `transcriptPath`, and `engineStatus` (Claude's `subtype`), absent for `RawAdapter` runs, and existing capabilities (`runs get`, `stats summary`, `stats job`) expose them without a new `SURFACE_CAPABILITIES` row.
-What changes at a high level: `runs` table gains `cost_usd REAL`, `turns INTEGER`, `usage_json TEXT`, `transcript_path TEXT`, `engine_status TEXT` (plain schema addition, no migration, per ADR 0017); `finalizeRun()` writes them from the adapter's `EngineResult`; `src/client.ts`, `src/cli/index.ts` (`runs get`), `src/mcp/index.ts` (`crontick_run_get`) all surface the new fields; `docs/reference/` updated for the affected commands.
+What changes at a high level: `runs` table gains `cost_usd REAL`, `turns INTEGER`, `usage_json TEXT`, `transcript_path TEXT`, `engine_status TEXT` (plain schema addition, no migration, per ADR 0001); `finalizeRun()` writes them from the adapter's `EngineResult`; `src/client.ts`, `src/cli/index.ts` (`runs get`), `src/mcp/index.ts` (`crontick_run_get`) all surface the new fields; `docs/reference/` updated for the affected commands.
 Done when: `tests/surface-drift.test.ts` still passes with no new capability row; a Claude run's `costUsd`/`turns`/`usageJson`/`transcriptPath`/`engineStatus` are readable via CLI, MCP, and library after a fake-claude run; a `RawAdapter` run leaves them absent/null.
 
 ## Task 7 — Default engine becomes `claude`; `copilot` removed entirely
@@ -65,7 +65,7 @@ Done when: `jobs new --reuse-session --overlap queue` is rejected; `--reuse-sess
 
 ## Task 9 — Reserved-arg extension + argument passthrough
 What it is / what it means: Delivers R7 (extend the one static, engine-agnostic reserved-arg list with `--output-format`/`--settings`, Decision 7) together with R9 (open-ended passthrough, Decision 9/12/13), since passthrough's whole purpose is forwarding flags crontick doesn't recognize while still rejecting ones that collide with the extended reserved list.
-What changes at a high level: `src/prompt-runtime.ts`'s `RESERVED_PROMPT_ARGS` gains the two entries; `jobs new`/`jobs update` (`src/cli/index.ts`) set Commander's `allowUnknownOption()`, collecting unrecognized long-form flags (with their value if the next token isn't flag-shaped) in argv order; `resolveActionArgs()` (`src/job-input.ts`) merges this third source with the existing `--`/`--arg` sources (still mutually exclusive with each other, per ADR 0018/0019) before the reserved-arg check runs against the merged list.
+What changes at a high level: `src/prompt-runtime.ts`'s `RESERVED_PROMPT_ARGS` gains the two entries; `jobs new`/`jobs update` (`src/cli/index.ts`) set Commander's `allowUnknownOption()`, collecting unrecognized long-form flags (with their value if the next token isn't flag-shaped) in argv order; `resolveActionArgs()` (`src/job-input.ts`) merges this third source with the existing `--`/`--arg` sources (still mutually exclusive with each other, per ADR 0002) before the reserved-arg check runs against the merged list.
 Done when: `jobs new --prompt "..." --allow-all` stores and forwards `--allow-all` verbatim in `action.args`; a passthrough flag matching `RESERVED_PROMPT_ARGS` is rejected at create/update time with the same error as today's reserved-arg check.
 
 ## Task 10 — `config.json` `defaults` section, snapshotted
@@ -74,7 +74,7 @@ What changes at a high level: schema additions in `src/schemas/config.ts`; `BUIL
 Done when: a new job omitting the matching CLI flag honors `config.json`'s `defaults.overlap`/`defaults.timeoutSec`/`defaults.retry`; a job created before a `config.json` defaults edit is unaffected by that later edit.
 
 ## Task 11 — CLI flag renames: `--alias`→`--name`, `--engine`→`--runner`
-What it is / what it means: Delivers R12/Decision 15 (boo-parity): a hard rename on `jobs new`/`jobs update`, no deprecated alias kept alongside (design-principles.md #6, pre-1.0 per ADR 0027). Underlying schema fields (`alias`, `action.engine`) are unchanged — this is CLI-surface only.
+What it is / what it means: Delivers R12/Decision 15 (boo-parity): a hard rename on `jobs new`/`jobs update`, no deprecated alias kept alongside (design-principles.md #6, pre-1.0 per ADR 0001). Underlying schema fields (`alias`, `action.engine`) are unchanged — this is CLI-surface only.
 What changes at a high level: `src/cli/index.ts` option definitions and help text for `jobs new`/`jobs update`; any CLI-layer tests/examples referencing `--alias`/`--engine` updated to `--name`/`--runner`.
 Done when: `crontick jobs new --name <n> --prompt <p> --runner claude --every 30m` works; `--alias`/`--engine` no longer appear in `--help` output; a test asserts the old flag names are rejected as unknown options.
 
@@ -90,4 +90,4 @@ Done when: `docs/specs/007-prompt-jobs.md` and `docs/reference/` read consistent
 
 ---
 
-**Closing note (manual/owner-only step, not assignable to a coding agent):** per the PRD's Manual steps and Risks/Open Questions, the owner live-validates the `SessionEnd`/`Stop` hook's actual firing semantics and payload shape in `-p` mode *after* Task 12 lands — this is deferred and non-blocking, since every normal-run correctness path (Task 4) is already hook-independent. No other manual step blocks this sub-project; the `defaultEngine`/`copilot`-removal breaking change (Task 7) is already owner-approved per the PRD (R2/Decision 8, ADR 0027).
+**Closing note (manual/owner-only step, not assignable to a coding agent):** per the PRD's Manual steps and Risks/Open Questions, the owner live-validates the `SessionEnd`/`Stop` hook's actual firing semantics and payload shape in `-p` mode *after* Task 12 lands — this is deferred and non-blocking, since every normal-run correctness path (Task 4) is already hook-independent. No other manual step blocks this sub-project; the `defaultEngine`/`copilot`-removal breaking change (Task 7) is already owner-approved per the PRD (R2/Decision 8, ADR 0001).

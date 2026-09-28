@@ -66,7 +66,7 @@ export const PromptActionSchema = PromptActionBaseSchema.superRefine(addPromptRu
 /**
  * Action discriminated union keyed on `kind`. Prompt is the only member since
  * the `script`/`exec` action kinds were removed (crontick is prompt-only --
- * see docs/decisions/0028-prompt-only-jobs.md). `kind: 'prompt'` is kept
+ * see docs/decisions/0002-prompt-only-jobs-and-engine-adapters.md). `kind: 'prompt'` is kept
  * explicit (rather than dropping the discriminant and flattening the action
  * shape) so job JSON stays self-describing and forward-compatible with a
  * future action kind, and so existing job files/tooling that read

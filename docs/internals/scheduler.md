@@ -165,4 +165,4 @@ There is no explicit drift correction. Croner handles cron drift internally; int
 accumulate drift from Node.js event-loop delays (standard `setInterval` behavior). A fire missed
 while the daemon was down is never executed after the fact, but is never silently lost either:
 the startup missed-fire pass (built on `enumerateFiresBetween` above) records it as a `missed`
-run. See [ADR 0015](../decisions/0015-report-missed-fires-not-replay.md).
+run. See [ADR 0001](../decisions/0001-architecture-and-runtime-model.md).

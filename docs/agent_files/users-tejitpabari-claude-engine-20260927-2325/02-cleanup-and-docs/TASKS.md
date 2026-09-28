@@ -44,7 +44,7 @@ Done when: The grep was run and its output (or absence of external hits) is reco
 
 ## Task 4 — Rewrite `README.md` and doc examples for prompt-only
 
-What it is / what it means: `README.md:5` still claims "Classic script/exec jobs still exist" and ships an "Advanced: script & exec jobs" section; `docs/examples/{cli,mcp}/README.md` ship `script`/`exec` job JSON. These describe surfaces removed by ADR 0028.
+What it is / what it means: `README.md:5` still claims "Classic script/exec jobs still exist" and ships an "Advanced: script & exec jobs" section; `docs/examples/{cli,mcp}/README.md` ship `script`/`exec` job JSON. These describe surfaces removed by ADR 0002.
 
 What changes at a high level: Remove the script/exec claim and section from `README.md`. Replace the `script`/`exec` example JSON in `docs/examples/cli/README.md` and `docs/examples/mcp/README.md` with a second prompt-job variant each, so the examples still show two job shapes without referencing removed kinds.
 
@@ -62,7 +62,7 @@ Done when: `wc -w docs/architecture.md` ≤ 2000; `grep -rn "kind: 'script'\|kin
 
 What it is / what it means: Per SP01's shipped shape, `copilot` is removed entirely as a built-in engine (not merely non-default), and a new terminal run status `skipped` exists alongside `canceled`. Every doc that still lists or exemplifies `copilot` as available/default, or enumerates run statuses without `skipped`, is now stale.
 
-What changes at a high level: Update `docs/reference/configuration.md`, `docs/concepts/jobs.md`, and `docs/reference/glossary.md` so `claude` is shown as the sole built-in engine; leave `docs/decisions/0008-prompt-jobs-pluggable-engines.md` untouched (append-only ADR) but ensure any still-current successor doc doesn't cite `copilot` as live — a `copilot`-shaped example may remain only as a generic, unnamed `type: raw` custom-engine illustration. Add the `skipped` status, with its distinguishing meaning ("never started" vs. "started, then terminated"), to every run-status enumeration in `docs/reference/{errors,cli,mcp-tools,job-schema,library-api}.md` and `docs/concepts/{execution,state-and-storage}.md` that currently lists `canceled`.
+What changes at a high level: Update `docs/reference/configuration.md`, `docs/concepts/jobs.md`, and `docs/reference/glossary.md` so `claude` is shown as the sole built-in engine; leave `docs/decisions/0002-prompt-only-jobs-and-engine-adapters.md` untouched (append-only ADR) but ensure any still-current successor doc doesn't cite `copilot` as live — a `copilot`-shaped example may remain only as a generic, unnamed `type: raw` custom-engine illustration. Add the `skipped` status, with its distinguishing meaning ("never started" vs. "started, then terminated"), to every run-status enumeration in `docs/reference/{errors,cli,mcp-tools,job-schema,library-api}.md` and `docs/concepts/{execution,state-and-storage}.md` that currently lists `canceled`.
 
 Done when: `grep -rln "copilot" docs/reference docs/concepts README.md` → 0 hits describing it as a live/default/available engine (ADR files excluded); `grep -rln "skipped" docs/reference` → the run-status tables in errors, cli, mcp-tools, job-schema, and library-api all list it with its distinguishing meaning.
 

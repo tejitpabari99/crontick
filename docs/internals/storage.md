@@ -31,7 +31,7 @@ Resolved by `src/paths.ts`. Root: `CRONTICK_HOME` env var, or `envPaths('crontic
 Opened with `node:sqlite` `DatabaseSync`. The full schema is created in one idempotent `CREATE
 TABLE/INDEX IF NOT EXISTS` pass on `open()` -- no migration ledger, no prior shape to reconcile. A
 `runs.db` from before 1.0.0 is not a supported input (see
-[ADR 0017](../decisions/0017-no-migrations-for-first-release.md)). `PRAGMA journal_mode=WAL;
+[ADR 0001](../decisions/0001-architecture-and-runtime-model.md)). `PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;` are set on every `open()`.
 
 | Table | Key columns |
@@ -103,7 +103,7 @@ Before jobs are (re)scheduled, the daemon compares each enabled job's
 firedAt)` -- a terminal `runs` row, `status: 'missed'`, no `pid`. A job with no watermark yet has
 one seeded instead. Capped at `MISSED_FIRE_CAP_PER_JOB` (500) per job. Results aggregate into
 `missedFireSummary`, returned by `GET /api/daemon/status`. Missed fires are reported, never
-replayed -- see [ADR 0015](../decisions/0015-report-missed-fires-not-replay.md).
+replayed -- see [ADR 0001](../decisions/0001-architecture-and-runtime-model.md).
 
 ## Run retention
 
@@ -113,7 +113,7 @@ row (no FK cascade -- a crash mid-eviction leaves at worst a logless run). `prun
 sweeps every job at startup to catch a cap lowered while the daemon was down;
 `setRunRetentionCap()` applies a reload-time change live. Eviction batches 500 ids per transaction
 (`node:sqlite`'s ~32766 bound-parameter ceiling). Both paths are best-effort -- logged on failure,
-never fail a run or block startup. See [ADR 0012](../decisions/0012-run-history-retention.md).
+never fail a run or block startup. See [ADR 0001](../decisions/0001-architecture-and-runtime-model.md).
 
 ## Run import
 

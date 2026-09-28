@@ -23,13 +23,13 @@ SP02 documents SP01's shipped shape; it does not redesign `src/engines/`, `promp
 
 ## Locked decisions (initiative-wide)
 
-- Prompt-only product, per ADR 0028 — no `script`/`exec` job kinds.
+- Prompt-only product, per ADR 0002 — no `script`/`exec` job kinds.
 - The Copilot plugin is preserved, but only on branch `users/tejitpabari/copilot-init`, not on this branch.
 - Claude Code is the first engine, delivered via a general adapter framework (not a Claude-only special case).
 - Follow `docs/tech/design-principles.md` and `docs/tech/mission.md` for all structural decisions.
-- No daemon reboot autostart (ADR 0013 stands).
+- No daemon reboot autostart (ADR 0001 stands).
 - No new runtime dependencies (AGENTS.md rule 1) — CLI-subprocess model only, no Claude Agent SDK this phase.
-- Pre-1.0: breaking changes are allowed without back-compat shims (ADR 0027), but still need explicit owner sign-off per AGENTS.md rule 8.
+- Pre-1.0: breaking changes are allowed without back-compat shims (ADR 0001), but still need explicit owner sign-off per AGENTS.md rule 8.
 - No crontick-managed permission flags, ever — any engine permission mode is passed by the user via argument passthrough (any CLI flag crontick doesn't recognize is forwarded verbatim to the engine; see SP01 Decision 6/R9).
 - A job with `reuseSession: true` may only use `overlap: 'skip'` (schema-enforced); a fire while the reused session's run is active is recorded with a new terminal status `skipped` (not `canceled`) — applies to every overlap-skip, not only reused-session ones — and never cancels the in-flight run (SP01 Decision 11/16/R10/R13).
 - `config.json` gains a `defaults` section (overlap, timeout, retry) for job-setting defaults; precedence is CLI flag > per-job JSON > `config.json` > built-in constants, resolved and snapshotted once at create/update time — a later `config.json` edit never retroactively changes an existing job (SP01 Decision 14/R11, **[RESOLVED]**).

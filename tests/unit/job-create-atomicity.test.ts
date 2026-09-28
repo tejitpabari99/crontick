@@ -91,7 +91,7 @@ async function apiCall(port: number, method: string, path: string, body?: unknow
   return { status: response.status, data };
 }
 
-describe('CTD-004 create/update schedule atomicity', () => {
+describe('create/update schedule atomicity', () => {
   it('rejects invalid creates without persisting a job row', async () => {
     const dir = makeHome('create');
     const store = makeStore(dir);

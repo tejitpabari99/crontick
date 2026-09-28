@@ -14,7 +14,7 @@ Agent CLIs are great at *one conversation*. They have no answer for "run this pr
 
 | # | Tenet | What this means in practice | Status |
 |---|-------|------------------------------|--------|
-| 1 | **Session-independent** | Jobs fire whether or not any agent session (or terminal) is open — the daemon does it, not your editor or chat window. The daemon is demand-started (see ADR 0003), not boot-launched: something has to trigger it once, but after that it runs independent of any session. Reboot autostart is intentionally not a goal right now. | Implemented |
+| 1 | **Session-independent** | Jobs fire whether or not any agent session (or terminal) is open — the daemon does it, not your editor or chat window. The daemon is demand-started (see ADR 0001), not boot-launched: something has to trigger it once, but after that it runs independent of any session. Reboot autostart is intentionally not a goal right now. | Implemented |
 | 2 | **Engine-agnostic** | One core lifecycle, many engine adapters. Starts with Claude Code; Copilot, Codex, and others follow the same adapter contract. Users (and the core) should never have to special-case an engine by name. | Partial |
 | 3 | **Agent-accessible** | An agent (e.g. Claude Code) can set up and manage its own jobs — create, list, inspect, delete — via the CLI or MCP server, no human required to run the commands. | Implemented |
 | 4 | **Session-aware** | crontick creates the engine session itself and knows its identity (session id) and real status — running / finished / failed — not just a process exit code. | Planned / Partial |
@@ -26,7 +26,7 @@ Agent CLIs are great at *one conversation*. They have no answer for "run this pr
 | # | Tenet | What this means in practice |
 |---|-------|------------------------------|
 | 7 | **Local-first & private** | No cloud service; all state (jobs, run history, logs) stays on the machine; the daemon speaks loopback-only HTTP, never a remote listener. |
-| 8 | **Observable** | Every run is recorded with a status, logs, and session id; nothing fails silently. Missed fires are reported, never silently replayed (see ADR 0015). |
+| 8 | **Observable** | Every run is recorded with a status, logs, and session id; nothing fails silently. Missed fires are reported, never silently replayed (see ADR 0001). |
 | 9 | **Safe by default** | Secrets are redacted from logs; least-privilege by default; explicit engine permission flags; destructive operations ask for confirmation. |
 | 10 | **Recoverable** | Survives daemon restarts — in-flight runs are adopted rather than lost or duplicated, and job definitions are plain files, not opaque state. |
 | 11 | **Predictable** | Same input, same behavior, regardless of whether you used the CLI, MCP, or the library — enforced by surface parity. |

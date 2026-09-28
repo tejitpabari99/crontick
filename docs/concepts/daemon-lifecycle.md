@@ -10,7 +10,7 @@ After reading this page: how the daemon starts, how shims find it, and what happ
 
 The daemon is not a system service, launchd agent, or systemd unit -- it's a regular Node.js
 process started **on demand** the first time a shim needs it, with no persistent supervisor.
-See [ADR 0003](../decisions/0003-demand-started-daemon.md).
+See [ADR 0001](../decisions/0001-architecture-and-runtime-model.md).
 
 ## How a shim starts/finds the daemon
 
@@ -50,7 +50,7 @@ a POSIX-only fallback: Windows has no real user-space `SIGTERM` (`process.kill(p
 from another process there unconditionally terminates the target without invoking any handler),
 which is exactly why the HTTP route is primary. See
 [internals/daemon.md](../internals/daemon.md#shutdown) and
-[ADR 0014](../decisions/0014-http-graceful-shutdown-over-signals.md).
+[ADR 0001](../decisions/0001-architecture-and-runtime-model.md).
 
 In-flight child processes are deliberately left running across shutdown (see the next section);
 the stop response's `activeRuns: [{ id, jobId }]` means a stop never silently leaves work running
@@ -59,14 +59,14 @@ without saying so.
 ## What happens while the daemon is down
 
 - **No ticks fire.** The core trade-off of demand-start (see
-  [ADR 0003](../decisions/0003-demand-started-daemon.md)) -- not a defect, but a gap that needs
+  [ADR 0001](../decisions/0001-architecture-and-runtime-model.md)) -- not a defect, but a gap that needs
   surfacing.
 - **Missed fires are recorded and reported, not replayed.** The daemon persists a per-job "last
   seen ticking" watermark. On the next start, it computes which fires each enabled job's schedule
   *would* have produced since then and records each as a terminal `missed` run (capped at 500 per
   job). `crontick info` / `GET /api/daemon/status` summarizes this as `missedFires`, and
   `crontick runs list --status missed` lists the rows. crontick deliberately does **not** run the
-  missed fires -- see [ADR 0015](../decisions/0015-report-missed-fires-not-replay.md). A job
+  missed fires -- see [ADR 0001](../decisions/0001-architecture-and-runtime-model.md). A job
   never observed live yet has its watermark seeded, with no gap computed.
 - **Orphan runs are reconciled by checking real process liveness, not assumed dead.** `queued`
   runs are always canceled (never spawned). `running` runs are checked against the OS process
@@ -78,8 +78,7 @@ without saying so.
   `detached: true`, decoupled from the daemon's process tree. The exception is a PowerShell
   engine command on Windows, spawned attached to get output at all -- trading survival across a
   Ctrl+C shutdown for that (an abrupt crash still leaves it running). See
-  [ADR 0016](../decisions/0016-detached-children-cross-platform.md) and
-  [ADR 0020](../decisions/0020-no-detach-powershell-script-jobs-windows.md).
+  [ADR 0001](../decisions/0001-architecture-and-runtime-model.md).
 - **Jobs are safe.** Job definitions live in JSON files on disk and are never lost when the daemon stops.
 
 ## Why not a system service
@@ -87,9 +86,9 @@ without saying so.
 No elevated privileges to install/update/uninstall; identical behavior across OSes without
 platform-specific plumbing; avoids waking a daemon on laptop resume only to find targets stale.
 OS startup registration was removed in favor of pure demand-start; see
-[ADR 0003](../decisions/0003-demand-started-daemon.md).
+[ADR 0001](../decisions/0001-architecture-and-runtime-model.md).
 
 ## Further reading
 
 - [State and storage](./state-and-storage.md), [Error model](./error-model.md), [Architecture](../architecture.md)
-- [ADR 0003](../decisions/0003-demand-started-daemon.md), [ADR 0014](../decisions/0014-http-graceful-shutdown-over-signals.md), [ADR 0015](../decisions/0015-report-missed-fires-not-replay.md)
+- [ADR 0001: Architecture and runtime model](../decisions/0001-architecture-and-runtime-model.md)

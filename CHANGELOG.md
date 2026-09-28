@@ -52,7 +52,7 @@
   automatically on first use, and `crontick daemon start` is available for explicit manual
   lifecycle control. There is no install-time or login/startup registration -- crontick does not
   register itself to launch automatically when you log in or start your machine; see
-  `docs/concepts/daemon-lifecycle.md` and ADR 0003 for the reasoning.
+  `docs/concepts/daemon-lifecycle.md` and ADR 0001 for the reasoning.
 
 - 4e956c9: Argument passing to `--exec`/`--prompt` jobs now has a primary, always-correct form: the
   repeatable `--arg <value>` flag. Use it instead of `--` when you need arguments with spaces,
@@ -144,7 +144,7 @@ reload` -- no restart required.
   - **`runs list --status`** (and `crontick_run_list.status`) filters run history by status, and
     `pid`/`outputTruncated` are exposed on run records.
 
-  See the new architecture decision records (ADR 0014-0018) for the reasoning and honest trade-offs
+  See the architecture decision records (ADR 0001) for the reasoning and honest trade-offs
   behind each of these.
 
 - deb296e: Fix AWS secret redaction to require high-confidence context instead of treating every bare

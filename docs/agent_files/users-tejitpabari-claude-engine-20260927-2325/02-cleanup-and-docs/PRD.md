@@ -16,7 +16,7 @@ SP01 lands the Claude engine adapter; SP02 is the settling pass: consolidate sca
 
 ## Problem
 
-The prompt-only pivot (ADR 0028, commits `664e241`/`bb2c5ea`/`12a14ad`) removed `script`/`exec` and the Copilot plugin, but:
+The prompt-only pivot (ADR 0002, commits `664e241`/`bb2c5ea`/`12a14ad`) removed `script`/`exec` and the Copilot plugin, but:
 - Docs (~50k words, `[verified: wc -w docs/**/*.md → 49,922]`) still describe removed surfaces: `README.md:5` claims "Classic script/exec jobs still exist"; `docs/architecture.md` documents a 3-kind `ActionSchema` and a deleted `plugin/` directory; `docs/examples/{cli,mcp}/README.md` ship `script`/`exec` job JSON `[verified: grep 'kind": "script"' docs/examples → 2 hits]`.
 - `docs/tech/{mission,principles}.md` (new, `d8d3966`) aren't linked from `docs/README.md` or `AGENTS.md`'s documentation map — the rulebook is undiscoverable.
 - Constants duplicated, not centralized: retention defaults (`100`, `2_000_000`, `30`) are hand-copied in `src/config.ts:63` and `src/schemas/config.ts:76`, and re-typed as literals in `config.test.ts` (3x) and `runner.test.ts` `[verified: grep '2_000_000' src tests → 8 hits/4 files]`.
@@ -59,7 +59,7 @@ Each affected test (`config.test.ts`, `runner.test.ts`, `scheduler.test.ts`, `da
 |---|---|---|
 | `rebrand.test.ts` | Scans deleted `plugin/` root; try/catch silently no-ops | Drop `'plugin'` from `roots`; keep the pattern checks (still a valid legacy-name guard) |
 | `dashboard-command-removal.test.ts` | Still guards a real, current decision | Keep as-is |
-| `autostart-removal.test.ts` | Still guards a real, current decision (ADR 0013) | Keep as-is |
+| `autostart-removal.test.ts` | Still guards a real, current decision (ADR 0001) | Keep as-is |
 | `*.ctd-NNN.test.ts` (13 files) | Numbered by an external ticket system with no in-repo index of what `ctd-NNN` means | Rename to descriptive names (file already has one, e.g. `runner.ctd-001.test.ts` → `runner.pid-capture.test.ts`); confirm via `git log` what each guards before renaming, don't drop coverage |
 | `validate` script ordering | `test` runs before `build`; ~10 files need `dist/` | Reorder `package.json#scripts.validate` to `lint && typecheck && typecheck:examples && build && test && typecheck:examples:dist` |
 
@@ -78,7 +78,7 @@ Style rules (section appended to `design-principles.md`): word budgets — `conc
 
 Concrete fixes: `README.md:5` — remove "Classic script/exec jobs still exist"; drop the "Advanced: script & exec jobs" section; `docs/examples/{cli,mcp}/README.md` — replace `script`/`exec` example JSON with a second prompt-job variant; `architecture.md` — drop `plugin/` extension-point section, collapse `ActionSchema` table to one `prompt` kind, add SP01's engine-adapter section; `specs/{001,003,004,005,006,007}.md` — cut script/exec/Copilot-plugin references.
 
-**SP01-consistency fixes (new field/behavior, not a redesign):** per SP01's shipped shape, `copilot` is gone as a built-in engine entirely (not merely non-default) — every doc that lists or exemplifies `copilot` as an available/default engine (`docs/reference/configuration.md`, `docs/concepts/jobs.md`, `docs/reference/glossary.md`, `docs/decisions/0008-prompt-jobs-pluggable-engines.md` stays untouched as an append-only ADR, but its still-current successors don't cite `copilot` as live) is updated to show `claude` as the sole built-in, with `copilot`-shaped custom-engine config left only as a generic `type: raw` example, unnamed. Every run-status enumeration in `docs/reference/` (errors, cli, mcp-tools, job-schema, library-api) and `docs/concepts/` (execution, state-and-storage) that lists `canceled` adds the new terminal `skipped` status (SP01 R13) with its distinguishing meaning ("never started" vs. "started, then terminated").
+**SP01-consistency fixes (new field/behavior, not a redesign):** per SP01's shipped shape, `copilot` is gone as a built-in engine entirely (not merely non-default) — every doc that lists or exemplifies `copilot` as an available/default engine (`docs/reference/configuration.md`, `docs/concepts/jobs.md`, `docs/reference/glossary.md`, `docs/decisions/0002-prompt-only-jobs-and-engine-adapters.md` stays untouched as an append-only ADR, but its still-current successors don't cite `copilot` as live) is updated to show `claude` as the sole built-in, with `copilot`-shaped custom-engine config left only as a generic `type: raw` example, unnamed. Every run-status enumeration in `docs/reference/` (errors, cli, mcp-tools, job-schema, library-api) and `docs/concepts/` (execution, state-and-storage) that lists `canceled` adds the new terminal `skipped` status (SP01 R13) with its distinguishing meaning ("never started" vs. "started, then terminated").
 
 Link `docs/tech/mission.md`/`design-principles.md` from `docs/README.md` (new "Guiding docs" row), `AGENTS.md`'s documentation-map table, and `CLAUDE.md` (one line: "check `docs/tech/design-principles.md` before any structural change").
 

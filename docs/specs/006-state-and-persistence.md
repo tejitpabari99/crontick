@@ -29,7 +29,7 @@ human-editability of jobs and efficient querying of run history.
 | Data directory | Platform-specific root for all crontick state; resolved by `env-paths`. |
 | Jobs directory | `<dataDir>/jobs/`; one JSON file per job. |
 | runs.db | SQLite database (WAL) containing `jobs` (cache), `runs`, `run_logs`, and `job_schedule_state`. |
-| Schema creation | The full schema is created in one idempotent `CREATE TABLE/INDEX IF NOT EXISTS` pass on `open()`. There is no migration ledger; a `runs.db` created by a crontick version before 1.0.0 is not a supported input (see ADR 0017). |
+| Schema creation | The full schema is created in one idempotent `CREATE TABLE/INDEX IF NOT EXISTS` pass on `open()`. There is no migration ledger; a `runs.db` created by a crontick version before 1.0.0 is not a supported input (see ADR 0001). |
 | Orphan run | A `queued` or `running` run left behind after a daemon crash or unclean shutdown; resolved on the next startup via a process-liveness check. |
 | Missed run | A terminal `missed`-status run recorded at daemon startup for a scheduled fire that occurred while no daemon was running; never executed (see spec 004 R-004-28). |
 | Read-time redaction | Defensive masking applied when config values, run rows, log lines, or dashboard payloads are returned from user-facing read surfaces. |
@@ -49,7 +49,7 @@ human-editability of jobs and efficient querying of run history.
 - **R-006-9**: The `runs` table MUST store: `id`, `job_id`, `started_at`, `ended_at`, `status`, `exit_code`, `error`, `duration_ms`, `pid` (nullable, absent for `missed`), `output_truncated`, `session_id` (nullable), `command` (nullable), `cost_usd`, `turns`, `usage_json`, and `transcript_path` (all nullable, Claude-only). The `jobs` table MUST store `id`, `alias`, `json`, `updated_at`.
 - **R-006-10**: The `run_logs` table MUST store `id`, `run_id`, `stream`, `ts`, `chunk` (BLOB).
 - **R-006-11**: Indexes MUST exist as `idx_runs_job_id_started_at`, `idx_runs_started_at`, `idx_run_logs_run_id`, and `idx_jobs_alias` (unique partial, `WHERE alias IS NOT NULL`). A narrower single-column `idx_runs_job_id` MUST NOT also be created.
-- **R-006-12**: The full schema MUST be created in one idempotent `CREATE TABLE/INDEX IF NOT EXISTS` pass on `open()`, with no migration ledger, no versioned migration list, and no runtime schema-version check; a `runs.db` produced before 1.0.0 is unsupported input (see ADR 0017).
+- **R-006-12**: The full schema MUST be created in one idempotent `CREATE TABLE/INDEX IF NOT EXISTS` pass on `open()`, with no migration ledger, no versioned migration list, and no runtime schema-version check; a `runs.db` produced before 1.0.0 is unsupported input (see ADR 0001).
 - **R-006-13**: On startup, `reconcileOrphanRuns(check)` MUST resolve every run left `queued`/`running`: `queued` runs are canceled unconditionally; `running` runs are checked against real process liveness (pid + start-time tolerance, to detect pid reuse) -- alive or inconclusive MUST be adopted back into the runner; confirmed-dead MUST first use a valid Claude completion marker (spec 004 R-004-34), or otherwise be canceled with `ORPHAN_RUN_ERROR_MESSAGE`/`ORPHAN_RUN_ERROR_CODE`.
 - **R-006-14**: `listRuns()` MUST support filtering by `jobId`, `since`, `status`, and `limit`; results ordered by `started_at DESC`.
 - **R-006-15**: `appendLog()` MUST insert a new row into `run_logs` with the current timestamp; text-like output is expected to have already passed through runner redaction.
@@ -69,7 +69,7 @@ human-editability of jobs and efficient querying of run history.
 ### Non-functional requirements
 
 - **R-006-21**: The data directory layout SHOULD remain stable across minor versions.
-- **R-006-22**: New SQLite columns/tables SHOULD extend the single idempotent schema pass, never a migration ledger or `ALTER TABLE` upgrade step (see ADR 0017, ADR 0027).
+- **R-006-22**: New SQLite columns/tables SHOULD extend the single idempotent schema pass, never a migration ledger or `ALTER TABLE` upgrade step (see ADR 0001).
 - **R-006-23**: The daemon SHOULD NOT hold exclusive locks on job JSON files.
 
 ## Behavior
@@ -147,4 +147,4 @@ None.
 - [004-daemon.md](004-daemon.md)
 - [../internals/storage.md](../internals/storage.md)
 - [../concepts/state-and-storage.md](../concepts/state-and-storage.md)
-- [../decisions/0017-no-migrations-for-first-release.md](../decisions/0017-no-migrations-for-first-release.md)
+- [../decisions/0001-architecture-and-runtime-model.md](../decisions/0001-architecture-and-runtime-model.md)

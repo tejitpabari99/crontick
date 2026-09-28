@@ -48,7 +48,7 @@ through the adapter registry. Each adapter builds an invocation, parses the
 process result, and resolves a session ID. The runner owns spawn, bounded and
 redacted output capture, timeout, persistence, and retries. Engine-specific
 command and result rules stay in adapters
-([ADR 0033](../decisions/0033-engine-adapter-framework.md)).
+([ADR 0002](../decisions/0002-prompt-only-jobs-and-engine-adapters.md)).
 
 ### Raw adapter
 
@@ -116,7 +116,7 @@ JSON with a `SessionEnd` hook that writes a completion marker for best-effort
 restart recovery. This marker never determines a normal run's result and does
 not make a session eligible for resume. Its live firing and payload still
 require validation; when absent, restart reconciliation uses the existing
-unknown-exit fallback ([ADR 0032](../decisions/0032-claude-completion-marker-for-restart-recovery.md)).
+unknown-exit fallback ([ADR 0002](../decisions/0002-prompt-only-jobs-and-engine-adapters.md)).
 
 ## CLI and surface behavior
 
@@ -160,4 +160,4 @@ args. Library and MCP callers pass `action.args` directly. See the
 - [Job schema](../reference/job-schema.md)
 - [Configuration](../reference/configuration.md)
 - [Execution](003-execution.md)
-- [ADR 0033: Engine adapter framework](../decisions/0033-engine-adapter-framework.md)
+- [ADR 0002: Prompt-only jobs and the engine adapter framework](../decisions/0002-prompt-only-jobs-and-engine-adapters.md)

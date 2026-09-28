@@ -92,7 +92,7 @@ within the timeout (or the route was unreachable at all), it escalates to `SIGTE
 `SIGKILL`, reporting `mode: 'hard-kill'`. `SIGINT`/`SIGTERM` handlers run the identical `shutdown()`
 closure as a POSIX-only fallback. See
 [concepts/daemon-lifecycle.md](../concepts/daemon-lifecycle.md#shutdown) for the full rationale and
-[ADR 0014](../decisions/0014-http-graceful-shutdown-over-signals.md).
+[ADR 0001](../decisions/0001-architecture-and-runtime-model.md).
 
 `uncaughtException` (non-EPIPE) logs a fatal error, cleans up PID/port files, and exits 1; stderr
 EPIPE is swallowed (detached daemon, closed parent). A daemon start tolerates and overwrites stale

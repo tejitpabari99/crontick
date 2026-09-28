@@ -129,7 +129,7 @@ async function apiCall(port: number, method: string, path: string, body?: unknow
 
 async function spawnDaemon(dir: string, previousPort?: number): Promise<{ proc: ChildProcess; port: number }> {
   // Registers the fake node-eval engine so `exec`-style inline-script
-  // fixtures (now expressed as prompt actions, see docs/decisions/0028) can
+  // fixtures (now expressed as prompt actions, see docs/decisions/0002) can
   // run without a real engine CLI installed. Skipped if the test already
   // wrote its own config.json (e.g. to also set retention overrides -- see
   // writeFakeEngineConfig()'s callers below for that case) or if `dir` itself

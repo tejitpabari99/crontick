@@ -52,14 +52,14 @@ unresolved identifier fails with `JOB_NOT_FOUND`.
 
 - **R-001-1**: A job `alias`, when supplied, MUST match `^[a-z0-9]+(?:-[a-z0-9]+)*$` (kebab-case). The `id` field is a server-assigned GUID, never validated against this pattern.
 - **R-001-2**: A job MUST have exactly one `schedule` field conforming to one of the schedule kinds (`cron`, `interval`, `one-shot`).
-- **R-001-3**: A job MUST have exactly one `action` field; `kind` is a discriminant with a single member, `"prompt"` (see [ADR 0028](../decisions/0028-prompt-only-jobs.md)).
+- **R-001-3**: A job MUST have exactly one `action` field; `kind` is a discriminant with a single member, `"prompt"` (see [ADR 0002](../decisions/0002-prompt-only-jobs-and-engine-adapters.md)).
 - **R-001-4**: The `enabled` field MUST default to `true` when omitted.
 - **R-001-5**: The built-in `overlap` default MUST be `"skip"`. Valid values are `skip`, `queue`, `cancel-previous`.
 - **R-001-5a**: When a prompt action has `reuseSession=true`, `overlap` MUST be `skip`; `queue` and `cancel-previous` MUST fail job validation.
 - **R-001-6**: The built-in `retry.max` default MUST be `0`; the built-in `retry.backoffSec` default MUST be `30`.
 - **R-001-6a**: A create input that omits `overlap`, `action.timeoutSec`, or either `retry` field MUST use the matching `config.json` `defaults` value, falling back to the built-in values in R-001-5/R-001-6. These are saved in the job definition at create time; a later config edit MUST NOT change an existing job, and an update patch that omits a field MUST preserve its saved value.
 - **R-001-7**: The `description` field MAY be omitted; it has no behavioral effect.
-- **R-001-8**: Creating a job with an alias (or GUID `id`) that already resolves to a live job MUST fail with `JOB_ALREADY_EXISTS` and leave the existing definition unchanged, unless the caller requests overwrite (`--force`, `force: true`, or `force=1|true`). See [ADR 0021](../decisions/0021-duplicate-job-create-requires-force.md).
+- **R-001-8**: Creating a job with an alias (or GUID `id`) that already resolves to a live job MUST fail with `JOB_ALREADY_EXISTS` and leave the existing definition unchanged, unless the caller requests overwrite (`--force`, `force: true`, or `force=1|true`). See [ADR 0002](../decisions/0002-prompt-only-jobs-and-engine-adapters.md).
 - **R-001-9**: Updating a job MUST merge the patch onto the existing definition, re-validate the merged result against `JobSchema`, and complete schedule validation plus any `action.envFile` preflight before any persistence. `envFile` preflight resolves relative paths against `action.cwd ?? process.cwd()`, confirms readability, and leaves the stored job unchanged on failure.
 - **R-001-9a**: CLI update shorthand MUST preserve unspecified fields; `--enable`/`--disable` MUST be mutually exclusive.
 - **R-001-9b**: On the API and MCP surfaces, a partial action patch that omits `prompt` but includes only modifier fields (`envFile`, `timeoutSec`, `args`, `reuseSession`, `engine`, `sessionId`) MUST be accepted; the missing `prompt` is backfilled from the existing stored action by `mergeActionPatch`. The CLI reaches advanced action patches through `jobs update --file <patch.json>`.
@@ -108,12 +108,12 @@ unresolved identifier fails with `JOB_NOT_FOUND`.
 - [x] Default values applied correctly for overlap, retry, enabled (test file: `tests/property.schema.test.ts`)
 - [x] Strict action schema rejects unknown keys, and `kind: "script"`/`kind: "exec"` are rejected (test file: `tests/property.schema.test.ts`, `tests/job-input.test.ts`)
 - [x] Duplicate create rejects by default and explicit `force` replaces the existing job (test file: `tests/job-create-duplicate.test.ts`)
-- [x] Invalid schedule on create/update persists nothing / preserves the original job (test file: `tests/job-create-atomicity.ctd-004.test.ts`)
+- [x] Invalid schedule on create/update persists nothing / preserves the original job (test file: `tests/job-create-atomicity.test.ts`)
 - [x] Delete removes file and SQLite row (test file: `tests/store.test.ts`)
 - [x] Schema sidecar written on persist (test file: `tests/store.test.ts`)
 - [x] Prompt action validates reserved args (test file: `tests/job-input.test.ts`)
 - [x] Update merge semantics preserve omitted fields across CLI, MCP, and library surfaces (test files: `tests/job-input.test.ts`, `tests/cli.test.ts`, `tests/client.test.ts`, `tests/mcp.test.ts`)
-- [x] Missing `envFile` on create/update is rejected before persistence; BOM-prefixed job files load and malformed job/job-patch files report file/position/expected-shape diagnostics (test files: `tests/job-create-atomicity.ctd-004.test.ts`, `tests/env-file.test.ts`, `tests/job-input.test.ts`)
+- [x] Missing `envFile` on create/update is rejected before persistence; BOM-prefixed job files load and malformed job/job-patch files report file/position/expected-shape diagnostics (test files: `tests/job-create-atomicity.test.ts`, `tests/env-file.test.ts`, `tests/job-input.test.ts`)
 
 ## Out of scope
 
@@ -132,4 +132,4 @@ None.
 - [007-prompt-jobs.md](007-prompt-jobs.md)
 - [../reference/job-schema.md](../reference/job-schema.md)
 - [../concepts/jobs.md](../concepts/jobs.md)
-- [../decisions/0028-prompt-only-jobs.md](../decisions/0028-prompt-only-jobs.md)
+- [../decisions/0002-prompt-only-jobs-and-engine-adapters.md](../decisions/0002-prompt-only-jobs-and-engine-adapters.md)

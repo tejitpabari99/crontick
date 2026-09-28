@@ -14,7 +14,7 @@ The project ships as a single npm package (`crontick`) with three binaries and a
 
 ## Scope and non-goals
 
-crontick is a single-machine, single-user, demand-started (lazy) scheduler: an ESM-only Node.js package (>=22.5) using the built-in `node:sqlite` module. It is **not** a supervised always-on service (if the daemon dies, schedules pause until the next client interaction), not distributed, not a job queue with external brokers, not a container orchestrator, not a replacement for system cron, and not a general-purpose task runner -- job actions are prompt-only (see [ADR 0028](decisions/0028-prompt-only-jobs.md)).
+crontick is a single-machine, single-user, demand-started (lazy) scheduler: an ESM-only Node.js package (>=22.5) using the built-in `node:sqlite` module. It is **not** a supervised always-on service (if the daemon dies, schedules pause until the next client interaction), not distributed, not a job queue with external brokers, not a container orchestrator, not a replacement for system cron, and not a general-purpose task runner -- job actions are prompt-only (see [ADR 0002](decisions/0002-prompt-only-jobs-and-engine-adapters.md)).
 
 ## Public API boundary
 
@@ -78,7 +78,7 @@ owns non-interactive `stream-json` invocation, pre-assigned session IDs, transcr
 preflight (`SESSION_NOT_FOUND`), and a best-effort `SessionEnd` completion-marker hook used only
 for restart recovery. See [internals/engines.md](internals/engines.md),
 [specs/007-prompt-jobs.md](specs/007-prompt-jobs.md), and
-[ADR 0033](decisions/0033-engine-adapter-framework.md).
+[ADR 0002](decisions/0002-prompt-only-jobs-and-engine-adapters.md).
 
 ## Important invariants
 
@@ -153,11 +153,11 @@ outbound calls; spawned engine children are unconstrained.
 Two aspects are sometimes mistaken for gaps; they are deliberate:
 
 - **Demand-started, not supervised.** Nothing restarts a crashed daemon or notifies you
-  out-of-band. See [ADR 0003](decisions/0003-demand-started-daemon.md) and
+  out-of-band. See [ADR 0001](decisions/0001-architecture-and-runtime-model.md) and
   [concepts/daemon-lifecycle.md](concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down)
   for the missed-fire mechanism that makes any downtime gap visible anyway.
 - **Run-history retention is a bounded cache, not an archive.** Each job keeps at most
   `retention.maxRunsPerJob` runs (default 100); eviction is a hard delete. Export first with
   `crontick share export --include-runs` if you need history past the cap. See
   [concepts/state-and-storage.md](concepts/state-and-storage.md#run-history-retention) and
-  [ADR 0012](decisions/0012-run-history-retention.md).
+  [ADR 0001](decisions/0001-architecture-and-runtime-model.md).

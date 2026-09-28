@@ -45,7 +45,7 @@ The `.schema.json` sidecar is a JSON Schema generated from the Zod `JobSchema` v
 The `runs.db` file is opened with `PRAGMA journal_mode=WAL` and `PRAGMA foreign_keys=ON`. The
 full schema is created in one idempotent pass on open -- there is no migration ledger; a
 `runs.db` created before 1.0.0 is not a supported input (see
-[ADR 0017](../decisions/0017-no-migrations-for-first-release.md)). Tables: `jobs` (cache,
+[ADR 0001](../decisions/0001-architecture-and-runtime-model.md)). Tables: `jobs` (cache,
 rebuilt from disk on start), `runs` (status, exit code, timing, spawned `pid`,
 output-truncation flag), `run_logs` (stdout/stderr chunks, ordered by insertion), and
 `job_schedule_state` (per-job "last observed ticking" watermark for missed-fire computation). See
@@ -76,7 +76,7 @@ age limit): a job firing every minute keeps ~100 minutes of history, one firing 
 years. Eviction is a hard delete with no undo -- back up first with `crontick share export
 --include-runs` if you need history past the cap. See
 [internals/storage.md](../internals/storage.md) for the eviction algorithm and
-[ADR 0012](../decisions/0012-run-history-retention.md) for the rationale.
+[ADR 0001](../decisions/0001-architecture-and-runtime-model.md) for the rationale.
 
 A single run's own captured stdout/stderr is bounded separately by
 `retention.maxOutputBytesPerRun` (default 2,000,000 bytes); once hit, further output is dropped

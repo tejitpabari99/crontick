@@ -110,7 +110,7 @@ a fallback only) are described in
 - [x] `POST /api/daemon/stop` responds before the process exits and reports `activeRuns` (test file: `tests/integration.daemon-lifecycle.test.ts`)
 - [x] `stopDaemon` reports `mode: 'graceful'` on success and escalates to `SIGTERM`/`SIGKILL` (`mode: 'hard-kill'`) when the route stalls or is unreachable (test file: `tests/integration.daemon-lifecycle.test.ts`)
 - [x] `DELETE /api/jobs/:id` cancels the job's active run, reporting `canceledRun` (test file: `tests/integration.daemon-lifecycle.test.ts`)
-- [x] `POST /api/jobs` rejects duplicate IDs unless `force` is explicit; create/update validate schedules and `envFile` before persistence (test files: `tests/job-create-duplicate.test.ts`, `tests/job-create-atomicity.ctd-004.test.ts`, `tests/env-file.test.ts`)
+- [x] `POST /api/jobs` rejects duplicate IDs unless `force` is explicit; create/update validate schedules and `envFile` before persistence (test files: `tests/job-create-duplicate.test.ts`, `tests/job-create-atomicity.test.ts`, `tests/env-file.test.ts`)
 - [x] Startup prunes daemon log files beyond `retention.maxLogFiles`; reload applies a lowered cap without restart (test file: `tests/integration.daemon-lifecycle.test.ts`)
 - [x] Missed fires across a crash/restart are recorded as `missed` runs and surfaced in `info`'s `missedFires` summary (test files: `tests/integration.daemon-lifecycle.test.ts`, `tests/api.test.ts`, `tests/daemon-status-fields.test.ts`)
 - [x] Reload reschedules all jobs from disk, aborting cleanly on invalid config (test file: `tests/integration.daemon-lifecycle.test.ts`)

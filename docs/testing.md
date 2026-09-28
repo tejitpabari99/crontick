@@ -274,7 +274,7 @@ publishing.
 ### State directory
 
 - [ ] Delete `CRONTICK_HOME` entirely; `crontick jobs list` recreates it via demand-start
-- [ ] With an existing populated state directory, reinstall/upgrade to a new 1.x patch or minor version; jobs and runs survive (a `runs.db` from before 1.0.0 is not a supported input -- see ADR 0017)
+- [ ] With an existing populated state directory, reinstall/upgrade to a new 1.x patch or minor version; jobs and runs survive (a `runs.db` from before 1.0.0 is not a supported input -- see ADR 0001)
 
 ### Three surfaces
 

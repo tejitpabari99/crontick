@@ -4,7 +4,7 @@ Implements: `src/engines/types.ts`, `src/engines/registry.ts`, `src/engines/raw-
 `src/engines/claude-adapter.ts`, `src/config.ts` (`resolvePromptRunCommand`)
 
 Audience: contributors adding or changing a prompt-engine adapter. Non-duplication: for *why*
-adapters exist see [ADR 0033](../decisions/0033-engine-adapter-framework.md); for the runner's
+adapters exist see [ADR 0002](../decisions/0002-prompt-only-jobs-and-engine-adapters.md); for the runner's
 side of the contract see [internals/prompt-execution.md](./prompt-execution.md); for the
 user-facing behavior contract see [specs/007-prompt-jobs.md](../specs/007-prompt-jobs.md).
 
@@ -87,7 +87,7 @@ that reads `exit_status`/`session_id` from hook stdin and writes
 `claudeCompletionMarkerPath(dataDir, runId)` -- a private file, never the user's own Claude
 settings. This marker is a best-effort signal consumed only by restart reconciliation (see
 [prompt-execution.md](./prompt-execution.md#adopting-runs-across-a-restart) and
-[ADR 0032](../decisions/0032-claude-completion-marker-for-restart-recovery.md)); a normal run's
+[ADR 0002](../decisions/0002-prompt-only-jobs-and-engine-adapters.md)); a normal run's
 outcome always comes from `parseResult`, never the marker.
 
 ## Adding an engine

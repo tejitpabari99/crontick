@@ -129,4 +129,4 @@ None.
 - [001-job-definition.md](001-job-definition.md)
 - [../reference/](../reference/)
 - [../architecture.md](../architecture.md)
-- [../decisions/0024-cli-command-tree-reorganization.md](../decisions/0024-cli-command-tree-reorganization.md)
+- [../decisions/0001-architecture-and-runtime-model.md](../decisions/0001-architecture-and-runtime-model.md)

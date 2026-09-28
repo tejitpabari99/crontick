@@ -123,7 +123,7 @@ install, npm creates platform-appropriate shims (`.cmd` on Windows).
 Only these paths are included in the published tarball. Source code under `src/`
 is excluded (except the skill markdown). Tests, scripts, and config files are
 not shipped. `plugin/**` was removed from this list when the Copilot plugin was
-removed (see [ADR 0028](../decisions/0028-prompt-only-jobs.md)).
+removed (see [ADR 0002](../decisions/0002-prompt-only-jobs-and-engine-adapters.md)).
 
 ---
 

@@ -30,7 +30,7 @@ function makeStore(dir: string): Store {
  * Builds a job whose prompt action resolves (via config, see
  * writeFakeEngineConfig) to `node -e <code>`, so the runner really spawns a
  * process running `code` -- this is what `exec`-kind fixtures did before
- * crontick became prompt-only (see docs/decisions/0028-prompt-only-jobs.md).
+ * crontick became prompt-only (see docs/decisions/0002-prompt-only-jobs-and-engine-adapters.md).
  * Kept call-compatible with the old `execJob(id, node, ['-e', code, ...extraArgs])`
  * shape used throughout this file: `command` is unused (always `node`
  * already), and `args` is `['-e', code, ...extraArgs]`.

@@ -54,7 +54,7 @@ local cron daemon, with observability through captured logs and structured run r
 - **R-003-19**: After all attempts complete, the runner MUST finalize the run with `endedAt`, `durationMs`, final `status`, `exitCode`, and `error`.
 - **R-003-20**: `safeRedact` MUST only redact text-like chunks; binary data (NUL bytes or failed UTF-8 round-trip) MUST be stored as-is.
 - **R-003-22**: `cancelRun(runId)` MUST abort the active run by its run ID and return true; if no such active run exists, it MUST return false.
-- **R-003-25**: Every spawn MUST pass `windowsHide: true` and `detached: true` to the child process, with exactly one exception: when the resolved engine command's basename is `pwsh`/`powershell.exe` on Windows, it MUST be spawned with `detached: false`, because a detached PowerShell host on Windows receives no console and writes nothing to its stdio. A daemon restart or graceful stop MUST NOT kill in-flight work as a side effect for any other combination (see [ADR 0020](../decisions/0020-no-detach-powershell-script-jobs-windows.md)).
+- **R-003-25**: Every spawn MUST pass `windowsHide: true` and `detached: true` to the child process, with exactly one exception: when the resolved engine command's basename is `pwsh`/`powershell.exe` on Windows, it MUST be spawned with `detached: false`, because a detached PowerShell host on Windows receives no console and writes nothing to its stdio. A daemon restart or graceful stop MUST NOT kill in-flight work as a side effect for any other combination (see [ADR 0001](../decisions/0001-architecture-and-runtime-model.md)).
 - **R-003-26**: The child process's `pid` MUST be persisted to the run record as soon as the process spawns, before any output arrives; `missed` runs never spawn a process and so never get a `pid`.
 - **R-003-27**: Captured stdout/stderr for a single run MUST be capped at `retention.maxOutputBytesPerRun` (default 2,000,000; configurable 1024..1,000,000,000). Once reached, the runner MUST trim to a UTF-8 character boundary, append a single truncation marker, set `outputTruncated`, and drop further output without persisting it. Hitting the cap MUST NOT affect the child process itself.
 - **R-003-28**: `Runner.adoptRun(jobId, runId, pid, store)` MUST re-attach a run that survived a daemon restart (spec 004 R-004-8) into this daemon's overlap tracking, so `overlap: 'skip'`/`'cancel-previous'` hold for a subsequent tick exactly as for a run spawned by this daemon. Since no `ChildProcess` handle exists for an adopted run, the runner MUST poll process liveness periodically and finalize the run once the poll observes it exited.
@@ -135,6 +135,5 @@ None.
 - [004-daemon.md](004-daemon.md)
 - [006-state-and-persistence.md](006-state-and-persistence.md)
 - [007-prompt-jobs.md](007-prompt-jobs.md)
-- [../decisions/0016-detached-children-cross-platform.md](../decisions/0016-detached-children-cross-platform.md)
-- [../decisions/0020-no-detach-powershell-script-jobs-windows.md](../decisions/0020-no-detach-powershell-script-jobs-windows.md)
-- [../decisions/0033-engine-adapter-framework.md](../decisions/0033-engine-adapter-framework.md)
+- [../decisions/0001-architecture-and-runtime-model.md](../decisions/0001-architecture-and-runtime-model.md)
+- [../decisions/0002-prompt-only-jobs-and-engine-adapters.md](../decisions/0002-prompt-only-jobs-and-engine-adapters.md)

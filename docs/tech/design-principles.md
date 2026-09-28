@@ -65,7 +65,7 @@ Filesystem, network, timing (clock/timers), and process spawning are all accesse
 
 ### 6. No dead code, no legacy paths
 
-Pre-1.0, a removed feature is removed, not deprecated-and-kept (ADR 0027). A capability that's gone is guarded by a regression test proving it stays gone.
+Pre-1.0, a removed feature is removed, not deprecated-and-kept (ADR 0001). A capability that's gone is guarded by a regression test proving it stays gone.
 
 - **Do** delete the old code path in the same change that removes the feature.
 - **Don't** leave a flag, branch, or config option "just in case" once its feature is gone — reintroducing a removed feature requires explicit sign-off explaining why the original removal rationale no longer applies.

@@ -60,8 +60,7 @@ detects the resolved command's basename is `pwsh`/`powershell` **and** the platf
 where `detached: false` instead -- Windows's `DETACHED_PROCESS` flag gives the child no console,
 and a console-less PowerShell host never writes to its own stdout/stderr. This is keyed off the
 spawned command's basename, not an action kind, so it would still apply if a configured engine's
-command happened to be PowerShell. See [ADR 0016](../decisions/0016-detached-children-cross-platform.md)
-and [ADR 0020](../decisions/0020-no-detach-powershell-script-jobs-windows.md).
+command happened to be PowerShell. See [ADR 0001](../decisions/0001-architecture-and-runtime-model.md).
 
 ## Timeout enforcement
 

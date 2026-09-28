@@ -32,7 +32,7 @@ The runner resolves the job's engine (via its adapter -- see
 with `shell: false`, stdin ignored, and `detached: true, windowsHide: true` -- except
 `pwsh`/`powershell.exe` on Windows, spawned attached because detached processes get no console
 there and PowerShell needs one to write output
-(see [ADR 0020](../decisions/0020-no-detach-powershell-script-jobs-windows.md)).
+(see [ADR 0001](../decisions/0001-architecture-and-runtime-model.md)).
 Detaching otherwise means a daemon restart or crash never kills a running job -- it keeps running
 (see [orphan reconciliation](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down)) or has
 already exited. The child's `pid` is persisted onto its run row as soon as known.
