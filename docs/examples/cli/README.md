@@ -15,7 +15,7 @@ Examples use POSIX single quotes (`'...'`) by default. On **Windows CMD**, repla
 ### Interval prompt job
 
 ```sh
-crontick jobs new --every 60 --prompt 'Say hello from crontick' --alias hello-world
+crontick jobs new --every 60 --prompt 'Say hello from crontick' --name hello-world
 ```
 
 Expected: prints the created job with a generated GUID `id` and alias `hello-world`.
@@ -23,7 +23,7 @@ Expected: prints the created job with a generated GUID `id` and alias `hello-wor
 ### Cron prompt job with timezone
 
 ```sh
-crontick jobs new --cron '0 9 * * 1-5' --tz America/New_York --prompt 'Write a morning report' --engine copilot --alias morning-report
+crontick jobs new --cron '0 9 * * 1-5' --tz America/New_York --prompt 'Write a morning report' --runner claude --name morning-report
 ```
 
 Expected: job with `schedule.kind: "cron"`, `schedule.tz: "America/New_York"`, and `action.kind: "prompt"`.
@@ -67,7 +67,7 @@ crontick jobs new --file exec-job.json
 ### One-shot prompt job
 
 ```sh
-crontick jobs new --at '2026-08-01T00:00:00Z' --prompt 'Remind me that the one-shot fired' --alias cleanup-once
+crontick jobs new --at '2026-08-01T00:00:00Z' --prompt 'Remind me that the one-shot fired' --name cleanup-once
 ```
 
 ---
@@ -192,5 +192,5 @@ crontick share import jobs-backup.json
 Append `-v` or `--verbose` for debug-level logs to stderr:
 
 ```sh
-crontick jobs new --every 10 --prompt 'echo hi' --alias test-verbose --verbose
+crontick jobs new --every 10 --prompt 'echo hi' --name test-verbose --verbose
 ```

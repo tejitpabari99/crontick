@@ -144,7 +144,7 @@ Expected: `health` shows `{ status: 'ok', ... }`, job appears in list, then disa
 crontick jobs list
 
 # Create an exec job on a 5-second interval
-crontick jobs new --every 5 --prompt "say hello" --alias my-test
+crontick jobs new --every 5 --prompt "say hello" --name my-test
 
 # Verify it appears
 crontick jobs list
@@ -255,14 +255,14 @@ publishing.
 
 - [ ] Create a `script` job from JSON: `crontick jobs new --file script-job.json`
 - [ ] Create an `exec` job from JSON: `crontick jobs new --file exec-job.json`
-- [ ] Create a `prompt` job: `crontick jobs new --every 60 --prompt "say hello" --alias p1` (requires a configured engine)
+- [ ] Create a `prompt` job: `crontick jobs new --every 60 --prompt "say hello" --name p1` (requires a configured engine)
 - [ ] Each fires at least once and `crontick runs list` shows `success`
 
 ### Schedule kinds
 
-- [ ] `cron`: `crontick jobs new --cron "* * * * *" --prompt "tick" --alias c1`
+- [ ] `cron`: `crontick jobs new --cron "* * * * *" --prompt "tick" --name c1`
 - [ ] `interval`: verified above
-- [ ] `one-shot`: `crontick jobs new --at "<30-seconds-from-now-ISO>" --prompt "once" --alias o1` fires exactly once
+- [ ] `one-shot`: `crontick jobs new --at "<30-seconds-from-now-ISO>" --prompt "once" --name o1` fires exactly once
 
 ### Daemon lifecycle
 
@@ -291,7 +291,7 @@ publishing.
 
 ### Error paths
 
-- [ ] Invalid cron expression on `crontick jobs new --cron bad --prompt test --alias bad-cron` returns error
+- [ ] Invalid cron expression on `crontick jobs new --cron bad --prompt test --name bad-cron` returns error
 - [ ] Failing command: job with `exit 1` shows `failed` status in runs
 - [ ] Missing binary in an exec job created from JSON fails the run with an actionable error
 

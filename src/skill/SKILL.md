@@ -35,9 +35,9 @@ crontick jobs new --desc "release reminder" --at "2026-08-01T09:00:00" --prompt 
 
 No `id` is needed — crontick assigns the GUID and auto-generates an `alias`. Options:
 
-- `--alias <name>` — set a memorable kebab-case alias instead of the generated one.
+- `--name <name>` — set a memorable kebab-case alias instead of the generated one.
 - `--tz <tz>` — timezone for cron schedules (e.g. `America/Los_Angeles`).
-- `--engine <name>` — pick a configured engine (default: `copilot`).
+- `--runner <name>` — pick a configured engine (default: `copilot`).
 - `--prompt-file <path>` — read the prompt from a UTF-8 `.txt` file instead of `--prompt` (mutually exclusive with `--prompt`; contents are stored, not the path).
 - `--timeout <sec>`, `--overlap skip|queue|cancel-previous` (default `skip`), `--retry <max>` (default `0`).
 - `--force` — replace an existing job with the same alias.
@@ -93,7 +93,7 @@ A prompt engine is the AI CLI crontick invokes. The built-in default is `copilot
 
 At run time crontick appends the prompt after the engine args → `copilot --allow-all-tools -p "<prompt>"`, then any `engineArgs...`, then a package-owned `--session-id=<id>` when session continuity is on.
 
-- Select a configured engine per job with `--engine <name>` (default `copilot`).
+- Select a configured engine per job with `--runner <name>` (default `copilot`).
 - Add or edit engines (e.g. `claude`) by editing the `config.json` whose path `crontick info` prints. The prompt-taking flag (`-p`) must stay **last** in an engine's `args`.
 
 **Multi-turn continuity** (carry the AI session across runs) — use at most one:
@@ -102,7 +102,7 @@ At run time crontick appends the prompt after the engine args → `copilot --all
 - `--reuse-session` — capture the session id from the first successful run and reuse it thereafter.
 
 ```sh
-crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident queue" --reuse-session --alias triage
+crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident queue" --reuse-session --name triage
 ```
 
 ## Command reference

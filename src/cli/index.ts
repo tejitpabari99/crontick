@@ -209,16 +209,16 @@ function commonJobOptions(command: Command): Command {
   return command
     .option('--desc <description>', 'Job description')
     .option('--cron <expr>', 'Cron expression (e.g. "0 9 * * *")')
-    .option('--every <sec>', 'Interval in seconds', parseInteger)
+    .option('--every <interval>', 'Interval in seconds, or with s/m/h/d suffix (e.g. 30m)', parseEveryInterval)
     .option('--at <iso>', 'One-shot run-at ISO-8601 time')
     .option('--tz <tz>', 'Timezone for cron schedule')
     .option('--prompt <text>', 'Prompt text for a prompt action')
     .option('--prompt-file <path>', 'UTF-8 .txt file to read into the prompt')
-    .option('--engine <engine>', 'Configured prompt engine name (default: config defaultEngine, i.e. copilot)')
+    .option('--runner <runner>', 'Configured prompt engine name (default: config defaultEngine)')
     .option('--session-id <id>', 'Reuse this prompt engine session every run')
     .option('--reuse-session', 'Capture the first successful run session id and reuse it')
     .option('--file <path>', 'Create the job from a full job-definition JSON file (advanced)')
-    .option('--alias <alias>', 'Human-friendly, unique, kebab-case job identifier; auto-generated on create when omitted')
+    .option('--name <name>', 'Human-friendly, unique, kebab-case job identifier; auto-generated on create when omitted')
     // No hardcoded default here (unlike most flags): a Commander default would
     // be indistinguishable from the user explicitly typing the same value,
     // which on `update` previously caused an omitted flag to silently reset
@@ -233,7 +233,7 @@ function commonJobOptions(command: Command): Command {
 
 function collectJobOptions(engineArgs: string[], passthroughArgs: string[], cliArgvOrder: string[], opts: Record<string, unknown>): JobCreateCliOptions {
   return {
-    alias: stringOption(opts.alias),
+    alias: stringOption(opts.name),
     rawArgs: Array.isArray(engineArgs) ? engineArgs : [],
     passthroughArgs,
     cliArgvOrder,
@@ -244,7 +244,7 @@ function collectJobOptions(engineArgs: string[], passthroughArgs: string[], cliA
     tz: stringOption(opts.tz),
     prompt: stringOption(opts.prompt),
     promptFile: stringOption(opts.promptFile),
-    engine: stringOption(opts.engine),
+    engine: stringOption(opts.runner),
     sessionId: stringOption(opts.sessionId),
     reuseSession: booleanOption(opts.reuseSession),
     timeout: numberOption(opts.timeout),
@@ -257,7 +257,7 @@ function collectJobOptions(engineArgs: string[], passthroughArgs: string[], cliA
 
 function collectPatchOptions(engineArgs: string[], passthroughArgs: string[], cliArgvOrder: string[], opts: Record<string, unknown>): JobPatchCliOptions {
   return {
-    alias: stringOption(opts.alias),
+    alias: stringOption(opts.name),
     rawArgs: Array.isArray(engineArgs) ? engineArgs : [],
     passthroughArgs,
     cliArgvOrder,
@@ -268,7 +268,7 @@ function collectPatchOptions(engineArgs: string[], passthroughArgs: string[], cl
     tz: stringOption(opts.tz),
     prompt: stringOption(opts.prompt),
     promptFile: stringOption(opts.promptFile),
-    engine: stringOption(opts.engine),
+    engine: stringOption(opts.runner),
     sessionId: stringOption(opts.sessionId),
     reuseSession: booleanOption(opts.reuseSession),
     timeout: numberOption(opts.timeout),
@@ -288,6 +288,15 @@ function parseInteger(value: string): number {
   return parsed;
 }
 
+function parseEveryInterval(value: string): number {
+  const match = /^(\d+)([smhd]?)$/.exec(value);
+  if (!match) throw new InvalidArgumentError(`Invalid interval: ${value}. Use seconds or an s/m/h/d suffix.`);
+  const units: Record<string, number> = { '': 1, s: 1, m: 60, h: 3600, d: 86400 };
+  const seconds = Number(match[1]) * units[match[2]!]!;
+  if (!Number.isSafeInteger(seconds)) throw new InvalidArgumentError(`Interval is too large: ${value}`);
+  return seconds;
+}
+
 function stringOption(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
@@ -301,7 +310,7 @@ function booleanOption(value: unknown): boolean | undefined {
 }
 
 /**
- * Guards against a user placing a crontick flag (e.g. --engine) after `--`,
+ * Guards against a user placing a crontick flag (e.g. --runner) after `--`,
  * expecting it to still be parsed as a crontick option. Commander treats
  * everything after a literal `--` as positional, so such a token instead
  * becomes a literal argument to the job's prompt action — silently corrupting
@@ -344,10 +353,11 @@ function splitPromptEngineArgs(engineArgs: string[]): { rawArgs: string[]; passt
     for (let i = 0; i < tokens.length; i++) {
       const token = tokens[i]!;
       if (token.startsWith('--') && token.length > 2) {
-        // The removed crontick environment-file switch must remain an error;
-        // forwarding it would bypass its explicit removal regression guard.
-        if (token === '--job-env-file' || token.startsWith('--job-env-file=')) {
-          throw new Error("unknown option '--job-env-file'");
+        // Removed CLI switches must stay unknown instead of being forwarded
+        // to the prompt runner through the generic long-flag passthrough.
+        const flag = token.split('=', 1)[0]!;
+        if (flag === '--job-env-file' || flag === '--alias' || flag === '--engine') {
+          throw new Error(`unknown option '${flag}'`);
         }
         passthroughArgs.push(token);
         if (!token.includes('=') && i + 1 < tokens.length && !tokens[i + 1]!.startsWith('-')) {
@@ -393,7 +403,7 @@ program
 // ── jobs ─────────────────────────────────────────────────────────────────────
 const jobs = groupHelp(program.command('jobs').description('Create, inspect, and manage scheduled jobs'));
 
-commonJobOptions(jobs.command('new [engineArgs...]').description('Create a new job (alias auto-generated when --alias is omitted)'))
+commonJobOptions(jobs.command('new [engineArgs...]').description('Create a new job (alias auto-generated when --name is omitted)'))
   .allowUnknownOption()
   .option('--force', 'Replace an existing job when the same alias already exists')
   .action(async (engineArgs: string[], opts, cmd: Command) => {

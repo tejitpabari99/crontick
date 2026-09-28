@@ -870,7 +870,7 @@
             "ct-prompt-002",
             "--every",
             "3600",
-            "--engine",
+            "--runner",
             "qa-mock",
             "--prompt",
             "WRITE_FILE:${SCRATCH_WORK}/ct-prompt-002.txt say hello"
@@ -1132,7 +1132,7 @@
             "ct-prompt-009",
             "--every",
             "3600",
-            "--engine",
+            "--runner",
             "qa-mock",
             "--prompt",
             "WRITE_FILE:${SCRATCH_WORK}/ct-prompt-009-artifact.txt artifact content"
@@ -1237,7 +1237,7 @@
             "ct-prompt-012",
             "--every",
             "3600",
-            "--engine",
+            "--runner",
             "qa-mock",
             "--prompt",
             "test",
@@ -1297,7 +1297,7 @@
             "ct-prompt-016",
             "--every",
             "3600",
-            "--engine",
+            "--runner",
             "nonexistent-engine-xyz",
             "--prompt",
             "test"
@@ -1385,7 +1385,7 @@
             "ct-prompt-017",
             "--every",
             "3600",
-            "--engine",
+            "--runner",
             "qa-mock",
             "--prompt",
             "FAIL_NONZERO"
@@ -2072,7 +2072,7 @@
             "ct-job-016",
             "--every",
             "3600",
-            "--engine",
+            "--runner",
             "qa-mock",
             "--prompt",
             "SLEEP:5",
@@ -2225,7 +2225,7 @@
             "ct-run-001",
             "--every",
             "3600",
-            "--engine",
+            "--runner",
             "qa-mock",
             "--prompt",
             "noop"
@@ -2328,7 +2328,7 @@
             "ct-run-002",
             "--every",
             "3600",
-            "--engine",
+            "--runner",
             "qa-mock",
             "--prompt",
             "noop"
@@ -2436,7 +2436,7 @@
             "ct-run-006",
             "--every",
             "3600",
-            "--engine",
+            "--runner",
             "qa-mock",
             "--prompt",
             "noop"
@@ -2669,7 +2669,7 @@
             "ct-log-001",
             "--every",
             "3600",
-            "--engine",
+            "--runner",
             "qa-node-eval",
             "--prompt",
             "console.log('line-a'); console.log('line-b'); console.log('line-c')"
@@ -2783,7 +2783,7 @@
             "ct-log-002",
             "--every",
             "3600",
-            "--engine",
+            "--runner",
             "qa-node-eval",
             "--prompt",
             "for(let i=1;i<=10;i++) console.log('line-'+i)"
@@ -2890,7 +2890,7 @@
             "ct-log-007",
             "--every",
             "3600",
-            "--engine",
+            "--runner",
             "qa-node-eval",
             "--prompt",
             "process.exit(0)"
@@ -3097,7 +3097,7 @@
             "ct-security-001",
             "--every",
             "3600",
-            "--engine",
+            "--runner",
             "qa-mock",
             "--prompt",
             "Authorization: Bearer zzverifytoken998877"

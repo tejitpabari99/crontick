@@ -14,7 +14,7 @@ function cli(args: string[]) {
 }
 
 function invalidCreateArgs(): string[] {
-  return ['jobs', 'new', '--alias', INVALID_JOB_ALIAS, '--every', '3600', '--prompt', 'hello'];
+  return ['jobs', 'new', '--name', INVALID_JOB_ALIAS, '--every', '3600', '--prompt', 'hello'];
 }
 
 describe('CTD-006 CLI error details', () => {
@@ -38,12 +38,12 @@ describe('CTD-006 CLI error details', () => {
   });
 
   it('an invalid integer option value fails cleanly (exit 1, no stack trace)', () => {
-    const result = cli(['jobs', 'new', '--alias', 'good-alias', '--every', 'abc', '--prompt', 'hello']);
+    const result = cli(['jobs', 'new', '--name', 'good-alias', '--every', 'abc', '--prompt', 'hello']);
 
     expect(result.status, result.stderr).toBe(1);
     expect(result.stdout).toBe('');
     // Commander's InvalidArgumentError is rendered as a single clean red line.
-    expect(result.stderr).toContain('Invalid integer: abc');
+    expect(result.stderr).toContain('Invalid interval: abc');
     expect(result.stderr.trim().startsWith('error:')).toBe(true);
     expect(result.stderr).not.toContain('at '); // no Node stack frames
   });

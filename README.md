@@ -86,13 +86,13 @@ Every job carries exactly one schedule. Pick the flag that matches:
 
 ```sh
 # cron expression (optionally with --tz)
-crontick jobs new --cron "0 9 * * *" --prompt "Summarize my open PRs" --alias standup
+crontick jobs new --cron "0 9 * * *" --prompt "Summarize my open PRs" --name standup
 
-# fixed interval, in seconds
-crontick jobs new --every 3600 --prompt "Check the build and report failures" --alias hourly
+# fixed interval, in seconds or with an s/m/h/d suffix
+crontick jobs new --every 1h --prompt "Check the build and report failures" --name hourly
 
 # one-shot at a specific ISO-8601 time
-crontick jobs new --at "2026-08-01T09:00:00" --prompt "Remind me to cut the release" --alias release-reminder
+crontick jobs new --at "2026-08-01T09:00:00" --prompt "Remind me to cut the release" --name release-reminder
 ```
 
 Preview the next fire times for any job:
@@ -131,10 +131,10 @@ At run time crontick appends the prompt after the engine args, producing `copilo
 }
 ```
 
-Select an engine per job with `--engine`:
+Select an engine per job with `--runner`:
 
 ```sh
-crontick jobs new --every 3600 --prompt "Review recent commits for risky changes" --engine claude --alias review
+crontick jobs new --every 3600 --prompt "Review recent commits for risky changes" --runner claude --name review
 ```
 
 Pass engine options as unknown long flags on `jobs new` or `jobs update`, for example `--permission-mode acceptEdits`. Crontick stores them in the job's `action.args` and forwards them to the engine. It rejects flags it manages itself, including `--output-format` and `--settings`.
@@ -147,7 +147,7 @@ Prompt jobs can carry an AI session across runs so the agent remembers prior con
 - `--reuse-session` — capture the session id from the first successful run and reuse it thereafter.
 
 ```sh
-crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident queue" --reuse-session --alias triage
+crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident queue" --reuse-session --name triage
 ```
 
 See [docs/reference/configuration.md](docs/reference/configuration.md) for the full schema, environment variables (`CRONTICK_HOME`, `CRONTICK_DAEMON_URL`, `CRONTICK_VERBOSE`), and precedence.

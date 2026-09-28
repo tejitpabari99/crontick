@@ -40,7 +40,8 @@ A job also has an optional, user-editable `alias`: a kebab-case string unique
 across all currently-defined (non-deleted) jobs. When omitted on create, an
 alias is auto-generated from a small built-in word list plus a random integer
 1-1000 (retried on collision); the word list and RNG are injectable so this is
-deterministic in tests. Every surface that accepts a job identifier (CLI
+deterministic in tests. The CLI sets this field with `--name` on `jobs new`
+and `jobs update`; the job schema field remains `alias`. Every surface that accepts a job identifier (CLI
 positional, MCP `id` params, HTTP path segments) accepts EITHER the GUID `id`
 OR the `alias` and resolves it internally: an exact GUID match wins, otherwise
 the value is looked up by alias. An unresolved identifier fails with

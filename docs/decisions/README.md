@@ -75,3 +75,4 @@ NNNN-kebab-case-title.md
 | 0027 | Remove pre-production migration, legacy, and back-compatibility code | Accepted | 2026-08-03 |
 | 0028 | crontick becomes prompt-only; remove `script`/`exec` action kinds and the Copilot plugin | Accepted | 2026-09-27 |
 | 0029 | Distinguish overlap skips and protect reused sessions | Accepted | 2026-09-28 |
+| 0031 | Rename job CLI flags to name and runner | Accepted | 2026-09-28 |

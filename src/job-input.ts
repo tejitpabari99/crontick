@@ -279,7 +279,7 @@ function mergeActionPatch(existingAction: unknown, patchAction: unknown): unknow
 
 /**
  * Fills the configured default engine for a genuinely new prompt action
- * introduced via a kind-change patch that didn't specify --engine. Same-kind
+ * introduced via a kind-change patch that didn't specify --runner. Same-kind
  * prompt updates never need this: their engine is already preserved by
  * mergeActionPatch. This only fires when the existing action was NOT already
  * a prompt (a real kind change), so it never overwrites an engine that
@@ -409,7 +409,7 @@ export function buildJobPatchFromUpdateOptions(
  * args/reuseSession it can't fall back on the final JobSchema parse.
  * On create, an omitted engine should resolve to the configured default. On
  * a patch (isCreate: false), filling it here would stamp the config default
- * onto every same-kind prompt update that doesn't mention --engine, wiping
+ * onto every same-kind prompt update that doesn't mention --runner, wiping
  * out a job's existing custom engine. normalizeJobPatch instead merges the
  * patch action onto the existing action (preserving engine), and only calls
  * withEngineDefaultForNewPromptAction to fill it for a genuine kind-change
@@ -553,7 +553,7 @@ function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[], strictUp
     if (input.engine !== undefined || input.sessionId !== undefined || input.reuseSession) {
       throw new CrontickError(
         'VALIDATION_ERROR',
-        'Prompt engine/session flags are valid only with prompt mode. Use --prompt or --prompt-file, or remove --engine/--session-id/--reuse-session.',
+        'Prompt engine/session flags are valid only with prompt mode. Use --prompt or --prompt-file, or remove --runner/--session-id/--reuse-session.',
       );
     }
     return undefined;
