@@ -39,6 +39,38 @@ describe('Claude invocation', () => {
   });
 });
 
+describe('Claude stream-json result parsing', () => {
+  const adapter = new ClaudeAdapter();
+
+  it('uses the last well-formed result line and extracts usage metadata', () => {
+    const older = JSON.stringify({ type: 'result', session_id: 'older', is_error: true, result: 'old failure' });
+    const newest = JSON.stringify({
+      type: 'result', session_id: 'latest', is_error: false, subtype: 'success',
+      total_cost_usd: 0.25, num_turns: 3, usage: { input_tokens: 20, output_tokens: 7 }, result: 'done',
+    });
+    expect(adapter.parseResult(0, `${older}\n{"type":"assistant"}\n${newest}\n{"type":"result"`, '')).toEqual({
+      status: 'success', exitCode: 0, sessionId: 'latest', costUsd: 0.25,
+      turns: 3, usage: { input_tokens: 20, output_tokens: 7 }, engineStatus: 'success',
+    });
+  });
+
+  it('uses the result message, then subtype, for a Claude error at exit code zero', () => {
+    const line = JSON.stringify({ type: 'result', session_id: 'failed-id', is_error: true, subtype: 'error_during_execution', result: 'tool failed' });
+    expect(adapter.parseResult(0, `${line}\n`, '')).toMatchObject({
+      status: 'failed', exitCode: 0, sessionId: 'failed-id', error: 'tool failed', engineStatus: 'error_during_execution',
+    });
+    const withoutMessage = JSON.stringify({ type: 'result', is_error: true, subtype: 'error_max_turns', result: '' });
+    expect(adapter.parseResult(0, `${withoutMessage}\n`, '').error).toBe('error_max_turns');
+  });
+
+  it('falls back to the exit-code table when the result is absent or truncated', () => {
+    const tail = '{"type":"assistant"}\n{"type":"result","is_error":true';
+    expect(adapter.parseResult(0, tail, '')).toEqual({ status: 'success', exitCode: 0 });
+    expect(adapter.parseResult(9, tail, '')).toEqual({ status: 'failed', exitCode: 9 });
+    expect(adapter.parseResult(null, tail, '')).toEqual({ status: 'failed', error: 'process exited without code' });
+  });
+});
+
 describe('Claude run session assignment', () => {
   const dirs: string[] = [];
   afterEach(() => {
@@ -94,6 +126,33 @@ describe('Claude run session assignment', () => {
         '--resume', persisted?.sessionId, '--settings', '{}',
       ]);
       expect(store.getRun(resumeRun.id)?.sessionId).toBe(persisted?.sessionId);
+    } finally {
+      store.close();
+      if (priorHome === undefined) delete process.env['CRONTICK_HOME'];
+      else process.env['CRONTICK_HOME'] = priorHome;
+    }
+  });
+
+  it('records a failed run when fake Claude exits zero with is_error true', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'crontick-claude-error-'));
+    dirs.push(dir);
+    const priorHome = process.env['CRONTICK_HOME'];
+    process.env['CRONTICK_HOME'] = dir;
+    const fake = fakeClaudeEngineConfig({ isError: true, result: 'tool failed' });
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ defaultEngine: 'test-claude', engines: { 'test-claude': fake } }));
+    mkdirSync(join(dir, 'jobs'));
+    const store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
+    store.open();
+    try {
+      const job: Job = {
+        id: 'job-error', enabled: true, schedule: { kind: 'cron', cron: '* * * * *' },
+        action: { kind: 'prompt', prompt: 'hello', engine: 'test-claude', args: [], reuseSession: false },
+        overlap: 'skip', retry: { max: 0, backoffSec: 30 },
+      };
+      store.upsertJob(job);
+      const run = store.insertRun(job.id);
+      await new Runner(nodeSpawn).run(job, run.id, store);
+      expect(store.getRun(run.id)).toMatchObject({ status: 'failed', exitCode: 0, error: 'tool failed' });
     } finally {
       store.close();
       if (priorHome === undefined) delete process.env['CRONTICK_HOME'];
