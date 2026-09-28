@@ -307,10 +307,10 @@ publishing.
    ```powershell
    npm run validate
    ```
-   (`validate` chains lint, typecheck, source and dist example type-checking, the full test
-   suite, and a build; `verify-package-install` is CI-only and not part of `validate` -- see
-   step 4.)
-3. Review tarball contents: `npm pack --dry-run` (expect `dist/`, `plugin/`, `src/skill/SKILL.md`, `README.md`, `LICENSE`).
+   (`validate` chains lint, typecheck, source example type-checking, a build, the full test
+   suite, and dist example type-checking; `verify-package-install` is CI-only and not part of
+   `validate` -- see step 4.)
+3. Review tarball contents: `npm pack --dry-run` (expect `dist/`, `src/skill/SKILL.md`, `README.md`, `LICENSE`).
 4. The tarball install-and-launch smoke test (installing the packed tarball and exercising
    `crontick --version`, `crontick-daemon`, and `crontick-mcp`) now runs automatically in the
    `verify-package` CI job (`npm run verify-package-install`); optionally repeat it locally:

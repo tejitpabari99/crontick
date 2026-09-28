@@ -1,5 +1,5 @@
 /**
- * Rebrand check: no stale legacy product-name references in src/, plugin/, tests/.
+ * Rebrand check: no stale legacy product-name references in src/, tests/.
  */
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -30,7 +30,7 @@ function collectTextFiles(dir: string, exts = ['.ts', '.js', '.json', '.md']): s
 }
 
 describe('Rebrand: no stale references', () => {
-  const roots = ['src', 'plugin', 'tests'].map((d) => join(process.cwd(), d));
+  const roots = ['src', 'tests'].map((d) => join(process.cwd(), d));
   const allFiles = roots.flatMap((r) => collectTextFiles(r)).filter((f) => !f.endsWith('rebrand.test.ts'));
   allFiles.push(join(process.cwd(), 'README.md'));
 

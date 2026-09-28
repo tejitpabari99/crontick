@@ -23,7 +23,7 @@ Read the relevant docs before modifying the corresponding area:
 
 ```sh
 npm ci                       # Install dependencies (clean)
-npm run validate             # Full check: lint + typecheck + typecheck:examples + test + build + typecheck:examples:dist
+npm run validate             # Full check: lint + typecheck + typecheck:examples + build + test + typecheck:examples:dist
 npm run lint                 # ESLint
 npm run typecheck            # TypeScript type-check (src)
 npm run typecheck:examples   # TypeScript type-check (examples, against source types)
