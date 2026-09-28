@@ -215,7 +215,7 @@ Get a run by ID.
 crontick runs get <runId>
 ```
 
-The output includes the resolved, redacted command for that run, the engine/status/timing fields, and any captured `sessionId`.
+The output includes the resolved, redacted command, status/timing fields, and any captured `sessionId`. Claude runs with a complete result also include `costUsd`, `turns`, `usageJson` (a redacted JSON string), `transcriptPath` (a path pointer; crontick does not read the file for usage), and `engineStatus` (Claude's result subtype). Raw-engine runs omit these fields.
 
 ---
 
@@ -261,6 +261,7 @@ crontick stats summary
 ```
 
 Only runs whose parent job still exists are counted.
+The response includes `totalCostUsd` and `totalTurns` summed over the included runs; runs without usage contribute zero.
 
 ### crontick stats job
 
@@ -269,6 +270,8 @@ Show statistics for one job.
 ```bash
 crontick stats job <id>
 ```
+
+The response includes `totalCostUsd` and `totalTurns` summed over that job's recent runs.
 
 ---
 

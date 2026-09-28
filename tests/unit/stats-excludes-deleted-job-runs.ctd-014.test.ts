@@ -19,6 +19,8 @@ type StatsSummary = {
   succeeded: number;
   failed: number;
   avgDurationMs: number | null;
+  totalCostUsd: number;
+  totalTurns: number;
 };
 
 type DashboardPayload = {
@@ -184,6 +186,8 @@ describe('CTD-014 deleted-job aggregates', () => {
       succeeded: 1,
       failed: 0,
       avgDurationMs: expect.any(Number),
+      totalCostUsd: 0,
+      totalTurns: 0,
     });
 
     const cliSummaryResult = cli(['stats', 'summary']);

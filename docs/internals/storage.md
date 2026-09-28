@@ -76,6 +76,11 @@ PRAGMA foreign_keys=ON;
 | `session_id` | TEXT | nullable (prompt-engine session id captured for this run, or explicitly provided; absent for non-prompt runs) |
 | `claude_result_completed` | INTEGER | NOT NULL DEFAULT 0; internal resume eligibility evidence set only after parsing a complete Claude result |
 | `command` | TEXT | nullable (redacted resolved command line actually spawned for this run; absent for `queued`/`missed` runs) |
+| `cost_usd` | REAL | nullable (Claude reported total cost in USD) |
+| `turns` | INTEGER | nullable (Claude reported turn count) |
+| `usage_json` | TEXT | nullable (redacted raw usage JSON) |
+| `transcript_path` | TEXT | nullable (pointer to Claude's session transcript) |
+| `engine_status` | TEXT | nullable (Claude result subtype) |
 
 #### `run_logs`
 

@@ -280,7 +280,7 @@ export function createMcpServer(): McpServer {
   server.registerTool(
     'crontick_run_get',
     {
-      description: 'Get the details and current status of a specific run. Includes the run pid (if it was spawned) and whether its output was truncated by the retention output cap.',
+      description: 'Get run details and status, including Claude cost, turns, redacted usage, transcript path, and engine status when available.',
       inputSchema: withVerbose({ id: z.string() }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
@@ -323,7 +323,7 @@ export function createMcpServer(): McpServer {
     'crontick_stats_summary',
     {
       description:
-        'Get an aggregate summary of all jobs: total count, enabled count, run history, success/failure counts, average duration.',
+        'Get aggregate job/run counts, average duration, total engine cost in USD, and total turns.',
       inputSchema: withVerbose({}),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
@@ -333,7 +333,7 @@ export function createMcpServer(): McpServer {
   server.registerTool(
     'crontick_stats_job',
     {
-      description: 'Get run statistics for a specific job (id or alias): total runs, success/failure rates, last status.',
+      description: 'Get run counts, last status, total engine cost in USD, and total turns for one job (id or alias).',
       inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },

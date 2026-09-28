@@ -44,6 +44,8 @@ export interface DashboardStats {
   succeeded: number;
   failed: number;
   avgDurationMs: number | null;
+  totalCostUsd: number;
+  totalTurns: number;
 }
 
 export interface DashboardJob {
@@ -177,6 +179,8 @@ export function buildDashboardStats(jobs: Job[], runs: Run[]): DashboardStats {
     totalRuns: runs.length,
     succeeded,
     failed,
+    totalCostUsd: runs.reduce((sum, run) => sum + (run.costUsd ?? 0), 0),
+    totalTurns: runs.reduce((sum, run) => sum + (run.turns ?? 0), 0),
     avgDurationMs: executedRuns.length > 0
       ? Math.round(executedRuns.reduce((sum, run) => sum + (run.durationMs ?? 0), 0) / executedRuns.length)
       : null,

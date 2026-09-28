@@ -5,6 +5,7 @@ export interface FakeClaudeOptions {
   delayMs?: number;
   result?: string;
   omitResult?: boolean;
+  usage?: unknown;
 }
 
 const fakeClaudeProgram = String.raw`
@@ -19,7 +20,7 @@ setTimeout(() => {
   if (!config.omitResult) {
     emit({ type: 'result', subtype: config.isError ? 'error_during_execution' : 'success', is_error: !!config.isError,
       session_id: sessionId, total_cost_usd: 0.01, num_turns: 1,
-      usage: { input_tokens: 10, output_tokens: 5 }, result: config.result || 'fake reply' });
+      usage: config.usage ?? { input_tokens: 10, output_tokens: 5 }, result: config.result || 'fake reply' });
   }
   process.exitCode = config.exitCode ?? 0;
 }, config.delayMs ?? 0);

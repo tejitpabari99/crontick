@@ -112,6 +112,29 @@ export interface StatsSummary {
   succeeded: number;
   failed: number;
   avgDurationMs: number | null;
+  totalCostUsd: number;
+  totalTurns: number;
+}
+
+/** Run fields returned by getRun() and listRuns() on all three surfaces. */
+export interface RunRecord {
+  id: string;
+  jobId: string;
+  startedAt: number;
+  endedAt?: number;
+  status: string;
+  exitCode?: number;
+  error?: string;
+  durationMs?: number;
+  pid?: number;
+  outputTruncated: boolean;
+  sessionId?: string;
+  command?: string;
+  costUsd?: number;
+  turns?: number;
+  usageJson?: string;
+  transcriptPath?: string;
+  engineStatus?: string;
 }
 
 export interface JobStats {
@@ -121,6 +144,8 @@ export interface JobStats {
   failed: number;
   lastStatus: string | null;
   lastRunAt: number | null;
+  totalCostUsd: number;
+  totalTurns: number;
 }
 
 interface DaemonMissedFiresSummary {
@@ -287,19 +312,19 @@ export class CrontickClient {
   }
 
 
-  async getRun(runId: string): Promise<unknown> {
-    return this.request('GET', `/api/runs/${encodeURIComponent(runId)}`);
+  async getRun(runId: string): Promise<RunRecord> {
+    return this.request<RunRecord>('GET', `/api/runs/${encodeURIComponent(runId)}`);
   }
 
   /** `options.jobId` accepts either the job's GUID id or its alias. */
-  async listRuns(options: { jobId?: string; limit?: number; since?: number; status?: string } = {}): Promise<unknown[]> {
+  async listRuns(options: { jobId?: string; limit?: number; since?: number; status?: string } = {}): Promise<RunRecord[]> {
     const params = new URLSearchParams();
     if (options.jobId) params.set('jobId', options.jobId);
     if (options.limit !== undefined) params.set('limit', String(options.limit));
     if (options.since !== undefined) params.set('since', String(options.since));
     if (options.status !== undefined) params.set('status', options.status);
     const qs = params.toString();
-    return this.request<unknown[]>('GET', `/api/runs${qs ? `?${qs}` : ''}`);
+    return this.request<RunRecord[]>('GET', `/api/runs${qs ? `?${qs}` : ''}`);
   }
 
   async getLogs(runId: string, options: { lines?: number; source?: LogSource | (string & {}) } = {}): Promise<LogsResult> {

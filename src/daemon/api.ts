@@ -346,6 +346,8 @@ async function handleRequest(
         totalRuns: runs.length,
         succeeded: runs.filter((r) => r.status === 'success').length,
         failed: runs.filter((r) => r.status === 'failed').length,
+        totalCostUsd: runs.reduce((sum, run) => sum + (run.costUsd ?? 0), 0),
+        totalTurns: runs.reduce((sum, run) => sum + (run.turns ?? 0), 0),
         lastStatus: runs[0]?.status ?? null,
         lastRunAt: runs[0]?.startedAt ?? null,
       });

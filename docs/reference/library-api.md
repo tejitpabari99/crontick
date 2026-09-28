@@ -47,8 +47,8 @@ Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `disableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
 | `runNow` | `(id: string): Promise<{ runId: string }>` | `{ runId }` | `CrontickError` |
 | `cancelRun` | `(runId: string): Promise<{ ok: true; canceled: boolean }>` | Cancel result | `CrontickError` |
-| `getRun` | `(runId: string): Promise<unknown>` | Run object | `CrontickError` |
-| `listRuns` | `(options?: { jobId?: string; limit?: number; since?: number; status?: string }): Promise<unknown[]>` | Array of runs | `CrontickError` |
+| `getRun` | `(runId: string): Promise<RunRecord>` | Run object | `CrontickError` |
+| `listRuns` | `(options?: { jobId?: string; limit?: number; since?: number; status?: string }): Promise<RunRecord[]>` | Array of runs | `CrontickError` |
 | `getLogs` | `(runId: string, options?: { lines?: number; source?: 'all' \| 'engine' \| 'crontick' }): Promise<LogsResult>` | `LogsResult` | `CrontickError` (`VALIDATION_ERROR` on an invalid `source`) |
 | `exportJobs` | `(options?: { includeRuns?: boolean }): Promise<{ jobs: Job[]; runs?: unknown[] }>` | Export payload; `runs` present only when `includeRuns` is set | `CrontickError` |
 | `importJobs` | `(jobs: unknown[], options?: NormalizeJobInputOptions & { runs?: unknown[] }): Promise<unknown>` | Import result, including `runsImported`/`runsSkipped` when `options.runs` is passed | `CrontickError` |
@@ -80,6 +80,8 @@ Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `info` | `(): Promise<CrontickInfo>` | `{ version, node, platform, configPath, paths, daemon, dashboardUrl }` — powers `crontick info` and `crontick_info`; `dashboardUrl` is the daemon-served dashboard URL when running, otherwise `null` | `CrontickError` |
 | `drainNotices` | `(): string[]` | Accumulated notices | — |
 | `isVerbose` | `(): boolean` | Verbose flag | — |
+
+`RunRecord` includes optional `costUsd`, `turns`, `usageJson`, `transcriptPath`, and `engineStatus` for Claude runs with a complete result. `usageJson` is the redacted raw usage block serialized as JSON. Raw-engine runs omit these fields. `StatsSummary` and `JobStats` include `totalCostUsd` and `totalTurns`, summing runs with recorded usage and treating missing values as zero.
 
 **Library-only methods (retained in the client but no longer part of `SURFACE_CAPABILITIES`, so they have no CLI/MCP equivalent):** `ensure`, `health`, `createJobFromCliOptions`, `jobJsonSchema`, `getConfig`, `drainNotices`, `isVerbose`, `daemonStart`, `daemonStatus`, `daemonRestart`, `configPath`, `validateSchedule`, `previewSchedule`, `dashboardStatus`, `dashboardData`, and the config/engine helpers (`getConfigValue`, `setConfigValue`, `removeConfigValue`, `listEngines`, `addEngine`, `updateEngine`, `removeEngine`, `initConfig`, `validateConfig`). These are intentionally excluded from the parity contract because they serve internal wiring, direct-use library scenarios, or launch infrastructure rather than proxying a daemon operation exposed on every surface. The `dashboard` command group and MCP tools were removed because the dashboard is always served by the daemon; `dashboardStart`/`dashboardStop` were removed entirely (they only made sense as commands), while `dashboardStatus`/`dashboardData` remain for direct library use.
 

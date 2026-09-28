@@ -55,6 +55,7 @@ reuse enables multi-turn conversations across runs.
 - **R-007-21**: Removing the `defaultEngine` MUST be rejected with `CONFIG_VALIDATION_ERROR`.
 - **R-007-24**: An engine config MAY set `type` to `raw` or `claude`; when omitted, it MUST parse to `raw` so existing custom-engine configs remain valid.
 - **R-007-25**: A Claude session ID MUST be captured onto a reusable job only after a complete `stream-json` result line is parsed (including a failed result). Before a Claude run uses `--resume`, the runner MUST confirm both that an earlier success/failed run for this job parsed a complete result with that ID and that the corresponding `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl` file exists. An ineligible or missing session MUST fail the run with `SESSION_NOT_FOUND` before spawning, without retrying. Prompt children MUST have stdin ignored.
+- **R-007-26**: Runs with a complete Claude result MUST persist optional `costUsd`, `turns`, redacted `usageJson`, `transcriptPath`, and `engineStatus` fields. Raw-engine runs MUST omit these fields. `runs get` MUST return them on CLI, MCP, and library surfaces. `stats summary` and `stats job` MUST include summed `totalCostUsd` and `totalTurns`, treating missing values as zero.
 
 ### Non-functional requirements
 

@@ -246,7 +246,7 @@ Get the details and current status of a run.
 | `id` | `string` | yes | — | Run ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Run object, including resolved/redacted `command`, engine/status/timing fields, `pid` when spawned, `sessionId` when available, and `outputTruncated`.
+**Result:** Run object, including resolved/redacted `command`, engine/status/timing fields, `pid` when spawned, `sessionId` when available, and `outputTruncated`. Claude runs with a complete result include `costUsd`, `turns`, redacted `usageJson` (JSON string), `transcriptPath`, and `engineStatus` (Claude result subtype). Raw-engine runs omit these fields.
 
 ---
 
@@ -273,7 +273,7 @@ Get aggregate summary of all jobs.
 |-----------|------|----------|---------|-------------|
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ totalJobs, enabledJobs, totalRuns, succeeded, failed, avgDurationMs }`.
+**Result:** `{ totalJobs, enabledJobs, totalRuns, succeeded, failed, avgDurationMs, totalCostUsd, totalTurns }`. Cost and turns sum the included runs; missing usage contributes zero.
 
 ---
 
@@ -286,7 +286,7 @@ Get run statistics for a specific job.
 | `id` | `string` | yes | — | Job GUID or alias |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ jobId, totalRuns, succeeded, failed, lastStatus, lastRunAt }`.
+**Result:** `{ jobId, totalRuns, succeeded, failed, lastStatus, lastRunAt, totalCostUsd, totalTurns }`.
 
 ---
 

@@ -34,6 +34,11 @@ export interface Run {
   outputTruncated: boolean; // true once a run's captured output hit the byte cap (NOT NULL DEFAULT 0 column, always present).
   sessionId?: string; // prompt-engine session id captured from output (or explicitly provided) for this run; absent for non-prompt runs.
   command?: string; // redacted resolved command line (binary + args) actually spawned for this run; absent for 'queued'/'missed' runs.
+  costUsd?: number;
+  turns?: number;
+  usageJson?: string; // redacted raw engine usage block
+  transcriptPath?: string;
+  engineStatus?: string;
 }
 
 /** Every RunStatus value, kept as a runtime array so RunImportSchema's z.enum
@@ -64,6 +69,11 @@ export const RunImportSchema = z.object({
   outputTruncated: z.boolean().optional(),
   sessionId: z.string().optional(),
   command: z.string().optional(),
+  costUsd: z.number().optional(),
+  turns: z.number().int().optional(),
+  usageJson: z.string().optional(),
+  transcriptPath: z.string().optional(),
+  engineStatus: z.string().optional(),
 });
 
 export interface RunLog {
@@ -215,7 +225,12 @@ export class Store {
         output_truncated INTEGER NOT NULL DEFAULT 0,
         session_id TEXT,
         claude_result_completed INTEGER NOT NULL DEFAULT 0,
-        command TEXT
+        command TEXT,
+        cost_usd REAL,
+        turns INTEGER,
+        usage_json TEXT,
+        transcript_path TEXT,
+        engine_status TEXT
       );
 
       CREATE TABLE IF NOT EXISTS run_logs (
@@ -476,7 +491,7 @@ export class Store {
 
   updateRun(
     id: string,
-    update: Partial<Pick<Run, 'status' | 'exitCode' | 'error' | 'endedAt' | 'durationMs' | 'pid' | 'outputTruncated' | 'sessionId' | 'command'>>,
+    update: Partial<Pick<Run, 'status' | 'exitCode' | 'error' | 'endedAt' | 'durationMs' | 'pid' | 'outputTruncated' | 'sessionId' | 'command' | 'costUsd' | 'turns' | 'usageJson' | 'transcriptPath' | 'engineStatus'>>,
   ): void {
     const run = this.getRun(id);
     if (!run) throw new CrontickError('NOT_FOUND', `Run ${id} not found`);
@@ -519,6 +534,26 @@ export class Store {
     if (update.command !== undefined) {
       fields.push('command = ?');
       values.push(update.command ?? null);
+    }
+    if (update.costUsd !== undefined) {
+      fields.push('cost_usd = ?');
+      values.push(update.costUsd);
+    }
+    if (update.turns !== undefined) {
+      fields.push('turns = ?');
+      values.push(update.turns);
+    }
+    if (update.usageJson !== undefined) {
+      fields.push('usage_json = ?');
+      values.push(update.usageJson);
+    }
+    if (update.transcriptPath !== undefined) {
+      fields.push('transcript_path = ?');
+      values.push(update.transcriptPath);
+    }
+    if (update.engineStatus !== undefined) {
+      fields.push('engine_status = ?');
+      values.push(update.engineStatus);
     }
 
     if (fields.length === 0) return;
@@ -639,8 +674,8 @@ export class Store {
     const jobExists = this.db.prepare('SELECT 1 FROM jobs WHERE id = ?');
     const insert = this.db.prepare(
       `INSERT OR IGNORE INTO runs
-         (id, job_id, started_at, ended_at, status, exit_code, error, duration_ms, pid, output_truncated, session_id, command)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, job_id, started_at, ended_at, status, exit_code, error, duration_ms, pid, output_truncated, session_id, command, cost_usd, turns, usage_json, transcript_path, engine_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     for (const raw of runs) {
       const parsed = RunImportSchema.safeParse(raw);
@@ -668,6 +703,11 @@ export class Store {
           run.outputTruncated ? 1 : 0,
           run.sessionId ?? null,
           run.command ?? null,
+          run.costUsd ?? null,
+          run.turns ?? null,
+          run.usageJson ?? null,
+          run.transcriptPath ?? null,
+          run.engineStatus ?? null,
         ) as { changes: number };
         if (result.changes > 0) {
           imported += 1;
@@ -930,6 +970,11 @@ interface DbRunRow {
   output_truncated: number;
   session_id: string | null;
   command: string | null;
+  cost_usd: number | null;
+  turns: number | null;
+  usage_json: string | null;
+  transcript_path: string | null;
+  engine_status: string | null;
 }
 
 interface DbLogRow {
@@ -967,6 +1012,11 @@ function rowToRun(row: DbRunRow): Run {
   if (row.pid !== null) r.pid = row.pid;
   if (row.session_id !== null) r.sessionId = row.session_id;
   if (row.command !== null) r.command = row.command;
+  if (row.cost_usd !== null) r.costUsd = row.cost_usd;
+  if (row.turns !== null) r.turns = row.turns;
+  if (row.usage_json !== null) r.usageJson = row.usage_json;
+  if (row.transcript_path !== null) r.transcriptPath = row.transcript_path;
+  if (row.engine_status !== null) r.engineStatus = row.engine_status;
   return r;
 }
 

@@ -10,7 +10,7 @@ import type { Store, RunStatus, LogStream } from './store.js';
 import { CrontickError } from '../errors.js';
 import { resolvePromptRunCommand, loadConfig } from '../config.js';
 import { dataDir } from '../paths.js';
-import { createStreamingTextRedactor, nullLogger, redactText, type Logger, type StreamingTextRedactor } from '../logger.js';
+import { createStreamingTextRedactor, nullLogger, redactText, redactValue, type Logger, type StreamingTextRedactor } from '../logger.js';
 import { isProcessAlive, isSameRunProcess } from '../process-liveness.js';
 import { readEnvFileForAction } from './env-file.js';
 import { createJobLogFileFactory, type JobLogFile, type JobLogFileFactory } from './job-log-file.js';
@@ -61,6 +61,11 @@ interface RunResult {
   status: RunStatus;
   exitCode?: number;
   error?: string;
+  costUsd?: number;
+  turns?: number;
+  usageJson?: string;
+  transcriptPath?: string;
+  engineStatus?: string;
 }
 
 type QueueEntry = () => Promise<void>;
@@ -732,14 +737,21 @@ export class Runner {
             status: parsed.status,
             exitCode: parsed.exitCode,
             error: parsed.error,
+            costUsd: parsed.costUsd,
+            turns: parsed.turns,
+            usageJson: parsed.usage === undefined ? undefined : JSON.stringify(redactValue(parsed.usage)),
+            transcriptPath: parsed.sessionId === undefined
+              ? undefined
+              : adapter.resumeTranscriptPath(action.cwd ?? process.cwd(), parsed.sessionId),
+            engineStatus: parsed.engineStatus,
           };
           if (capturePromptSession && adapter.canCaptureSession(parsed)) {
             const resolvedSessionId = adapter.resolveSessionId(engineOptions, parsed);
             if (!resolvedSessionId) {
               this.logger.debug('Session id capture failed', { jobId: job.id, runId });
               finish({
+                ...result,
                 status: 'failed',
-                exitCode: result.exitCode,
                 error: 'SESSION_ID_NOT_FOUND: prompt engine output did not include a session id. Configure an explicit session id with --session-id <id>, or disable reuseSession.',
               });
               return;
@@ -758,8 +770,8 @@ export class Runner {
                 persisted = store.tryCapturePromptSession(job.id, captureAction, resolvedSessionId);
               } catch (err) {
                 finish({
+                  ...result,
                   status: 'failed',
-                  exitCode: result.exitCode,
                   error: `SESSION_PERSIST_FAILED: ${errorMessage(err)}`,
                 });
                 return;
@@ -770,8 +782,8 @@ export class Runner {
                   log.append('crontick', Buffer.from(`[crontick] captured session id: ${resolvedSessionId}\n`, 'utf-8'));
                 } catch (err) {
                   finish({
+                    ...result,
                     status: 'failed',
-                    exitCode: result.exitCode,
                     error: `SESSION_PERSIST_FAILED: ${errorMessage(err)}`,
                   });
                   return;
@@ -821,6 +833,11 @@ export class Runner {
       error: result.error,
       endedAt: now,
       durationMs,
+      costUsd: result.costUsd,
+      turns: result.turns,
+      usageJson: result.usageJson,
+      transcriptPath: result.transcriptPath,
+      engineStatus: result.engineStatus,
     });
     log?.crontick('run finished', { status: result.status, exitCode: result.exitCode, durationMs, error: result.error });
     this.logger.debug('Finalized run', { runId, status: result.status, exitCode: result.exitCode, durationMs });
