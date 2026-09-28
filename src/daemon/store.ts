@@ -15,6 +15,7 @@ import type { LogSource } from '../log-source.js';
 import { readClaudeCompletionMarker } from '../claude-completion-marker.js';
 import { loadConfig } from '../config.js';
 import { getEngineAdapter } from '../engines/registry.js';
+import { DEFAULT_RUN_RETENTION_CAP } from '../constants/retention.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -142,12 +143,6 @@ export interface OrphanReconciliationResult {
  * ORPHAN_RUN_ERROR_MESSAGE (src/errors.ts) and other runs.error values.
  */
 export const MISSED_RUN_ERROR_MESSAGE = 'MISSED: daemon was not running at the scheduled fire time';
-
-// Not exported: this is an internal fallback for the constructor default
-// parameter below only. BUILT_IN_CONFIG.retention.maxRunsPerJob (src/config.ts)
-// is the actual default consumers see; keeping this un-exported avoids a
-// second, easily-drifting public source of the same "100" default.
-const DEFAULT_RUN_RETENTION_CAP = 100;
 
 export class Store {
   private db!: DatabaseSync;

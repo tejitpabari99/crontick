@@ -4,6 +4,11 @@
  * that at least one engine exists.
  */
 import { z } from 'zod';
+import {
+  DEFAULT_MAX_LOG_FILES,
+  DEFAULT_MAX_OUTPUT_BYTES_PER_RUN,
+  DEFAULT_RUN_RETENTION_CAP,
+} from '../constants/retention.js';
 
 /** Shared regex for config key paths and engine names (letters, numbers, underscore, dash, dot). */
 export const ConfigKeySchema = z.string().regex(
@@ -45,9 +50,9 @@ export const EngineConfigSchema = z.object({
  * retention fields.
  */
 export const RetentionConfigSchema = z.object({
-  maxRunsPerJob: z.number().int().min(1).max(100_000).default(100),
-  maxOutputBytesPerRun: z.number().int().min(1024).max(1_000_000_000).default(2_000_000),
-  maxLogFiles: z.number().int().min(1).max(3650).default(30),
+  maxRunsPerJob: z.number().int().min(1).max(100_000).default(DEFAULT_RUN_RETENTION_CAP),
+  maxOutputBytesPerRun: z.number().int().min(1024).max(1_000_000_000).default(DEFAULT_MAX_OUTPUT_BYTES_PER_RUN),
+  maxLogFiles: z.number().int().min(1).max(3650).default(DEFAULT_MAX_LOG_FILES),
 }).strict();
 
 /**
@@ -84,7 +89,11 @@ export const ConfigSchema = z.object({
   engines: z.record(EngineNameSchema, EngineConfigSchema).default({
     claude: { command: 'claude', args: [], env: {}, type: 'claude' },
   }),
-  retention: RetentionConfigSchema.default({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 }),
+  retention: RetentionConfigSchema.default({
+    maxRunsPerJob: DEFAULT_RUN_RETENTION_CAP,
+    maxOutputBytesPerRun: DEFAULT_MAX_OUTPUT_BYTES_PER_RUN,
+    maxLogFiles: DEFAULT_MAX_LOG_FILES,
+  }),
   logging: LoggingConfigSchema.default({ fileEnabled: true }),
   defaults: JobDefaultsConfigSchema.default({ overlap: 'skip', retry: { max: 0, backoffSec: 30 } }),
 }).strict().superRefine((config, ctx) => {

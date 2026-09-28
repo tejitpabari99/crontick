@@ -20,13 +20,12 @@ import {
 } from '../dashboard.js';
 import { nullLogger, redactValue, type Logger } from '../logger.js';
 import { readEnvFileForAction } from './env-file.js';
+import { SSE_POLL_MS } from '../constants/daemon.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 // Invariant: only loopback addresses may connect. Non-loopback → 403.
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
-/** Poll interval for SSE log streaming. Stream closes when run reaches a terminal status. */
-const SSE_POLL_MS = 200;
 
 /** Coerce an untrusted `source` query value to a valid LogSource, defaulting to 'all'. */
 function normalizeLogSource(value: string | null): LogSource {

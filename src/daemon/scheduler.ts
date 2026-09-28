@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events';
 import { Cron, type CronOptions } from 'croner';
 import type { Job, Schedule } from '../schemas/job.js';
 import { nullLogger, type Logger } from '../logger.js';
+import { DEFAULT_ENUMERATE_FIRES_CAP } from '../constants/scheduler.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -30,9 +31,6 @@ export interface EnumerateFiresResult {
   /** True if the schedule had more fires in the window than the cap allowed to enumerate. */
   capped: boolean;
 }
-
-/** Default cap for enumerateFiresBetween() when the caller doesn't specify one. */
-export const DEFAULT_ENUMERATE_FIRES_CAP = 500;
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 

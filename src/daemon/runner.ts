@@ -15,16 +15,11 @@ import { isProcessAlive, isSameRunProcess } from '../process-liveness.js';
 import { readEnvFileForAction } from './env-file.js';
 import { createJobLogFileFactory, type JobLogFile, type JobLogFileFactory } from './job-log-file.js';
 import { readClaudeCompletionMarker, removeClaudeCompletionMarker } from '../claude-completion-marker.js';
+import { DEFAULT_MAX_OUTPUT_BYTES_PER_RUN } from '../constants/retention.js';
+import { ADOPTED_RUN_POLL_MS } from '../constants/daemon.js';
+import { sleep } from '../utils/sleep.js';
 
 // ── Output cap (L5) ───────────────────────────────────────────────────────────
-
-/**
- * Default bytes captured per run before further stdout/stderr is dropped
- * (mirrors `retention.maxOutputBytesPerRun` on RetentionConfig, see
- * src/schemas/config.ts). Used as the fallback when config loading fails;
- * see resolveMaxOutputBytesPerRun().
- */
-export const DEFAULT_MAX_OUTPUT_BYTES_PER_RUN = 2_000_000;
 
 /** Marker line appended exactly once when a run's captured output hits the cap. */
 export function truncationMarker(maxBytes: number): string {
@@ -41,9 +36,6 @@ function resolveMaxOutputBytesPerRun(): number {
 }
 
 // ── Adopted-run polling (L3/L4) ────────────────────────────────────────────────
-
-/** How often an adopted run's pid is polled for liveness (see Runner.adoptRun()). */
-const ADOPTED_RUN_POLL_MS = 3_000;
 
 /**
  * Sentinel error recorded on an adopted run once its process is observed to
@@ -921,10 +913,6 @@ export class Runner {
 function isPowerShellHostCommand(cmd: string): boolean {
   const name = basename(cmd).toLowerCase().replace(/\.exe$/, '');
   return name === 'pwsh' || name === 'powershell';
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function errorMessage(err: unknown): string {

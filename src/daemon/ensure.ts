@@ -17,6 +17,13 @@ import { fileURLToPath } from 'node:url';
 import { CrontickError } from '../errors.js';
 import { dataDir, ensureDirs, logsDir, pidFilePath, portFilePath } from '../paths.js';
 import { nullLogger, type Logger } from '../logger.js';
+import {
+  DEFAULT_HEALTH_TIMEOUT_MS,
+  DEFAULT_LOCK_TIMEOUT_MS,
+  DEFAULT_STARTUP_TIMEOUT_MS,
+  POLL_MS,
+} from '../constants/daemon.js';
+import { sleep } from '../utils/sleep.js';
 
 export interface EnsureDaemonOptions {
   daemonUrl?: string;
@@ -36,11 +43,6 @@ export interface DaemonInfo {
   started: boolean;
 }
 
-const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
-const DEFAULT_HEALTH_TIMEOUT_MS = 2_000;
-const DEFAULT_LOCK_TIMEOUT_MS = 15_000;
-/** Polling interval while waiting for daemon health or lock release. */
-const POLL_MS = 100;
 /** Max bytes to read from daemon.ensure.log for error diagnostics. */
 const STDERR_LIMIT = 4096;
 /** Health probe rejects responses whose product field doesn't match. */
@@ -483,10 +485,6 @@ function readEnsureLogTail(path: string, startOffset: number): string {
 
 function stderrHint(stderr: string, logPath: string): string {
   return stderr ? `\nDaemon stderr excerpt from ${logPath}: ${stderr.slice(0, 500)}` : `\nDaemon log path: ${logPath}`;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function errorMessage(err: unknown): string {

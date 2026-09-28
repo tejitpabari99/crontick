@@ -18,6 +18,11 @@ import {
 import { normalizeJobInput } from '../../src/job-input.js';
 import { ConfigSchema } from '../../src/schemas/config.js';
 import type { JobCreateInput } from '../../src/job-input.js';
+import {
+  DEFAULT_MAX_LOG_FILES,
+  DEFAULT_MAX_OUTPUT_BYTES_PER_RUN,
+  DEFAULT_RUN_RETENTION_CAP,
+} from '../../src/constants/retention.js';
 
 const scratchRoot = resolve('.crontick', 'config-tests');
 const cleanupDirs: string[] = [];
@@ -87,7 +92,7 @@ describe('crontick config core', () => {
     expect(loadConfig({ env })).toEqual({
       defaultEngine: 'claude',
       engines: { claude: { command: 'claude', args: [], env: {}, type: 'claude' } },
-      retention: { maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 },
+      retention: { maxRunsPerJob: DEFAULT_RUN_RETENTION_CAP, maxOutputBytesPerRun: DEFAULT_MAX_OUTPUT_BYTES_PER_RUN, maxLogFiles: DEFAULT_MAX_LOG_FILES },
       logging: { fileEnabled: true },
       defaults: { overlap: 'skip', retry: { max: 0, backoffSec: 30 } },
     });
@@ -300,11 +305,11 @@ describe('crontick config core', () => {
     const { env, path } = makeHome();
 
     // No config file at all: built-in default applies.
-    expect(loadConfig({ env }).retention.maxRunsPerJob).toBe(100);
+    expect(loadConfig({ env }).retention.maxRunsPerJob).toBe(DEFAULT_RUN_RETENTION_CAP);
 
     // Custom config file that omits `retention` entirely: deep-merge keeps the default.
     writeRawConfig(path, { defaultEngine: 'copilot', engines: { copilot: { command: 'copilot' } } });
-    expect(loadConfig({ env }).retention.maxRunsPerJob).toBe(100);
+    expect(loadConfig({ env }).retention.maxRunsPerJob).toBe(DEFAULT_RUN_RETENTION_CAP);
 
     setConfigValue('retention.maxRunsPerJob', 250, { env });
     expect(getConfigValue('retention.maxRunsPerJob', { env })).toBe(250);
@@ -317,11 +322,11 @@ describe('crontick config core', () => {
     const { env, path } = makeHome();
 
     // No config file at all: built-in default applies.
-    expect(loadConfig({ env }).retention.maxOutputBytesPerRun).toBe(2_000_000);
+    expect(loadConfig({ env }).retention.maxOutputBytesPerRun).toBe(DEFAULT_MAX_OUTPUT_BYTES_PER_RUN);
 
     // Custom config file that omits `retention` entirely: deep-merge keeps the default.
     writeRawConfig(path, { defaultEngine: 'copilot', engines: { copilot: { command: 'copilot' } } });
-    expect(loadConfig({ env }).retention.maxOutputBytesPerRun).toBe(2_000_000);
+    expect(loadConfig({ env }).retention.maxOutputBytesPerRun).toBe(DEFAULT_MAX_OUTPUT_BYTES_PER_RUN);
 
     setConfigValue('retention.maxOutputBytesPerRun', 5_000_000, { env });
     expect(getConfigValue('retention.maxOutputBytesPerRun', { env })).toBe(5_000_000);
@@ -387,8 +392,8 @@ describe('crontick config core', () => {
 
       const raw = JSON.parse(readFileSync(path, 'utf-8')) as { retention?: { maxRunsPerJob?: number } };
       expect(raw.retention?.maxRunsPerJob).toBeUndefined();
-      expect(getConfigValue('retention.maxRunsPerJob', { env })).toBe(100);
-      expect(loadConfig({ env }).retention.maxRunsPerJob).toBe(100);
+      expect(getConfigValue('retention.maxRunsPerJob', { env })).toBe(DEFAULT_RUN_RETENTION_CAP);
+      expect(loadConfig({ env }).retention.maxRunsPerJob).toBe(DEFAULT_RUN_RETENTION_CAP);
     });
 
     it('engines map: unsetting a customized built-in Claude field removes it from the file and falls back to the built-in value', () => {
@@ -414,7 +419,7 @@ describe('crontick config core', () => {
       expect(getConfigValue(undefined, { env })).toEqual({
         defaultEngine: 'claude',
         engines: { claude: { command: 'claude', args: [], env: {}, type: 'claude' } },
-        retention: { maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 },
+        retention: { maxRunsPerJob: DEFAULT_RUN_RETENTION_CAP, maxOutputBytesPerRun: DEFAULT_MAX_OUTPUT_BYTES_PER_RUN, maxLogFiles: DEFAULT_MAX_LOG_FILES },
         logging: { fileEnabled: true },
         defaults: { overlap: 'skip', retry: { max: 0, backoffSec: 30 } },
       });

@@ -13,6 +13,11 @@ import { CrontickError } from './errors.js';
 import { configPath as defaultConfigPath, ensureDirs } from './paths.js';
 import { readJsonFile } from './json-file.js';
 import {
+  DEFAULT_MAX_LOG_FILES,
+  DEFAULT_MAX_OUTPUT_BYTES_PER_RUN,
+  DEFAULT_RUN_RETENTION_CAP,
+} from './constants/retention.js';
+import {
   ConfigKeySchema,
   ConfigSchema,
   EngineConfigSchema,
@@ -70,7 +75,11 @@ export const BUILT_IN_CONFIG: CrontickConfig = Object.freeze({
   engines: {
     claude: Object.freeze({ command: 'claude', args: [], env: {}, type: 'claude' }),
   },
-  retention: Object.freeze({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 }),
+  retention: Object.freeze({
+    maxRunsPerJob: DEFAULT_RUN_RETENTION_CAP,
+    maxOutputBytesPerRun: DEFAULT_MAX_OUTPUT_BYTES_PER_RUN,
+    maxLogFiles: DEFAULT_MAX_LOG_FILES,
+  }),
   logging: Object.freeze({ fileEnabled: true }),
   defaults: Object.freeze({ overlap: 'skip', retry: Object.freeze({ max: 0, backoffSec: 30 }), timeoutSec: undefined }),
 });

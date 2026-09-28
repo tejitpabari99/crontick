@@ -25,6 +25,7 @@ import { EngineNameSchema, type CrontickConfig } from './schemas/config.js';
 import { loadConfig } from './config.js';
 import { readJsonFile } from './json-file.js';
 import { promptRuntimeValidationMessage } from './prompt-runtime.js';
+import { DEFAULT_MAX_PROMPT_FILE_BYTES } from './constants/job-input.js';
 
 /**
  * Input schema extends prompt action to accept `promptFile` as an alternative
@@ -141,8 +142,6 @@ export interface JobCreateCliOptions {
 }
 
 export type JobPatchCliOptions = JobCreateCliOptions;
-
-const DEFAULT_MAX_PROMPT_FILE_BYTES = 1024 * 1024;
 
 /** Validates and normalizes a full job create input into the canonical persisted shape. */
 export function normalizeJobInput(

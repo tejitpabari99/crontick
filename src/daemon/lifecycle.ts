@@ -6,6 +6,8 @@ import { CrontickError } from '../errors.js';
 import { pidFilePath, portFilePath } from '../paths.js';
 import { ensureDaemon, resolveDaemonBaseUrl, type DaemonInfo, type EnsureDaemonOptions } from './ensure.js';
 import { nullLogger, type Logger } from '../logger.js';
+import { POLL_MS } from '../constants/daemon.js';
+import { sleep } from '../utils/sleep.js';
 
 export interface DaemonLifecycleOptions extends EnsureDaemonOptions {
   foreground?: boolean;
@@ -256,7 +258,7 @@ async function waitForStopped(pid: number, env: NodeJS.ProcessEnv, timeoutMs: nu
     const portExists = existsSync(portFilePath(env));
     if (!alive && !portExists) return true;
     if (!alive) return true;
-    await sleep(100);
+    await sleep(POLL_MS);
   }
   return !isPidAlive(pid);
 }
@@ -268,8 +270,4 @@ function isPidAlive(pid: number): boolean {
   } catch {
     return false;
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
