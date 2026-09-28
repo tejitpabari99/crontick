@@ -87,7 +87,7 @@ afterEach(() => {
   home = '';
 });
 
-describe('CTD-013 daemon lifecycle CLI human output', () => {
+describe('daemon lifecycle CLI human output', () => {
   it('daemon-backed commands demand-start the daemon and emit human-readable output', () => {
     const result = cli(['jobs', 'list']);
 

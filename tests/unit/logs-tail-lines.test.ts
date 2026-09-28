@@ -170,7 +170,7 @@ afterAll(async () => {
   await new Promise<void>((resolveClose) => server?.close(() => resolveClose()));
 });
 
-describe('CTD-007 log tailing', () => {
+describe('log tailing', () => {
   it('reconstructs logical lines before tailing across client, CLI, and MCP', async () => {
     const client = createClient({ daemonUrl: baseUrl, startDaemon: false });
 

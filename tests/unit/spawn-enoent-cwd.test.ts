@@ -77,7 +77,7 @@ function fakeSpawnError(error: NodeJS.ErrnoException) {
   return { calls, spawnFn };
 }
 
-describe('Runner missing cwd preflight (CTD-011)', () => {
+describe('Runner missing cwd preflight', () => {
   let dir: string;
   let store: Store;
   let previousHome: string | undefined;

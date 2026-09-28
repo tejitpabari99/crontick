@@ -17,7 +17,7 @@ function invalidCreateArgs(): string[] {
   return ['jobs', 'new', '--name', INVALID_JOB_ALIAS, '--every', '3600', '--prompt', 'hello'];
 }
 
-describe('CTD-006 CLI error details', () => {
+describe('CLI error details', () => {
   it('validation errors print the normalized one-line headline', () => {
     const result = cli(invalidCreateArgs());
 

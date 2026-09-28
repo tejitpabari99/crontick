@@ -137,7 +137,7 @@ afterAll(async () => {
   await new Promise<void>((resolveClose) => server?.close(() => resolveClose()));
 });
 
-describe('CTD-015 MCP parameter naming', () => {
+describe('MCP parameter naming', () => {
   it('keeps tool names stable, exposes the full parameter inventory, and advertises single-run requiredness', async () => {
     const listed = await mcpClient.listTools();
     const tools = listed.tools.filter((tool) => tool.name.startsWith('crontick_')) as ListedTool[];

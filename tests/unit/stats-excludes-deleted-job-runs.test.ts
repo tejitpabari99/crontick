@@ -158,7 +158,7 @@ afterAll(async () => {
   rmSync(HOME, { recursive: true, force: true });
 });
 
-describe('CTD-014 deleted-job aggregates', () => {
+describe('deleted-job aggregates', () => {
   it('excludes deleted-job history from live stats/dashboard views while preserving direct run access', async () => {
     const liveJobId = 'ctd-014-live-job';
     const deletedJobId = 'ctd-014-deleted-job';

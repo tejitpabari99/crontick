@@ -435,7 +435,7 @@ function expectNoRedactionMarker(text: string, surface: string): void {
   expect(text, `${surface} should preserve benign values`).not.toContain('[REDACTED]');
 }
 
-describe('CTD-003 shared secret redaction', () => {
+describe('shared secret redaction', () => {
   it('RED-001/RED-002 redacts the must-redact corpus across runtime, config, dashboard, and export surfaces', async () => {
     const fixture = await createFixture('matrix');
     try {

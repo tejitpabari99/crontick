@@ -159,7 +159,7 @@ afterEach(async () => {
   port = 0;
 });
 
-describe('CTD-012 daemon status discovery fields', () => {
+describe('daemon status discovery fields', () => {
   it('surfaces daemon port and dashboard URL across library, CLI info, and MCP info', async () => {
     const client = createClient({ daemonUrl: baseUrl, startDaemon: false });
     const clientStatus = await client.daemonStatus() as StatusPayload;

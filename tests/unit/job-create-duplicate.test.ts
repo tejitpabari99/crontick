@@ -112,7 +112,7 @@ async function apiCall(port: number, method: string, path: string, body?: unknow
   return { status: response.status, data };
 }
 
-describe('CTD-005 duplicate create requires explicit force', () => {
+describe('duplicate create requires explicit force', () => {
   it('API rejects duplicate create without force and preserves the original job', async () => {
     const dir = makeHome('api-reject');
     const store = makeStore(dir);

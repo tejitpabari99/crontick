@@ -18,7 +18,7 @@ afterEach(() => {
   for (const dir of cleanupDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-describe('CTD-016 built-in engine defaults', () => {
+describe('built-in engine defaults', () => {
   it('uses the Claude adapter for the built-in engine', () => {
     expect(BUILT_IN_CONFIG.engines.claude).toEqual({ command: 'claude', args: [], env: {}, type: 'claude' });
 

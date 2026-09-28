@@ -131,7 +131,7 @@ both human-editability of jobs and efficient querying of run history.
 - [x] Malformed job files skipped (test file: `tests/store.test.ts`)
 - [x] Orphan runs reconciled with liveness-checked adopt/cancel, not unconditional cancellation (test file: `tests/store.test.ts`, "reconcileOrphanRuns ..." describe block, lines 295-352; `tests/integration.persistence.test.ts`)
 - [x] upsertJob writes both JSON file and SQLite (test file: `tests/store.test.ts`)
-- [x] deleteJob removes the job file/row while preserving deleted-job run history for direct run-id reads and excluding that archived history from current-job aggregate views (test files: `tests/store.test.ts`, `tests/stats-excludes-deleted-job-runs.ctd-014.test.ts`)
+- [x] deleteJob removes the job file/row while preserving deleted-job run history for direct run-id reads and excluding that archived history from current-job aggregate views (test files: `tests/store.test.ts`, `tests/stats-excludes-deleted-job-runs.test.ts`)
 - [x] Schema sidecar written (test file: `tests/store.test.ts`)
 - [x] Schema created in one idempotent pass; re-opening the store does not error or duplicate schema objects (test file: `tests/store.test.ts`, "open() is idempotent...")
 - [x] listRuns filters by jobId, since, status, and orders correctly (test file: `tests/store.test.ts`, "listRuns filters by status, surfacing missed runs distinctly..."; `tests/cli.test.ts`, "crontick runs list --status filters to the requested run status")
@@ -141,7 +141,7 @@ both human-editability of jobs and efficient querying of run history.
 - [x] `job_schedule_state`: `recordTick`/`getScheduleState` seed and advance a job's watermark (test file: `tests/store.test.ts`, "getScheduleState ..." / "recordTick ..." describe block, lines 275-294)
 - [x] `recordMissedRun` inserts a terminal `missed` run with no pid, subject to the same retention cap as any other run (test file: `tests/store.test.ts`, lines 210-238)
 - [x] `importRuns` validates each row individually, skips malformed rows or rows for missing jobs without aborting the batch, is idempotent on `id`, and prunes affected jobs back to their retention cap afterward (test file: `tests/store.test.ts`, `describe('Store.importRuns', ...)`; exercised end-to-end via `tests/cli.test.ts`, line ~760; `tests/mcp.test.ts`, line ~709)
-- [x] Read-time redaction applies consistently to config, run, log, and dashboard read surfaces, including pre-existing stored values, private-key markers, contextual or nearby-access-key-paired AWS secrets, and the `NON_SECRET` / benign-base64 false-positive boundary (test file: `tests/secret-redaction.ctd-003.test.ts`)
+- [x] Read-time redaction applies consistently to config, run, log, and dashboard read surfaces, including pre-existing stored values, private-key markers, contextual or nearby-access-key-paired AWS secrets, and the `NON_SECRET` / benign-base64 false-positive boundary (test file: `tests/secret-redaction.test.ts`)
 - [x] Config reads/validation accept BOM-prefixed JSON and report structured parse diagnostics for malformed JSON (test file: `tests/config.test.ts`)
 - [x] Managed temp-script storage lives under CRONTICK_HOME and wrapper files are removed after the run (test file: `tests/temp-script-cleanup.ctd-017.test.ts`)
 

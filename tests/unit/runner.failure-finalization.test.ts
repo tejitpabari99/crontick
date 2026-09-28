@@ -136,7 +136,7 @@ function createRecordingLogger(): { logger: Logger; errors: Array<{ message: str
   return { logger, errors };
 }
 
-describe('CTD-001 runner setup failures', () => {
+describe('runner setup failures finalize exactly once', () => {
   it('finalizes envFile setup failures exactly once as failed', async () => {
     const dir = makeTmpDir();
     const store = makeStore(dir);

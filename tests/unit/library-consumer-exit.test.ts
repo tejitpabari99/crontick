@@ -28,7 +28,7 @@ function killHomeDaemon(home: string): void {
   }
 }
 
-describe('CTD-009 library consumer exit', () => {
+describe('library consumer exit', () => {
   it('lets createClient consumers call process.exit() immediately after a daemon-backed request without a native crash', async () => {
     const home = makeHome();
     try {

@@ -114,7 +114,7 @@ the value is looked up by alias. An unresolved identifier fails with
 - [x] Kebab-case validation rejects invalid IDs (test file: `tests/job-input.test.ts`)
 - [x] Default values applied correctly for overlap, retry, enabled (test file: `tests/property.schema.test.ts`)
 - [x] Strict action schemas reject unknown keys (test file: `tests/property.schema.test.ts`)
-- [x] Duplicate create rejects by default and explicit `force` replaces the existing job (test file: `tests/job-create-duplicate.ctd-005.test.ts`)
+- [x] Duplicate create rejects by default and explicit `force` replaces the existing job (test file: `tests/job-create-duplicate.test.ts`)
 - [x] Invalid schedule on create/update persists nothing / preserves the original job (test file: `tests/job-create-atomicity.ctd-004.test.ts`)
 - [x] Delete removes file and SQLite row (test file: `tests/store.test.ts`)
 - [x] Schema sidecar written on persist (test file: `tests/store.test.ts`)
