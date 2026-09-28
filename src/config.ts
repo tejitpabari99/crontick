@@ -54,6 +54,7 @@ export interface PromptRunCommand {
   args: string[];
   env: Record<string, string>;
   engine: string;
+  sessionId?: string;
 }
 
 /** Internal execution bundle: invocation and parser share one config read. */
@@ -256,6 +257,7 @@ export function resolvePromptRunCommand(
     env: engine.env ?? {},
   };
   const invocation = adapter.buildInvocation(action.prompt, engineOptions);
+  if (invocation.sessionId) engineOptions.sessionId = invocation.sessionId;
   const result = {
     ...invocation,
     engine: engineName,

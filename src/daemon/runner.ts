@@ -602,6 +602,15 @@ export class Runner {
       this.logger.debug('Spawning child process', { jobId: job.id, runId, command: cmd, args, cwd: spawnOpts.cwd, timeoutMs });
       this.appendDiagnosticLog(log, 'spawn', { command: cmd, args, cwd: spawnOpts.cwd, timeoutMs });
       const child = this.spawnFn(cmd, args, spawnOpts);
+      // Claude assigns an id before spawn. Persist it before attaching output
+      // listeners, so even a process that emits immediately has a run id.
+      if (runCommand.sessionId) {
+        try {
+          store.updateRun(runId, { sessionId: runCommand.sessionId });
+        } catch (err) {
+          this.logger.error('Failed to persist run sessionId', { jobId: job.id, runId, error: String(err) });
+        }
+      }
       // Persist the OS pid the instant it's known (L4) — nothing before this
       // point could reconcile against it. unref() so a detached child never
       // keeps the daemon's event loop alive on its own.

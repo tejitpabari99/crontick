@@ -15,6 +15,8 @@ export interface EngineInvocation {
   command: string;
   args: string[];
   env: Record<string, string>;
+  /** Session selected before spawn; the runner persists it as soon as the child exists. */
+  sessionId?: string;
 }
 
 export interface EngineResult {
