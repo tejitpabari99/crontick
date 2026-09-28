@@ -10,13 +10,13 @@ Source of truth: `docs/agent_files/users-tejitpabari-claude-engine-20260927-2325
 
 | # | Task | Depends on | Status |
 |---|---|---|---|
-| 1 | Centralize retention/daemon/scheduler/job-input constants and dedupe `sleep()` | none | todo |
-| 2 | Fix `validate` script ordering and drop dead `plugin/` scan from `rebrand.test.ts` | none | todo |
-| 3 | Rename `ctd-NNN` test files to descriptive names | none | todo |
-| 4 | Rewrite `README.md` and doc examples to drop script/exec framing | none | todo |
-| 5 | Restructure docs information architecture (architecture, concepts, internals, specs) | 4 | todo |
-| 6 | Apply SP01-consistency fixes across docs (copilot removal, `skipped` status) | 5 | todo |
-| 7 | Update `AGENTS.md`/`CLAUDE.md`/`docs/README.md` for new structure and tech-doc links | 1, 5, 6 | todo |
+| 1 | Centralize retention/daemon/scheduler/job-input constants and dedupe `sleep()` | none | done |
+| 2 | Fix `validate` script ordering and drop dead `plugin/` scan from `rebrand.test.ts` | none | done |
+| 3 | Rename `ctd-NNN` test files to descriptive names | none | done |
+| 4 | Rewrite `README.md` and doc examples to drop script/exec framing | none | done |
+| 5 | Restructure docs information architecture (architecture, concepts, internals, specs) | 4 | done |
+| 6 | Apply SP01-consistency fixes across docs (copilot removal, `skipped` status) | 5 | done |
+| 7 | Update `AGENTS.md`/`CLAUDE.md`/`docs/README.md` for new structure and tech-doc links | 1, 5, 6 | done |
 
 ## Task 1 — Centralize constants and dedupe `sleep()`
 
