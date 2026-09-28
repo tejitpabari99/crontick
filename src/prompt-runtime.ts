@@ -44,7 +44,7 @@ export function promptRuntimeValidationMessage(action: PromptRuntimeValidationIn
 
 function promptRuntimeArgv(action: PromptRuntimeValidationInput): string[] {
   const args = action.args ?? [];
-  const argv = [action.engine ?? 'copilot', action.prompt, ...args];
+  const argv = [action.engine ?? 'claude', action.prompt, ...args];
   if (action.sessionId) argv.push(`--session-id=${action.sessionId}`);
   return argv;
 }

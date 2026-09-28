@@ -613,6 +613,21 @@ describe('normalizeJobPatch — action merge (mergeActionPatch)', () => {
     const result = normalizeJobPatch('job-1', existing, patch);
     expect(result.action).toEqual(existing.action);
   });
+
+  it('estimates an args-only patch\'s command line using the claude fallback engine name, not the removed copilot default', () => {
+    // An args-only patch (no prompt/engine in the patch itself) is runtime-validated
+    // before being merged onto the existing action (see normalizeActionInput's
+    // args-only branch in src/job-input.ts), using placeholder prompt/engine values
+    // since the final resolved ones aren't known yet. That placeholder engine must
+    // be 'claude' (6 chars) -- the only remaining engine -- not the removed
+    // 'copilot' default (7 chars). With a 30,000-char arg, the estimate is
+    // 6 (engine) + 1 + 0 (placeholder prompt) + 1 + 30,000 = 30,008 for 'claude'
+    // vs 30,009 for 'copilot'; asserting the exact embedded number pins down
+    // which fallback produced it.
+    const existing = existingJob({ kind: 'prompt', prompt: 'hello', engine: 'claude' });
+    const patch: JobPatchInput = { action: { kind: 'prompt', args: ['a'.repeat(30_000)] } as ActionInput };
+    expect(() => normalizeJobPatch('job-1', existing, patch)).toThrow(/\(30008\/32767 characters\)/);
+  });
 });
 
 // ── normalizeJobPatch — prompt args/reuseSession/retry/engine ──────────────────

@@ -483,7 +483,7 @@ function validatePromptActionRuntimeArgs(action: Record<string, unknown>): void 
   const args = Array.isArray(action.args) ? action.args.filter(isString) : [];
   const message = promptRuntimeValidationMessage({
     prompt: typeof action.prompt === 'string' ? action.prompt : '',
-    engine: typeof action.engine === 'string' ? action.engine : 'copilot',
+    engine: typeof action.engine === 'string' ? action.engine : 'claude',
     args,
     sessionId: typeof action.sessionId === 'string' ? action.sessionId : undefined,
   });
