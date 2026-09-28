@@ -51,9 +51,10 @@ output-truncation flag), `run_logs` (stdout/stderr chunks, ordered by insertion)
 `job_schedule_state` (per-job "last observed ticking" watermark for missed-fire computation). See
 [internals/storage.md](../internals/storage.md) for exact columns and indexes.
 
-Run statuses: `queued`, `running`, `success`, `failed`, `canceled`, `skipped`, `timeout`, `missed` (a fire
-the schedule would have produced while the daemon was not running, recorded but never executed --
-see [daemon-lifecycle.md](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down)).
+Run statuses: `queued`, `running`, `success`, `failed`, `canceled` (a started run that was
+terminated), `skipped` (an overlap-skip fire that never started a process), `timeout`, `missed` (a
+fire the schedule would have produced while the daemon was not running, recorded but never
+executed -- see [daemon-lifecycle.md](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down)).
 
 ## Single-writer assumption
 

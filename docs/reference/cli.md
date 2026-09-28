@@ -263,7 +263,7 @@ crontick stats summary
 ```
 
 Only runs whose parent job still exists are counted.
-The response includes separate `canceled` and `skipped` counts, plus `totalCostUsd` and `totalTurns` summed over the included runs; runs without usage contribute zero.
+The response includes separate `canceled` and `skipped` counts (`skipped` = fires that never started a process because overlap `skip` found another run already active; `canceled` = runs that started and were then terminated), plus `totalCostUsd` and `totalTurns` summed over the included runs; runs without usage contribute zero.
 
 ### crontick stats job
 

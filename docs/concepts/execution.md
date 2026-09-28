@@ -29,13 +29,12 @@ rebuilt for any run that survived: orphan reconciliation liveness-checks each `r
 
 The runner resolves the job's engine (via its adapter -- see
 [internals/engines.md](../internals/engines.md)) into a concrete command/args/env, then spawns it
-with `shell: false`, stdin ignored, and `detached: true, windowsHide: true` -- except when the
-resolved command is `pwsh`/`powershell.exe` on Windows, which is spawned attached because
-Windows's detached process creation gives the child no console and PowerShell's host needs one to
-write output at all (see [ADR 0020](../decisions/0020-no-detach-powershell-script-jobs-windows.md)).
-Detaching otherwise means a daemon restart or crash never kills a running job's process as a side
-effect -- it keeps running (picked up by
-[orphan reconciliation](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down)) or has
+with `shell: false`, stdin ignored, and `detached: true, windowsHide: true` -- except
+`pwsh`/`powershell.exe` on Windows, spawned attached because detached processes get no console
+there and PowerShell needs one to write output
+(see [ADR 0020](../decisions/0020-no-detach-powershell-script-jobs-windows.md)).
+Detaching otherwise means a daemon restart or crash never kills a running job -- it keeps running
+(see [orphan reconciliation](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down)) or has
 already exited. The child's `pid` is persisted onto its run row as soon as known.
 
 The child inherits `action.cwd` if set, otherwise `process.cwd()`. Environment merges (highest
@@ -73,9 +72,10 @@ exited when the timer elapses, the Runner sends `SIGTERM` directly and records `
 | Signal SIGTERM/SIGKILL (cancellation) | `canceled` |
 | ENOENT (engine not found) or no exit code | `failed` |
 
-`missed` is an eighth terminal status, but never produced by this pipeline: it's recorded
-directly by the daemon's startup missed-fire pass for a fire that had no run because the daemon
-wasn't running. See
+`skipped` and `missed` fall outside this table. `skipped` finalizes before any process spawns,
+when overlap `skip` finds another run active -- distinct from `canceled`, which stops an
+already-started process. `missed` is recorded directly by the daemon's startup missed-fire pass
+for a fire that had no run because the daemon wasn't running. See
 [daemon-lifecycle.md](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down).
 
 ## Retry behavior

@@ -10,7 +10,7 @@ allowed-tools: shell
 
 This **crontick** skill lets you schedule and manage AI cron jobs on the local machine from the shell. Use it when asked to run an AI prompt on a cron, interval, or one-shot schedule, or to inspect, trigger, or clean up those scheduled jobs and their run history.
 
-crontick is **AI-native local cron**: a demand-started local daemon plus a `crontick` CLI (and MCP server). The default job is a **prompt job** — a natural-language prompt scheduled to run against an AI **engine** (`copilot` by default, i.e. `copilot --allow-all-tools -p "<prompt>"`). Everything runs on one machine; the daemon auto-starts on first use.
+crontick is **AI-native local cron**: a demand-started local daemon plus a `crontick` CLI (and MCP server). The default job is a **prompt job** — a natural-language prompt scheduled to run against an AI **engine** (`claude` by default, i.e. the Claude Code CLI invoked as `claude -p "<prompt>"`). Everything runs on one machine; the daemon auto-starts on first use.
 
 **Identity:** every job has an immutable GUID `id` (assigned by crontick — never invent it) plus an optional human `alias` (kebab-case, auto-generated when omitted, e.g. `fern-270`). Pass **either** the `id` or the `alias` anywhere an identifier is expected.
 
@@ -37,7 +37,7 @@ No `id` is needed — crontick assigns the GUID and auto-generates an `alias`. O
 
 - `--name <name>` — set a memorable kebab-case alias instead of the generated one.
 - `--tz <tz>` — timezone for cron schedules (e.g. `America/Los_Angeles`).
-- `--runner <name>` — pick a configured engine (default: `copilot`).
+- `--runner <name>` — pick a configured engine (default: `claude`).
 - `--prompt-file <path>` — read the prompt from a UTF-8 `.txt` file instead of `--prompt` (mutually exclusive with `--prompt`; contents are stored, not the path).
 - `--timeout <sec>`, `--overlap skip|queue|cancel-previous` (default `skip`), `--retry <max>` (default `0`).
 - `--force` — replace an existing job with the same alias.
@@ -85,16 +85,16 @@ The dashboard (job/run browser) is served by the daemon; open the `dashboardUrl`
 
 ## Engines
 
-A prompt engine is the AI CLI crontick invokes. The built-in default is `copilot`:
+A prompt engine is the AI CLI crontick invokes. The built-in default is `claude` (the Claude Code CLI):
 
 ```jsonc
-{ "command": "copilot", "args": ["--allow-all-tools", "-p"], "env": {} }
+{ "command": "claude", "args": [], "env": {}, "type": "claude" }
 ```
 
-At run time crontick appends the prompt after the engine args → `copilot --allow-all-tools -p "<prompt>"`, then any `engineArgs...`, then a package-owned `--session-id=<id>` when session continuity is on.
+At run time the `claude` adapter builds the full invocation (`claude -p "<prompt>" --output-format stream-json --verbose --session-id <uuid> ...`), then appends any `engineArgs...`. A custom engine instead defaults to the `raw` adapter, which appends the prompt straight after `engine.args`, e.g. `{ "command": "my-cli", "args": ["--yes", "-p"], "type": "raw" }` → `my-cli --yes -p "<prompt>"`, then any `engineArgs...`, then a package-owned `--session-id=<id>` when session continuity is on.
 
-- Select a configured engine per job with `--runner <name>` (default `copilot`).
-- Add or edit engines (e.g. `claude`) by editing the `config.json` whose path `crontick info` prints. The prompt-taking flag (`-p`) must stay **last** in an engine's `args`.
+- Select a configured engine per job with `--runner <name>` (default `claude`).
+- Add or edit engines by editing the `config.json` whose path `crontick info` prints. For a `raw` engine, the prompt-taking flag must stay **last** in `args`.
 
 **Multi-turn continuity** (carry the AI session across runs) — use at most one:
 
