@@ -1,197 +1,109 @@
 # Execution
 
-After reading this page you will understand how crontick turns a scheduled tick into a completed run, including process spawning, I/O capture, timeouts, and how prompt jobs differ.
+Audience: users and contributors reasoning about how a run actually happens. Non-duplication:
+for the exact spawn/redaction/adoption mechanics see
+[internals/prompt-execution.md](../internals/prompt-execution.md); for the engine adapter
+contract see [internals/engines.md](../internals/engines.md); for the normative contract see
+[specs/003-execution.md](../specs/003-execution.md).
+
+After reading this page: how crontick turns a scheduled tick into a completed run.
 
 ## From tick to run
 
-1. The scheduler emits a `tick` event with `{ jobId, plannedAt }`.
-2. The daemon handler fetches the job from the store; if the job is missing or disabled, the tick is dropped.
-3. A new run is inserted into SQLite with status `queued` and `startedAt` set to the planned time.
-4. `Runner.run()` is called with the job, run ID, and store reference.
+The scheduler emits a `tick` event with `{ jobId, plannedAt }`; the daemon fetches the job
+(dropping the tick if missing or disabled), inserts a `queued` run, and calls `Runner.run()`.
 
 ## Overlap enforcement
 
-Before spawning, the Runner checks the job's `overlap` policy:
+Before spawning, the Runner checks the job's `overlap` policy: **skip** finalizes the new run as
+`skipped` without starting a process if another is active; **cancel-previous** signals the active
+run's `AbortController`, then proceeds; **queue** places the new run in a per-job FIFO drained
+sequentially.
 
-- **skip**: if another run for this job is active, the new run is immediately finalized as `skipped` without starting a process.
-- **cancel-previous**: the active run's `AbortController` is signaled, then the new run proceeds.
-- **queue**: the new run is placed in a per-job FIFO queue; a drain loop executes entries sequentially.
-
-Overlap state (which run is active per job, and its queue) is tracked in the daemon process's
-memory, not persisted to `runs.db`. A daemon restart drops that in-memory state, but it is
-rebuilt for any run that survived the restart: on startup, `Store.reconcileOrphanRuns()`
-liveness-checks each `running` run's recorded `pid` and, if the process is still alive (or
-liveness can't be ruled out), calls `Runner.adoptRun()` to re-register it in the new process's
-overlap tracking, so a `skip`/`cancel-previous` policy still holds for that job. See
-[daemon-lifecycle.md](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down) for the full
-reconciliation behavior.
+Overlap state lives in the daemon process's memory, not `runs.db`. A restart drops it, but it's
+rebuilt for any run that survived: orphan reconciliation liveness-checks each `running` run's
+`pid` and, if alive (or inconclusive), re-registers it via `Runner.adoptRun()`. See
+[daemon-lifecycle.md](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down).
 
 ## Process spawn
 
-Prompt jobs spawn a child process with `shell: false` using Node.js `child_process.spawn`. The spawn options are:
+The runner resolves the job's engine (via its adapter -- see
+[internals/engines.md](../internals/engines.md)) into a concrete command/args/env, then spawns it
+with `shell: false`, stdin ignored, and `detached: true, windowsHide: true` -- except when the
+resolved command is `pwsh`/`powershell.exe` on Windows, which is spawned attached because
+Windows's detached process creation gives the child no console and PowerShell's host needs one to
+write output at all (see [ADR 0020](../decisions/0020-no-detach-powershell-script-jobs-windows.md)).
+Detaching otherwise means a daemon restart or crash never kills a running job's process as a side
+effect -- it keeps running (picked up by
+[orphan reconciliation](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down)) or has
+already exited. The child's `pid` is persisted onto its run row as soon as known.
 
-```typescript
-{
-  cwd: action.cwd ?? process.cwd(),
-  env: { ...process.env, ...promptEnv, ...envFileVars, ...action.env },
-  signal: abortController.signal,
-  shell: false,
-  detached: !isWindowsPowerShellHost,
-  windowsHide: true,
-  stdio: ['ignore', 'pipe', 'pipe'],
-}
-```
+The child inherits `action.cwd` if set, otherwise `process.cwd()`. Environment merges (highest
+wins): `action.env` > `envFile` variables > engine-config `env` > `process.env`.
 
-Timeouts are no longer implemented via the spawn options — see [Timeouts](#timeouts) below.
+## Log streams and capture
 
-`detached` is `true` for every action kind on every platform, with one narrow exception:
-`isWindowsPowerShellHost` is true when the platform is Windows and the resolved command is
-`pwsh`/`powershell(.exe)` (case-insensitive), which is the case for `script` jobs whose shell
-resolves to PowerShell (including the `shell: "auto"` default). For that one command/platform
-combination, `detached` is `false` instead, because Windows's `DETACHED_PROCESS` creation flag
-gives the child no console, and PowerShell's host requires an attached console to ever write to
-its own (otherwise valid) stdout/stderr — without this exception, a PowerShell script job's
-output is unconditionally empty on Windows. See
-[ADR 0020](../decisions/0020-no-detach-powershell-script-jobs-windows.md) for the full
-rationale and trade-off, and [internals/executors.md](../internals/executors.md#detached-child-processes)
-for the exact detection.
+Each run's logs combine **engine streams** (`stdout`/`stderr`: the job process's own output) and
+a **crontick stream** (its own lifecycle events -- run started, executing, run finished, overlap
+skips, retry backoffs, session capture). Log retrieval accepts a `source` filter (`all` default,
+`engine`, or `crontick`) across every surface, and logs are also mirrored, best-effort, to a
+per-job file at `<dataDir>/logs/<jobId>.log` (see
+[configuration reference](../reference/configuration.md#loggingconfig)).
 
-For every other case, `detached: true` means a child's survival across a daemon restart or crash
-is uniform: on POSIX the child reparents to init as before; on Windows it runs in its own process
-group instead of the daemon's job object, so it is no longer killed when the daemon exits.
-`windowsHide` suppresses the console window that `detached` would otherwise pop on Windows (this
-still applies even when `detached` is disabled for the PowerShell exception). The child's `pid`
-is persisted onto its run row (`Store.updateRun(runId, { pid })`) as soon as it is known, and
-`child.unref()` is called so a detached child never keeps the daemon's event loop alive. See
-[daemon-lifecycle.md](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down)
-for how a surviving child is reconciled on the next daemon start, and note that the PowerShell
-exception above means such a job's child does **not** survive the daemon being killed via Ctrl+C
-through a shared console (an abrupt crash/kill still leaves it running, since Windows does not
-cascade-kill on its own).
-
-### Script jobs
-
-The `script` body is written to a temporary file in `<os.tmpdir()>/crontick/` with extension `.sh`, `.ps1`, or `.bat` (depending on resolved shell). The appropriate interpreter is invoked:
-
-| Shell | Command |
-|-------|---------|
-| `bash` | `bash <tmpfile>` |
-| `pwsh` | `pwsh -NoProfile -NonInteractive -File <tmpfile>` |
-| `cmd` | `cmd /c <tmpfile>` |
-
-The temp file is deleted after the process exits (or on error).
-
-### Exec jobs
-
-The `command` is spawned directly with `args`. No shell interpretation occurs. `command` is used
-verbatim -- it is never split on whitespace -- so a command string containing spaces (e.g. a path)
-is passed through unchanged as a single argv element. `args` come from the job schema (for example,
-a JSON file passed to `crontick jobs new --file <job.json>`) or the library API, so an individual
-argument containing spaces is preserved intact rather than being re-split.
-
-### Prompt jobs
-
-The engine is resolved from `config.json`. `buildPromptRunCommand()` constructs the full command, arguments, and environment for the engine binary. The prompt text and any engine-specific args are passed as CLI arguments to the engine.
-
-## Working directory
-
-The child process inherits `action.cwd` if set; otherwise it defaults to `process.cwd()` of the daemon process (typically the daemon's install location).
-
-## Environment inheritance
-
-Environment variables are merged in priority order (last wins):
-
-1. `process.env` (daemon's environment)
-2. Engine-specific env (prompt jobs only, from `buildPromptRunCommand`)
-3. `envFile` variables (parsed from a `.env`-style file)
-4. `action.env` (inline env from the job definition)
-
-The `envFile` is resolved relative to `action.cwd` (or `process.cwd()`) when not an absolute path.
-
-## Log streams: engine vs crontick
-
-Each run's logs combine two kinds of entries, distinguished by their stream name in `run_logs`:
-
-- **Engine streams** (`stdout`, `stderr`): the job process's own output (see below).
-- **Crontick stream** (`crontick`): crontick's own scheduling/execution lifecycle events for the
-  run -- run started, executing (with the redacted command), run finished (status/exit/duration),
-  overlap skips, retry backoffs, and session capture. Each event is a redacted `[crontick] ...`
-  line.
-
-Log retrieval accepts a `source` filter (`all` -- default, `engine` = `stdout`+`stderr`, or
-`crontick`) across the CLI (`crontick runs logs <runId> [engine|crontick]`), the MCP tool `crontick_run_logs_tail`, the
-client `getLogs()`, and the daemon `GET /api/runs/:id/logs?source=` route.
-
-### Per-job log file
-
-In addition to the SQLite `run_logs` store, every run's logs (engine output **and** crontick
-lifecycle events, interleaved) are mirrored to a per-job file at `<dataDir>/logs/<jobId>.log`
-(overridable via `logging.dir`; disable with `logging.fileEnabled: false`). File writes are
-best-effort and never block or fail a run. See
-[internals/executors.md](../internals/executors.md#per-job-log-file) and the
-[configuration reference](../reference/configuration.md#loggingconfig).
-
-## Stdout/stderr capture
-
-Both streams are captured chunk-by-chunk. Each chunk passes through `safeRedact()`, which applies secret redaction only to valid UTF-8 text (binary data is stored as-is). Redacted chunks are inserted into `run_logs` with the stream name and a timestamp.
-
-Captured output per run is bounded by `retention.maxOutputBytesPerRun` (default 2,000,000 bytes,
-configurable `1024..1_000_000_000` -- see [configuration reference](../reference/configuration.md)).
-Once a run's captured output reaches the cap, crontick trims the last chunk back to a valid UTF-8
-character boundary (never splitting a multi-byte character) before appending a truncation marker
-line to `run_logs`, then stops persisting any further chunks; the run's `outputTruncated` field is
-set to `true`. This only stops output *capture* -- the job's own child process is never killed,
-throttled, or otherwise affected by hitting the cap; it keeps running to completion. See
-[internals/executors.md](../internals/executors.md#output-capture-cap) for the exact enforcement
-point.
+Both streams are captured chunk-by-chunk through `safeRedact()`, which redacts secrets only in
+valid UTF-8 text (binary passes through as-is). Output per run is bounded by
+`retention.maxOutputBytesPerRun` (default 2,000,000 bytes); once hit, crontick trims to a UTF-8
+character boundary, appends a truncation marker, and stops persisting further chunks -- the
+child process itself is never killed or throttled by hitting the cap.
 
 ## Timeouts
 
-When `action.timeoutSec` is set, the Runner starts its own timer alongside the spawn (this is not
-implemented via Node's `spawn(..., { timeout })` option, which cannot be distinguished from a
-plain cancellation once it fires). If the child has not exited when the timer elapses, the Runner
-sends `SIGTERM` to it directly and records the run's status as `timeout` (with an error message
-naming the configured `timeoutSec`), rather than `canceled`.
+When `action.timeoutSec` is set, the Runner starts its own timer alongside the spawn (not Node's
+`spawn(..., { timeout })`, indistinguishable from a plain cancellation). If the child hasn't
+exited when the timer elapses, the Runner sends `SIGTERM` directly and records `timeout` (naming
+`timeoutSec`), rather than `canceled`.
 
 ## Exit-status interpretation
 
 | Condition | Run status |
 |-----------|------------|
-| Exit code 0 | `success` |
-| Exit code non-zero | `failed` (with `exitCode` recorded) |
-| Runner-initiated timeout (`action.timeoutSec` elapsed) | `timeout` |
-| Signal SIGTERM/SIGKILL (user/overlap cancellation, not a timeout) | `canceled` |
-| Abort signal (overlap or manual cancel) | `canceled` |
-| ENOENT (prompt engine not found) | `failed` with descriptive error |
-| No exit code (null) | `failed` |
+| Exit code 0, no adapter-reported error | `success` |
+| Exit code non-zero, or adapter-reported error (e.g. Claude `is_error`) | `failed` |
+| Runner-initiated timeout | `timeout` |
+| Signal SIGTERM/SIGKILL (cancellation) | `canceled` |
+| ENOENT (engine not found) or no exit code | `failed` |
 
-`missed` is a seventh terminal status, but it is never produced by the Runner or by this
-tick-to-run pipeline: it is recorded directly by the daemon's startup missed-fire pass for a
-schedule fire that had no run at all because the daemon was not running at the time. See
+`missed` is an eighth terminal status, but never produced by this pipeline: it's recorded
+directly by the daemon's startup missed-fire pass for a fire that had no run because the daemon
+wasn't running. See
 [daemon-lifecycle.md](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down).
 
 ## Retry behavior
 
-If `retry.max > 0`, the Runner loops up to `max + 1` total attempts. Between retries it sleeps for `retry.backoffSec` seconds. Retries stop early on `success`, `canceled`, or `timeout`.
+If `retry.max > 0`, the Runner loops up to `max + 1` attempts, sleeping `retry.backoffSec`
+seconds between them, stopping early on `success`, `canceled`, or `timeout`.
 
 ## How prompt jobs differ
 
-Beyond the spawn mechanics, prompt jobs have additional behavior:
-
-- **Engine resolution**: the configured engine is looked up from `config.json` using `action.engine` (or `defaultEngine` if omitted). The resulting command line follows the pattern: `<engine.command> <engine.args...> <prompt> <action.args...> [--session-id=<id>]`.
-- **Session precedence**: explicit `sessionId` is used every run. If both `sessionId` and `reuseSession` are supplied, `sessionId` wins and crontick stores `reuseSession: false` with a notice.
-- **Session capture**: when `reuseSession` is true and no `sessionId` is set, the Runner monitors the engine's combined stdout/stderr output (up to 128 KB tail). Raw engines extract a session ID via regex after a successful exit. Claude uses the session ID in a complete `stream-json` result line, including a failed result. The captured ID is persisted back into the job definition so subsequent runs reuse the same session, **and** onto the run record (`run.sessionId`, surfaced by `runs get` and the dashboard). An explicitly provided `sessionId` is also recorded on the run record.
-- **Claude resume safety**: Claude sessions become reusable only after a complete result line is parsed, whether the result succeeded or failed. Before a run invokes `--resume`, crontick checks that an earlier run for the same job completed with that parsed session ID and that its transcript exists under `~/.claude/projects/`. An ineligible ID or missing file fails with `SESSION_NOT_FOUND` before any process starts. Prompt child processes have stdin ignored.
-- **Engine resolution failure**: if the engine binary is not on PATH, the run fails with a descriptive error naming the engine and suggesting config changes.
-- **promptFile sugar**: CLI and programmatic input may use `promptFile` as creation sugar. It must point to a UTF-8 `.txt` file; the file is read before persistence and exports contain only `prompt`.
-
-## Finalization
-
-After all attempts complete (or abort), `Runner.finalizeRun()` updates the SQLite run record with the final `status`, `exitCode`, `error`, `endedAt`, and `durationMs`.
+- **Engine resolution**: `action.engine` (or `config.defaultEngine`, the built-in `claude` engine
+  unless changed) selects a configured engine, whose **adapter** turns it into a concrete
+  invocation -- see [internals/engines.md](../internals/engines.md) and
+  [specs/007-prompt-jobs.md](../specs/007-prompt-jobs.md).
+- **Session precedence**: an explicit `sessionId` always wins over `reuseSession`, which is then
+  stored as `false` with a notice.
+- **Session capture**: when `reuseSession` is true and no `sessionId` is set, the adapter decides
+  eligibility from the finished run's parsed result and resolves a session id, persisted onto
+  both the run record and the job definition.
+- **Claude resume safety**: a Claude session is reusable only after a complete result line was
+  parsed. Before `--resume`, crontick checks a completed local run for that session id and that
+  its transcript exists; otherwise the run fails with `SESSION_NOT_FOUND` before any process
+  starts.
+- **promptFile sugar**: CLI/programmatic input may use `promptFile` as creation sugar, read once
+  at creation time; only `prompt` is ever persisted or exported.
 
 ## Further reading
 
-- [Jobs](./jobs.md) - action kinds and overlap/retry fields
+- [Jobs](./jobs.md) - the job model and its action
 - [Scheduling](./scheduling.md) - how ticks are generated
 - [Error model](./error-model.md) - how failures surface to users
 - [State and storage](./state-and-storage.md) - where runs and logs are persisted

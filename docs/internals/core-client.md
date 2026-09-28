@@ -2,6 +2,10 @@
 
 Implements: `src/client.ts`
 
+Audience: contributors changing `CrontickClient`'s daemon transport or auto-start logic.
+Non-duplication: for the public method surface see
+[reference/library-api.md](../reference/library-api.md).
+
 The `CrontickClient` class is the single programmatic entry point for all
 crontick operations. CLI, MCP, and library consumers instantiate it and call its
 methods; the class handles daemon discovery, auto-start, HTTP transport, and

@@ -1,5 +1,9 @@
 # Error Model
 
+Audience: users and contributors reasoning about how failures surface. Non-duplication: for the
+exhaustive code-by-code reference see [reference/errors.md](../reference/errors.md) -- this page
+only covers the shared shape and per-surface presentation.
+
 After reading this page you will understand how crontick classifies failures, how the same underlying error is presented differently by each surface, and where failures are recorded.
 
 ## CrontickError
@@ -18,16 +22,13 @@ The `toJSON()` method returns `{ code, message, details }` for serialization.
 
 ## Error codes
 
-Errors are grouped by origin:
-
-| Category | Codes |
-|----------|-------|
-| Daemon connectivity | `DAEMON_NOT_RUNNING`, `DAEMON_REQUEST_FAILED`, `DAEMON_START_FAILED`, `DAEMON_TIMEOUT`, `DAEMON_START_LOCK_TIMEOUT`, `DAEMON_STOP_FAILED` |
-| Validation | `VALIDATION_ERROR`, `PARSE_ERROR` |
-| Not found | `NOT_FOUND` |
-| Configuration | `CONFIG_EXISTS`, `CONFIG_READ_ERROR`, `CONFIG_VALIDATION_ERROR`, `CONFIG_KEY_ERROR`, `CONFIG_KEY_NOT_FOUND`, `CONFIG_ENGINE_NOT_FOUND`, `CONFIG_ENGINE_EXISTS`, `CONFIG_BUILTIN_ENGINE` |
-| Runtime | `ENV_FILE_ERROR`, `API_ERROR`, `INTERNAL_ERROR`, `FORBIDDEN` |
-| Build | `NOT_BUILT` |
+Errors are grouped by origin: daemon connectivity (`DAEMON_NOT_RUNNING`,
+`DAEMON_REQUEST_FAILED`, `DAEMON_START_FAILED`, `DAEMON_TIMEOUT`, ...), validation
+(`VALIDATION_ERROR`, `PARSE_ERROR`), not-found (`NOT_FOUND`), configuration
+(`CONFIG_EXISTS`, `CONFIG_READ_ERROR`, `CONFIG_ENGINE_NOT_FOUND`, ...), and runtime/build
+(`ENV_FILE_ERROR`, `API_ERROR`, `FORBIDDEN`, `NOT_BUILT`, `INTERNAL_ERROR`). See
+[reference/errors.md](../reference/errors.md) for the exhaustive, per-code table (when each is
+thrown, message shape, and `details`).
 
 ## Error presentation by surface
 

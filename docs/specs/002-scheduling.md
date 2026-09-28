@@ -4,6 +4,11 @@
 - Owner: crontick maintainers
 - Last reviewed: 2026-07-25
 
+Audience: contributors changing the scheduler or schedule validation. Non-duplication: this
+spec is the normative contract; for the mental model see
+[concepts/scheduling.md](../concepts/scheduling.md), and for implementation detail see
+[internals/scheduler.md](../internals/scheduler.md).
+
 ## Summary
 
 Crontick supports three schedule kinds: `cron` (recurring via cron expression),

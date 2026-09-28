@@ -4,6 +4,10 @@
 - Owner: crontick maintainers
 - Last reviewed: 2026-08-02
 
+Audience: contributors adding or changing a user-facing capability. Non-duplication: this spec
+is the normative contract; for the design rationale see
+[concepts/surface-parity.md](../concepts/surface-parity.md).
+
 ## Summary
 
 Every user-facing capability in crontick MUST be available on all three parity surfaces: CLI, MCP server, and library API (`CrontickClient`). A canonical table (`SURFACE_CAPABILITIES` in `src/surface.ts`) encodes this mapping and an automated drift test enforces it. The current table contains 21 capabilities.
@@ -14,7 +18,7 @@ When a change extends an existing capability rather than adding a new one (for e
 
 Surface parity prevents feature fragmentation. Users and agents MUST be able to accomplish any parity-scoped task regardless of their chosen interface. The drift test catches regressions early: if a new parity capability is added to one surface without the others, CI fails.
 
-The command-tree reorganization intentionally narrowed some exposure without removing library/core behavior. Raw schedule validation/preview, dashboard status/data, and direct config mutation/engine helpers remain library-only and are excluded from parity. The dashboard itself is always served by the daemon on its loopback origin; the `dashboard` command group and MCP tools were removed and `crontick info` surfaces the `dashboardUrl` instead. Script and exec actions remain supported through the job schema and library, while the CLI creates them through `jobs new --file <job.json>` instead of dedicated flags.
+The command-tree reorganization intentionally narrowed some exposure without removing library/core behavior. Raw schedule validation/preview, dashboard status/data, and direct config mutation/engine helpers remain library-only and are excluded from parity. The dashboard itself is always served by the daemon on its loopback origin; the `dashboard` command group and MCP tools were removed and `crontick info` surfaces the `dashboardUrl` instead.
 
 ## Terminology
 

@@ -54,9 +54,9 @@ observable behavior without updating relevant docs is incomplete.
 
 | File | Description |
 |------|-------------|
-| [jobs.md](concepts/jobs.md) | What a job is: identity, lifecycle, enabled/disabled semantics |
+| [jobs.md](concepts/jobs.md) | What a job is: identity, prompt action, lifecycle |
 | [scheduling.md](concepts/scheduling.md) | Cron, interval, and one-shot schedule behavior |
-| [execution.md](concepts/execution.md) | How actions run: shell rules, timeouts, cancellation |
+| [execution.md](concepts/execution.md) | How a run happens: spawn, overlap, timeouts, retries |
 | [daemon-lifecycle.md](concepts/daemon-lifecycle.md) | Demand-start, shutdown, no supervision |
 | [state-and-storage.md](concepts/state-and-storage.md) | Where state lives, SQLite WAL, JSON files |
 | [surface-parity.md](concepts/surface-parity.md) | The 21-capability contract across CLI/MCP/library |
@@ -70,7 +70,8 @@ observable behavior without updating relevant docs is incomplete.
 | [core-client.md](internals/core-client.md) | CrontickClient implementation details |
 | [daemon.md](internals/daemon.md) | Daemon process: HTTP server, routing, lifecycle |
 | [scheduler.md](internals/scheduler.md) | Scheduler loop: croner integration, tick behavior |
-| [executors.md](internals/executors.md) | Script, exec, and prompt executor implementations |
+| [prompt-execution.md](internals/prompt-execution.md) | Runner: prompt execution, overlap policy, retry, timeout, log capture, restart adoption |
+| [engines.md](internals/engines.md) | Engine adapter contract, registry, raw/Claude adapters |
 | [storage.md](internals/storage.md) | SQLite schema, WAL mode, retention and eviction |
 | [shims.md](internals/shims.md) | CLI and MCP shim architecture (thin adapters) |
 | [build-and-package.md](internals/build-and-package.md) | tsup config, bin entries, publish pipeline |
@@ -95,7 +96,7 @@ observable behavior without updating relevant docs is incomplete.
 | [README.md](decisions/README.md) | ADR index and process |
 | [0000-template.md](decisions/0000-template.md) | Template for new ADRs |
 
-See [decisions/README.md](decisions/README.md) for the full list of architecture decision records (ADRs 0001-0027).
+See [decisions/README.md](decisions/README.md) for the full list of architecture decision records (ADRs 0001-0033).
 
 ### specs/
 
@@ -118,8 +119,7 @@ See [decisions/README.md](decisions/README.md) for the full list of architecture
 | [README.md](examples/README.md) | Examples overview and how to run them |
 | [01-quick-start.ts](examples/01-quick-start.ts) | Create, list, and delete a job |
 | [02-cron-schedule.ts](examples/02-cron-schedule.ts) | Cron-scheduled job |
-| [03-exec-job.ts](examples/03-exec-job.ts) | Direct command execution job |
-| [04-prompt-job.ts](examples/04-prompt-job.ts) | LLM prompt job |
+| [04-prompt-job.ts](examples/04-prompt-job.ts) | Prompt action with engine, list engines |
 | [05-one-shot.ts](examples/05-one-shot.ts) | One-shot scheduled job |
 | [06-run-history.ts](examples/06-run-history.ts) | Querying run history and logs |
 | [07-lifecycle.ts](examples/07-lifecycle.ts) | Daemon lifecycle management |

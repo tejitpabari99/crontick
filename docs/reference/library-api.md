@@ -310,7 +310,7 @@ escalate to `SIGTERM` then `SIGKILL`; `'already-stopped'` if no daemon was runni
 lists any runs still `status: 'running'` at the moment the stop was accepted — they are not
 canceled by a stop, since [detached children survive daemon shutdown by design](../concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down)
 (PowerShell-hosted commands retain the exception described in [ADR 0028](../decisions/0028-prompt-only-jobs.md)).
-See [cli.md](./cli.md#daemon-stop) and [internals/daemon.md](../internals/daemon.md#shutdown).
+See [cli.md](./cli.md#crontick-info-daemon-stop) and [internals/daemon.md](../internals/daemon.md#shutdown).
 
 ### DaemonRestartResult
 

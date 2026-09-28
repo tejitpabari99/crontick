@@ -2,6 +2,9 @@
 
 Implements: `src/daemon/scheduler.ts`
 
+Audience: contributors changing timer registration or fire-time computation. Non-duplication:
+for the mental model see [concepts/scheduling.md](../concepts/scheduling.md).
+
 The `Scheduler` class manages timer registrations for all active jobs. It emits
 `'tick'` events that the daemon wires to the runner. It also provides schedule
 validation and next-fire-time preview.
@@ -150,19 +153,16 @@ unbounded loop.
 This is used exactly once in the codebase: by the daemon's startup missed-fire pass, which calls
 it with `fromExclusiveMs` = the job's `job_schedule_state.last_tick_at` watermark and
 `toExclusiveMs` = "now", to compute exactly which fires happened while no daemon process was
-running. See [daemon.md](./daemon.md#missed-fire-reporting) for the full startup sequence and
-[storage.md](./storage.md#missed-fire-reporting) for how each fire becomes a `missed` run.
+running. See [daemon.md](./daemon.md#startup-sequence-srcdaemonindexts) for the full startup
+sequence and [storage.md](./storage.md#missed-fire-reporting) for how each fire becomes a
+`missed` run.
 
 ---
 
 ## Drift Handling
 
-There is no explicit drift correction. Croner handles cron drift internally.
-Interval jobs may accumulate drift from Node.js event-loop delays (standard
-`setInterval` behavior). One-shot and recurring jobs alike are not retried if the daemon was
-down at a scheduled fire time — that fire is never executed after the fact. It is, however,
-never silently lost: the daemon's startup missed-fire pass (built on
-`enumerateFiresBetween` above) records it as a `missed` run, so the gap is always visible in
-`crontick runs list` and in `daemon status`'s `missedFires` summary, even though nothing runs to
-fill it. See [ADR 0015](../decisions/0015-report-missed-fires-not-replay.md) for why replay was
-rejected in favor of reporting.
+There is no explicit drift correction. Croner handles cron drift internally; interval jobs may
+accumulate drift from Node.js event-loop delays (standard `setInterval` behavior). A fire missed
+while the daemon was down is never executed after the fact, but is never silently lost either:
+the startup missed-fire pass (built on `enumerateFiresBetween` above) records it as a `missed`
+run. See [ADR 0015](../decisions/0015-report-missed-fires-not-replay.md).

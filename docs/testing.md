@@ -121,9 +121,9 @@ const health = await client.health();
 console.log('health:', health);
 
 await client.createJob({
-  id: 'lib-test',
+  alias: 'lib-test',
   schedule: { kind: 'interval', everySec: 5 },
-  action: { kind: 'exec', command: 'echo', args: ['hello from lib'] },
+  action: { kind: 'prompt', prompt: 'say hello from lib' },
 });
 const jobs = await client.listJobs();
 console.log('jobs:', jobs);
@@ -143,7 +143,7 @@ Expected: `health` shows `{ status: 'ok', ... }`, job appears in list, then disa
 # Any daemon-backed command demand-starts the daemon
 crontick jobs list
 
-# Create an exec job on a 5-second interval
+# Create a prompt job on a 5-second interval
 crontick jobs new --every 5 --prompt "say hello" --name my-test
 
 # Verify it appears
@@ -253,9 +253,8 @@ publishing.
 
 ### Job kinds
 
-- [ ] Create a `script` job from JSON: `crontick jobs new --file script-job.json`
-- [ ] Create an `exec` job from JSON: `crontick jobs new --file exec-job.json`
-- [ ] Create a `prompt` job: `crontick jobs new --every 60 --prompt "say hello" --name p1` (requires a configured engine)
+- [ ] Create a `prompt` job from JSON: `crontick jobs new --file prompt-job.json`
+- [ ] Create a `prompt` job via flags: `crontick jobs new --every 60 --prompt "say hello" --name p1` (requires a configured engine)
 - [ ] Each fires at least once and `crontick runs list` shows `success`
 
 ### Schedule kinds
@@ -285,15 +284,14 @@ publishing.
 
 ### Cross-platform (Windows-specific)
 
-- [ ] On Windows, `script` jobs with `shell: "auto"` use PowerShell (check run output)
+- [ ] On Windows, a prompt engine command resolving to PowerShell is spawned attached and still captures output (check run output)
 - [ ] Path separators in `CRONTICK_HOME` work with backslashes
 - [ ] Long command lines for prompt jobs do not exceed 30,000-char Windows limit (validated by `prompt-runtime.ts`)
 
 ### Error paths
 
 - [ ] Invalid cron expression on `crontick jobs new --cron bad --prompt test --name bad-cron` returns error
-- [ ] Failing command: job with `exit 1` shows `failed` status in runs
-- [ ] Missing binary in an exec job created from JSON fails the run with an actionable error
+- [ ] A prompt job whose engine command is missing from PATH fails the run with an actionable error
 
 ### Docs / examples
 

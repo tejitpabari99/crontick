@@ -214,7 +214,7 @@ than a job that fires monthly under the same cap. If you need to keep more histo
 the old cap that were already pruned cannot be recovered after the fact). To avoid losing history
 in the first place, back it up before it is evicted: `crontick share export --include-runs` captures
 every job's run history, and `crontick share import` restores it — see
-[cli.md](reference/cli.md#export). See
+[cli.md](reference/cli.md#crontick-share-export). See
 [state-and-storage.md](concepts/state-and-storage.md#run-history-retention) and
 [configuration.md](reference/configuration.md).
 

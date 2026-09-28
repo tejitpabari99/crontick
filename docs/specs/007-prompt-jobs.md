@@ -4,6 +4,11 @@
 - Owner: crontick maintainers
 - Last reviewed: 2026-09-28
 
+Audience: contributors changing engine adapters, session handling, or prompt CLI surface
+behavior. Non-duplication: this spec is the normative contract; for the mental model see
+[concepts/execution.md](../concepts/execution.md), and for the adapter implementation see
+[internals/engines.md](../internals/engines.md).
+
 ## Summary
 
 Prompt jobs invoke a configured CLI engine with a natural-language prompt.
@@ -136,6 +141,19 @@ args. Library and MCP callers pass `action.args` directly. See the
 | Overlap while active with `overlap: "skip"` | Terminal `skipped` run; active run continues. |
 | Explicit `sessionId` with `reuseSession: true` | Notice in crontick log; no session capture. |
 | Concurrent job edit during capture | Compare-and-swap declines the job mutation. |
+
+## Acceptance criteria
+
+- [x] Built-in config defines only `claude` (no Copilot fallback), with `defaultEngine: "claude"` (test file: `tests/default-engine-config.test.ts`)
+- [x] Engine registry resolves `type` to the `raw`/`claude` adapter, defaulting unset `type` to `raw` (test file: `tests/engine-registry.test.ts`)
+- [x] Raw adapter builds generic argv, treats exit code 0 as success, and extracts a session id from output when `reuseSession` is set (test file: `tests/raw-adapter.test.ts`)
+- [x] Claude adapter assigns a session id before spawn, builds `stream-json` invocation, parses the last complete result line, and populates `costUsd`/`turns`/`usageJson`/`transcriptPath`/`engineStatus` (test file: `tests/claude-adapter.test.ts`)
+- [x] Claude resume preflight rejects a session with no completed local result or missing transcript with `SESSION_NOT_FOUND` (test files: `tests/claude-adapter.test.ts`, `tests/prompt-resolution.test.ts`)
+- [x] `reuseSession: true` requires `overlap: "skip"`; other overlap values fail job validation (test file: `tests/job-input.test.ts`)
+- [x] Reserved prompt args (`-p`, `-r`, `--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`) are rejected from `action.args` (test file: `tests/job-input.test.ts`)
+- [x] End-to-end prompt run against a fake engine binary records status, session, and usage fields (test file: `tests/integration.prompt-e2e.test.ts`)
+- [x] `stats summary`/`stats job` sum `costUsd`/`turns` and report `canceled`/`skipped` counts separately (test files: `tests/run-usage-fields.test.ts`, `tests/run-usage-surfaces.test.ts`)
+- [x] `jobs new --runner` sets `action.engine`; the removed `--engine`/`--alias` flags fail (test file: `tests/cli.test.ts`)
 
 ## Related
 

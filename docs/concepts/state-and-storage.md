@@ -1,5 +1,10 @@
 # State and Storage
 
+Audience: users and contributors reasoning about where data lives and how it's retained.
+Non-duplication: for the exact SQLite schema see [internals/storage.md](../internals/storage.md);
+for the normative contract see
+[specs/006-state-and-persistence.md](../specs/006-state-and-persistence.md).
+
 After reading this page you will understand where crontick stores data, what format each piece uses, and how to safely inspect or reset state.
 
 ## Data directory location
@@ -38,23 +43,17 @@ The `.schema.json` sidecar is a JSON Schema generated from the Zod `JobSchema` v
 ## SQLite: runs, logs, schedule state
 
 The `runs.db` file is opened with `PRAGMA journal_mode=WAL` and `PRAGMA foreign_keys=ON`. The
-full schema is created in one idempotent pass on open -- there is no migration ledger and no
-prior on-disk shape to reconcile; a `runs.db` created by a crontick version before 1.0.0 is not a
-supported input (see [ADR 0017](../decisions/0017-no-migrations-for-first-release.md)). It
-contains:
-
-| Table | Purpose |
-|-------|---------|
-| `jobs` | Cache of job definitions (rebuilt from disk on start) |
-| `runs` | Run execution records: status, exit code, timing, spawned `pid`, output-truncation flag |
-| `run_logs` | Stdout/stderr chunks per run, ordered by insertion |
-| `job_schedule_state` | Per-job "last observed ticking" watermark, used to compute missed fires on restart |
+full schema is created in one idempotent pass on open -- there is no migration ledger; a
+`runs.db` created before 1.0.0 is not a supported input (see
+[ADR 0017](../decisions/0017-no-migrations-for-first-release.md)). Tables: `jobs` (cache,
+rebuilt from disk on start), `runs` (status, exit code, timing, spawned `pid`,
+output-truncation flag), `run_logs` (stdout/stderr chunks, ordered by insertion), and
+`job_schedule_state` (per-job "last observed ticking" watermark for missed-fire computation). See
+[internals/storage.md](../internals/storage.md) for exact columns and indexes.
 
 Run statuses: `queued`, `running`, `success`, `failed`, `canceled`, `skipped`, `timeout`, `missed` (a fire
 the schedule would have produced while the daemon was not running, recorded but never executed --
 see [daemon-lifecycle.md](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down)).
-
-Key indexes: `idx_runs_job_id_started_at`, `idx_runs_started_at`, `idx_run_logs_run_id`.
 
 ## Single-writer assumption
 
@@ -68,43 +67,27 @@ Only the daemon process writes to `runs.db` and the `jobs/` directory at runtime
 
 ## Run history retention
 
-Each job retains at most `retention.maxRunsPerJob` runs (default `100`,
-configurable `1..100000` — see [configuration reference](../reference/configuration.md)).
-When a job's terminal run count (runs not currently `running` or `queued`)
-exceeds the cap, the oldest terminal runs are deleted, along with their
-`run_logs`. Active runs are never evicted. Pruning runs on every new run, and
-also as a startup pass (`pruneAllJobsRunHistory()`) that catches a job whose
-cap was just lowered via `crontick info daemon reload` but that hasn't ticked since
--- not an upgrade or backfill step. Pruning is best-effort: a pruning failure
-is logged but never fails a run or blocks daemon startup. Lowering or raising
-`retention.maxRunsPerJob` takes effect on `crontick info daemon reload`, without a
-restart. See [storage internals](../internals/storage.md) for the eviction algorithm.
-
-**Design boundaries** (deliberate, not oversights):
-
-- The cap is a per-job **count** only — there is no age-based limit. A job that fires every
-  minute keeps roughly 100 minutes of history; a job that fires monthly keeps years of history
-  under the same cap.
-- Eviction is a hard delete with no dry-run or confirmation prompt. If you need to keep runs
-  beyond the cap, back them up first with `crontick share export --include-runs` (round-trips via
-  `crontick share import`), or raise `retention.maxRunsPerJob` before the cap would evict them.
+Each job retains at most `retention.maxRunsPerJob` runs (default `100`, configurable
+`1..100000`). The oldest terminal runs (never active ones) are deleted along with their
+`run_logs` once the cap is exceeded, on every new run and in a startup sweep that catches a cap
+just lowered via `crontick info daemon reload`. Pruning is best-effort and count-based only (no
+age limit): a job firing every minute keeps ~100 minutes of history, one firing monthly keeps
+years. Eviction is a hard delete with no undo -- back up first with `crontick share export
+--include-runs` if you need history past the cap. See
+[internals/storage.md](../internals/storage.md) for the eviction algorithm and
+[ADR 0012](../decisions/0012-run-history-retention.md) for the rationale.
 
 A single run's own captured stdout/stderr is bounded separately by
-`retention.maxOutputBytesPerRun` (default 2,000,000 bytes, range `1024..1_000_000_000`); once a
-run hits that cap, further output is dropped and `outputTruncated` is set on the run, but its
-`run_logs` size no longer grows without bound. See
-[execution.md](./execution.md#stdoutstderr-capture) for the truncation behavior.
-
-See [ADR 0012](../decisions/0012-run-history-retention.md) for why the cap is
-count-based rather than age-based, and why eviction is best-effort.
+`retention.maxOutputBytesPerRun` (default 2,000,000 bytes); once hit, further output is dropped
+and `outputTruncated` is set, but the run itself completes normally. See
+[execution.md](./execution.md#log-streams-and-capture).
 
 ## Daemon log retention
 
-`retention.maxLogFiles` (default `30`, configurable `1..3650`) bounds how many daily
-`logs/daemon-YYYY-MM-DD.log` files are kept; the oldest files beyond the cap are deleted, keeping
-the newest. Applied at daemon startup and again on `crontick info daemon reload` (a lowered value
-takes effect immediately, without a restart). Pruning is best-effort: a failure is logged but
-never blocks startup or reload. See [configuration reference](../reference/configuration.md#retentionconfig).
+`retention.maxLogFiles` (default `30`) bounds how many daily `logs/daemon-YYYY-MM-DD.log` files
+are kept, oldest deleted first, applied at startup and on `crontick info daemon reload` without a
+restart. Best-effort: a pruning failure is logged but never blocks startup or reload. See
+[configuration reference](../reference/configuration.md#retentionconfig).
 
 ## Inspecting state
 

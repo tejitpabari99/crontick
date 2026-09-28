@@ -1,6 +1,11 @@
 # Jobs
 
-A job is the fundamental unit of work in crontick. After reading this page you will understand how jobs are identified, what kinds exist, and how they move through their lifecycle.
+Audience: users and contributors who need the job mental model (identity, action shape,
+lifecycle). Non-duplication: for the exact field-by-field schema see
+[reference/job-schema.md](../reference/job-schema.md); for engine/adapter behavior see
+[specs/007-prompt-jobs.md](../specs/007-prompt-jobs.md).
+
+A job is the fundamental unit of work in crontick. After reading this page you will understand how jobs are identified, what a job's action looks like, and how they move through their lifecycle.
 
 ## What is a job
 
@@ -14,21 +19,24 @@ Every job also has an optional, user-editable `alias`: a kebab-case (`/^[a-z0-9]
 
 Anywhere a job identifier is accepted (CLI positional `<id>`, MCP `id` params, HTTP path segments), you may pass EITHER the GUID `id` OR the `alias`; crontick resolves an exact GUID match first, then falls back to an alias lookup, and returns `JOB_NOT_FOUND` if neither matches.
 
-## The three action kinds
+## The job's action: `prompt`
 
-| Kind | When to use | Key fields |
-|------|-------------|------------|
-| `script` | Run shell code (multi-line scripts, pipelines) | `script`, `shell` |
-| `exec` | Run a binary directly (no shell interpretation) | `command`, `args` |
-| `prompt` | Send a prompt to an LLM engine on a schedule | `prompt`, `engine`, `args` |
+`action.kind` is a discriminant with a single member today, `"prompt"` (`script` and `exec` were
+removed -- see [ADR 0028](../decisions/0028-prompt-only-jobs.md)). A prompt action sends
+`prompt` text to a configured LLM engine on the job's schedule:
 
-**script** writes the body to a temp file and invokes it through a shell. The `shell` field accepts `auto`, `bash`, `pwsh`, or `cmd`; `auto` resolves to `pwsh` on Windows, `bash` elsewhere.
+| Field | Purpose |
+|-------|---------|
+| `prompt` | The text sent to the engine. |
+| `engine` | Named engine from `config.json` (defaults to `config.defaultEngine`, which is the built-in `claude` engine unless changed). |
+| `args` | Extra arguments passed through to the engine CLI. |
+| `sessionId` / `reuseSession` | Multi-turn session reuse across scheduled runs -- see [execution.md](./execution.md#how-prompt-jobs-differ). |
 
-**exec** spawns the command directly (`shell: false` always). Use this when you need deterministic argument passing without shell quoting.
+The engine is resolved from `config.json` by an **adapter** keyed on the engine's `type`
+(`raw` or `claude`); the adapter builds the actual command line and interprets the result. See
+[internals/engines.md](../internals/engines.md) for the adapter contract.
 
-**prompt** resolves the engine from `config.json` (defaulting to the built-in `copilot` engine), constructs the full command line via `buildPromptRunCommand`, and spawns the engine binary. It supports session reuse (`reuseSession`, `sessionId`) for multi-turn conversations.
-
-All three kinds share common optional fields: `cwd`, `env`, `envFile`, and `timeoutSec`.
+All actions also share `cwd`, `env`, `envFile`, and `timeoutSec`.
 
 ## Enabled/disabled state
 
@@ -42,25 +50,20 @@ A job has a boolean `enabled` field (default `true`). Disabled jobs are persiste
 | `retry.max` | `0` | How many times to retry after failure |
 | `retry.backoffSec` | `30` | Seconds to wait between retries |
 
-Overlap values: `skip` (discard the new run), `queue` (wait for the active run to finish), `cancel-previous` (abort the active run, start the new one).
+Overlap values: `skip` (finalize the new tick as `skipped`), `queue` (wait for the active run to finish), `cancel-previous` (abort the active run, start the new one).
 
 ## Lifecycle: create, update, remove
 
 1. **Create** - the client validates the input against `JobSchema` (Zod), POSTs to the daemon, which persists both a JSON file and a SQLite row, then registers the schedule.
 2. **Update** - a PATCH-style merge is applied to the existing job: fields the caller does not
-   mention keep their previous value rather than resetting to a create-time default (e.g.
-   `overlap`, `shell`, `envFile`, `timeoutSec`, `args`, `reuseSession`, and `retry.backoffSec`
-   are all preserved unless explicitly provided). Changing `action.kind` (e.g. `script` ->
-   `exec`) is the one exception: it replaces the action wholly rather than merging field by
-   field, since the old kind's fields (e.g. `shell`) have no meaning for the new kind. This
+   mention keep their previous value rather than resetting to a create-time default. This
    behavior is identical on the CLI, MCP, and library surfaces. See
    [job-schema.md](../reference/job-schema.md#update-vs-create-semantics) for the exact field
    list. The daemon re-persists and re-schedules after applying the merge.
 3. **Delete** - removes the JSON file, SQLite row, schema sidecar, and unschedules. It also
-   cancels the job's in-flight run, if any (`Runner.cancelJob()`), so deleting a job never
-   leaves an orphaned process running against a definition that no longer exists; the response
-   reports whether a run was actually canceled (`canceledRun: boolean`). See
-   [reference/mcp-tools.md](../reference/mcp-tools.md#jobs) and
+   cancels the job's in-flight run, if any (`Runner.cancelJob()`), reporting whether a run was
+   actually canceled (`canceledRun: boolean`). See
+   [reference/mcp-tools.md](../reference/mcp-tools.md#crontickjobdelete) and
    [reference/cli.md](../reference/cli.md#crontick-jobs-delete).
 
 ## What is persisted vs derived

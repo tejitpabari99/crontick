@@ -91,6 +91,29 @@ Ties to Tenet 6 in `mission.md`: the daemon and CLI should stay cheap to run by 
 - **Do** default to event-driven mechanisms (timers, `EventEmitter`) over polling.
 - **Don't** add a loop that wakes up "just to check" when a scheduled callback would do.
 
+## 10. Documentation word budgets and topic ownership
+
+Each doc area has a word budget and exactly one narrative owner per topic; other docs link to
+the owner instead of repeating it (see `docs/README.md` for the area table).
+
+- `docs/concepts/*.md`: ≤800 words each.
+- `docs/internals/*.md`: ≤900 words each.
+- `docs/reference/*.md`: uncapped (exact lookups belong here, however long).
+- `docs/specs/NNN-*.md`: ≤600 words of prose (Summary/Motivation/Behavior/Edge cases/etc.); the
+  Requirements and Acceptance-criteria lists don't count toward that limit.
+- `docs/architecture.md`: ≤2000 words -- a components-and-links map, not a restatement of
+  `docs/internals/`, `docs/concepts/`, or `docs/reference/`.
+
+**Do** open every doc in `concepts/`, `internals/`, `specs/`, and `architecture.md` with a
+one-line audience statement (e.g. "Audience: maintainers changing the scheduler.") and a
+non-duplication note naming the doc that owns any topic it would otherwise repeat.
+
+**Do** move a lookup-style table (full route list, exhaustive error codes, full field list) to
+the relevant `docs/reference/` file rather than keeping two copies in sync by hand.
+
+**Don't** restate another layer's narrative to pad a doc back up to a round number, and don't
+let a doc grow past its budget without moving detail to its owning layer first.
+
 ## Changing these principles
 
 Edit this file directly, and add an ADR in `docs/decisions/` when the change reflects a lasting design decision (not just a wording fix).

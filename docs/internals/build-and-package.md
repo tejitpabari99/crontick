@@ -2,6 +2,9 @@
 
 Implements: `tsup.config.ts`, `package.json`, `scripts/fix-node-sqlite.mjs`
 
+Audience: contributors changing the build pipeline or release process. Non-duplication: for the
+release/packaging checklist see [AGENTS.md](../../AGENTS.md#packaging-rules).
+
 This document covers the build pipeline, output layout, npm package structure,
 and the changesets release flow.
 
@@ -114,12 +117,13 @@ install, npm creates platform-appropriate shims (`.cmd` on Windows).
 ## files Allowlist
 
 ```json
-["dist", "plugin/**", "src/skill/SKILL.md", "README.md", "LICENSE"]
+["dist", "src/skill/SKILL.md", "README.md", "LICENSE"]
 ```
 
 Only these paths are included in the published tarball. Source code under `src/`
 is excluded (except the skill markdown). Tests, scripts, and config files are
-not shipped.
+not shipped. `plugin/**` was removed from this list when the Copilot plugin was
+removed (see [ADR 0028](../decisions/0028-prompt-only-jobs.md)).
 
 ---
 

@@ -2,6 +2,9 @@
 
 Implements: `src/cli/index.ts`, `src/mcp/index.ts`, `src/index.ts`, `src/surface.ts`
 
+Audience: contributors adding a CLI/MCP/library entry point for a capability. Non-duplication:
+for the design rationale see [concepts/surface-parity.md](../concepts/surface-parity.md).
+
 The three consumer surfaces (CLI, MCP server, library) are thin adapters over
 `CrontickClient`. This document describes how they are wired, the parity
 mechanism, and the process for adding a new capability.
