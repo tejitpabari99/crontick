@@ -21,7 +21,7 @@ import {
   type Job,
   type JobInput,
 } from './schemas/job.js';
-import { EngineNameSchema } from './schemas/config.js';
+import { EngineNameSchema, type CrontickConfig } from './schemas/config.js';
 import { loadConfig } from './config.js';
 import { readJsonFile } from './json-file.js';
 import { promptRuntimeValidationMessage } from './prompt-runtime.js';
@@ -56,10 +56,6 @@ const ActionPatchInputSchema = z.discriminatedUnion('kind', [
   PromptActionPatchSchema,
 ]);
 
-export const JobCreateInputSchema = JobBaseSchema.omit({ action: true }).extend({
-  action: ActionInputSchema,
-});
-
 /**
  * Patch-only retry shape: unlike RetrySchema (used for create), both fields
  * are plain optional with no default — a partial retry patch (e.g. only
@@ -70,6 +66,13 @@ export const JobCreateInputSchema = JobBaseSchema.omit({ action: true }).extend(
 const RetryPatchSchema = z.object({
   max: z.number().int().min(0).optional(),
   backoffSec: z.number().positive().optional(),
+});
+
+/** Create inputs must leave missing policy fields absent until config defaults are applied. */
+export const JobCreateInputSchema = JobBaseSchema.omit({ action: true }).extend({
+  action: ActionInputSchema,
+  overlap: z.enum(['skip', 'queue', 'cancel-previous']).optional(),
+  retry: RetryPatchSchema.optional(),
 });
 
 export const JobPatchInputSchema = z.object({
@@ -146,9 +149,15 @@ export function normalizeJobInput(
   input: JobCreateInput,
   options: NormalizeJobInputOptions = {},
 ): Job {
+  const config = loadConfig({ env: options.env });
   const normalized = {
     ...input,
-    action: normalizeActionInput(input.action, options, true),
+    overlap: input.overlap ?? config.defaults.overlap,
+    retry: {
+      max: input.retry?.max ?? config.defaults.retry.max,
+      backoffSec: input.retry?.backoffSec ?? config.defaults.retry.backoffSec,
+    },
+    action: normalizeActionInput(input.action, options, true, config),
   };
 
   const parsed = JobSchema.safeParse(normalized);
@@ -341,8 +350,8 @@ export function buildJobFromCreateOptions(
     enabled: input.enabled,
     schedule: buildSchedule(input),
     action: buildAction(input, resolvedArgs),
-    overlap: (input.overlap ?? 'skip') as JobCreateInput['overlap'],
-    retry: input.retry !== undefined ? { max: input.retry, backoffSec: 30 } : undefined,
+    overlap: input.overlap as JobCreateInput['overlap'],
+    retry: input.retry !== undefined ? { max: input.retry } : undefined,
   } satisfies JobCreateInput;
   return normalizeJobInput(jobData, options);
 }
@@ -384,7 +393,7 @@ export function buildJobPatchFromUpdateOptions(
   // commonJobOptions in cli/index.ts), so `undefined` unambiguously means
   // "not provided" here — overlap is treated like any other optional field.
   if (input.overlap !== undefined) patch.overlap = input.overlap as JobPatchInput['overlap'];
-  if (input.retry !== undefined) patch.retry = { max: input.retry, backoffSec: 30 };
+  if (input.retry !== undefined) patch.retry = { max: input.retry };
 
   const parsed = JobPatchInputSchema.safeParse(patch);
   if (!parsed.success) throw new CrontickError('VALIDATION_ERROR', 'Invalid job patch', parsed.error.format());
@@ -406,7 +415,7 @@ export function buildJobPatchFromUpdateOptions(
  * withEngineDefaultForNewPromptAction to fill it for a genuine kind-change
  * into 'prompt' (which has no existing engine to preserve).
  */
-function normalizeActionInput(action: ActionInput, options: NormalizeJobInputOptions, isCreate: boolean): unknown {
+function normalizeActionInput(action: ActionInput, options: NormalizeJobInputOptions, isCreate: boolean, config?: CrontickConfig): unknown {
   if (!isRecord(action) || action.kind !== 'prompt') return action;
 
   const prompt = typeof action.prompt === 'string' ? action.prompt : undefined;
@@ -444,14 +453,18 @@ function normalizeActionInput(action: ActionInput, options: NormalizeJobInputOpt
 
   const { promptFile: _promptFile, ...rest } = action;
   void _promptFile;
+  const effectiveConfig = isCreate ? config ?? loadConfig({ env: options.env }) : undefined;
   let normalized = {
     ...rest,
     prompt: prompt ?? readPromptFile(promptFile!, options),
+    ...(isCreate && rest.timeoutSec === undefined && effectiveConfig?.defaults.timeoutSec !== undefined
+      ? { timeoutSec: effectiveConfig.defaults.timeoutSec }
+      : {}),
   };
   if (isCreate && normalized.engine === undefined) {
     normalized = {
       ...normalized,
-      engine: loadConfig({ env: options.env }).defaultEngine,
+      engine: effectiveConfig!.defaultEngine,
     };
   }
   if (typeof normalized.sessionId === 'string' && normalized.reuseSession === true) {

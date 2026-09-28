@@ -16,8 +16,8 @@ Top-level job object.
 | `enabled` | `boolean` | no | `true` | — | Whether the job runs on schedule |
 | `schedule` | `Schedule` | yes | — | Discriminated union on `kind` | When the job runs |
 | `action` | `Action` | yes | — | Discriminated union on `kind` | What the job does |
-| `overlap` | `"skip" \| "queue" \| "cancel-previous"` | no | `"skip"` | Enum | What happens when a new tick fires while a previous run is still active |
-| `retry` | `Retry` | no | `{ max: 0, backoffSec: 30 }` | — | Retry policy for failed runs |
+| `overlap` | `"skip" \| "queue" \| "cancel-previous"` | no | `config.json` `defaults.overlap`, then `"skip"` | Enum | What happens when a new tick fires while a previous run is still active |
+| `retry` | `Retry` | no | `config.json` `defaults.retry`, then `{ max: 0, backoffSec: 30 }` | — | Retry policy for failed runs |
 
 ### Identity: GUID `id` + `alias`
 
@@ -71,7 +71,7 @@ Discriminated union on `kind`. All action kinds share these common optional fiel
 | `cwd` | `string` | no | — | — | Working directory for execution |
 | `env` | `Record<string, string>` | no | — | — | Additional environment variables |
 | `envFile` | `string` | no | — | — | Path to `.env` file for extra env vars |
-| `timeoutSec` | `number` | no | — | Positive | Kill the process after this many seconds |
+| `timeoutSec` | `number` | no | `config.json` `defaults.timeoutSec`, then unset | Positive | Kill the process after this many seconds |
 
 ### kind: `script`
 

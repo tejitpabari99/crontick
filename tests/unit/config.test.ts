@@ -89,8 +89,28 @@ describe('crontick config core', () => {
       engines: { claude: { command: 'claude', args: [], env: {}, type: 'claude' } },
       retention: { maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 },
       logging: { fileEnabled: true },
+      defaults: { overlap: 'skip', retry: { max: 0, backoffSec: 30 } },
     });
     expect(validateConfigFile({ env })).toMatchObject({ ok: true, path, problems: [] });
+  });
+
+  it('deep-merges job defaults and preserves raw unset semantics', () => {
+    const { env, path } = makeHome();
+    writeRawConfig(path, { defaults: { overlap: 'queue', retry: { max: 2 } } });
+    expect(loadConfig({ env }).defaults).toEqual({ overlap: 'queue', retry: { max: 2, backoffSec: 30 } });
+    expect(getConfigValue('defaults.retry.backoffSec', { env })).toBe(30);
+
+    setConfigValue('defaults.retry.backoffSec', 45, { env });
+    expect(loadConfig({ env }).defaults.retry).toEqual({ max: 2, backoffSec: 45 });
+    removeConfigValue('defaults.retry.backoffSec', { env });
+    expect(JSON.parse(readFileSync(path, 'utf-8')).defaults.retry).toEqual({ max: 2 });
+    expect(loadConfig({ env }).defaults.retry).toEqual({ max: 2, backoffSec: 30 });
+  });
+
+  it('rejects invalid job defaults in config.json', () => {
+    const { env, path } = makeHome();
+    writeRawConfig(path, { defaults: { timeoutSec: 0 } });
+    expect(() => loadConfig({ env })).toThrow(/defaults.timeoutSec/);
   });
 
   it('validates a minimal custom config and merges built-in engines', () => {
@@ -396,6 +416,7 @@ describe('crontick config core', () => {
         engines: { claude: { command: 'claude', args: [], env: {}, type: 'claude' } },
         retention: { maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 },
         logging: { fileEnabled: true },
+        defaults: { overlap: 'skip', retry: { max: 0, backoffSec: 30 } },
       });
     });
   });

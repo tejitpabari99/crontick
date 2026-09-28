@@ -64,6 +64,16 @@ export const LoggingConfigSchema = z.object({
   dir: z.string().min(1).optional(),
 }).strict();
 
+/** Job values copied into new job definitions when the input omits them. */
+export const JobDefaultsConfigSchema = z.object({
+  overlap: z.enum(['skip', 'queue', 'cancel-previous']).default('skip'),
+  timeoutSec: z.number().positive().optional(),
+  retry: z.object({
+    max: z.number().int().min(0).default(0),
+    backoffSec: z.number().positive().default(30),
+  }).strict().default({ max: 0, backoffSec: 30 }),
+}).strict();
+
 /**
  * Top-level config schema. File config is deep-merged over BUILT_IN_CONFIG
  * (defined in src/config.ts), then validated here. The refinement ensures
@@ -76,6 +86,7 @@ export const ConfigSchema = z.object({
   }),
   retention: RetentionConfigSchema.default({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 }),
   logging: LoggingConfigSchema.default({ fileEnabled: true }),
+  defaults: JobDefaultsConfigSchema.default({ overlap: 'skip', retry: { max: 0, backoffSec: 30 } }),
 }).strict().superRefine((config, ctx) => {
   if (Object.keys(config.engines).length === 0) {
     ctx.addIssue({
@@ -97,6 +108,7 @@ export type EngineConfig = z.infer<typeof EngineConfigSchema>;
 export type CrontickConfig = z.infer<typeof ConfigSchema>;
 export type RetentionConfig = z.infer<typeof RetentionConfigSchema>;
 export type LoggingConfig = z.infer<typeof LoggingConfigSchema>;
+export type JobDefaultsConfig = z.infer<typeof JobDefaultsConfigSchema>;
 
 /**
  * "Persisted" counterparts of the schemas above — every field is `.optional()`
@@ -132,11 +144,21 @@ export const PersistedLoggingConfigSchema = z.object({
   dir: z.string().min(1).optional(),
 }).strict();
 
+export const PersistedJobDefaultsConfigSchema = z.object({
+  overlap: z.enum(['skip', 'queue', 'cancel-previous']).optional(),
+  timeoutSec: z.number().positive().optional(),
+  retry: z.object({
+    max: z.number().int().min(0).optional(),
+    backoffSec: z.number().positive().optional(),
+  }).strict().optional(),
+}).strict();
+
 export const PersistedConfigSchema = z.object({
   defaultEngine: EngineNameSchema.optional(),
   engines: z.record(EngineNameSchema, PersistedEngineConfigSchema).optional(),
   retention: PersistedRetentionConfigSchema.optional(),
   logging: PersistedLoggingConfigSchema.optional(),
+  defaults: PersistedJobDefaultsConfigSchema.optional(),
 }).strict();
 
 export type PersistedConfig = z.infer<typeof PersistedConfigSchema>;

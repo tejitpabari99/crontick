@@ -54,9 +54,10 @@ the value is looked up by alias. An unresolved identifier fails with
 - **R-001-2**: A job MUST have exactly one `schedule` field conforming to one of the schedule kinds (`cron`, `interval`, `one-shot`).
 - **R-001-3**: A job MUST have exactly one `action` field whose `kind` discriminator selects `script`, `exec`, or `prompt`.
 - **R-001-4**: The `enabled` field MUST default to `true` when omitted.
-- **R-001-5**: The `overlap` field MUST default to `"skip"` when omitted. Valid values are `skip`, `queue`, `cancel-previous`.
+- **R-001-5**: The built-in `overlap` default MUST be `"skip"`. Valid values are `skip`, `queue`, `cancel-previous`.
 - **R-001-5a**: When a prompt action has `reuseSession=true`, `overlap` MUST be `skip`; `queue` and `cancel-previous` MUST fail job validation.
-- **R-001-6**: The `retry.max` field MUST default to `0`; `retry.backoffSec` MUST default to `30`.
+- **R-001-6**: The built-in `retry.max` default MUST be `0`; the built-in `retry.backoffSec` default MUST be `30`.
+- **R-001-6a**: A create input that omits `overlap`, `action.timeoutSec`, or either `retry` field MUST use the matching `config.json` `defaults` value, falling back to the built-in values in R-001-5/R-001-6 (with no built-in timeout). These values MUST be saved in the job definition at create time. A later config edit MUST NOT change an existing job, and an update patch that omits a field MUST preserve its saved value.
 - **R-001-7**: The `description` field MAY be omitted; it has no behavioral effect.
 - **R-001-8**: Creating a job with an alias (or GUID `id`) that already resolves to a live job MUST fail with `JOB_ALREADY_EXISTS` and MUST leave the existing definition unchanged, unless the caller explicitly requests overwrite intent (`--force` on the CLI, `force: true` on library/MCP, or `force=1|true` on the HTTP route). This is a breaking change from the earlier silent-upsert create behavior; see ADR 0021.
 - **R-001-9**: Updating a job MUST merge the patch onto the existing definition, re-validate the merged result against `JobSchema`, and complete schedule validation plus any `action.envFile` preflight before any persistence. `action.envFile` preflight MUST resolve relative paths against `action.cwd ?? process.cwd()`, confirm the file is readable, and leave the previously stored job unchanged on failure.

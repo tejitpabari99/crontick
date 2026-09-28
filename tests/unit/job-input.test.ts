@@ -8,6 +8,7 @@ import {
   buildJobFromCreateOptions,
   buildJobPatchFromUpdateOptions,
   generateAlias,
+  JobCreateInputSchema,
   JobPatchInputSchema,
   type ActionInput,
   type JobCreateInput,
@@ -17,6 +18,14 @@ import {
 import { CrontickError } from '../../src/errors.js';
 import { readJsonFile } from '../../src/json-file.js';
 import { JobSchema, type Job } from '../../src/schemas/job.js';
+
+function configOptions(dir: string) {
+  return { cwd: dir, env: { ...process.env, CRONTICK_HOME: dir } };
+}
+
+function writeDefaults(dir: string, defaults: unknown): void {
+  writeFileSync(join(dir, 'config.json'), JSON.stringify({ defaults }));
+}
 
 const scratchRoot = resolve('.crontick', 'job-input-tests');
 const cleanupDirs: string[] = [];
@@ -204,6 +213,52 @@ describe('readJsonFile', () => {
 });
 
 describe('normalizeJobInput', () => {
+  it('snapshots config defaults for missing job fields, including partial retry input', () => {
+    const dir = makeDir();
+    writeDefaults(dir, { overlap: 'queue', timeoutSec: 120, retry: { max: 3, backoffSec: 45 } });
+    const options = configOptions(dir);
+    const first = normalizeJobInput(baseJob({ kind: 'prompt', prompt: 'Summarize' }), options);
+    expect(first).toMatchObject({ overlap: 'queue', retry: { max: 3, backoffSec: 45 }, action: { timeoutSec: 120 } });
+
+    const partial = normalizeJobInput({ ...baseJob({ kind: 'prompt', prompt: 'Summarize' }), retry: { max: 5 } }, options);
+    expect(partial.retry).toEqual({ max: 5, backoffSec: 45 });
+
+    writeDefaults(dir, { overlap: 'cancel-previous', timeoutSec: 10, retry: { max: 1, backoffSec: 5 } });
+    expect(first).toMatchObject({ overlap: 'queue', retry: { max: 3, backoffSec: 45 }, action: { timeoutSec: 120 } });
+    const updated = normalizeJobPatch(first.id, first, { description: 'edited' }, options);
+    expect(updated).toMatchObject({ overlap: 'queue', retry: { max: 3, backoffSec: 45 }, action: { timeoutSec: 120 } });
+    expect(normalizeJobInput(baseJob({ kind: 'prompt', prompt: 'New' }), options)).toMatchObject({
+      overlap: 'cancel-previous', retry: { max: 1, backoffSec: 5 }, action: { timeoutSec: 10 },
+    });
+  });
+
+  it('lets explicit JSON and CLI values override config defaults', () => {
+    const dir = makeDir();
+    writeDefaults(dir, { overlap: 'queue', timeoutSec: 120, retry: { max: 3, backoffSec: 45 } });
+    const options = configOptions(dir);
+    const json = normalizeJobInput({
+      ...baseJob({ kind: 'prompt', prompt: 'Summarize', timeoutSec: 25 }),
+      overlap: 'skip', retry: { max: 7, backoffSec: 8 },
+    }, options);
+    expect(json).toMatchObject({ overlap: 'skip', retry: { max: 7, backoffSec: 8 }, action: { timeoutSec: 25 } });
+
+    const cli = buildJobFromCreateOptions({ cron: '0 9 * * *', prompt: 'Summarize', overlap: 'skip', timeout: 20, retry: 4 }, options);
+    expect(cli).toMatchObject({ overlap: 'skip', retry: { max: 4, backoffSec: 45 }, action: { timeoutSec: 20 } });
+    const cliUnspecified = buildJobFromCreateOptions({ cron: '0 9 * * *', prompt: 'Summarize' }, options);
+    expect(cliUnspecified).toMatchObject({ overlap: 'queue', retry: { max: 3, backoffSec: 45 }, action: { timeoutSec: 120 } });
+  });
+
+  it('keeps omitted MCP create fields absent until config resolution', () => {
+    const dir = makeDir();
+    writeDefaults(dir, { overlap: 'queue', timeoutSec: 90, retry: { max: 2, backoffSec: 15 } });
+    const parsed = JobCreateInputSchema.parse(baseJob({ kind: 'prompt', prompt: 'MCP' }));
+    expect(parsed).not.toHaveProperty('overlap');
+    expect(parsed).not.toHaveProperty('retry');
+    expect(normalizeJobInput(parsed, configOptions(dir))).toMatchObject({
+      overlap: 'queue', retry: { max: 2, backoffSec: 15 }, action: { timeoutSec: 90 },
+    });
+  });
+
   it('normalizes prompt text jobs with defaults', () => {
     const job = normalizeJobInput(baseJob({ kind: 'prompt', prompt: 'Summarize' }));
     expect(job.action).toEqual({
@@ -456,7 +511,7 @@ describe('buildJobPatchFromUpdateOptions - no update flag silently no-ops', () =
       { flag: '--job-env-file', opts: patchOpts({ envFile: join(dir, 'vars.env') }), error: /--job-env-file .* requires an action source on update/ },
       { flag: '--timeout', opts: patchOpts({ timeout: 30 }), error: /--timeout requires an action source on update/ },
       { flag: '--overlap', opts: patchOpts({ overlap: 'queue' }), assert: (patch) => expect(patch.overlap).toBe('queue') },
-      { flag: '--retry', opts: patchOpts({ retry: 3 }), assert: (patch) => expect(patch.retry).toEqual({ max: 3, backoffSec: 30 }) },
+      { flag: '--retry', opts: patchOpts({ retry: 3 }), assert: (patch) => expect(patch.retry).toEqual({ max: 3 }) },
       { flag: '--desc', opts: patchOpts({ desc: 'updated' }), assert: (patch) => expect(patch.description).toBe('updated') },
       { flag: '--enable', opts: patchOpts({ enabled: true }), assert: (patch) => expect(patch.enabled).toBe(true) },
       { flag: '--disable', opts: patchOpts({ enabled: false }), assert: (patch) => expect(patch.enabled).toBe(false) },
@@ -599,6 +654,12 @@ describe('normalizeJobPatch — prompt args/reuseSession merge', () => {
 });
 
 describe('normalizeJobPatch — retry merge', () => {
+  it('preserves stored backoff when the CLI only changes retry max', () => {
+    const existing = { ...existingJob({ kind: 'prompt', prompt: 'hello' }), retry: { max: 1, backoffSec: 90 } };
+    const patch = buildJobPatchFromUpdateOptions({ retry: 3 });
+    expect(normalizeJobPatch(existing.id, existing, patch).retry).toEqual({ max: 3, backoffSec: 90 });
+  });
+
   it('preserves retry.backoffSec when the patch only sets max', () => {
     const existing = { ...existingJob({ kind: 'prompt', prompt: 'hello' }), retry: { max: 1, backoffSec: 90 } };
     const patch = mcpPatch({ retry: { max: 3 } });

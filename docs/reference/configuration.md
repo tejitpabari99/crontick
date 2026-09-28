@@ -43,6 +43,11 @@ The data directory is resolved by (in order):
   "logging": {
     "fileEnabled": true,
     "dir": "<optional-override-dir>"
+  },
+  "defaults": {
+    "overlap": "skip",
+    "timeoutSec": 120,
+    "retry": { "max": 0, "backoffSec": 30 }
   }
 }
 ```
@@ -53,6 +58,7 @@ The data directory is resolved by (in order):
 | `engines` | `Record<string, EngineConfig>` | no | built-in `copilot` engine | At least one engine must be defined |
 | `retention` | `RetentionConfig` | no | `{ maxRunsPerJob: 100, maxOutputBytesPerRun: 2000000, maxLogFiles: 30 }` | See below |
 | `logging` | `LoggingConfig` | no | `{ fileEnabled: true }` | See below |
+| `defaults` | `JobDefaultsConfig` | no | `{ overlap: "skip", retry: { max: 0, backoffSec: 30 } }` | See below; `timeoutSec` is unset by default |
 
 ### Built-in Default (no file needed)
 
@@ -69,11 +75,26 @@ The data directory is resolved by (in order):
   },
   "logging": {
     "fileEnabled": true
+  },
+  "defaults": {
+    "overlap": "skip",
+    "retry": { "max": 0, "backoffSec": 30 }
   }
 }
 ```
 
 The file config is deep-merged over the built-in defaults. `config.json` must be strict JSON; unknown fields are rejected by the schema.
+
+### Job defaults
+
+| Field | Type | Built-in default | Constraints |
+|-------|------|------------------|-------------|
+| `defaults.overlap` | `"skip" \| "queue" \| "cancel-previous"` | `"skip"` | Valid overlap policy |
+| `defaults.timeoutSec` | `number` | unset (no timeout) | Positive when set |
+| `defaults.retry.max` | `integer` | `0` | At least 0 |
+| `defaults.retry.backoffSec` | `number` | `30` | Positive |
+
+On creation, each omitted job field takes its value from `config.json` `defaults`, then the built-in fallback. A CLI flag takes precedence over a value in a job JSON file, and explicit job values take precedence over config defaults. The resolved overlap, retry, and optional action timeout are saved in the job definition. Editing `defaults` affects subsequently created jobs; an update that omits these fields keeps the existing job values.
 
 ---
 
@@ -87,6 +108,8 @@ Most config is read fresh for each run and applies automatically on the **next r
 - logging settings (`logging.fileEnabled`, `logging.dir`)
 - per-run output retention (`retention.maxOutputBytesPerRun`)
 - daemon log-file retention (`retention.maxLogFiles`) the next time log retention is applied
+
+`defaults.overlap`, `defaults.timeoutSec`, and `defaults.retry` are read when a job is created. Existing jobs keep the values saved in their job files after a config edit.
 
 The exception is `retention.maxRunsPerJob`. The daemon's Store reads and caches that value at daemon startup. Changing `retention.maxRunsPerJob` requires:
 
@@ -224,7 +247,7 @@ Root: `CRONTICK_HOME` or platform default.
 
 ```text
 <dataDir>/
-├── config.json                 Config file (engines, defaultEngine, retention, logging)
+├── config.json                 Config file (engines, defaultEngine, defaults, retention, logging)
 ├── jobs/                       Per-job JSON files (source of truth)
 │   ├── <job-id>.json           Job definition
 │   └── <job-id>.schema.json    JSON Schema sidecar

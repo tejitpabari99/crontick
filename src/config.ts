@@ -72,6 +72,7 @@ export const BUILT_IN_CONFIG: CrontickConfig = Object.freeze({
   },
   retention: Object.freeze({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 }),
   logging: Object.freeze({ fileEnabled: true }),
+  defaults: Object.freeze({ overlap: 'skip', retry: Object.freeze({ max: 0, backoffSec: 30 }), timeoutSec: undefined }),
 });
 
 export function redactConfigForRead(config: CrontickConfig): CrontickConfig {
