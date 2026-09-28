@@ -1,7 +1,7 @@
 ---
-status: draft
+status: approved
 summary: Post-SP01 cleanup of scattered constants/helpers into src/constants+utils, trim obsolete tests, and rewrite the doc set for the prompt-only + Claude-engine end state
-date: 2026-09-27
+date: 2026-09-28
 ---
 
 # PRD: Code cleanup + documentation rewrite
@@ -78,6 +78,8 @@ Style rules (section appended to `design-principles.md`): word budgets — `conc
 
 Concrete fixes: `README.md:5` — remove "Classic script/exec jobs still exist"; drop the "Advanced: script & exec jobs" section; `docs/examples/{cli,mcp}/README.md` — replace `script`/`exec` example JSON with a second prompt-job variant; `architecture.md` — drop `plugin/` extension-point section, collapse `ActionSchema` table to one `prompt` kind, add SP01's engine-adapter section; `specs/{001,003,004,005,006,007}.md` — cut script/exec/Copilot-plugin references.
 
+**SP01-consistency fixes (new field/behavior, not a redesign):** per SP01's shipped shape, `copilot` is gone as a built-in engine entirely (not merely non-default) — every doc that lists or exemplifies `copilot` as an available/default engine (`docs/reference/configuration.md`, `docs/concepts/jobs.md`, `docs/reference/glossary.md`, `docs/decisions/0008-prompt-jobs-pluggable-engines.md` stays untouched as an append-only ADR, but its still-current successors don't cite `copilot` as live) is updated to show `claude` as the sole built-in, with `copilot`-shaped custom-engine config left only as a generic `type: raw` example, unnamed. Every run-status enumeration in `docs/reference/` (errors, cli, mcp-tools, job-schema, library-api) and `docs/concepts/` (execution, state-and-storage) that lists `canceled` adds the new terminal `skipped` status (SP01 R13) with its distinguishing meaning ("never started" vs. "started, then terminated").
+
 Link `docs/tech/mission.md`/`design-principles.md` from `docs/README.md` (new "Guiding docs" row), `AGENTS.md`'s documentation-map table, and `CLAUDE.md` (one line: "check `docs/tech/design-principles.md` before any structural change").
 
 ### 4. AGENTS.md / CLAUDE.md updates
@@ -110,7 +112,7 @@ Docs target (full mapping in Requirements #3): `architecture.md` (map) → `conc
 | # | Decision | Choice | Alternatives considered | Why |
 |---|---|---|---|---|
 | 1 | Constants grouping | Four domain files (`retention`, `daemon`, `scheduler`, `job-input`) | One flat `constants.ts` | Matches principles #3 "grouped by domain"; narrower import surfaces |
-| 2 | `ctd-NNN` test renames | Rename to descriptive names, keep coverage | Delete and rewrite | Descriptive name already present post-`ctd-NNN`; renaming is zero-risk |
+| 2 | `ctd-NNN` test renames | Rename to descriptive names, keep coverage, after a repo-wide `grep "ctd-0"` confirms no external ticket/dashboard reference (Risks) | Delete and rewrite | Descriptive name already present post-`ctd-NNN`; renaming is low-risk once the grep confirms no self-external references exist |
 | 3 | Doc layer per topic | One layer owns narrative; others link, don't repeat | Merge concepts+internals into one folder | `docs/README.md`'s users-vs-maintainers audience split is real; fix is discipline, not fewer folders |
 | 4 | `validate` fix | Reorder script (build before test) | Add `"pretest": "npm run build"` | `npm test` alone is documented as "requires prior build" (AGENTS.md); a silent `pretest` hook would contradict that documented contract |
 | 5 | `plugin/` in rebrand test | Drop from scan roots | Leave (harmless no-op) | Dead reference to a directory moved to another branch; confuses future readers |
@@ -121,15 +123,16 @@ Docs target (full mapping in Requirements #3): `architecture.md` (map) → `conc
 
 ## Risks / Open Questions
 
-- [OPEN] Exact word-budget enforcement mechanism: a CI word-count check vs. review-only discipline. Recommend review-only for now (no new tooling/deps); revisit if docs drift again.
-- [OPEN] Whether `docs/internals/executors.md` should be renamed (e.g. `prompt-execution.md`) or merged into `daemon.md` — depends on how much unique implementation detail remains once script/exec content is cut; decide during implementation after seeing the diff size.
-- [OPEN] `ctd-NNN` rename scope: confirm none of the 13 files are referenced by an external ticket/dashboard by number before renaming (grep the repo and `docs/decisions/` for literal `ctd-0` mentions first).
+- [RESOLVED: review-only, no tooling] Word-budget enforcement is discipline, not a CI check — no word-count tooling/dependency added this pass. Revisit only if docs drift again in a later cleanup pass.
+- [RESOLVED: decide during implementation, default rule stated] `docs/internals/executors.md` vs. `daemon.md`: implementer counts the words that are still unique (non-obvious past-the-code, non-duplicated-with-concepts) once script/exec content is cut. Default: if under ~150 words of unique content remain, merge that content into `daemon.md` and delete `executors.md`; otherwise keep it standalone, renamed `prompt-execution.md` to match the one remaining action kind. Either outcome satisfies Requirements #3's topic-ownership table — this only decides the file boundary.
+- [RESOLVED: grep-first rule] `ctd-NNN` rename scope: before renaming any of the 13 files, run `grep -rn "ctd-0" . --include='*.md' --include='*.ts'` (repo-wide, including `docs/decisions/`) with the file-rename PR. If every hit is the test file's own name/self-reference, rename freely (Decision 2). If a hit is an external reference (a linked ticket/dashboard ID, a changelog entry, an ADR citing the number as a stable identifier), keep that one file's name and rename only the rest.
 - [RESOLVED: SP01 boundary] SP02 does not touch `src/daemon/prompt-session.ts`, `runner.ts`'s prompt-building logic, or engine config schema — confirmed these are SP01-owned per the initiative split; SP02 only documents the shipped result.
 - [DEFERRED] Introducing `ts-prune`/`knip` for automated dead-export detection — not available without a new dependency; manual grep-based audit only for this pass.
 
 ## Acceptance Criteria
 
 - [ ] `grep -rn "kind: 'script'\|kind: 'exec'\|kind === 'script'" src docs README.md` → 0 hits outside `docs/decisions/` (historical ADRs may reference them).
+- [ ] `grep -rln "copilot" docs/reference docs/concepts README.md` → 0 hits describing it as a live/default/available engine (outside `docs/decisions/`, append-only); `grep -rln "'skipped'\|skipped" docs/reference` → run-status tables list it.
 - [ ] `grep -c "function sleep" src/daemon/*.ts` → 1 total (single `src/utils/sleep.ts`).
 - [ ] `grep -rn "2_000_000\|maxRunsPerJob: 100" src/config.ts src/schemas/config.ts` → both import from `src/constants/retention.ts`, no duplicate literals.
 - [ ] `ls src/constants src/utils` → both directories exist with the files listed in Architecture.
