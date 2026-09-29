@@ -79,7 +79,11 @@ tests/
     smoke.test.ts            Package export sanity
     autostart-removal.test.ts  Guard: removed autostart-registration strings do not reappear
                                 in shipped product files (src/plugin/scripts/README/package.json)
+    claude-adapter / raw-adapter / engine-registry .test.ts   Engine adapter framework
+    run-usage-*.test.ts, prompt-session.test.ts, prompt-resolution.test.ts   Run usage fields, session handling
     ...
+  helpers/                   Shared fakes (fake-claude.ts, fake-engine.ts)
+  job-alias-recreate.test.ts Vitest test kept at the tests/ root
   integration/               On-demand E2E harness (NOT run by `npm test`)
     run-harness.mjs          Harness entry point (npm run e2e)
     tests.json               Canonical test definitions
@@ -108,7 +112,7 @@ Naming convention: `<module-or-layer>.<optional-qualifier>.test.ts`. Place new v
 
 ### Library API
 
-**Automated coverage:** `tests/smoke.test.ts` (export sanity), `tests/client.test.ts` (full CrontickClient against fake and real daemons).
+**Automated coverage:** `tests/unit/smoke.test.ts` (export sanity), `tests/unit/client.test.ts` (full CrontickClient against fake and real daemons).
 
 **Manual end-to-end:**
 
@@ -135,7 +139,7 @@ Expected: `health` shows `{ status: 'ok', ... }`, job appears in list, then disa
 
 ### CLI
 
-**Automated coverage:** `tests/cli.test.ts` (spawns `dist/cli/index.js` with temp home, covers CRUD, daemon lifecycle, schedule commands, error paths).
+**Automated coverage:** `tests/unit/cli.test.ts` (spawns `dist/cli/index.js` with temp home, covers CRUD, daemon lifecycle, schedule commands, error paths).
 
 **Manual end-to-end:**
 
@@ -165,7 +169,7 @@ Expected: `list` shows the job enabled, `runs list` shows at least one `success`
 
 ### MCP server
 
-**Automated coverage:** `tests/mcp.test.ts` (starts real daemon + MCP server, drives all 21 tools via `@modelcontextprotocol/sdk` client over stdio). `tests/surface-drift.test.ts` verifies every tool is registered.
+**Automated coverage:** `tests/unit/mcp.test.ts` (starts real daemon + MCP server, drives all 21 tools via `@modelcontextprotocol/sdk` client over stdio). `tests/unit/surface-drift.test.ts` verifies every tool is registered.
 
 **Launch command:**
 
@@ -201,7 +205,7 @@ Expected: `tools/list` returns all 21 `crontick_*` tools; `crontick_info` return
 
 The `SURFACE_CAPABILITIES` constant in `src/surface.ts` is the single source of truth mapping each capability to its `clientMethod`, `cliCommand`, and `mcpTool`.
 
-`tests/surface-drift.test.ts` enforces:
+`tests/unit/surface-drift.test.ts` enforces:
 
 1. Every capability has a matching method on `CrontickClient.prototype`.
 2. Every `CrontickClient` public method is accounted for (in the table or in `NON_PARITY_CLIENT_METHODS`).

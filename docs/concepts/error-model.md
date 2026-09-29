@@ -96,6 +96,7 @@ is a distinct, smaller vocabulary scoped to run outcomes:
 |----------------------|---------|
 | `DAEMON_RESTART: ...` | `Store.reconcileOrphanRuns()` canceled a run that was `running`/`queued` when the daemon last stopped, exported as `ORPHAN_RUN_ERROR_CODE`/`ORPHAN_RUN_ERROR_MESSAGE` from `src/errors.ts` (and the package root) |
 | `RUNNER_CALLBACK_FAILED: ...` | A user-supplied run callback threw |
+| `SESSION_NOT_FOUND: ...` | Claude resume preflight found no completed run or no transcript for the session id; the run fails without spawning a process |
 | `SESSION_ID_NOT_FOUND: ...` | `reuseSession` capture could not find a session id in prompt engine output |
 | `SESSION_PERSIST_FAILED: ...` | Persisting a captured session id back to the job file failed |
 

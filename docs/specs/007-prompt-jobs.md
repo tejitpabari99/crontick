@@ -144,16 +144,16 @@ args. Library and MCP callers pass `action.args` directly. See the
 
 ## Acceptance criteria
 
-- [x] Built-in config defines only `claude` (no Copilot fallback), with `defaultEngine: "claude"` (test file: `tests/default-engine-config.test.ts`)
-- [x] Engine registry resolves `type` to the `raw`/`claude` adapter, defaulting unset `type` to `raw` (test file: `tests/engine-registry.test.ts`)
-- [x] Raw adapter builds generic argv, treats exit code 0 as success, and extracts a session id from output when `reuseSession` is set (test file: `tests/raw-adapter.test.ts`)
-- [x] Claude adapter assigns a session id before spawn, builds `stream-json` invocation, parses the last complete result line, and populates `costUsd`/`turns`/`usageJson`/`transcriptPath`/`engineStatus` (test file: `tests/claude-adapter.test.ts`)
-- [x] Claude resume preflight rejects a session with no completed local result or missing transcript with `SESSION_NOT_FOUND` (test files: `tests/claude-adapter.test.ts`, `tests/prompt-resolution.test.ts`)
-- [x] `reuseSession: true` requires `overlap: "skip"`; other overlap values fail job validation (test file: `tests/job-input.test.ts`)
-- [x] Reserved prompt args (`-p`, `-r`, `--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`) are rejected from `action.args` (test file: `tests/job-input.test.ts`)
-- [x] End-to-end prompt run against a fake engine binary records status, session, and usage fields (test file: `tests/integration.prompt-e2e.test.ts`)
-- [x] `stats summary`/`stats job` sum `costUsd`/`turns` and report `canceled`/`skipped` counts separately (test files: `tests/run-usage-fields.test.ts`, `tests/run-usage-surfaces.test.ts`)
-- [x] `jobs new --runner` sets `action.engine`; the removed `--engine`/`--alias` flags fail (test file: `tests/cli.test.ts`)
+- [x] Built-in config defines only `claude` (no Copilot fallback), with `defaultEngine: "claude"` (test file: `tests/unit/default-engine-config.test.ts`)
+- [x] Engine registry resolves `type` to the `raw`/`claude` adapter, defaulting unset `type` to `raw` (test file: `tests/unit/engine-registry.test.ts`)
+- [x] Raw adapter builds generic argv, treats exit code 0 as success, and extracts a session id from output when `reuseSession` is set (test file: `tests/unit/raw-adapter.test.ts`)
+- [x] Claude adapter assigns a session id before spawn, builds `stream-json` invocation, parses the last complete result line, and populates `costUsd`/`turns`/`usageJson`/`transcriptPath`/`engineStatus` (test file: `tests/unit/claude-adapter.test.ts`)
+- [x] Claude resume preflight rejects a session with no completed local result or missing transcript with `SESSION_NOT_FOUND` (test files: `tests/unit/claude-adapter.test.ts`, `tests/unit/prompt-resolution.test.ts`)
+- [x] `reuseSession: true` requires `overlap: "skip"`; other overlap values fail job validation (test file: `tests/unit/job-input.test.ts`)
+- [x] Reserved prompt args (`-p`, `-r`, `--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`) are rejected from `action.args` (test file: `tests/unit/job-input.test.ts`)
+- [x] End-to-end prompt run against a fake engine binary records status, session, and usage fields (test file: `tests/unit/integration.prompt-e2e.test.ts`)
+- [x] `stats summary`/`stats job` sum `costUsd`/`turns` and report `canceled`/`skipped` counts separately (test files: `tests/unit/run-usage-fields.test.ts`, `tests/unit/run-usage-surfaces.test.ts`)
+- [x] `jobs new --runner` sets `action.engine`; the removed `--engine`/`--alias` flags fail (test file: `tests/unit/cli.test.ts`)
 
 ## Related
 

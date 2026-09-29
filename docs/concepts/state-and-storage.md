@@ -21,7 +21,7 @@ The data directory root is resolved by `src/paths.ts`:
 
 ```
 <dataDir>/
-  config.json              User configuration (engines, defaultEngine)
+  config.json              User configuration (engines, defaultEngine, retention, logging, job defaults)
   daemon.pid               PID of running daemon
   daemon.port              Port of daemon API
   daemon.ensure.lock       Startup coordination lock
@@ -47,7 +47,7 @@ full schema is created in one idempotent pass on open -- there is no migration l
 `runs.db` created before 1.0.0 is not a supported input (see
 [ADR 0001](../decisions/0001-architecture-and-runtime-model.md)). Tables: `jobs` (cache,
 rebuilt from disk on start), `runs` (status, exit code, timing, spawned `pid`,
-output-truncation flag), `run_logs` (stdout/stderr chunks, ordered by insertion), and
+output-truncation flag, and for engine runs `sessionId`, `costUsd`, `turns`, `usageJson`, `transcriptPath`, `engineStatus`), `run_logs` (stdout/stderr chunks, ordered by insertion), and
 `job_schedule_state` (per-job "last observed ticking" watermark for missed-fire computation). See
 [implementation/storage.md](../implementation/storage.md) for exact columns and indexes.
 

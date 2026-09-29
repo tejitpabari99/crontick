@@ -37,6 +37,7 @@ shim.
 
 Helper functions:
 - `client(startDaemon = true)`: factory returning `createClient({...})`.
+- Unknown long flags on `jobs new`/`jobs update` are collected as passthrough args into `action.args`; removed switches (`--alias`, `--engine`, `--job-env-file`) are rejected as unknown options rather than forwarded.
 - `useJson()`, `useVerbose()`: read program-level options.
 - `renderLogEvent(event)`: formats `LogEvent` to stderr for verbose mode.
 
@@ -88,7 +89,7 @@ Currently 21 entries. Derived export:
 
 ---
 
-## Drift Test (`tests/surface-drift.test.ts`)
+## Drift Test (`tests/unit/surface-drift.test.ts`)
 
 Enforces parity at build/test time:
 

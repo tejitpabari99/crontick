@@ -97,7 +97,7 @@ outcome always comes from `parseResult`, never the marker.
 3. Add config/schema/docs for the new `type` value (`src/schemas/config.ts`,
    [reference/configuration.md](../reference/configuration.md)).
 4. Add adapter unit tests plus an end-to-end prompt test against a fake binary (see
-   `tests/claude-adapter.test.ts`, `tests/raw-adapter.test.ts`,
-   `tests/integration.prompt-e2e.test.ts`).
+   `tests/unit/claude-adapter.test.ts`, `tests/unit/raw-adapter.test.ts`,
+   `tests/unit/integration.prompt-e2e.test.ts`).
 
 No runner or config-resolution code should need to branch on the new engine name.

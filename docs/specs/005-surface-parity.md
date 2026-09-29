@@ -81,7 +81,7 @@ Removed parity rows from the previous 37-capability surface include raw schedule
 
 ## Behavior
 
-The drift test (`tests/surface-drift.test.ts`) performs four checks:
+The drift test (`tests/unit/surface-drift.test.ts`) performs four checks:
 
 1. **Client method existence**: Iterates `SURFACE_CAPABILITIES` and asserts each `clientMethod` is a function on `CrontickClient.prototype`.
 2. **Client completeness**: Gets all prototype methods, filters out non-parity methods and constructors, and asserts each remaining method is in `SURFACE_CAPABILITIES`.
@@ -106,12 +106,12 @@ The drift test (`tests/surface-drift.test.ts`) performs four checks:
 
 ## Acceptance criteria
 
-- [x] Client exposes every table capability method (test file: `tests/surface-drift.test.ts`)
-- [x] Surface table accounts for every client prototype method (test file: `tests/surface-drift.test.ts`)
-- [x] CLI exposes every table capability command (test file: `tests/surface-drift.test.ts`)
-- [x] MCP exposes every table capability tool (test file: `tests/surface-drift.test.ts`)
-- [x] All MCP tools have verbose parameter (test file: `tests/surface-drift.test.ts`)
-- [x] Documentation updated when capability count or parity-coupled option metadata changes (test file: `tests/surface-drift.test.ts`)
+- [x] Client exposes every table capability method (test file: `tests/unit/surface-drift.test.ts`)
+- [x] Surface table accounts for every client prototype method (test file: `tests/unit/surface-drift.test.ts`)
+- [x] CLI exposes every table capability command (test file: `tests/unit/surface-drift.test.ts`)
+- [x] MCP exposes every table capability tool (test file: `tests/unit/surface-drift.test.ts`)
+- [x] All MCP tools have verbose parameter (test file: `tests/unit/surface-drift.test.ts`)
+- [x] Documentation updated when capability count or parity-coupled option metadata changes (test file: `tests/unit/surface-drift.test.ts`)
 
 ## Out of scope
 

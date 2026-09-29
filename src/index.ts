@@ -7,7 +7,7 @@
  * isVerbose, jobJsonSchema, createJobFromCliOptions, configPath, daemonStart,
  * daemonStatus, daemonRestart) are intentionally library-only — they serve
  * internal wiring or direct-use scenarios and are outside the surface-parity
- * contract enforced by tests/surface-drift.test.ts.
+ * contract enforced by tests/unit/surface-drift.test.ts.
  */
 
 export { VERSION } from './version.js';

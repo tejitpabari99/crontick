@@ -33,6 +33,7 @@ Key public categories: the `CrontickClient`/`createClient` core; `CrontickError`
 | **Daemon** | `src/daemon/index.ts`, `api.ts`, `ensure.ts` | Long-running process bound to `127.0.0.1`; owns the scheduler, runner, and store behind a loopback HTTP API. See [implementation/daemon.md](implementation/daemon.md) and [concepts/daemon-lifecycle.md](concepts/daemon-lifecycle.md). |
 | **Scheduler** | `src/daemon/scheduler.ts` | `EventEmitter` managing per-job timers for `cron` (croner v9), `interval`, and `one-shot` schedules; emits `tick`. See [implementation/scheduler.md](implementation/scheduler.md). |
 | **Runner** | `src/daemon/runner.ts` | Spawns each job's prompt engine, enforcing overlap/retry/timeout, capturing redacted output. See [implementation/prompt-execution.md](implementation/prompt-execution.md). |
+| **Shared modules** | `src/constants/`, `src/utils/` | Cross-file constants and defaults, grouped by domain (`daemon`, `job-input`, `retention`, `scheduler`); pure single-concern helpers. See [design principles](tech/design-principles.md). |
 | **Engine adapters** | `src/engines/` | Per-engine invocation/result-parsing behind one contract (see [Engine adapters](#engine-adapters) below). |
 | **Store** | `src/daemon/store.ts` | Dual persistence: job JSON files (source of truth) + SQLite (runs, logs, schedule state). See [implementation/storage.md](implementation/storage.md). |
 
@@ -84,9 +85,9 @@ for restart recovery. See [implementation/engines.md](implementation/engines.md)
 
 | Invariant | Enforcement |
 |-----------|-------------|
-| Surface parity: every capability exists identically in client, CLI, and MCP | `SURFACE_CAPABILITIES` (`src/surface.ts`) + `tests/surface-drift.test.ts` -- see [specs/005-surface-parity.md](specs/005-surface-parity.md) |
+| Surface parity: every capability exists identically in client, CLI, and MCP | `SURFACE_CAPABILITIES` (`src/surface.ts`) + `tests/unit/surface-drift.test.ts` -- see [specs/005-surface-parity.md](specs/005-surface-parity.md) |
 | Shims contain no business logic | Review policy; scheduling/validation/persistence live only in core + daemon modules |
-| Loopback-only binding | `createApiServer` checks `req.socket.remoteAddress`; non-loopback gets 403 `FORBIDDEN` (`tests/security.test.ts`) |
+| Loopback-only binding | `createApiServer` checks `req.socket.remoteAddress`; non-loopback gets 403 `FORBIDDEN` (`tests/unit/security.test.ts`) |
 | Single daemon instance per data directory | PID file + liveness probe + exclusive startup lock |
 | Single writer to SQLite | Only the daemon opens `runs.db`; all other surfaces go through daemon HTTP |
 | Orphan run reconciliation on restart | See [concepts/daemon-lifecycle.md](concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down) |

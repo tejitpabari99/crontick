@@ -90,17 +90,17 @@ removes the entry from the internal map. `unscheduleAll()` iterates all entries.
 
 ## Acceptance criteria
 
-- [x] Cron scheduling fires ticks at correct times (test file: `tests/scheduler.test.ts`)
-- [x] Interval scheduling respects startAt alignment (test file: `tests/scheduler.test.ts`)
-- [x] One-shot fires exactly once and removes entry (test file: `tests/scheduler.test.ts`)
-- [x] Disabled jobs are not scheduled (test file: `tests/scheduler.test.ts`)
-- [x] Idempotent schedule() replaces previous entry (test file: `tests/scheduler.test.ts`)
-- [x] validateSchedule rejects invalid cron (test file: `tests/scheduler.test.ts`)
-- [x] previewNext returns correct ISO timestamps (test file: `tests/scheduler.test.ts`)
-- [x] safeSetTimeout chains for large delays (test file: `tests/property.scheduler.test.ts`)
-- [x] Property: arbitrary cron expressions produce sorted future dates (test file: `tests/property.cron.test.ts`)
-- [x] One-shot past-time no-op verified in integration context (test file: `tests/integration.oneshot.test.ts`)
-- [x] A live daemon's real Scheduler auto-fires a cron/interval tick end-to-end into a run, with no manual `/run` trigger (test file: `tests/integration.autofire.test.ts`)
+- [x] Cron scheduling fires ticks at correct times (test file: `tests/unit/scheduler.test.ts`)
+- [x] Interval scheduling respects startAt alignment (test file: `tests/unit/scheduler.test.ts`)
+- [x] One-shot fires exactly once and removes entry (test file: `tests/unit/scheduler.test.ts`)
+- [x] Disabled jobs are not scheduled (test file: `tests/unit/scheduler.test.ts`)
+- [x] Idempotent schedule() replaces previous entry (test file: `tests/unit/scheduler.test.ts`)
+- [x] validateSchedule rejects invalid cron (test file: `tests/unit/scheduler.test.ts`)
+- [x] previewNext returns correct ISO timestamps (test file: `tests/unit/scheduler.test.ts`)
+- [x] safeSetTimeout chains for large delays (test file: `tests/unit/property.scheduler.test.ts`)
+- [x] Property: arbitrary cron expressions produce sorted future dates (test file: `tests/unit/property.cron.test.ts`)
+- [x] One-shot past-time no-op verified in integration context (test file: `tests/unit/integration.oneshot.test.ts`)
+- [x] A live daemon's real Scheduler auto-fires a cron/interval tick end-to-end into a run, with no manual `/run` trigger (test file: `tests/unit/integration.autofire.test.ts`)
 
 ## Out of scope
 

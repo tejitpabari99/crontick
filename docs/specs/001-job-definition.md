@@ -104,16 +104,16 @@ unresolved identifier fails with `JOB_NOT_FOUND`.
 
 ## Acceptance criteria
 
-- [x] Kebab-case validation rejects invalid aliases (test file: `tests/job-input.test.ts`)
-- [x] Default values applied correctly for overlap, retry, enabled (test file: `tests/property.schema.test.ts`)
-- [x] Strict action schema rejects unknown keys, and `kind: "script"`/`kind: "exec"` are rejected (test file: `tests/property.schema.test.ts`, `tests/job-input.test.ts`)
-- [x] Duplicate create rejects by default and explicit `force` replaces the existing job (test file: `tests/job-create-duplicate.test.ts`)
-- [x] Invalid schedule on create/update persists nothing / preserves the original job (test file: `tests/job-create-atomicity.test.ts`)
-- [x] Delete removes file and SQLite row (test file: `tests/store.test.ts`)
-- [x] Schema sidecar written on persist (test file: `tests/store.test.ts`)
-- [x] Prompt action validates reserved args (test file: `tests/job-input.test.ts`)
-- [x] Update merge semantics preserve omitted fields across CLI, MCP, and library surfaces (test files: `tests/job-input.test.ts`, `tests/cli.test.ts`, `tests/client.test.ts`, `tests/mcp.test.ts`)
-- [x] Missing `envFile` on create/update is rejected before persistence; BOM-prefixed job files load and malformed job/job-patch files report file/position/expected-shape diagnostics (test files: `tests/job-create-atomicity.test.ts`, `tests/env-file.test.ts`, `tests/job-input.test.ts`)
+- [x] Kebab-case validation rejects invalid aliases (test file: `tests/unit/job-input.test.ts`)
+- [x] Default values applied correctly for overlap, retry, enabled (test file: `tests/unit/property.schema.test.ts`)
+- [x] Strict action schema rejects unknown keys, and `kind: "script"`/`kind: "exec"` are rejected (test file: `tests/unit/property.schema.test.ts`, `tests/unit/job-input.test.ts`)
+- [x] Duplicate create rejects by default and explicit `force` replaces the existing job (test file: `tests/unit/job-create-duplicate.test.ts`)
+- [x] Invalid schedule on create/update persists nothing / preserves the original job (test file: `tests/unit/job-create-atomicity.test.ts`)
+- [x] Delete removes file and SQLite row (test file: `tests/unit/store.test.ts`)
+- [x] Schema sidecar written on persist (test file: `tests/unit/store.test.ts`)
+- [x] Prompt action validates reserved args (test file: `tests/unit/job-input.test.ts`)
+- [x] Update merge semantics preserve omitted fields across CLI, MCP, and library surfaces (test files: `tests/unit/job-input.test.ts`, `tests/unit/cli.test.ts`, `tests/unit/client.test.ts`, `tests/unit/mcp.test.ts`)
+- [x] Missing `envFile` on create/update is rejected before persistence; BOM-prefixed job files load and malformed job/job-patch files report file/position/expected-shape diagnostics (test files: `tests/unit/job-create-atomicity.test.ts`, `tests/unit/env-file.test.ts`, `tests/unit/job-input.test.ts`)
 
 ## Out of scope
 

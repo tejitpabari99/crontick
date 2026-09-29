@@ -118,19 +118,19 @@ human-editability of jobs and efficient querying of run history.
 
 ## Acceptance criteria
 
-- [x] Jobs loaded from disk on daemon start; malformed job files skipped (test file: `tests/store.test.ts`)
-- [x] Orphan runs reconciled with liveness-checked adopt/cancel (test file: `tests/store.test.ts`; `tests/integration.persistence.test.ts`)
-- [x] upsertJob writes both JSON file and SQLite; schema sidecar written (test file: `tests/store.test.ts`)
-- [x] deleteJob removes the job file/row while preserving deleted-job run history for direct reads and excluding it from aggregate views (test files: `tests/store.test.ts`, `tests/stats-excludes-deleted-job-runs.test.ts`)
-- [x] Schema created in one idempotent pass; re-opening the store does not error or duplicate schema objects (test file: `tests/store.test.ts`)
-- [x] listRuns filters by jobId, since, status, and orders correctly (test files: `tests/store.test.ts`, `tests/cli.test.ts`)
-- [x] Config atomic write; BOM-prefixed JSON accepted; structured parse diagnostics on malformed JSON (test file: `tests/config.test.ts`)
-- [x] Data directory creation on fresh install (test file: `tests/integration.daemon-lifecycle.test.ts`)
-- [x] Retention/purge policy enforced via `pruneRunsForJob()`/`pruneAllJobsRunHistory()`, reload-applicable via `setRunRetentionCap()` (test files: `tests/store.test.ts`, `tests/integration.persistence.test.ts`, `tests/config.test.ts`)
-- [x] `job_schedule_state`: `recordTick`/`getScheduleState` seed and advance a job's watermark (test file: `tests/store.test.ts`)
-- [x] `recordMissedRun` inserts a terminal `missed` run with no pid, subject to the same retention cap (test file: `tests/store.test.ts`)
-- [x] `importRuns` validates each row individually, skips malformed rows without aborting, is idempotent on `id`, and prunes affected jobs afterward (test file: `tests/store.test.ts`; `tests/cli.test.ts`; `tests/mcp.test.ts`)
-- [x] Read-time redaction applies consistently across config, run, log, and dashboard read surfaces (test file: `tests/secret-redaction.test.ts`)
+- [x] Jobs loaded from disk on daemon start; malformed job files skipped (test file: `tests/unit/store.test.ts`)
+- [x] Orphan runs reconciled with liveness-checked adopt/cancel (test file: `tests/unit/store.test.ts`; `tests/unit/integration.persistence.test.ts`)
+- [x] upsertJob writes both JSON file and SQLite; schema sidecar written (test file: `tests/unit/store.test.ts`)
+- [x] deleteJob removes the job file/row while preserving deleted-job run history for direct reads and excluding it from aggregate views (test files: `tests/unit/store.test.ts`, `tests/unit/stats-excludes-deleted-job-runs.test.ts`)
+- [x] Schema created in one idempotent pass; re-opening the store does not error or duplicate schema objects (test file: `tests/unit/store.test.ts`)
+- [x] listRuns filters by jobId, since, status, and orders correctly (test files: `tests/unit/store.test.ts`, `tests/unit/cli.test.ts`)
+- [x] Config atomic write; BOM-prefixed JSON accepted; structured parse diagnostics on malformed JSON (test file: `tests/unit/config.test.ts`)
+- [x] Data directory creation on fresh install (test file: `tests/unit/integration.daemon-lifecycle.test.ts`)
+- [x] Retention/purge policy enforced via `pruneRunsForJob()`/`pruneAllJobsRunHistory()`, reload-applicable via `setRunRetentionCap()` (test files: `tests/unit/store.test.ts`, `tests/unit/integration.persistence.test.ts`, `tests/unit/config.test.ts`)
+- [x] `job_schedule_state`: `recordTick`/`getScheduleState` seed and advance a job's watermark (test file: `tests/unit/store.test.ts`)
+- [x] `recordMissedRun` inserts a terminal `missed` run with no pid, subject to the same retention cap (test file: `tests/unit/store.test.ts`)
+- [x] `importRuns` validates each row individually, skips malformed rows without aborting, is idempotent on `id`, and prunes affected jobs afterward (test file: `tests/unit/store.test.ts`; `tests/unit/cli.test.ts`; `tests/unit/mcp.test.ts`)
+- [x] Read-time redaction applies consistently across config, run, log, and dashboard read surfaces (test file: `tests/unit/secret-redaction.test.ts`)
 
 ## Out of scope
 

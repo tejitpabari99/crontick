@@ -48,7 +48,7 @@ and `--disable`.
 
 ## The surface-drift test
 
-`tests/surface-drift.test.ts` uses the `SURFACE_CAPABILITIES` array to verify at test time that:
+`tests/unit/surface-drift.test.ts` uses the `SURFACE_CAPABILITIES` array to verify at test time that:
 
 1. Every capability's `clientMethod` exists as a function on `CrontickClient.prototype`.
 2. Every client prototype method is either in the capabilities table or in a known non-parity set.

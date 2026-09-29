@@ -1,6 +1,6 @@
 // Job execution engine: spawns child processes, enforces overlap policies,
 // retry with backoff, timeout, and stream capture with secret redaction.
-// See docs/implementation/executors.md
+// See docs/implementation/prompt-execution.md
 import { spawn } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { platform } from 'node:os';

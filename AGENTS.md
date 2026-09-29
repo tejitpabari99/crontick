@@ -58,7 +58,7 @@ Do not import from `src/daemon/`, `src/cli/`, or `src/mcp/` internals outside th
 5. Prefer Node.js platform APIs (`node:fs`, `node:sqlite`, `node:crypto`, etc.) over third-party packages.
 6. Keep filesystem, network, and timing side effects behind injectable interfaces.
 7. Shims contain zero business logic -- all behavior lives in the core client and daemon modules.
-8. A feature removed from the product (guarded by a regression test, e.g. `tests/autostart-removal.test.ts`) MUST NOT be reintroduced without explicit sign-off in the PR description explaining why the original removal rationale no longer applies.
+8. A feature removed from the product (guarded by a regression test, e.g. `tests/unit/autostart-removal.test.ts`) MUST NOT be reintroduced without explicit sign-off in the PR description explaining why the original removal rationale no longer applies.
 9. Constants used in more than one file live in `src/constants/`; reusable logic lives in `src/utils/`.
 
 ## Surface parity rule
@@ -70,7 +70,7 @@ Every capability change must update ALL of:
 3. The MCP tool (`src/mcp/`)
 4. The `SURFACE_CAPABILITIES` constant (`src/surface.ts`)
 
-If any surface is missing, `tests/surface-drift.test.ts` will fail. See `docs/concepts/surface-parity.md` for the full protocol.
+If any surface is missing, `tests/unit/surface-drift.test.ts` will fail. See `docs/concepts/surface-parity.md` for the full protocol.
 
 ## Testing rules
 

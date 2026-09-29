@@ -101,20 +101,20 @@ a fallback only) are described in
 
 ## Acceptance criteria
 
-- [x] Single-instance guard rejects second daemon (test file: `tests/daemon.ensure.test.ts`)
-- [x] Demand-start spawns daemon and returns healthy info; stale PID file cleaned up (test file: `tests/daemon.ensure.test.ts`)
-- [x] Loopback enforcement returns 403 for non-local (test file: `tests/security.test.ts`)
-- [x] Health endpoint returns correct shape (test file: `tests/health.test.ts`)
-- [x] Orphan runs reconciled on startup, liveness-checked and adopted or canceled accordingly (test file: `tests/store.test.ts`; `tests/integration.persistence.test.ts`)
-- [x] Lock timeout throws `DAEMON_START_LOCK_TIMEOUT`; `NOT_BUILT` thrown when daemon script missing (test file: `tests/daemon.ensure.test.ts`)
-- [x] `POST /api/daemon/stop` responds before the process exits and reports `activeRuns` (test file: `tests/integration.daemon-lifecycle.test.ts`)
-- [x] `stopDaemon` reports `mode: 'graceful'` on success and escalates to `SIGTERM`/`SIGKILL` (`mode: 'hard-kill'`) when the route stalls or is unreachable (test file: `tests/integration.daemon-lifecycle.test.ts`)
-- [x] `DELETE /api/jobs/:id` cancels the job's active run, reporting `canceledRun` (test file: `tests/integration.daemon-lifecycle.test.ts`)
-- [x] `POST /api/jobs` rejects duplicate IDs unless `force` is explicit; create/update validate schedules and `envFile` before persistence (test files: `tests/job-create-duplicate.test.ts`, `tests/job-create-atomicity.test.ts`, `tests/env-file.test.ts`)
-- [x] Startup prunes daemon log files beyond `retention.maxLogFiles`; reload applies a lowered cap without restart (test file: `tests/integration.daemon-lifecycle.test.ts`)
-- [x] Missed fires across a crash/restart are recorded as `missed` runs and surfaced in `info`'s `missedFires` summary (test files: `tests/integration.daemon-lifecycle.test.ts`, `tests/api.test.ts`, `tests/daemon-status-fields.test.ts`)
-- [x] Reload reschedules all jobs from disk, aborting cleanly on invalid config (test file: `tests/integration.daemon-lifecycle.test.ts`)
-- [x] `crontick info daemon stop`/`reload` use human-readable CLI output (test file: `tests/cli-daemon-json.test.ts`)
+- [x] Single-instance guard rejects second daemon (test file: `tests/unit/daemon.ensure.test.ts`)
+- [x] Demand-start spawns daemon and returns healthy info; stale PID file cleaned up (test file: `tests/unit/daemon.ensure.test.ts`)
+- [x] Loopback enforcement returns 403 for non-local (test file: `tests/unit/security.test.ts`)
+- [x] Health endpoint returns correct shape (test file: `tests/unit/health.test.ts`)
+- [x] Orphan runs reconciled on startup, liveness-checked and adopted or canceled accordingly (test file: `tests/unit/store.test.ts`; `tests/unit/integration.persistence.test.ts`)
+- [x] Lock timeout throws `DAEMON_START_LOCK_TIMEOUT`; `NOT_BUILT` thrown when daemon script missing (test file: `tests/unit/daemon.ensure.test.ts`)
+- [x] `POST /api/daemon/stop` responds before the process exits and reports `activeRuns` (test file: `tests/unit/integration.daemon-lifecycle.test.ts`)
+- [x] `stopDaemon` reports `mode: 'graceful'` on success and escalates to `SIGTERM`/`SIGKILL` (`mode: 'hard-kill'`) when the route stalls or is unreachable (test file: `tests/unit/integration.daemon-lifecycle.test.ts`)
+- [x] `DELETE /api/jobs/:id` cancels the job's active run, reporting `canceledRun` (test file: `tests/unit/integration.daemon-lifecycle.test.ts`)
+- [x] `POST /api/jobs` rejects duplicate IDs unless `force` is explicit; create/update validate schedules and `envFile` before persistence (test files: `tests/unit/job-create-duplicate.test.ts`, `tests/unit/job-create-atomicity.test.ts`, `tests/unit/env-file.test.ts`)
+- [x] Startup prunes daemon log files beyond `retention.maxLogFiles`; reload applies a lowered cap without restart (test file: `tests/unit/integration.daemon-lifecycle.test.ts`)
+- [x] Missed fires across a crash/restart are recorded as `missed` runs and surfaced in `info`'s `missedFires` summary (test files: `tests/unit/integration.daemon-lifecycle.test.ts`, `tests/unit/api.test.ts`, `tests/unit/daemon-status-fields.test.ts`)
+- [x] Reload reschedules all jobs from disk, aborting cleanly on invalid config (test file: `tests/unit/integration.daemon-lifecycle.test.ts`)
+- [x] `crontick info daemon stop`/`reload` use human-readable CLI output (test file: `tests/unit/cli-daemon-json.test.ts`)
 
 ## Out of scope
 

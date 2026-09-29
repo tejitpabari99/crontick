@@ -4,7 +4,7 @@
  * CrontickClient method, a Commander subcommand in cli/index.ts, a registerTool
  * call in mcp/index.ts, and (if new types are needed) an export in index.ts.
  *
- * tests/surface-drift.test.ts asserts all four columns stay in sync — it will
+ * tests/unit/surface-drift.test.ts asserts all four columns stay in sync — it will
  * fail if any surface drifts from this table.
  */
 

@@ -29,7 +29,7 @@ removed -- see [ADR 0002](../decisions/0002-prompt-only-jobs-and-engine-adapters
 |-------|---------|
 | `prompt` | The text sent to the engine. |
 | `engine` | Named engine from `config.json` (defaults to `config.defaultEngine`, which is the built-in `claude` engine unless changed). |
-| `args` | Extra arguments passed through to the engine CLI. |
+| `args` | Extra arguments passed through to the engine CLI. On the CLI, unrecognized `--flags` given to `jobs new`/`jobs update` are forwarded into `args`; engine-reserved flags (for Claude, e.g. `--output-format`, `--settings`) are rejected. |
 | `sessionId` / `reuseSession` | Multi-turn session reuse across scheduled runs -- see [execution.md](./execution.md#how-prompt-jobs-differ). |
 
 The engine is resolved from `config.json` by an **adapter** keyed on the engine's `type`
@@ -50,7 +50,9 @@ A job has a boolean `enabled` field (default `true`). Disabled jobs are persiste
 | `retry.max` | `0` | How many times to retry after failure |
 | `retry.backoffSec` | `30` | Seconds to wait between retries |
 
-Overlap values: `skip` (finalize the new tick as `skipped`), `queue` (wait for the active run to finish), `cancel-previous` (abort the active run, start the new one).
+Overlap values: `skip` (finalize the new tick as `skipped`), `queue` (wait for the active run to finish), `cancel-previous` (abort the active run, start the new one). `reuseSession: true` requires `overlap: "skip"`, since two concurrent runs cannot safely share one session.
+
+When a create input omits `overlap`, `timeoutSec`, or `retry`, crontick fills them from the `defaults` section of `config.json`, falling back to the built-ins above. Precedence is CLI flag > job JSON > `config.json` `defaults` > built-in. The resolved values are saved with the job at create/update time, so later config edits do not change existing jobs (see [spec 007](../specs/007-prompt-jobs.md)).
 
 ## Lifecycle: create, update, remove
 
