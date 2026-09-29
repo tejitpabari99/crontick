@@ -243,7 +243,7 @@ export function createMcpServer(): McpServer {
     'crontick_job_run_now',
     {
       description:
-        'Trigger an immediate run of a job (id or name), bypassing its schedule. This executes the job\'s prompt on the user\'s machine right now -- confirm with the user before calling. Returns a runId to track progress with crontick_run_get.',
+        'Run a job (id or name) once, right now, even if it is disabled -- it is NOT enabled and its schedule is not changed (an enabled job keeps running on its normal schedule). The overlap policy still applies (with overlap=skip and a run already active, the run is recorded as skipped). This executes the job\'s prompt on the user\'s machine right now -- confirm with the user before calling. Returns a runId to track progress with crontick_run_get.',
       inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or name') }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },

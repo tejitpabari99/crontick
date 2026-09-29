@@ -309,7 +309,11 @@ export class CrontickClient {
     return this.request<Job>('POST', `/api/jobs/${encodeURIComponent(id)}/disable`);
   }
 
-  /** `id` accepts either the job's GUID id or its alias. */
+  /**
+   * Run a job once immediately, even when disabled. Does not enable the job or
+   * touch its schedule; the overlap policy still applies. `id` accepts either
+   * the job's GUID id or its alias.
+   */
   async runNow(id: string): Promise<{ runId: string }> {
     return this.request<{ runId: string }>('POST', `/api/jobs/${encodeURIComponent(id)}/run`);
   }

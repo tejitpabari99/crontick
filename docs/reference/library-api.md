@@ -45,7 +45,7 @@ Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `deleteJob` | `(id?: string, options?: { all?: boolean; force?: boolean }): Promise<{ ok: true } \| { ok: true; deleted: number }>` | `{ ok: true }` for a single delete, or `{ ok: true, deleted }` when `all` is set (requires `force`) | `CrontickError` (`VALIDATION_ERROR`, `NOT_FOUND`) |
 | `enableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
 | `disableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
-| `runNow` | `(id: string): Promise<{ runId: string }>` | `{ runId }` | `CrontickError` |
+| `runNow` | `(id: string): Promise<{ runId: string }>` (runs once now, even if disabled; does not enable the job or alter the schedule) | `{ runId }` | `CrontickError` |
 | `cancelRun` | `(runId: string): Promise<{ ok: true; canceled: boolean }>` | Cancel result | `CrontickError` |
 | `getRun` | `(runId: string): Promise<RunRecord>` | Run object | `CrontickError` |
 | `listRuns` | `(options?: { jobId?: string; limit?: number; since?: number; status?: string }): Promise<RunRecord[]>` | Array of runs | `CrontickError` |

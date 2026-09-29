@@ -63,7 +63,7 @@ crontick prints the new job, including its auto-assigned `alias` (e.g. `fern-270
 ```sh
 crontick jobs list                 # see all jobs
 crontick jobs get fern-270         # inspect one job
-crontick jobs run-now fern-270     # trigger an immediate run
+crontick jobs run-now fern-270     # run once now (works on disabled jobs too; schedule unchanged)
 ```
 
 Watch what the agent did:

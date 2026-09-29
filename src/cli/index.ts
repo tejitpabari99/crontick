@@ -476,7 +476,7 @@ jobs.command('delete <idOrAlias>')
     } catch (err) { handleError(err); }
   });
 
-jobs.command('run-now <id>').description('Trigger an immediate run of a job (id or name)').action(async (id: string) => {
+jobs.command('run-now <id>').description('Run a job once right now, even if it is disabled (does not enable it or change its schedule)').action(async (id: string) => {
   try { print(await client().runNow(id)); } catch (err) { handleError(err); }
 });
 

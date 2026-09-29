@@ -187,7 +187,7 @@ Permanently delete one job definition by GUID or name, or delete every job with 
 
 ### crontick_job_run_now
 
-Trigger an immediate run of a job, bypassing its schedule.
+Run a job once immediately, even if it is disabled. Does not enable the job or change its schedule; the overlap policy still applies (a run blocked by `overlap: skip` is recorded as `skipped`). Returns `{ runId }`.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|

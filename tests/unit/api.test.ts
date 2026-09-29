@@ -224,6 +224,57 @@ describe('Daemon HTTP API', () => {
     expect(typeof (data as { runId: string }).runId).toBe('string');
   });
 
+  it('POST /api/jobs/:id/run-now runs a disabled job once without enabling it or touching its schedule', async () => {
+    const created = await apiCall(port, 'POST', '/api/jobs', {
+      alias: 'run-now-disabled',
+      enabled: false,
+      schedule: { kind: 'cron', cron: '0 0 1 1 *' },
+      action: { kind: 'prompt', prompt: 'process.stdout.write("ran")', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
+    });
+    expect(created.status).toBe(201);
+    const before = created.data as { enabled: boolean; schedule: unknown };
+    expect(before.enabled).toBe(false);
+
+    for (const route of ['run-now', 'run']) {
+      const { status, data } = await apiCall(port, 'POST', `/api/jobs/run-now-disabled/${route}`);
+      expect(status).toBe(202);
+      const runId = (data as { runId: string }).runId;
+      let run: { status: string } | undefined;
+      for (let i = 0; i < 60; i++) {
+        run = (await apiCall(port, 'GET', `/api/runs/${runId}`)).data as { status: string };
+        if (run.status === 'success') break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(run?.status).toBe('success');
+    }
+
+    const after = (await apiCall(port, 'GET', '/api/jobs/run-now-disabled')).data as { enabled: boolean; schedule: unknown };
+    expect(after.enabled).toBe(false);
+    expect(after.schedule).toEqual(before.schedule);
+  });
+
+  it('POST /api/jobs/:id/run-now respects overlap=skip while a run is active', async () => {
+    const created = await apiCall(port, 'POST', '/api/jobs', {
+      alias: 'run-now-overlap',
+      enabled: false,
+      overlap: 'skip',
+      schedule: { kind: 'cron', cron: '0 0 1 1 *' },
+      action: { kind: 'prompt', prompt: 'setTimeout(() => {}, 1500)', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
+    });
+    expect(created.status).toBe(201);
+    const first = (await apiCall(port, 'POST', '/api/jobs/run-now-overlap/run-now')).data as { runId: string };
+    await new Promise((r) => setTimeout(r, 300));
+    const second = (await apiCall(port, 'POST', '/api/jobs/run-now-overlap/run-now')).data as { runId: string };
+    let run: { status: string } | undefined;
+    for (let i = 0; i < 30; i++) {
+      run = (await apiCall(port, 'GET', `/api/runs/${second.runId}`)).data as { status: string };
+      if (run.status === 'skipped') break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(run?.status).toBe('skipped');
+    await apiCall(port, 'POST', `/api/runs/${first.runId}/cancel`);
+  });
+
   it('GET /api/runs lists runs', async () => {
     const { status, data } = await apiCall(port, 'GET', '/api/runs?jobId=api-test-job');
     expect(status).toBe(200);

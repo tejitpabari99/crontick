@@ -231,7 +231,10 @@ async function handleRequest(
         return sendJson(res, 200, redactValue(updated));
       }
 
-      if (method === 'POST' && sub === '/run') {
+      // `/run-now` is an alias of `/run` (used by the dashboard). Runs the job once
+      // immediately WITHOUT touching `enabled` or the schedule: a disabled job stays
+      // disabled, an enabled job keeps its normal schedule. Overlap policy still applies.
+      if (method === 'POST' && (sub === '/run' || sub === '/run-now')) {
         if (!job) return sendJobNotFoundError(res, requestedId);
         const run = ctx.store.insertRun(job.id);
         // Fire-and-forget: return 202 immediately while the run executes async.

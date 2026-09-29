@@ -184,11 +184,13 @@ Deleting a single job cancels its in-flight run, if any. Historical runs remain 
 
 ### crontick jobs run-now
 
-Trigger an immediate run of a job.
+Run a job once, right now, whether or not it is enabled. Returns `{ runId }`; follow it with `crontick runs get <runId>`.
 
 ```bash
-crontick jobs run-now <id>
+crontick jobs run-now <id-or-name>
 ```
+
+Run-now does not enable a disabled job and does not alter or reschedule anything: an enabled job keeps its normal schedule, a disabled job stays disabled (and never fires on its own). The job's overlap policy still applies: with `overlap: skip` and a run already active, the manual run is recorded as `skipped`; `queue` and `cancel-previous` behave as for scheduled fires.
 
 ---
 
