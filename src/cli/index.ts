@@ -523,6 +523,32 @@ runs.command('logs <runId> [source]')
     } catch (err) { handleError(err); }
   });
 
+runs.command('output <runId>')
+  .description('Show the cleaned output of a run: final answer, error, and readable transcript (raw engine log: `runs logs`)')
+  .option('--json', 'Print the full output view as JSON')
+  .action(async (runId: string, opts) => {
+    try {
+      const out = await client().getOutput(runId);
+      if (opts.json) {
+        stdout(JSON.stringify(out, null, 2));
+        return;
+      }
+      stdout(`status: ${out.status}`);
+      if (out.error) stdout(`error: ${out.error}`);
+      if (out.result) {
+        stdout('');
+        stdout(out.result);
+      } else if (out.output) {
+        stdout('');
+        stdout(out.output);
+      }
+      if (out.stderr && out.error === null) {
+        stdout('');
+        stdout(`[stderr] ${out.stderr}`);
+      }
+    } catch (err) { handleError(err); }
+  });
+
 runs.command('cancel <runId>').description('Cancel an in-progress run').action(async (runId: string) => {
   try { print(await client().cancelRun(runId)); } catch (err) { handleError(err); }
 });
@@ -634,7 +660,7 @@ info.command('doctor', { hidden: true }).description('Check system health (alias
 // ── daemon ───────────────────────────────────────────────────────────────────
 // The daemon still demand-starts on first use; `daemon start` is the explicit,
 // manual way to start it (or run it in the foreground). It is NOT login/boot
-// registration (that removed feature is guarded by tests/unit/autostart-removal.test.ts).
+// registration (that removed feature is guarded by a regression test).
 async function daemonStop(): Promise<void> {
   try {
     const result = await client(false).daemonStop();

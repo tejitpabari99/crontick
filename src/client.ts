@@ -12,6 +12,7 @@ import http from 'node:http';
 import { existsSync } from 'node:fs';
 import { CrontickError } from './errors.js';
 import { LOG_SOURCES, type LogSource } from './log-source.js';
+import type { RunOutput } from './run-output.js';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -103,6 +104,7 @@ export interface LogsResult {
   lines: LogEntry[];
 }
 
+export type { RunOutput };
 export { LOG_SOURCES };
 export type { LogSource };
 
@@ -359,6 +361,15 @@ export class CrontickClient {
     const logicalLines = reconstructLogicalLogLines(logs);
     const lines = options.lines !== undefined ? logicalLines.slice(-options.lines) : logicalLines;
     return { runId, lines };
+  }
+
+  /**
+   * Cleaned, human-readable output of a run: the engine's final answer, the
+   * error (if any), and a readable transcript with thinking blocks, hook
+   * payloads and signatures removed. The raw log remains available via getLogs.
+   */
+  async getOutput(runId: string): Promise<RunOutput> {
+    return this.request<RunOutput>('GET', `/api/runs/${encodeURIComponent(runId)}/output`);
   }
 
   async exportJobs(options: { includeRuns?: boolean } = {}): Promise<{ jobs: Job[]; runs?: unknown[] }> {

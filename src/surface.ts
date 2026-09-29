@@ -30,6 +30,7 @@ export const SURFACE_CAPABILITIES = [
   { capability: 'list-runs', clientMethod: 'listRuns', cliCommand: ['runs', 'list'], mcpTool: 'crontick_run_list' },
   { capability: 'get-run', clientMethod: 'getRun', cliCommand: ['runs', 'get'], mcpTool: 'crontick_run_get' },
   { capability: 'logs', clientMethod: 'getLogs', cliCommand: ['runs', 'logs'], mcpTool: 'crontick_run_logs_tail' },
+  { capability: 'run-output', clientMethod: 'getOutput', cliCommand: ['runs', 'output'], mcpTool: 'crontick_run_output' },
   { capability: 'stats-summary', clientMethod: 'statsSummary', cliCommand: ['stats', 'summary'], mcpTool: 'crontick_stats_summary' },
   { capability: 'stats-job', clientMethod: 'statsJob', cliCommand: ['stats', 'job'], mcpTool: 'crontick_stats_job' },
   { capability: 'export', clientMethod: 'exportJobs', cliCommand: ['share', 'export'], mcpTool: 'crontick_export' },

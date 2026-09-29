@@ -39,6 +39,7 @@ crontick jobs run-now <id>
 crontick runs list [--job <id>] [--limit <n>] [--since <ms>] [--status <status>]
 crontick runs get <runId>
 crontick runs logs <runId> [engine|crontick] [--tail <n>]
+crontick runs output <runId> [--json]
 crontick runs cancel <runId>
 
 crontick stats summary
@@ -246,6 +247,18 @@ Output is one line per stored entry in this form:
 ```text
 [<stream>] <data>
 ```
+
+---
+
+### crontick runs output
+
+Show the cleaned output of a run instead of the raw engine log.
+
+```bash
+crontick runs output <runId> [--json]
+```
+
+The default output prints the run `status`, the `error` (if any), and the engine's final answer (falling back to the readable transcript). `--json` prints the full [`RunOutput`](library-api.md#runoutput) object. Claude `thinking` blocks, hook payloads, and base64 blobs are omitted; use `crontick runs logs <runId>` for the raw stream-json log.
 
 ---
 

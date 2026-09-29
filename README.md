@@ -73,6 +73,7 @@ crontick runs list                 # recent runs across all jobs
 crontick runs get <runId>          # resolved command, status, timing, session id
 crontick runs logs <runId>         # both streams; add "engine" or "crontick" to filter
 crontick runs logs <runId> engine  # just the AI engine's stdout/stderr
+crontick runs output <runId>        # cleaned output: final answer, error, readable transcript (no thinking/hook noise)
 ```
 
 Prefer a UI? `crontick info` prints the dashboard URL (`http://127.0.0.1:<port>/dashboard`) where you can browse jobs, runs, and per-run logs.

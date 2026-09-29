@@ -696,7 +696,7 @@ describe('CLI e2e with daemon', () => {
 
     // `info` output lists the available commands, derived from the live command tree.
     expect(info.stdout).toContain('commands');
-    for (const name of ['jobs new', 'jobs run-now', 'runs list', 'daemon start', 'daemon stop', 'doctor']) {
+    for (const name of ['jobs new', 'jobs run-now', 'runs list', 'runs output', 'daemon start', 'daemon stop', 'doctor']) {
       expect(info.stdout, `info should list '${name}'`).toContain(name);
     }
 

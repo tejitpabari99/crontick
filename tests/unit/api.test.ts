@@ -287,6 +287,35 @@ describe('Daemon HTTP API', () => {
     if (summary.avgDurationMs !== null) expect(summary.avgDurationSec).toBeCloseTo(summary.avgDurationMs / 1000, 1);
   });
 
+  it('GET /api/runs/:id/output returns the cleaned output view while /logs keeps the raw log', async () => {
+    const code = [
+      "const emit = (e) => process.stdout.write(JSON.stringify(e) + '\\n');",
+      "emit({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'hm', signature: 'SIGNATURE-BLOB' }] } });",
+      "emit({ type: 'assistant', message: { content: [{ type: 'text', text: 'All done.' }] } });",
+      "emit({ type: 'result', subtype: 'success', is_error: false, result: 'All done.' });",
+    ].join(' ');
+    await apiCall(port, 'POST', '/api/jobs', {
+      alias: 'output-view-job',
+      enabled: false,
+      schedule: { kind: 'cron', cron: '0 0 1 1 *' },
+      action: { kind: 'prompt', prompt: code, engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
+    });
+    const { data } = await apiCall(port, 'POST', '/api/jobs/output-view-job/run-now');
+    const runId = (data as { runId: string }).runId;
+    for (let i = 0; i < 60; i++) {
+      const run = (await apiCall(port, 'GET', `/api/runs/${runId}`)).data as { status: string };
+      if (run.status === 'success') break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const output = await apiCall(port, 'GET', `/api/runs/${runId}/output`);
+    expect(output.status).toBe(200);
+    expect(output.data).toMatchObject({ runId, status: 'success', format: 'claude-stream-json', result: 'All done.', error: null, output: 'All done.' });
+    expect(JSON.stringify(output.data)).not.toContain('SIGNATURE-BLOB');
+    const raw = await apiCall(port, 'GET', `/api/runs/${runId}/logs?source=engine`);
+    expect(JSON.stringify(raw.data)).toContain('SIGNATURE-BLOB');
+    expect((await apiCall(port, 'GET', '/api/runs/nope/output')).status).toBe(404);
+  });
+
   it('GET /api/runs lists runs', async () => {
     const { status, data } = await apiCall(port, 'GET', '/api/runs?jobId=api-test-job');
     expect(status).toBe(200);

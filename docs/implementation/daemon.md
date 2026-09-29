@@ -51,6 +51,7 @@ non-loopback gets 403 `FORBIDDEN`.
 | GET/POST | `/api/jobs[/:id]` | List/create/get job | 200/201/404 |
 | PUT/DELETE | `/api/jobs/:id` | Update/delete job (delete cancels an in-flight run: `canceledRun`) | 200/404 |
 | POST | `/api/jobs/:id/enable\|disable` | Enable/disable a job | 200/404 |
+| GET | `/api/runs/:id/output` | Cleaned output view (`RunOutput`): final result, error, readable transcript | 200/404 |
 | POST | `/api/jobs/:id/run-now` (alias `/run`) | Run a job once now, even if disabled, without changing `enabled` or the schedule; overlap policy applies. `202 { runId }` | 202/404 |
 | GET/POST | `/api/runs[/:id][/cancel]` | List/get/cancel runs | 200/404 |
 | GET | `/api/runs/:id/logs[/stream]` | Log entries, or an SSE stream (`SSE_POLL_MS` = 200 ms; closes on terminal status) | 200/404 |

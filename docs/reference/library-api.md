@@ -49,6 +49,7 @@ Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `cancelRun` | `(runId: string): Promise<{ ok: true; canceled: boolean }>` | Cancel result | `CrontickError` |
 | `getRun` | `(runId: string): Promise<RunRecord>` | Run object | `CrontickError` |
 | `listRuns` | `(options?: { jobId?: string; limit?: number; since?: number; status?: string }): Promise<RunRecord[]>` | Array of runs | `CrontickError` |
+| `getOutput` | `(runId: string): Promise<RunOutput>` (cleaned output view; raw log stays in `getLogs`) | `RunOutput` | `CrontickError` (`NOT_FOUND`) |
 | `getLogs` | `(runId: string, options?: { lines?: number; source?: 'all' \| 'engine' \| 'crontick' }): Promise<LogsResult>` | `LogsResult` | `CrontickError` (`VALIDATION_ERROR` on an invalid `source`) |
 | `exportJobs` | `(options?: { includeRuns?: boolean }): Promise<{ jobs: Job[]; runs?: unknown[] }>` | Export payload; `runs` present only when `includeRuns` is set | `CrontickError` |
 | `importJobs` | `(jobs: unknown[], options?: NormalizeJobInputOptions & { runs?: unknown[] }): Promise<unknown>` | Import result, including `runsImported`/`runsSkipped` when `options.runs` is passed | `CrontickError` |
@@ -426,6 +427,29 @@ interface DashboardHealth {
 }
 ```
 
+### RunOutput
+
+Returned by `getOutput`, `crontick runs output <runId> [--json]`, `crontick_run_output`, and `GET /api/runs/:id/output`.
+
+```ts
+interface RunOutput {
+  runId: string;
+  status: string;
+  format: 'claude-stream-json' | 'text'; // how engine stdout was parsed
+  result: string | null;   // the engine's final answer (Claude `result` text, else last assistant text, else plain stdout)
+  error: string | null;    // run.error, else an error reported in the engine output
+  output: string;          // readable transcript: assistant text + "[tool] Name" markers
+  stderr: string;          // engine stderr, redacted, last 4000 chars
+  sessionId: string | null;
+  costUsd: number | null;
+  turns: number | null;
+  durationMs: number | null;
+  truncated: boolean;      // captured output hit the retention cap, or this view was capped
+}
+```
+
+The view drops Claude `thinking` blocks (and their opaque `signature`), hook/system events, tool results, and base64 hook payloads, and applies secret redaction. The raw log is untouched and remains available from `getLogs`.
+
 ### DashboardStats
 
 ```ts
@@ -769,7 +793,7 @@ const BUILT_IN_CONFIG: CrontickConfig;
 const SURFACE_CAPABILITIES: readonly SurfaceCapability[];
 ```
 
-21-element array mapping every capability to its client method, CLI command path, and
+22-element array mapping every capability to its client method, CLI command path, and
 MCP tool name. The existing `create-job` capability row also records its parity-coupled
 `force` option via `optionNames: ['force']`.
 

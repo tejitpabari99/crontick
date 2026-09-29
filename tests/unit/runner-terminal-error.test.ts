@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import type { ChildProcess, SpawnOptions } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { Runner } from '../../src/daemon/runner.js';
 import { ClaudeAdapter } from '../../src/engines/claude-adapter.js';
 import { Store } from '../../src/daemon/store.js';
@@ -55,7 +55,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
 /** Each spawn returns a child that writes `lines` and then hangs (never exits) unless `exitAfter` is set. */
 function makeSpawn(script: Array<{ lines: string[]; exit?: 'close' | 'exit-only' | 'never' }>) {
   const children: FakeChild[] = [];
-  const spawnFn = ((_cmd: string, _args?: readonly string[], _opts?: SpawnOptions): ChildProcess => {
+  const spawnFn = ((): ChildProcess => {
     const step = script[Math.min(children.length, script.length - 1)]!;
     const child = new EventEmitter() as FakeChild;
     child.stdout = new PassThrough();

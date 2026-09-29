@@ -288,6 +288,17 @@ export function createMcpServer(): McpServer {
   );
 
   server.registerTool(
+    'crontick_run_output',
+    {
+      description:
+        'Get the cleaned, human-readable output of a run: the engine\'s final answer (result), any error, and a readable transcript with internal noise (thinking blocks, hook payloads, base64) removed. Prefer this over crontick_run_logs_tail to read what a run produced; use the logs tool for the raw engine log.',
+      inputSchema: withVerbose({ id: z.string().describe('Run id') }),
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => toolWrap(args, (client) => client.getOutput(args.id)),
+  );
+
+  server.registerTool(
     'crontick_run_logs_tail',
     {
       description:

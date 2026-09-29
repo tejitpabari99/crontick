@@ -43,7 +43,7 @@ If crontick is installed locally (not globally), use the full path:
 
 ---
 
-## Available tools (21)
+## Available tools (22)
 
 All tools accept an optional `verbose: boolean` parameter for diagnostics.
 
@@ -68,6 +68,7 @@ All tools accept an optional `verbose: boolean` parameter for diagnostics.
 |------|------------|-------------|
 | `crontick_run_list` | `jobId?`, `limit?`, `since?`, `status?` | List run records |
 | `crontick_run_get` | `id` | Get a specific run |
+| `crontick_run_output` | `id` | Cleaned run output: final result, error, readable transcript |
 | `crontick_run_logs_tail` | `id`, `lines?` (default 50), `source?` (`all`, `engine`, `crontick`) | Tail run output logs |
 
 `status` accepts one of `queued`, `running`, `success`, `failed`, `canceled`, `skipped`, `timeout`, `missed`. `skipped` marks a fire that never started because overlap `skip` found another run active; `missed` marks a schedule fire recorded but never executed because the daemon was down. `crontick_run_get` also returns `costUsd`, `turns`, `usageJson`, `transcriptPath`, and `engineStatus` for Claude runs.

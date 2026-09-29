@@ -10,7 +10,7 @@ is the normative contract; for the design rationale see
 
 ## Summary
 
-Every user-facing capability in crontick MUST be available on all three parity surfaces: CLI, MCP server, and library API (`CrontickClient`). A canonical table (`SURFACE_CAPABILITIES` in `src/surface.ts`) encodes this mapping and an automated drift test enforces it. The current table contains 21 capabilities.
+Every user-facing capability in crontick MUST be available on all three parity surfaces: CLI, MCP server, and library API (`CrontickClient`). A canonical table (`SURFACE_CAPABILITIES` in `src/surface.ts`) encodes this mapping and an automated drift test enforces it. The current table contains 22 capabilities.
 
 When a change extends an existing capability rather than adding a new one (for example the `create-job` capability's `force` option), the same table MAY annotate the parity-coupled option names.
 
@@ -68,6 +68,7 @@ The command-tree reorganization intentionally narrowed some exposure without rem
 | `list-runs` | `listRuns` | `crontick runs list` | `crontick_run_list` |
 | `get-run` | `getRun` | `crontick runs get` | `crontick_run_get` |
 | `logs` | `getLogs` | `crontick runs logs` | `crontick_run_logs_tail` |
+| `run-output` | `getOutput` | `crontick runs output` | `crontick_run_output` |
 | `stats-summary` | `statsSummary` | `crontick stats summary` | `crontick_stats_summary` |
 | `stats-job` | `statsJob` | `crontick stats job` | `crontick_stats_job` |
 | `export` | `exportJobs` | `crontick share export` | `crontick_export` |

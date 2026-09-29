@@ -19,7 +19,7 @@ All three are thin adapters over `CrontickClient`, which communicates with the d
 
 ## The `SURFACE_CAPABILITIES` constant
 
-`src/surface.ts` exports a single constant that canonically enumerates the 21 parity capabilities:
+`src/surface.ts` exports a single constant that canonically enumerates the 22 parity capabilities:
 
 ```typescript
 export const SURFACE_CAPABILITIES = [
@@ -40,7 +40,7 @@ Each entry maps:
 
 ## Current capability map
 
-21 capabilities are defined today; see
+22 capabilities are defined today; see
 [specs/005-surface-parity.md](../specs/005-surface-parity.md#current-capability-table) for the
 full table. The CLI may fold multiple capabilities into one command path when the operation is
 an option on a shared command -- `enable-job`/`disable-job` are `crontick jobs update --enable`

@@ -66,6 +66,7 @@ local cron daemon, with observability through captured logs and structured run r
 - **R-003-34**: A terminal engine error that a retry cannot fix (authentication) MUST NOT be retried even when `retry.max > 0`.
 - **R-003-35**: A run MUST always finalize: after SIGTERM for a timeout or cancel the runner MUST force-kill the process tree after `KILL_GRACE_MS` and finalize (`timeout`/`canceled`) even if `close` never arrives; if the process `exit`s but stdio stays open (inherited by a grandchild), the run MUST finalize `EXIT_CLOSE_GRACE_MS` (3s) after `exit`.
 - **R-003-36**: `run-now` (`CrontickClient.runNow`, `crontick jobs run-now`, `crontick_job_run_now`, `POST /api/jobs/:id/run-now` with `/run` as an alias) MUST run the job once immediately regardless of `enabled`, MUST NOT change `enabled` or the schedule, and MUST honour the overlap policy. It returns `202 { runId }`.
+- **R-003-37**: The run output view (`getOutput`, `crontick runs output`, `crontick_run_output`, `GET /api/runs/:id/output`) MUST be derived from the stored engine (`stdout`/`stderr`) log without modifying it, MUST return `{ runId, status, format, result, error, output, stderr, sessionId, costUsd, turns, durationMs, truncated }`, and MUST omit Claude `thinking` blocks/`signature` values, hook events, tool results and base64 hook payloads.
 
 ### Non-functional requirements
 

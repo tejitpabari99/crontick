@@ -20,6 +20,7 @@ import {
   dashboardStatusFromDaemon,
   resolveDashboardAsset,
 } from '../dashboard.js';
+import { buildRunOutput } from '../run-output.js';
 import { nullLogger, redactValue, type Logger } from '../logger.js';
 import { readEnvFileForAction } from './env-file.js';
 import { SSE_POLL_MS } from '../constants/daemon.js';
@@ -298,6 +299,15 @@ async function handleRequest(
           ts: l.ts,
           data: l.chunk.toString('utf-8'),
         }))));
+      }
+
+      // Cleaned, human-readable view of the run's engine output (final answer, error,
+      // readable transcript) -- see src/run-output.ts. The raw log stays at /logs.
+      if (method === 'GET' && sub === '/output') {
+        const run = ctx.store.getRun(id);
+        if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
+        const logs = ctx.store.getLogs(id, 'engine').map((l) => ({ stream: l.stream, data: l.chunk.toString('utf-8') }));
+        return sendJson(res, 200, redactValue(buildRunOutput(run, logs)));
       }
 
       if (method === 'GET' && sub === '/logs/stream') {

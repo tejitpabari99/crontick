@@ -66,6 +66,12 @@ Only the daemon process writes to `runs.db` and the `jobs/` directory at runtime
 - **Runs** are durable per SQLite WAL commit. Each `insertRun`, `updateRun`, and `appendLog` call is a separate synchronous statement.
 - **Logs** (daemon runtime) use `appendFileSync` to the daily log file; they survive crashes up to the last flushed line.
 
+## Where run logs and output come from
+
+Each job run is a child process (the prompt engine). The runner captures its stdout and stderr chunk by chunk, redacts secrets, and stores them in the `run_logs` table of `runs.db` (streams `stdout`, `stderr`, plus crontick's own lifecycle events on the `crontick` stream). The same text is mirrored, best effort, to `<logsDir>/<jobGuid>.log`. Nothing else is written per run except, for Claude runs, a tiny `<dataDir>/runs/<runId>.claude-hook.json` marker used only for restart recovery.
+
+For a Claude engine, stdout is `--output-format stream-json`: one JSON event per line -- `system` (including hook lifecycle), `assistant` messages (with `thinking` blocks and their opaque `signature`, text, and tool calls), `user` tool results, and a final `result`. That is what `crontick runs logs` (the raw log) shows. To read what a run produced, use the **output view** (`crontick runs output`, `getOutput`, `GET /api/runs/:id/output`): it parses the stream into the final answer, the error, and a readable transcript, and strips thinking signatures, hook payloads, and base64. Raw and cleaned views are computed from the same stored log; the raw log is never modified.
+
 ## Run history retention
 
 Each job retains at most `retention.maxRunsPerJob` runs (default `100`, configurable

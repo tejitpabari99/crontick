@@ -24,6 +24,7 @@ export type {
   LogEntry,
   LogSource,
   LogsResult,
+  RunOutput,
   RunRecord,
   StatsSummary,
 } from './client.js';

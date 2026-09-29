@@ -121,6 +121,7 @@ crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident qu
 | **runs** | `runs list [--job <id\|alias>] [--status …] [--limit …] [--since <ms>]` | List runs |
 | | `runs get <runId>` | Run details + session id |
 | | `runs logs <runId> [engine\|crontick] [--tail <n>]` | Run logs |
+| | `runs output <runId> [--json]` | Cleaned run output (final answer, error, transcript) |
 | | `runs cancel <runId>` | Cancel an in-progress run |
 | **share** | `share export` / `share import <file>` | Export / import jobs |
 | **stats** | `stats summary` / `stats job <id\|alias>` | Aggregate / per-job stats |
@@ -197,6 +198,7 @@ crontick also ships an MCP server that mirrors these commands one-to-one (tool p
 | `crontick_job_run_now` | `jobs run-now` |
 | `crontick_run_list` | `runs list` |
 | `crontick_run_logs_tail` | `runs logs` |
+| `crontick_run_output` | `runs output` |
 | `crontick_info` | `info` |
 | `crontick_daemon_stop` | `daemon stop` |
 | `crontick_daemon_reload` | `daemon reload` |

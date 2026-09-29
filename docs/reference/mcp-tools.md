@@ -66,7 +66,7 @@ Tools that expose run rows or log text apply the shared redaction contract befor
 
 ## Tool Inventory
 
-The MCP server exposes 21 `crontick_*` tools, matching `SURFACE_CAPABILITIES`.
+The MCP server exposes 22 `crontick_*` tools, matching `SURFACE_CAPABILITIES`.
 
 Removed tools are not present: the `crontick_config_*` get/set/unset/init/validate/engine tools, `crontick_schedule_validate`, `crontick_schedule_preview`, `crontick_dashboard_data`, `crontick_run_delete`, and the `crontick_daemon_start`/`crontick_daemon_status`/`crontick_daemon_restart` plus `crontick_dashboard_start`/`crontick_dashboard_status`/`crontick_dashboard_stop` tools. The dashboard is always served by the daemon; call `crontick_info`, read `configPath`, and open its `dashboardUrl`. Use `crontick_job_schedule` to preview an existing job's upcoming fire times.
 
@@ -251,6 +251,19 @@ Get the details and current status of a run.
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Run object, including resolved/redacted `command`, engine/status/timing fields, `pid` when spawned, `sessionId` when available, and `outputTruncated`. Claude runs with a complete result include `costUsd`, `turns`, redacted `usageJson` (JSON string), `transcriptPath`, and `engineStatus` (Claude result subtype). Raw-engine runs omit these fields.
+
+---
+
+### crontick_run_output
+
+Get the cleaned, human-readable output of a run: the engine's final answer, the error (if any), and a readable transcript. Prefer this over `crontick_run_logs_tail` to read what a run produced; use the logs tool for the raw engine log.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `id` | `string` | yes | — | Run ID |
+| `verbose` | `boolean` | no | `false` | Include diagnostics |
+
+**Result:** `RunOutput` -- `{ runId, status, format, result, error, output, stderr, sessionId, costUsd, turns, durationMs, truncated }`. See [library-api.md](library-api.md#runoutput).
 
 ---
 
