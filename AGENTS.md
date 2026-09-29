@@ -13,11 +13,11 @@ Read the relevant docs before modifying the corresponding area:
 | Mission and design principles | `docs/tech/` |
 | High-level design | `docs/architecture.md` |
 | Concepts (jobs, scheduling, execution, parity) | `docs/concepts/` |
-| Internal module design | `docs/internals/` |
+| Internal module design | `docs/implementation/` |
 | CLI / MCP / Library reference | `docs/reference/` |
 | Feature specifications | `docs/specs/` |
 | Design decisions and rationale | `docs/decisions/` |
-| Testing strategy and layers | `docs/testing.md` |
+| Testing strategy and layers | `docs/testing/testing.md` |
 | Full documentation index | `docs/README.md` |
 
 ## Required commands
@@ -79,7 +79,7 @@ If any surface is missing, `tests/surface-drift.test.ts` will fail. See `docs/co
 - No order dependence between tests.
 - Use fake timers for timing-sensitive tests.
 - Examples must type-check in CI (`npm run typecheck:examples`).
-- See `docs/testing.md` for test layers, running instructions, and the full procedure.
+- See `docs/testing/testing.md` for test layers, running instructions, and the full procedure.
 
 ## Documentation rules
 

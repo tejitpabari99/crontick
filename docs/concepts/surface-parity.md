@@ -94,4 +94,4 @@ These are tracked in the test's `NON_PARITY_CLIENT_METHODS` set.
 
 - [Architecture](../architecture.md) - component diagram and module map
 - [Error model](./error-model.md) - how errors translate across surfaces
-- [Testing](../testing.md) - the surface-drift test in detail
+- [Testing](../testing/testing.md) - the surface-drift test in detail

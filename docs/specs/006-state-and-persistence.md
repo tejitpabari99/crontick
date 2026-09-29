@@ -7,7 +7,7 @@
 Audience: contributors changing the store, schema, or retention behavior. Non-duplication: this
 spec is the normative contract; for the user-facing model see
 [concepts/state-and-storage.md](../concepts/state-and-storage.md), and for the schema/column
-detail see [internals/storage.md](../internals/storage.md).
+detail see [implementation/storage.md](../implementation/storage.md).
 
 ## Summary
 
@@ -145,6 +145,6 @@ None.
 
 - [001-job-definition.md](001-job-definition.md)
 - [004-daemon.md](004-daemon.md)
-- [../internals/storage.md](../internals/storage.md)
+- [../implementation/storage.md](../implementation/storage.md)
 - [../concepts/state-and-storage.md](../concepts/state-and-storage.md)
 - [../decisions/0001-architecture-and-runtime-model.md](../decisions/0001-architecture-and-runtime-model.md)

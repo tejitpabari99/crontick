@@ -247,7 +247,7 @@ State and configuration live in a platform-specific data directory (override wit
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide (DCO, code style, PR process). For coding agents, see [AGENTS.md](AGENTS.md). For testing, see [docs/testing.md](docs/testing.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide (DCO, code style, PR process). For coding agents, see [AGENTS.md](AGENTS.md). For testing, see [docs/testing/testing.md](docs/testing/testing.md).
 
 Validate a change:
 

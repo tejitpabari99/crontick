@@ -52,8 +52,8 @@ npm run e2e          # full Tier 1 (~47 tests)
 node tests/integration/run-harness.mjs --id CT-DAEMON-001   # single test
 ```
 
-See [`docs/e2e-testing.md`](e2e-testing.md) for all CLI flags, the isolation model, and log locations.
-For adding tests and check types, see [`tests/integration/README.md`](../tests/integration/README.md).
+See [`docs/testing/e2e-testing.md`](e2e-testing.md) for all CLI flags, the isolation model, and log locations.
+For adding tests and check types, see [`tests/integration/README.md`](../../tests/integration/README.md).
 
 ## Test layout
 
@@ -223,7 +223,7 @@ Workflow file: `.github/workflows/ci.yml`
 
 A second job `verify-package` (ubuntu-latest, Node 22) runs after the matrix, in this order:
 `npm run build` -> `npm run typecheck:examples:dist` (type-checks `docs/examples/` against the
-*built* `dist/index.d.ts`, not source — see [build-and-package.md](internals/build-and-package.md))
+*built* `dist/index.d.ts`, not source — see [build-and-package.md](../implementation/build-and-package.md))
 -> `npm pack --dry-run` + `scripts/verify-tarball.mjs` (tarball contents) ->
 `npm run verify-package-install` (packs a real tarball, installs it into a scratch directory,
 imports it and checks every required public export, then runs `crontick --version` and starts
@@ -322,7 +322,7 @@ publishing.
 6. The `release.yml` workflow creates a version PR via `changesets/action`; merge it.
 7. On merge, `changesets/action` publishes to npm with provenance.
 
-See [../RELEASING.md](../RELEASING.md) and [../CONTRIBUTING.md](../CONTRIBUTING.md) for full details.
+See [../../RELEASING.md](../../RELEASING.md) and [../../CONTRIBUTING.md](../../CONTRIBUTING.md) for full details.
 
 ## Troubleshooting tests
 

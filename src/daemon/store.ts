@@ -1,6 +1,6 @@
 // Dual-persistence layer: JSON files (source of truth for jobs) + SQLite WAL (runs, logs, job cache).
 // Only the daemon opens this store (single-writer invariant).
-// See docs/internals/storage.md
+// See docs/implementation/storage.md
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { writeFileSync, readFileSync, unlinkSync, readdirSync, existsSync, chmodSync } from 'node:fs';
@@ -923,7 +923,7 @@ export class Store {
   /**
    * Evict the oldest terminal (non-running/non-queued) runs for a job so that at
    * most `cap` rows remain for it, deleting matching run_logs first (run_logs
-   * has no FK/cascade — see docs/internals/storage.md) so a crash between the
+   * has no FK/cascade — see docs/implementation/storage.md) so a crash between the
    * two deletes can only ever leave a run with no logs, never an orphaned log
    * row with no parent run. In-flight runs are excluded from the candidate set
    * so an active run is never evicted no matter how old it is; this can let a

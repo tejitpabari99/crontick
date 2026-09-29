@@ -310,7 +310,7 @@ escalate to `SIGTERM` then `SIGKILL`; `'already-stopped'` if no daemon was runni
 lists any runs still `status: 'running'` at the moment the stop was accepted — they are not
 canceled by a stop, since [detached children survive daemon shutdown by design](../concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down)
 (PowerShell-hosted commands retain the exception described in [ADR 0001](../decisions/0001-architecture-and-runtime-model.md)).
-See [cli.md](./cli.md#crontick-info-daemon-stop) and [internals/daemon.md](../internals/daemon.md#shutdown).
+See [cli.md](./cli.md#crontick-info-daemon-stop) and [implementation/daemon.md](../implementation/daemon.md#shutdown).
 
 ### DaemonRestartResult
 
@@ -737,7 +737,7 @@ The stable code prefix stored in `runs.error` when `Store.reconcileOrphanRuns()`
 `queued` run (never spawned) or a `running` run confirmed dead by a process-liveness check, left
 behind by a daemon restart. A `running` run whose process is still alive (or the liveness check
 was inconclusive) is adopted instead and does not get this error — see
-[storage internals](../internals/storage.md#orphan-reconciliation). Not a thrown `CrontickError`
+[storage internals](../implementation/storage.md#orphan-reconciliation). Not a thrown `CrontickError`
 code — see [errors.md](errors.md#stored-run-error-values-not-crontickerror-codes).
 
 ### ORPHAN_RUN_ERROR_MESSAGE

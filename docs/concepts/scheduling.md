@@ -2,7 +2,7 @@
 
 Audience: users and contributors reasoning about when jobs fire. Non-duplication: for the
 normative contract see [specs/002-scheduling.md](../specs/002-scheduling.md); for the timer
-implementation see [internals/scheduler.md](../internals/scheduler.md).
+implementation see [implementation/scheduler.md](../implementation/scheduler.md).
 
 After reading this page you will understand how crontick determines when to run jobs, how timezones apply, and what happens when the daemon is unavailable at a scheduled time.
 

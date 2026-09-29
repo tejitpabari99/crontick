@@ -7,7 +7,7 @@
 Audience: contributors changing the scheduler or schedule validation. Non-duplication: this
 spec is the normative contract; for the mental model see
 [concepts/scheduling.md](../concepts/scheduling.md), and for implementation detail see
-[internals/scheduler.md](../internals/scheduler.md).
+[implementation/scheduler.md](../implementation/scheduler.md).
 
 ## Summary
 

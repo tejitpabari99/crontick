@@ -102,7 +102,7 @@ is a distinct, smaller vocabulary scoped to run outcomes:
 These prefixes are conventions for readability, not a closed enum validated
 anywhere, and they are unrelated to the `CrontickError` `code` table above —
 do not confuse a `runs.error` value like `DAEMON_RESTART: ...` with a thrown
-error code. See [storage internals](../internals/storage.md#orphan-reconciliation)
+error code. See [storage internals](../implementation/storage.md#orphan-reconciliation)
 and [errors reference](../reference/errors.md).
 
 ## Actionable error messages

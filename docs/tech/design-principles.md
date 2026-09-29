@@ -97,14 +97,14 @@ Each doc area has a word budget and exactly one narrative owner per topic; other
 the owner instead of repeating it (see `docs/README.md` for the area table).
 
 - `docs/concepts/*.md`: ≤800 words each.
-- `docs/internals/*.md`: ≤900 words each.
+- `docs/implementation/*.md`: ≤900 words each.
 - `docs/reference/*.md`: uncapped (exact lookups belong here, however long).
 - `docs/specs/NNN-*.md`: ≤600 words of prose (Summary/Motivation/Behavior/Edge cases/etc.); the
   Requirements and Acceptance-criteria lists don't count toward that limit.
 - `docs/architecture.md`: ≤2000 words -- a components-and-links map, not a restatement of
-  `docs/internals/`, `docs/concepts/`, or `docs/reference/`.
+  `docs/implementation/`, `docs/concepts/`, or `docs/reference/`.
 
-**Do** open every doc in `concepts/`, `internals/`, `specs/`, and `architecture.md` with a
+**Do** open every doc in `concepts/`, `implementation/`, `specs/`, and `architecture.md` with a
 one-line audience statement (e.g. "Audience: maintainers changing the scheduler.") and a
 non-duplication note naming the doc that owns any topic it would otherwise repeat.
 

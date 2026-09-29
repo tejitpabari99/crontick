@@ -34,7 +34,7 @@ removed -- see [ADR 0002](../decisions/0002-prompt-only-jobs-and-engine-adapters
 
 The engine is resolved from `config.json` by an **adapter** keyed on the engine's `type`
 (`raw` or `claude`); the adapter builds the actual command line and interprets the result. See
-[internals/engines.md](../internals/engines.md) for the adapter contract.
+[implementation/engines.md](../implementation/engines.md) for the adapter contract.
 
 All actions also share `cwd`, `env`, `envFile`, and `timeoutSec`.
 

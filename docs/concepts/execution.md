@@ -2,8 +2,8 @@
 
 Audience: users and contributors reasoning about how a run actually happens. Non-duplication:
 for the exact spawn/redaction/adoption mechanics see
-[internals/prompt-execution.md](../internals/prompt-execution.md); for the engine adapter
-contract see [internals/engines.md](../internals/engines.md); for the normative contract see
+[implementation/prompt-execution.md](../implementation/prompt-execution.md); for the engine adapter
+contract see [implementation/engines.md](../implementation/engines.md); for the normative contract see
 [specs/003-execution.md](../specs/003-execution.md).
 
 After reading this page: how crontick turns a scheduled tick into a completed run.
@@ -28,7 +28,7 @@ rebuilt for any run that survived: orphan reconciliation liveness-checks each `r
 ## Process spawn
 
 The runner resolves the job's engine (via its adapter -- see
-[internals/engines.md](../internals/engines.md)) into a concrete command/args/env, then spawns it
+[implementation/engines.md](../implementation/engines.md)) into a concrete command/args/env, then spawns it
 with `shell: false`, stdin ignored, and `detached: true, windowsHide: true` -- except
 `pwsh`/`powershell.exe` on Windows, spawned attached because detached processes get no console
 there and PowerShell needs one to write output
@@ -87,7 +87,7 @@ seconds between them, stopping early on `success`, `canceled`, or `timeout`.
 
 - **Engine resolution**: `action.engine` (or `config.defaultEngine`, the built-in `claude` engine
   unless changed) selects a configured engine, whose **adapter** turns it into a concrete
-  invocation -- see [internals/engines.md](../internals/engines.md) and
+  invocation -- see [implementation/engines.md](../implementation/engines.md) and
   [specs/007-prompt-jobs.md](../specs/007-prompt-jobs.md).
 - **Session precedence**: an explicit `sessionId` always wins over `reuseSession`, which is then
   stored as `false` with a notice.

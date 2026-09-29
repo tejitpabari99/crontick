@@ -241,7 +241,7 @@ an unrelated, run-scoped vocabulary; do not conflate the two.
 
 | Stored `runs.error` prefix | Set by | Meaning |
 |-----------------------------|--------|---------|
-| `DAEMON_RESTART: run was canceled ...` | `Store.reconcileOrphanRuns()` | A run left `queued` (never spawned), or left `running` and confirmed dead by a process-liveness check, when the daemon last stopped. Exported as `ORPHAN_RUN_ERROR_CODE` (`'DAEMON_RESTART'`) and `ORPHAN_RUN_ERROR_MESSAGE` from `src/errors.ts` and the package root — see [library-api.md](./library-api.md). A run whose liveness check finds the process still alive (or the check was inconclusive) is *adopted* instead of canceled — see [storage internals](../internals/storage.md#orphan-reconciliation) — and does not get this error. |
+| `DAEMON_RESTART: run was canceled ...` | `Store.reconcileOrphanRuns()` | A run left `queued` (never spawned), or left `running` and confirmed dead by a process-liveness check, when the daemon last stopped. Exported as `ORPHAN_RUN_ERROR_CODE` (`'DAEMON_RESTART'`) and `ORPHAN_RUN_ERROR_MESSAGE` from `src/errors.ts` and the package root — see [library-api.md](./library-api.md). A run whose liveness check finds the process still alive (or the check was inconclusive) is *adopted* instead of canceled — see [storage internals](../implementation/storage.md#orphan-reconciliation) — and does not get this error. |
 | `DAEMON_RESTART: adopted run was terminated` | `Runner.cancelRun()`/`cancelJob()` | An adopted run (see above) was explicitly canceled by a user or overlap policy after being re-attached to a new daemon process. |
 | `DAEMON_RESTART: process exited while the daemon was not running or between adoption and this check; exit code unknown` | `Runner` adoption poll, exported as `ADOPTED_RUN_EXITED_MESSAGE` from `src/daemon/runner.ts` (internal, not re-exported from the package root) | An adopted run's process had already exited by the time the adoption poll first checked it, so no exit code could be captured. Distinct from the orphan-cancellation message above: this run *did* run to completion, just without a daemon present to observe how. |
 | `MISSED: daemon was not running at the scheduled fire time` | `Store.recordMissedRun()`, exported as `MISSED_RUN_ERROR_MESSAGE` from `src/daemon/store.ts` (internal, not re-exported from the package root) | A scheduled fire that occurred while no daemon process was running; recorded, never executed. See [concepts/daemon-lifecycle.md](../concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down). |
@@ -253,7 +253,7 @@ an unrelated, run-scoped vocabulary; do not conflate the two.
 | `SESSION_PERSIST_FAILED: ...` | `src/daemon/runner.ts` | Persisting a captured session id back to the job file failed. |
 
 See [error-model.md](../concepts/error-model.md#stored-runserror-values-are-not-crontickerror-codes)
-and [storage internals](../internals/storage.md#orphan-reconciliation).
+and [storage internals](../implementation/storage.md#orphan-reconciliation).
 
 ---
 

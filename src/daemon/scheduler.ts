@@ -1,6 +1,6 @@
 // Per-job timer management: cron (via croner), interval, and one-shot schedules.
 // Emits 'tick' events consumed by the daemon to trigger runs.
-// See docs/internals/scheduler.md
+// See docs/implementation/scheduler.md
 import { EventEmitter } from 'node:events';
 import { Cron, type CronOptions } from 'croner';
 import type { Job, Schedule } from '../schemas/job.js';
@@ -234,7 +234,7 @@ export class Scheduler extends EventEmitter {
     // unschedule() being called synchronously from within this job's own first
     // tick listener: without the guard, the code below would unconditionally
     // re-arm a setInterval even though the job was just unscheduled from inside
-    // its own tick callback (see docs/internals/scheduler.md).
+    // its own tick callback (see docs/implementation/scheduler.md).
     let disposed = false;
     let currentTimer: { clear(): void } = safeSetTimeout(() => {
       if (disposed) return;

@@ -7,8 +7,8 @@
 Audience: contributors and coding agents changing the runner or engine adapters.
 Non-duplication: this spec is the normative contract; for the mental model see
 [concepts/execution.md](../concepts/execution.md), and for implementation detail see
-[internals/prompt-execution.md](../internals/prompt-execution.md) and
-[internals/engines.md](../internals/engines.md).
+[implementation/prompt-execution.md](../implementation/prompt-execution.md) and
+[implementation/engines.md](../implementation/engines.md).
 
 ## Summary
 

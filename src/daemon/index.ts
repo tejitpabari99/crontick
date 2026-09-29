@@ -1,6 +1,6 @@
 // Daemon entry point: starts the scheduler, runner, store, and HTTP API.
 // Re-execs with --experimental-sqlite on Node < 24 when the flag is absent.
-// See docs/internals/daemon.md
+// See docs/implementation/daemon.md
 import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, unlinkSync, existsSync, appendFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';

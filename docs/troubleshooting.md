@@ -189,7 +189,7 @@ and timestamps. **Job definitions are not affected**: jobs are the JSON files un
 **Confirm recovery:** `crontick info doctor` should report the daemon and dashboard reachable again,
 and `crontick jobs list` should show your jobs unchanged with empty run history (`crontick runs logs
 <job-id>` returns no runs until the job fires again). See
-[internals/storage.md](internals/storage.md) for the on-disk schema and
+[implementation/storage.md](implementation/storage.md) for the on-disk schema and
 [state-and-storage.md](concepts/state-and-storage.md) for the persistence model.
 
 ### DAEMON_START_LOCK_TIMEOUT
@@ -235,6 +235,6 @@ unresponsive. Common causes:
 After a hard-kill (on any platform), any run whose child process is still alive is picked up by
 the next daemon start's orphan reconciliation (adopted if still alive, canceled if not) — see
 [daemon-lifecycle.md](concepts/daemon-lifecycle.md#shutdown) and
-[storage.md](internals/storage.md#orphan-reconciliation).
+[storage.md](implementation/storage.md#orphan-reconciliation).
 
 For all error codes see [docs/reference/errors.md](reference/errors.md).

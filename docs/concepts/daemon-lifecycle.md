@@ -2,7 +2,7 @@
 
 Audience: users and contributors reasoning about daemon startup, shutdown, and downtime.
 Non-duplication: see [specs/004-daemon.md](../specs/004-daemon.md) for the contract and
-[internals/daemon.md](../internals/daemon.md) for implementation steps and HTTP routes.
+[implementation/daemon.md](../implementation/daemon.md) for implementation steps and HTTP routes.
 
 After reading this page: how the daemon starts, how shims find it, and what happens to scheduled jobs while it's stopped.
 
@@ -49,7 +49,7 @@ The daemon also registers `SIGINT`/`SIGTERM` handlers running the identical shut
 a POSIX-only fallback: Windows has no real user-space `SIGTERM` (`process.kill(pid, 'SIGTERM')`
 from another process there unconditionally terminates the target without invoking any handler),
 which is exactly why the HTTP route is primary. See
-[internals/daemon.md](../internals/daemon.md#shutdown) and
+[implementation/daemon.md](../implementation/daemon.md#shutdown) and
 [ADR 0001](../decisions/0001-architecture-and-runtime-model.md).
 
 In-flight child processes are deliberately left running across shutdown (see the next section);

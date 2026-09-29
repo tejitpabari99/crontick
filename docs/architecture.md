@@ -2,7 +2,7 @@
 
 Audience: everyone -- the entry point for understanding how crontick's pieces fit together.
 Non-duplication: this page is a components-and-links map, kept intentionally short. Full route
-tables, schema detail, and implementation mechanics live in `docs/internals/`; user-facing
+tables, schema detail, and implementation mechanics live in `docs/implementation/`; user-facing
 mental models live in `docs/concepts/`; exact field/flag/code lookups live in `docs/reference/`.
 Each section below links to its topic's one narrative owner instead of restating it.
 
@@ -26,15 +26,15 @@ Key public categories: the `CrontickClient`/`createClient` core; `CrontickError`
 
 | Component | Source | Role |
 |-----------|--------|------|
-| **CrontickClient** (core) | `src/client.ts` | The single source of business logic. Every operation (job CRUD, run management, daemon lifecycle, config, stats, dashboard, doctor) is a method here. Handles daemon connectivity (`ensureDaemon()`), issues HTTP requests, surfaces `CrontickError`. See [internals/core-client.md](internals/core-client.md). |
-| **CLI shim** | `src/cli/index.ts` | Commander v12 program: parses flags, calls `CrontickClient`, renders output. Zero business logic. See [internals/shims.md](internals/shims.md). |
-| **MCP server shim** | `src/mcp/index.ts` | Stdio MCP server registering 21 tools + one resource (`crontick://schemas/job`). See [internals/shims.md](internals/shims.md). |
+| **CrontickClient** (core) | `src/client.ts` | The single source of business logic. Every operation (job CRUD, run management, daemon lifecycle, config, stats, dashboard, doctor) is a method here. Handles daemon connectivity (`ensureDaemon()`), issues HTTP requests, surfaces `CrontickError`. See [implementation/core-client.md](implementation/core-client.md). |
+| **CLI shim** | `src/cli/index.ts` | Commander v12 program: parses flags, calls `CrontickClient`, renders output. Zero business logic. See [implementation/shims.md](implementation/shims.md). |
+| **MCP server shim** | `src/mcp/index.ts` | Stdio MCP server registering 21 tools + one resource (`crontick://schemas/job`). See [implementation/shims.md](implementation/shims.md). |
 | **Library API shim** | `src/index.ts` | Re-export facade; `import { createClient } from 'crontick'`. |
-| **Daemon** | `src/daemon/index.ts`, `api.ts`, `ensure.ts` | Long-running process bound to `127.0.0.1`; owns the scheduler, runner, and store behind a loopback HTTP API. See [internals/daemon.md](internals/daemon.md) and [concepts/daemon-lifecycle.md](concepts/daemon-lifecycle.md). |
-| **Scheduler** | `src/daemon/scheduler.ts` | `EventEmitter` managing per-job timers for `cron` (croner v9), `interval`, and `one-shot` schedules; emits `tick`. See [internals/scheduler.md](internals/scheduler.md). |
-| **Runner** | `src/daemon/runner.ts` | Spawns each job's prompt engine, enforcing overlap/retry/timeout, capturing redacted output. See [internals/prompt-execution.md](internals/prompt-execution.md). |
+| **Daemon** | `src/daemon/index.ts`, `api.ts`, `ensure.ts` | Long-running process bound to `127.0.0.1`; owns the scheduler, runner, and store behind a loopback HTTP API. See [implementation/daemon.md](implementation/daemon.md) and [concepts/daemon-lifecycle.md](concepts/daemon-lifecycle.md). |
+| **Scheduler** | `src/daemon/scheduler.ts` | `EventEmitter` managing per-job timers for `cron` (croner v9), `interval`, and `one-shot` schedules; emits `tick`. See [implementation/scheduler.md](implementation/scheduler.md). |
+| **Runner** | `src/daemon/runner.ts` | Spawns each job's prompt engine, enforcing overlap/retry/timeout, capturing redacted output. See [implementation/prompt-execution.md](implementation/prompt-execution.md). |
 | **Engine adapters** | `src/engines/` | Per-engine invocation/result-parsing behind one contract (see [Engine adapters](#engine-adapters) below). |
-| **Store** | `src/daemon/store.ts` | Dual persistence: job JSON files (source of truth) + SQLite (runs, logs, schedule state). See [internals/storage.md](internals/storage.md). |
+| **Store** | `src/daemon/store.ts` | Dual persistence: job JSON files (source of truth) + SQLite (runs, logs, schedule state). See [implementation/storage.md](implementation/storage.md). |
 
 ## Control and data flow
 
@@ -61,11 +61,11 @@ flowchart TD
     end
 ```
 
-Request sequence: a shim instantiates `CrontickClient` -> `ensureDaemon()` resolves/starts the daemon -> an HTTP request hits `daemon/api.ts` -> the route validates and delegates to Store/Scheduler -> on a schedule tick, the Scheduler emits, the daemon inserts a `queued` run, and `Runner` resolves the job's engine adapter, spawns it, streams redacted output into `Store`, and finalizes the run. See [internals/daemon.md](internals/daemon.md) for the full startup sequence and HTTP route table.
+Request sequence: a shim instantiates `CrontickClient` -> `ensureDaemon()` resolves/starts the daemon -> an HTTP request hits `daemon/api.ts` -> the route validates and delegates to Store/Scheduler -> on a schedule tick, the Scheduler emits, the daemon inserts a `queued` run, and `Runner` resolves the job's engine adapter, spawns it, streams redacted output into `Store`, and finalizes the run. See [implementation/daemon.md](implementation/daemon.md) for the full startup sequence and HTTP route table.
 
 ### On-disk state layout
 
-All state lives under one data directory (`CRONTICK_HOME`, or a platform default from `env-paths`) -- see [concepts/state-and-storage.md](concepts/state-and-storage.md) and [internals/storage.md](internals/storage.md) for the full layout and schema.
+All state lives under one data directory (`CRONTICK_HOME`, or a platform default from `env-paths`) -- see [concepts/state-and-storage.md](concepts/state-and-storage.md) and [implementation/storage.md](implementation/storage.md) for the full layout and schema.
 
 ## Engine adapters
 
@@ -76,7 +76,7 @@ sole built-in engine (`BUILT_IN_CONFIG.engines.claude`, `defaultEngine: "claude"
 engine without a `type` gets the original engine-agnostic (`raw`) behavior. The `ClaudeAdapter`
 owns non-interactive `stream-json` invocation, pre-assigned session IDs, transcript-backed resume
 preflight (`SESSION_NOT_FOUND`), and a best-effort `SessionEnd` completion-marker hook used only
-for restart recovery. See [internals/engines.md](internals/engines.md),
+for restart recovery. See [implementation/engines.md](implementation/engines.md),
 [specs/007-prompt-jobs.md](specs/007-prompt-jobs.md), and
 [ADR 0002](decisions/0002-prompt-only-jobs-and-engine-adapters.md).
 
@@ -118,7 +118,7 @@ block writes. Scheduling is timer-based (croner / `setTimeout`/`setInterval`), n
 Each job execution spawns one child process. Overlap concurrency is bounded per-job, not
 globally. Demand-start latency is bounded by `DEFAULT_STARTUP_TIMEOUT_MS` (10s); subsequent
 operations reuse the cached daemon URL. Run/log retention eviction batches in transactions of 500
-ids (see [internals/storage.md](internals/storage.md)) to stay under `node:sqlite`'s bound-parameter
+ids (see [implementation/storage.md](implementation/storage.md)) to stay under `node:sqlite`'s bound-parameter
 limit and cap per-transaction lock time.
 
 ## Compatibility requirements
@@ -142,7 +142,7 @@ the daemon, with no sandboxing or allowlist -- prompt-engine `command`/`args` ar
 configured (a malicious engine config can execute arbitrary code). **Secrets**: job JSON files are
 plain-text; `safeRedact()`/`redactText()`/`redactValue()` strip common secret patterns from
 captured output and config reads before persistence -- see
-[reference/errors.md](reference/errors.md) and [internals/storage.md](internals/storage.md).
+[reference/errors.md](reference/errors.md) and [implementation/storage.md](implementation/storage.md).
 **File permissions**: job files and `config.json` are written `0o600` (best-effort; a no-op on
 Windows). **MCP redaction**: `redactForLlm()` strips loopback addresses and filesystem paths from
 error messages returned to an MCP host. **No daemon network egress**: the daemon itself makes no

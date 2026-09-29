@@ -1,7 +1,7 @@
 # State and Storage
 
 Audience: users and contributors reasoning about where data lives and how it's retained.
-Non-duplication: for the exact SQLite schema see [internals/storage.md](../internals/storage.md);
+Non-duplication: for the exact SQLite schema see [implementation/storage.md](../implementation/storage.md);
 for the normative contract see
 [specs/006-state-and-persistence.md](../specs/006-state-and-persistence.md).
 
@@ -49,7 +49,7 @@ full schema is created in one idempotent pass on open -- there is no migration l
 rebuilt from disk on start), `runs` (status, exit code, timing, spawned `pid`,
 output-truncation flag), `run_logs` (stdout/stderr chunks, ordered by insertion), and
 `job_schedule_state` (per-job "last observed ticking" watermark for missed-fire computation). See
-[internals/storage.md](../internals/storage.md) for exact columns and indexes.
+[implementation/storage.md](../implementation/storage.md) for exact columns and indexes.
 
 Run statuses: `queued`, `running`, `success`, `failed`, `canceled` (a started run that was
 terminated), `skipped` (an overlap-skip fire that never started a process), `timeout`, `missed` (a
@@ -75,7 +75,7 @@ just lowered via `crontick info daemon reload`. Pruning is best-effort and count
 age limit): a job firing every minute keeps ~100 minutes of history, one firing monthly keeps
 years. Eviction is a hard delete with no undo -- back up first with `crontick share export
 --include-runs` if you need history past the cap. See
-[internals/storage.md](../internals/storage.md) for the eviction algorithm and
+[implementation/storage.md](../implementation/storage.md) for the eviction algorithm and
 [ADR 0001](../decisions/0001-architecture-and-runtime-model.md) for the rationale.
 
 A single run's own captured stdout/stderr is bounded separately by

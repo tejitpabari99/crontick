@@ -36,7 +36,7 @@ export const EngineConfigSchema = z.object({
  *
  * `maxOutputBytesPerRun`: caps stdout+stderr bytes captured per run before
  * the daemon stops persisting further output for that run (see
- * docs/internals/executors.md and src/daemon/runner.ts's captureChunk).
+ * docs/implementation/executors.md and src/daemon/runner.ts's captureChunk).
  * `min(1024)`: below this, even the truncation marker line barely fits.
  * `max(1_000_000_000)`: a sanity ceiling, same rationale as maxRunsPerJob.
  *

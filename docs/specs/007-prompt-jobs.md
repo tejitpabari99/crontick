@@ -7,7 +7,7 @@
 Audience: contributors changing engine adapters, session handling, or prompt CLI surface
 behavior. Non-duplication: this spec is the normative contract; for the mental model see
 [concepts/execution.md](../concepts/execution.md), and for the adapter implementation see
-[internals/engines.md](../internals/engines.md).
+[implementation/engines.md](../implementation/engines.md).
 
 ## Summary
 

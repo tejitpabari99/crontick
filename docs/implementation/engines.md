@@ -5,7 +5,7 @@ Implements: `src/engines/types.ts`, `src/engines/registry.ts`, `src/engines/raw-
 
 Audience: contributors adding or changing a prompt-engine adapter. Non-duplication: for *why*
 adapters exist see [ADR 0002](../decisions/0002-prompt-only-jobs-and-engine-adapters.md); for the runner's
-side of the contract see [internals/prompt-execution.md](./prompt-execution.md); for the
+side of the contract see [implementation/prompt-execution.md](./prompt-execution.md); for the
 user-facing behavior contract see [specs/007-prompt-jobs.md](../specs/007-prompt-jobs.md).
 
 ---

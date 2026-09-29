@@ -1,5 +1,5 @@
 // Loopback-only HTTP API for the daemon. All routes enforce localhost access.
-// See docs/internals/daemon.md for the full route table.
+// See docs/implementation/daemon.md for the full route table.
 import http from 'node:http';
 import { createReadStream } from 'node:fs';
 import { URL } from 'node:url';

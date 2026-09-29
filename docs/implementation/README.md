@@ -1,4 +1,4 @@
-# Internals
+# Implementation
 
 Implementation details for maintainers and coding agents. Everything here is
 subject to change without a major version bump. Do not depend on any internal

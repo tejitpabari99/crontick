@@ -237,7 +237,7 @@ Key `TestEntry` fields:
 
 3. **Add a test** in `tests.json` that exercises the new check type (see "How to add a new test" above).
 
-4. **Document the type** in the check-type table in this README and in `docs/internals/` if applicable.
+4. **Document the type** in the check-type table in this README and in `docs/implementation/` if applicable.
 
 ---
 

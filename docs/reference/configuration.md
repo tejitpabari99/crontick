@@ -137,7 +137,7 @@ crontick info daemon stop
 
 `maxLogFiles` bounds daily `daemon-YYYY-MM-DD.log` files under the daemon log directory; oldest files beyond the cap are deleted best-effort.
 
-See [state-and-storage.md](../concepts/state-and-storage.md#run-history-retention) for the user-facing model, and [storage internals](../internals/storage.md) for eviction details.
+See [state-and-storage.md](../concepts/state-and-storage.md#run-history-retention) for the user-facing model, and [storage internals](../implementation/storage.md) for eviction details.
 
 ---
 
@@ -273,7 +273,7 @@ Root: `CRONTICK_HOME` or platform default.
 
 ## SQLite Schema (runs.db)
 
-Journal mode: WAL. The full schema is documented in [internals/storage.md](../internals/storage.md#schema).
+Journal mode: WAL. The full schema is documented in [implementation/storage.md](../implementation/storage.md#schema).
 
 ---
 

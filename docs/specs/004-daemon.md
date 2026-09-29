@@ -8,7 +8,7 @@ Audience: contributors changing the daemon process, its HTTP API, or its lifecyc
 Non-duplication: this spec is the normative contract. For the demand-start/shutdown narrative
 and rationale, see [concepts/daemon-lifecycle.md](../concepts/daemon-lifecycle.md); for the
 route table and startup-sequence implementation, see
-[internals/daemon.md](../internals/daemon.md).
+[implementation/daemon.md](../implementation/daemon.md).
 
 ## Summary
 
@@ -75,7 +75,7 @@ on time even when no interactive session is open, without requiring OS service r
 
 ## Behavior
 
-See [internals/daemon.md](../internals/daemon.md) for the full 18-step startup sequence and the
+See [implementation/daemon.md](../implementation/daemon.md) for the full 18-step startup sequence and the
 HTTP route table. In brief: guard single-instance -> open store -> prune logs -> load jobs ->
 compute missed fires -> reconcile orphans -> schedule enabled jobs -> bind HTTP -> write port
 file -> wire shutdown. Demand-start and shutdown mechanics (why HTTP-first, why POSIX signals are
@@ -131,4 +131,4 @@ None.
 - [003-execution.md](003-execution.md)
 - [006-state-and-persistence.md](006-state-and-persistence.md)
 - [../concepts/daemon-lifecycle.md](../concepts/daemon-lifecycle.md)
-- [../internals/daemon.md](../internals/daemon.md)
+- [../implementation/daemon.md](../implementation/daemon.md)

@@ -111,6 +111,6 @@ Each run writes to `.e2e-scratch/logs/<YYYY-MM-DDTHH-mm-ss>/`:
 
 ## Adding tests and check types
 
-See [`tests/integration/README.md`](../tests/integration/README.md) for the full guide:
+See [`tests/integration/README.md`](../../tests/integration/README.md) for the full guide:
 schema reference, how to add a new test, how to add a new check type, the check-type catalogue,
 and the `tests.json` field reference.

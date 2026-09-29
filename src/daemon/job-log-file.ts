@@ -3,7 +3,7 @@
 // run-log storage. All writes are best-effort and never block or fail a run
 // (a missing directory or a failed write is swallowed, at most one debug log
 // is emitted). The factory is injectable so the runner and tests can supply a
-// fake sink without touching real disk. See docs/internals/executors.md.
+// fake sink without touching real disk. See docs/implementation/executors.md.
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '../config.js';
