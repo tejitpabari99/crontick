@@ -427,9 +427,9 @@ describe('CLI e2e with daemon', () => {
     const second = cli(['jobs', 'run-now', 'cli-skipped-run-job'], env());
     expect(second.status, second.stderr).toBe(0);
     const secondId = parseCliObject(second.stdout).runId;
-    const skipped = cli(['runs', 'list', '--job', 'cli-skipped-run-job', '--status', 'skipped'], env());
+    const skipped = cli(['runs', 'list', '--job', 'cli-skipped-run-job', '--status', 'skipped', '--json'], env());
     expect(skipped.status, skipped.stderr).toBe(0);
-    expect(parseCliTable(skipped.stdout)).toEqual(expect.arrayContaining([expect.objectContaining({ id: secondId, status: 'skipped' })]));
+    expect(JSON.parse(skipped.stdout)).toEqual(expect.arrayContaining([expect.objectContaining({ id: secondId, status: 'skipped' })]));
     const summary = parseCliObject(cli(['stats', 'summary'], env()).stdout);
     const jobStats = parseCliObject(cli(['stats', 'job', 'cli-skipped-run-job'], env()).stdout);
     expect(summary).toMatchObject({ skipped: expect.any(Number), canceled: expect.any(Number) });
@@ -547,9 +547,15 @@ describe('CLI e2e with daemon', () => {
     expect(run.id).toBe(runId);
     expect(run).toHaveProperty('command');
     expect(typeof run.outputTruncated).toBe('boolean');
-    const listRuns = cli(['runs', 'list', '--job', 'e2e-job', '--limit', '5', '--status', 'success'], env());
+    const listRuns = cli(['runs', 'list', '--job', 'e2e-job', '--limit', '5', '--status', 'success', '--json'], env());
     expect(listRuns.status, listRuns.stderr).toBe(0);
-    const runs = parseCliTable<{ id: string; status: string }>(listRuns.stdout);
+    const runs = JSON.parse(listRuns.stdout) as Array<{ id: string; status: string; startedAt: number }>;
+    expect(typeof runs[0]!.startedAt).toBe('number'); // --json keeps raw epoch milliseconds
+    const humanRuns = cli(['runs', 'list', '--job', 'e2e-job', '--limit', '5', '--status', 'success'], env());
+    expect(humanRuns.status, humanRuns.stderr).toBe(0);
+    expect(humanRuns.stdout).toMatch(/^RUN\s+JOB\s+STATUS\s+STARTED\s+ENDED\s+DURATION\s+EXIT\s+ERROR/);
+    expect(humanRuns.stdout).toMatch(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d/);
+    expect(humanRuns.stdout).not.toMatch(/\b1[6-9]\d{11}\b/);
     expect(runs.every((listed) => listed.status === 'success')).toBe(true);
     expect(runs.some((listed) => listed.id === runId)).toBe(true);
     const logs = cli(['runs', 'logs', runId, '--tail', '5'], env());
@@ -619,8 +625,8 @@ describe('CLI e2e with daemon', () => {
     const imported = cli(['share', 'import', importFile], env());
     expect(imported.status, imported.stderr).toBe(0);
     expect(parseCliObject(imported.stdout).imported).toBe(1);
-    const listRuns = cli(['runs', 'list', '--job', 'import-export-job'], env());
-    expect(parseCliTable<{ id: string }>(listRuns.stdout).some((run) => run.id === runId)).toBe(true);
+    const listRuns = cli(['runs', 'list', '--job', 'import-export-job', '--json'], env());
+    expect((JSON.parse(listRuns.stdout) as Array<{ id: string }>).some((run) => run.id === runId)).toBe(true);
   }, 10_000);
 
   it('share import and jobs new/update --file report JSON parse errors without mutation', () => {

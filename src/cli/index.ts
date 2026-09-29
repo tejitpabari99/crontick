@@ -16,6 +16,7 @@ import { createClient, type CrontickClient } from '../client.js';
 import { buildJobPatchFromUpdateOptions, type JobCreateCliOptions, type JobPatchCliOptions } from '../job-input.js';
 import { isVerboseEnv, type LogEvent } from '../logger.js';
 import { readJsonFile } from '../json-file.js';
+import { formatRunsTable } from '../run-format.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -490,14 +491,17 @@ runs.command('list')
   .option('--limit <n>', 'Maximum runs to return', parseInteger)
   .option('--since <ms>', 'Only runs since epoch milliseconds', parseInteger)
   .option('--status <status>', `Filter by run status (${RUN_STATUSES.join('|')})`)
+  .option('--json', 'Print the raw run records as JSON (epoch-millisecond timestamps, full error text)')
   .action(async (opts) => {
     try {
-      print(await client().listRuns({
+      const listed = await client().listRuns({
         jobId: opts.job as string | undefined,
         limit: opts.limit as number | undefined,
         since: opts.since as number | undefined,
         status: opts.status as string | undefined,
-      }));
+      });
+      if (opts.json) stdout(JSON.stringify(listed, null, 2));
+      else stdout(listed.length === 0 ? '(no items)' : formatRunsTable(listed));
     } catch (err) { handleError(err); }
   });
 

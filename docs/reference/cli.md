@@ -210,6 +210,9 @@ crontick runs list
 | `--limit <n>` | integer | — | Maximum runs to return |
 | `--since <ms>` | integer | — | Only runs since epoch milliseconds |
 | `--status <status>` | string | — | Filter by run status: `queued`\|`running`\|`success`\|`failed`\|`canceled`\|`skipped`\|`timeout`\|`missed` |
+| `--json` | boolean | `false` | Print the raw run records as JSON: epoch-millisecond timestamps, `durationMs`, and full error text |
+
+The default output is an aligned table with columns `RUN`, `JOB`, `STATUS`, `STARTED`, `ENDED` (ISO-8601 in the machine's local timezone, with offset), `DURATION` (seconds, for example `187s` or `1.23s`), `EXIT`, and `ERROR` (whitespace collapsed and truncated to 60 characters; use `runs get <runId>` or `--json` for the full text).
 
 ---
 
