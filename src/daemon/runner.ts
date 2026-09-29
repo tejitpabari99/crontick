@@ -16,7 +16,10 @@ import { readEnvFileForAction } from './env-file.js';
 import { createJobLogFileFactory, type JobLogFile, type JobLogFileFactory } from './job-log-file.js';
 import { readClaudeCompletionMarker, removeClaudeCompletionMarker } from '../claude-completion-marker.js';
 import { DEFAULT_MAX_OUTPUT_BYTES_PER_RUN } from '../constants/retention.js';
-import { ADOPTED_RUN_POLL_MS } from '../constants/daemon.js';
+import { ADOPTED_RUN_POLL_MS, EXIT_CLOSE_GRACE_MS, KILL_GRACE_MS, TERMINAL_ERROR_SETTLE_MS } from '../constants/daemon.js';
+import { killProcessTree, type TreeKiller } from './process-tree.js';
+import type { TerminalEngineError } from '../engines/types.js';
+import { StringDecoder } from 'node:string_decoder';
 import { sleep } from '../utils/sleep.js';
 
 // ── Output cap (L5) ───────────────────────────────────────────────────────────
@@ -59,6 +62,8 @@ interface RunResult {
   usageJson?: string;
   transcriptPath?: string;
   engineStatus?: string;
+  /** Set when retrying cannot help (e.g. the engine reported an authentication failure). */
+  noRetry?: boolean;
 }
 
 /** Claude result usage is per attempt; retries belong to one crontick run. */
@@ -238,6 +243,8 @@ export class Runner {
     jobLogFiles?: JobLogFileFactory,
     /** Injectable file check so a resume miss can be tested without touching ~/.claude. */
     private readonly transcriptExists: (path: string) => boolean = transcriptFileExists,
+    /** Injectable process-tree killer (defaults to taskkill /T /F on Windows, process-group kill on POSIX). */
+    private readonly killTree: TreeKiller = killProcessTree,
   ) {
     this.logger = logger.child('runner');
     this.jobLogFiles = jobLogFiles ?? createJobLogFileFactory(this.logger);
@@ -434,6 +441,7 @@ export class Runner {
         this.appendDiagnosticLog(log, 'attempt completed', { attempt, status: lastResult.status, exitCode: lastResult.exitCode });
         if (lastResult.status === 'success') break;
         if (lastResult.status === 'canceled' || lastResult.status === 'timeout') break;
+        if (lastResult.noRetry) break;
       }
     } finally {
       // Only clear if these maps still point to THIS run's state. A newer run
@@ -687,6 +695,27 @@ export class Runner {
         }
       }
       child.unref?.();
+
+      // Process-lifecycle guards: a run must always finalize, even when the
+      // child (or a grandchild holding its stdio) never exits on its own.
+      let exited = false;
+      let hardKillTimer: NodeJS.Timeout | undefined;
+      let settleTimer: NodeJS.Timeout | undefined;
+      let exitTimer: NodeJS.Timeout | undefined;
+      let terminalError: TerminalEngineError | undefined;
+      /** After SIGTERM, escalate to a forced tree kill, then finalize even if `close` never arrives. */
+      const armHardKill = (forced?: () => RunResult): void => {
+        if (exited || hardKillTimer) return;
+        hardKillTimer = setTimeout(() => {
+          if (exited) return;
+          this.killTree(child, true);
+          if (forced) {
+            const t = setTimeout(() => finish(forced()), EXIT_CLOSE_GRACE_MS);
+            t.unref?.();
+          }
+        }, KILL_GRACE_MS);
+        hardKillTimer.unref?.();
+      };
       if (timeoutMs !== undefined) {
         timeoutHandle = setTimeout(() => {
           timedOut = true;
@@ -695,6 +724,7 @@ export class Runner {
           } catch {
             // already gone
           }
+          armHardKill(() => ({ status: 'timeout', error: `run exceeded timeoutSec (${action.timeoutSec}s)` }));
         }, timeoutMs);
         timeoutHandle.unref?.();
       }
@@ -705,6 +735,7 @@ export class Runner {
         if (settled) return;
         settled = true;
         if (timeoutHandle) clearTimeout(timeoutHandle);
+        if (settleTimer) clearTimeout(settleTimer);
         resolve(runResult);
       };
       const failFromCallback = (err: unknown) => {
@@ -716,10 +747,32 @@ export class Runner {
         }
       };
 
+      // Structured engines (Claude stream-json) announce failure in-band. Scan
+      // complete stdout lines so a reported error ends the run immediately
+      // instead of waiting for the process to exit.
+      const stdoutDecoder = new StringDecoder('utf8');
+      let stdoutLineBuffer = '';
+      const scanStdout = (chunk: Buffer): void => {
+        if (settled) return;
+        stdoutLineBuffer += stdoutDecoder.write(chunk);
+        let newline = stdoutLineBuffer.indexOf('\n');
+        while (newline >= 0) {
+          const line = stdoutLineBuffer.slice(0, newline);
+          stdoutLineBuffer = stdoutLineBuffer.slice(newline + 1);
+          const detected = adapter.detectTerminalError(line);
+          if (detected) onTerminalError(detected);
+          if (settled) return;
+          newline = stdoutLineBuffer.indexOf('\n');
+        }
+        // A single unterminated line this large is not a stream-json event.
+        if (stdoutLineBuffer.length > 4 * 1024 * 1024) stdoutLineBuffer = '';
+      };
+
       child.stdout?.on('data', (chunk: Buffer) => {
         try {
           appendTranscript(chunk);
           captureChunk('stdout', chunk);
+          scanStdout(chunk);
         } catch (err) {
           failFromCallback(err);
         }
@@ -734,7 +787,116 @@ export class Runner {
         }
       });
 
-      child.on('close', (code, sig) => {
+      /** Parse the engine output captured so far into the run's final result and finish. */
+      const settleFromOutput = (code: number | null): void => {
+        const parsed = adapter.parseResult(code, readTranscriptTail(), '');
+        const resumableSessionId = adapter.resumableSessionId(parsed);
+        if (resumableSessionId) {
+          try {
+            store.markCompletedClaudeSession(runId, resumableSessionId);
+          } catch (err) {
+            this.logger.error('Failed to mark Claude session as completed', { jobId: job.id, runId, error: String(err) });
+          }
+        }
+        const result: RunResult = {
+          status: parsed.status,
+          exitCode: parsed.exitCode,
+          error: parsed.error,
+          costUsd: parsed.costUsd,
+          turns: parsed.turns,
+          usageJson: parsed.usage === undefined ? undefined : JSON.stringify(redactValue(parsed.usage)),
+          transcriptPath: parsed.sessionId === undefined
+            ? undefined
+            : adapter.resumeTranscriptPath(action.cwd ?? process.cwd(), parsed.sessionId),
+          engineStatus: parsed.engineStatus,
+        };
+        if (terminalError) {
+          result.status = 'failed';
+          result.error = terminalError.message;
+          if (!terminalError.retryable) result.noRetry = true;
+        }
+        if (capturePromptSession && adapter.canCaptureSession(parsed)) {
+          const resolvedSessionId = adapter.resolveSessionId(engineOptions, parsed);
+          if (!resolvedSessionId) {
+            this.logger.debug('Session id capture failed', { jobId: job.id, runId });
+            finish({
+              ...result,
+              status: 'failed',
+              error: 'SESSION_ID_NOT_FOUND: prompt engine output did not include a session id. Configure an explicit session id with --session-id <id>, or disable reuseSession.',
+            });
+            return;
+          }
+          // Persist the extracted session id onto the run record (for the
+          // dashboard and `runs get`), independent of whether the job-level
+          // capture below wins its race.
+          try {
+            store.updateRun(runId, { sessionId: resolvedSessionId });
+          } catch (err) {
+            this.logger.error('Failed to persist run sessionId', { jobId: job.id, runId, error: String(err) });
+          }
+          if (captureAction) {
+            let persisted = false;
+            try {
+              persisted = store.tryCapturePromptSession(job.id, captureAction, resolvedSessionId);
+            } catch (err) {
+              finish({
+                ...result,
+                status: 'failed',
+                error: `SESSION_PERSIST_FAILED: ${errorMessage(err)}`,
+              });
+              return;
+            }
+            if (persisted) {
+              this.logger.debug('Session id captured and persisted', { jobId: job.id, runId });
+              try {
+                log.append('crontick', Buffer.from(`[crontick] captured session id: ${resolvedSessionId}\n`, 'utf-8'));
+              } catch (err) {
+                finish({
+                  ...result,
+                  status: 'failed',
+                  error: `SESSION_PERSIST_FAILED: ${errorMessage(err)}`,
+                });
+                return;
+              }
+            }
+          }
+        }
+        finish(result);
+      };
+
+      const onTerminalError = (detected: TerminalEngineError): void => {
+        if (settled) return;
+        terminalError = terminalError
+          ? { message: detected.message, retryable: detected.retryable && terminalError.retryable }
+          : detected;
+        if (!settleTimer) {
+          // A healthy engine exits right after reporting the error; give it a
+          // moment to do so (exit code, session hooks), then end the run anyway.
+          settleTimer = setTimeout(settleTerminal, TERMINAL_ERROR_SETTLE_MS);
+          settleTimer.unref?.();
+        }
+      };
+
+      const settleTerminal = (): void => {
+        if (settled || !terminalError) return;
+        log.crontick('engine reported a terminal error; ending run and terminating the process tree', {
+          error: terminalError.message,
+          retryable: terminalError.retryable,
+        });
+        try {
+          settleFromOutput(null);
+        } catch (err) {
+          finish({ status: 'failed', error: terminalError.message, noRetry: !terminalError.retryable });
+          this.logger.error('Failed to build result for terminal engine error', { jobId: job.id, runId, error: String(err) });
+        }
+        this.killTree(child, false);
+        armHardKill();
+      };
+
+      const onClosed = (code: number | null, sig: NodeJS.Signals | null): void => {
+        exited = true;
+        if (hardKillTimer) clearTimeout(hardKillTimer);
+        if (exitTimer) clearTimeout(exitTimer);
         try {
           flushRedactor('stdout');
           flushRedactor('stderr');
@@ -745,6 +907,7 @@ export class Runner {
         const durationMs = Date.now() - startedAt;
         this.logger.debug('Child process closed', { jobId: job.id, runId, code, signal: sig, durationMs });
         this.appendDiagnosticLog(log, 'child closed', { code, signal: sig, durationMs });
+        if (settled) return;
         if (signal.aborted) {
           finish({ status: 'canceled', error: 'aborted' });
         } else if (timedOut) {
@@ -752,80 +915,30 @@ export class Runner {
           // this SIGTERM, so close() looks identical to a user cancellation
           // (code: null, signal: 'SIGTERM') unless we track intent ourselves.
           finish({ status: 'timeout', error: `run exceeded timeoutSec (${action.timeoutSec}s)` });
-        } else if (sig === 'SIGTERM' || sig === 'SIGKILL') {
+        } else if (!terminalError && (sig === 'SIGTERM' || sig === 'SIGKILL')) {
           finish({ status: 'canceled', error: `killed by signal ${sig}` });
         } else {
-          const parsed = adapter.parseResult(code, readTranscriptTail(), '');
-          const resumableSessionId = adapter.resumableSessionId(parsed);
-          if (resumableSessionId) {
-            try {
-              store.markCompletedClaudeSession(runId, resumableSessionId);
-            } catch (err) {
-              this.logger.error('Failed to mark Claude session as completed', { jobId: job.id, runId, error: String(err) });
-            }
-          }
-          const result: RunResult = {
-            status: parsed.status,
-            exitCode: parsed.exitCode,
-            error: parsed.error,
-            costUsd: parsed.costUsd,
-            turns: parsed.turns,
-            usageJson: parsed.usage === undefined ? undefined : JSON.stringify(redactValue(parsed.usage)),
-            transcriptPath: parsed.sessionId === undefined
-              ? undefined
-              : adapter.resumeTranscriptPath(action.cwd ?? process.cwd(), parsed.sessionId),
-            engineStatus: parsed.engineStatus,
-          };
-          if (capturePromptSession && adapter.canCaptureSession(parsed)) {
-            const resolvedSessionId = adapter.resolveSessionId(engineOptions, parsed);
-            if (!resolvedSessionId) {
-              this.logger.debug('Session id capture failed', { jobId: job.id, runId });
-              finish({
-                ...result,
-                status: 'failed',
-                error: 'SESSION_ID_NOT_FOUND: prompt engine output did not include a session id. Configure an explicit session id with --session-id <id>, or disable reuseSession.',
-              });
-              return;
-            }
-            // Persist the extracted session id onto the run record (for the
-            // dashboard and `runs get`), independent of whether the job-level
-            // capture below wins its race.
-            try {
-              store.updateRun(runId, { sessionId: resolvedSessionId });
-            } catch (err) {
-              this.logger.error('Failed to persist run sessionId', { jobId: job.id, runId, error: String(err) });
-            }
-            if (captureAction) {
-              let persisted = false;
-              try {
-                persisted = store.tryCapturePromptSession(job.id, captureAction, resolvedSessionId);
-              } catch (err) {
-                finish({
-                  ...result,
-                  status: 'failed',
-                  error: `SESSION_PERSIST_FAILED: ${errorMessage(err)}`,
-                });
-                return;
-              }
-              if (persisted) {
-                this.logger.debug('Session id captured and persisted', { jobId: job.id, runId });
-                try {
-                  log.append('crontick', Buffer.from(`[crontick] captured session id: ${resolvedSessionId}\n`, 'utf-8'));
-                } catch (err) {
-                  finish({
-                    ...result,
-                    status: 'failed',
-                    error: `SESSION_PERSIST_FAILED: ${errorMessage(err)}`,
-                  });
-                  return;
-                }
-              }
-            }
-          }
-          finish(result);
+          settleFromOutput(code);
         }
-        void durationMs; // consumed below via store
+      };
+
+      child.on('close', onClosed);
+      // `close` waits for stdio to drain; a grandchild that inherited the pipes
+      // can hold it open long after the process itself is gone. Finalize from
+      // `exit` after a short grace so such a run cannot stay "running" forever.
+      child.on('exit', (code, sig) => {
+        exited = true;
+        if (hardKillTimer) clearTimeout(hardKillTimer);
+        if (settled || exitTimer) return;
+        exitTimer = setTimeout(() => onClosed(code, sig), EXIT_CLOSE_GRACE_MS);
+        exitTimer.unref?.();
       });
+
+      if (signal.aborted) {
+        armHardKill(() => ({ status: 'canceled', error: 'aborted' }));
+      } else {
+        signal.addEventListener('abort', () => armHardKill(() => ({ status: 'canceled', error: 'aborted' })), { once: true });
+      }
 
       child.on('error', (err: NodeJS.ErrnoException) => {
         this.logger.debug('Child process error', { jobId: job.id, runId, code: err.code, message: err.message });

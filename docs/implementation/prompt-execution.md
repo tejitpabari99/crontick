@@ -69,6 +69,12 @@ command happened to be PowerShell. See [ADR 0001](../decisions/0001-architecture
 `timedOut` flag set just before the runner's own `SIGTERM` lets the `close` handler record
 `status: 'timeout'` instead of the generic `canceled` a plain signal produces.
 
+## Terminal errors, kill escalation, and guaranteed finalization
+
+`EngineAdapter.detectTerminalError(line)` is called for every complete stdout line. The Claude adapter reports a `result` event with `is_error: true` and an assistant message carrying an authentication API error (401, `authentication_error`, invalid OAuth token). On detection the runner starts a `TERMINAL_ERROR_SETTLE_MS` (2s) timer. A healthy engine exits within it and the normal close path finalizes the run with its real exit code; otherwise `settleTerminal()` finalizes the run `failed` with the parsed message (and `noRetry` for authentication failures), releases the active-run lock, and terminates the process tree through the injectable `TreeKiller` (`src/daemon/process-tree.ts`: `taskkill /PID <pid> /T /F` on Windows, `process.kill(-pid)` on POSIX where children lead their own process group), then force-kills after `KILL_GRACE_MS` (5s).
+
+The same guards cover timeouts and cancels (SIGTERM, then a forced tree kill, then finalization even without `close`) and a process that exits while a grandchild keeps its stdio open (finalized `EXIT_CLOSE_GRACE_MS` after `exit`). The Claude `SessionEnd` hook is unrelated to the hang: it only writes a marker file and cannot block or veto exit; crontick additionally sets a 10s hook `timeout` so it can never hold up shutdown.
+
 ## Stream capture, redaction, and the output cap
 
 `RunLogWriter` fans each chunk to two sinks: `store.appendLog()` (SQLite, source of truth) and a

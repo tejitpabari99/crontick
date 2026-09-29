@@ -78,6 +78,10 @@ already-started process. `missed` is recorded directly by the daemon's startup m
 for a fire that had no run because the daemon wasn't running. See
 [daemon-lifecycle.md](./daemon-lifecycle.md#what-happens-while-the-daemon-is-down).
 
+## Engine-reported failures and stuck processes
+
+If the engine reports a terminal failure in its output (for example Claude's `result` with `is_error: true`, or a 401 authentication error), the run is marked `failed` with that message within a couple of seconds and the process tree is terminated if it has not exited, so the next scheduled tick runs instead of being `skipped` behind a stuck run. Authentication failures are never retried. Timed-out and canceled runs are force-killed after a short grace period and always finalize.
+
 ## Retry behavior
 
 If `retry.max > 0`, the Runner loops up to `max + 1` attempts, sleeping `retry.backoffSec`

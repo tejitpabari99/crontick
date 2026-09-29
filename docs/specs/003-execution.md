@@ -50,7 +50,7 @@ local cron daemon, with observability through captured logs and structured run r
 - **R-003-15**: On expiry of the runner's own timeout timer, run status MUST be `timeout`, distinct from `canceled`, with an error message naming `timeoutSec`.
 - **R-003-16**: On `ABORT_ERR` or signal aborted, run status MUST be `canceled`.
 - **R-003-17**: On `ENOENT` for the prompt engine binary, the error message MUST name the engine and suggest corrective action.
-- **R-003-18**: Retry MUST re-attempt up to `retry.max` times; on each retry, the runner MUST wait `retry.backoffSec` seconds. Retry MUST NOT occur on `canceled` or `timeout` status.
+- **R-003-18**: Retry MUST re-attempt up to `retry.max` times; on each retry, the runner MUST wait `retry.backoffSec` seconds. Retry MUST NOT occur on `canceled` or `timeout` status, nor on non-retryable engine errors (R-003-34).
 - **R-003-19**: After all attempts complete, the runner MUST finalize the run with `endedAt`, `durationMs`, final `status`, `exitCode`, and `error`.
 - **R-003-20**: `safeRedact` MUST only redact text-like chunks; binary data (NUL bytes or failed UTF-8 round-trip) MUST be stored as-is.
 - **R-003-22**: `cancelRun(runId)` MUST abort the active run by its run ID and return true; if no such active run exists, it MUST return false.
@@ -62,6 +62,9 @@ local cron daemon, with observability through captured logs and structured run r
 - **R-003-30**: Log retrieval MUST support a `source` filter of `all` (default), `engine` (`stdout`+`stderr`), or `crontick`, exposed consistently across `Store.getLogs()`, the client, the daemon route, the MCP tool, and the CLI `--source` flag.
 - **R-003-31**: Every run's logs MUST additionally be mirrored to a per-job log file at `<logging.dir ?? <dataDir>/logs>/<jobId>.log`, controlled by `logging.fileEnabled`/`logging.dir`. File logging MUST be best-effort and MUST NEVER block or fail a run, behind an injectable interface.
 - **R-003-32**: A Claude invocation MUST append an ephemeral `--settings` JSON with a `SessionEnd` command hook writing `{exitStatus, sessionId}` to `<dataDir>/runs/<runId>.claude-hook.json`, without editing the user's Claude settings. For a normal run, `parseResult` and the process exit remain authoritative; the marker only supplements restart recovery.
+- **R-003-33**: While a run is live, the runner MUST scan complete stdout lines with the engine adapter's `detectTerminalError`. When the engine reports a terminal failure in-band (Claude: a `result` event with `is_error: true`, or an assistant message flagged with an authentication API error such as 401 / `authentication_error`), the run MUST end `failed` with the parsed error message: if the process exits within `TERMINAL_ERROR_SETTLE_MS` (2s) the normal close path finalizes it (keeping the real exit code); otherwise the runner MUST finalize it anyway, terminate the process tree (`taskkill /PID <pid> /T /F` on Windows, process-group SIGTERM on POSIX), and force-kill after `KILL_GRACE_MS` (5s). The active-run lock MUST be released at finalization so the next tick is not `skipped`.
+- **R-003-34**: A terminal engine error that a retry cannot fix (authentication) MUST NOT be retried even when `retry.max > 0`.
+- **R-003-35**: A run MUST always finalize: after SIGTERM for a timeout or cancel the runner MUST force-kill the process tree after `KILL_GRACE_MS` and finalize (`timeout`/`canceled`) even if `close` never arrives; if the process `exit`s but stdio stays open (inherited by a grandchild), the run MUST finalize `EXIT_CLOSE_GRACE_MS` (3s) after `exit`.
 
 ### Non-functional requirements
 

@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { claudeCompletionMarkerPath } from '../claude-completion-marker.js';
-import { EngineAdapter, type EngineInvocation, type EngineOptions, type EngineResult } from './types.js';
+import { EngineAdapter, type EngineInvocation, type EngineOptions, type EngineResult, type TerminalEngineError } from './types.js';
 import { resolveTranscriptPath } from './claude-transcript.js';
+
+/** Bounds the ephemeral SessionEnd hook so it can never hold up shutdown. */
+const HOOK_TIMEOUT_SEC = 10;
+
+const AUTH_ERROR_PATTERN = /authenticat|unauthori[sz]ed|\b401\b|invalid[^.]{0,30}(api key|token)|oauth|token[^.]{0,20}expired/i;
 
 /** Claude Code's non-interactive stream-json invocation. */
 export class ClaudeAdapter extends EngineAdapter {
@@ -34,7 +39,7 @@ export class ClaudeAdapter extends EngineAdapter {
       ? `"${process.execPath}"`
       : `'${process.execPath.replaceAll("'", "'\\''")}'`;
     const settings = JSON.stringify({
-      hooks: { SessionEnd: [{ hooks: [{ type: 'command', command: `${nodeCommand} -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"` }] }] },
+      hooks: { SessionEnd: [{ hooks: [{ type: 'command', timeout: HOOK_TIMEOUT_SEC, command: `${nodeCommand} -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"` }] }] },
     });
     return {
       command: opts.command,
@@ -50,6 +55,38 @@ export class ClaudeAdapter extends EngineAdapter {
       env: { ...opts.env },
       sessionId,
     };
+  }
+
+  detectTerminalError(line: string): TerminalEngineError | undefined {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('{')) return undefined;
+    let value: unknown;
+    try {
+      value = JSON.parse(trimmed);
+    } catch {
+      return undefined;
+    }
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+    const event = value as Record<string, unknown>;
+
+    if (event['type'] === 'result' && event['is_error'] === true) {
+      const message = typeof event['result'] === 'string' && event['result'].length > 0
+        ? event['result']
+        : typeof event['subtype'] === 'string' ? event['subtype'] : 'Claude reported an error';
+      return { message, retryable: !AUTH_ERROR_PATTERN.test(message) };
+    }
+
+    // An assistant message flagged with an API error (e.g. authentication_failed)
+    // precedes the final result; only auth failures are treated as terminal here
+    // (other API errors may be retried internally by the engine).
+    if (event['type'] === 'assistant' && (typeof event['error'] === 'string' || event['isApiErrorMessage'] === true)) {
+      const text = assistantText(event);
+      const label = typeof event['error'] === 'string' ? event['error'] : '';
+      if (AUTH_ERROR_PATTERN.test(`${label} ${text}`)) {
+        return { message: text || label, retryable: false };
+      }
+    }
+    return undefined;
   }
 
   parseResult(exitCode: number | null, stdout: string, stderr: string): EngineResult {
@@ -110,4 +147,16 @@ export class ClaudeAdapter extends EngineAdapter {
   resumableSessionId(result: EngineResult): string | undefined {
     return result.sessionId;
   }
+}
+
+function assistantText(event: Record<string, unknown>): string {
+  const message = event['message'];
+  if (typeof message !== 'object' || message === null) return '';
+  const content = (message as Record<string, unknown>)['content'];
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((block) => (typeof block === 'object' && block !== null && (block as Record<string, unknown>)['type'] === 'text'
+      ? String((block as Record<string, unknown>)['text'] ?? '') : ''))
+    .filter((text) => text.length > 0)
+    .join('\n');
 }

@@ -22,3 +22,10 @@ export const SSE_POLL_MS = 200;
 
 /** How often an adopted run's pid is polled for liveness, in ms (see `Runner.adoptRun()`). */
 export const ADOPTED_RUN_POLL_MS = 3_000;
+
+/** After an engine reports a terminal error in its output, wait this long for the process to exit on its own before ending the run and killing it. */
+export const TERMINAL_ERROR_SETTLE_MS = 2_000;
+/** After SIGTERM (timeout, cancel, or terminal engine error), wait this long before force-killing the process tree. */
+export const KILL_GRACE_MS = 5_000;
+/** After a process exits but its stdio pipes stay open (grandchildren inherited them), finalize the run after this long. */
+export const EXIT_CLOSE_GRACE_MS = 3_000;
