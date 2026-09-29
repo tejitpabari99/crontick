@@ -108,6 +108,49 @@ describe('core dashboard data model', () => {
     expect(data.runs[0]).toMatchObject({ id: run.id, jobId: job.id, status: 'success', durationMs: 25, exitCode: 0 });
   });
 
+  it('filters runs by multiple jobs/statuses and searches run fields and logs (q)', () => {
+    dir = makeScratchDir('run-search');
+    store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
+    scheduler = new Scheduler();
+    store.open();
+    const mk = (id: string, alias: string): Job => ({
+      id,
+      alias,
+      enabled: true,
+      schedule: { kind: 'interval', everySec: 60 },
+      action: { kind: 'prompt', prompt: 'hello', args: [], reuseSession: false },
+      overlap: 'skip',
+      retry: { max: 0, backoffSec: 30 },
+    });
+    const a = mk('11111111-1111-4111-8111-111111111111', 'trial');
+    const b = mk('22222222-2222-4222-8222-222222222222', 'sample');
+    const c = mk('33333333-3333-4333-8333-333333333333', 'other');
+    for (const j of [a, b, c]) store.upsertJob(j);
+    const ra = store.insertRun(a.id, Date.now() - 3000);
+    store.updateRun(ra.id, { status: 'success', durationMs: 10 });
+    const rb = store.insertRun(b.id, Date.now() - 2000);
+    store.updateRun(rb.id, { status: 'failed', durationMs: 20, error: '100% broken_thing' });
+    const rc = store.insertRun(c.id, Date.now() - 1000);
+    store.updateRun(rc.id, { status: 'success', durationMs: 30 });
+    store.appendLog(rc.id, 'stdout', Buffer.from('needle-in-the-haystack'));
+    const ctx = { store, scheduler, startedAt: new Date(), port: 1 };
+    const ids = (opts: Parameters<typeof buildDashboardData>[1]) => buildDashboardData(ctx, opts).runs.map((r) => r.id).sort();
+
+    expect(ids({ jobIds: [a.id, b.id] })).toEqual([ra.id, rb.id].sort());
+    expect(ids({ statuses: ['failed'] })).toEqual([rb.id]);
+    expect(ids({ jobIds: [a.id, b.id], statuses: ['success'] })).toEqual([ra.id]);
+    expect(ids({ q: 'needle' })).toEqual([rc.id]); // log search
+    expect(ids({ q: 'NEEDLE-in' })).toEqual([rc.id]); // case-insensitive
+    expect(ids({ q: 'sample' })).toEqual([rb.id]); // job alias
+    expect(ids({ q: 'failed' })).toEqual([rb.id]); // status
+    expect(ids({ q: '100%' })).toEqual([rb.id]); // error text, % matched literally
+    expect(ids({ q: 'broken_thing' })).toEqual([rb.id]);
+    expect(ids({ q: '%' })).toEqual([rb.id]); // a bare wildcard is literal, not match-all
+    expect(ids({ q: "x'; DROP TABLE runs;--" })).toEqual([]); // bound, not interpolated
+    expect(ids({ q: ra.id.slice(0, 8) })).toEqual([ra.id]);
+    expect(store.listRuns({ q: 'needle' })).toHaveLength(1);
+  });
+
   it('rejects dashboard asset traversal in the core resolver', () => {
     expect(() => resolveDashboardAsset('/dashboard/../../package.json')).toThrow(CrontickError);
   });

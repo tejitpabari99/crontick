@@ -16,6 +16,12 @@ import type { Scheduler } from './daemon/scheduler.js';
 export interface DashboardOptions {
   runsLimit?: number;
   jobId?: string;
+  /** Restrict the runs list to any of these job ids. */
+  jobIds?: string[];
+  /** Restrict the runs list to any of these statuses. */
+  statuses?: Run['status'][];
+  /** Free-text search over run id, status, error, session id, job id/alias and run logs. */
+  q?: string;
 }
 
 export interface DashboardHealth {
@@ -129,7 +135,7 @@ const MIME_TYPES: Record<string, string> = {
 export function buildDashboardData(ctx: DashboardContext, options: DashboardOptions = {}): DashboardData {
   const runsLimit = normalizeLimit(options.runsLimit, 100);
   const jobs = ctx.store.listJobs();
-  const recentRuns = ctx.store.listRunsForExistingJobs({ jobId: options.jobId, limit: runsLimit });
+  const recentRuns = ctx.store.listRunsForExistingJobs({ jobId: options.jobId, jobIds: options.jobIds, statuses: options.statuses, q: options.q, limit: runsLimit });
   const allRuns = ctx.store.listRunsForExistingJobs({ limit: 1000 });
   const since24h = Date.now() - 24 * 60 * 60 * 1000;
   const runs24h = ctx.store.listRunsForExistingJobs({ since: since24h });

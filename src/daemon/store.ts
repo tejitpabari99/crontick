@@ -108,6 +108,16 @@ export interface ListRunsOptions {
   limit?: number;
   since?: number; // epoch ms
   status?: RunStatus;
+  /** Restrict to any of these job ids (combined with `jobId` if both are given). */
+  jobIds?: string[];
+  /** Restrict to any of these statuses (combined with `status` if both are given). */
+  statuses?: RunStatus[];
+  /**
+   * Case-insensitive substring search over run id, status, error, session id, the job
+   * id/alias, and the stored run logs (all streams). Bound as a LIKE parameter (never
+   * interpolated); `%`, `_` and `\` in the text are matched literally.
+   */
+  q?: string;
 }
 
 /** Per-job watermark: the last time this job's schedule was known to be observed by a running daemon. */
@@ -640,6 +650,10 @@ export class Store {
       conditions.push('runs.job_id = ?');
       params.push(opts.jobId);
     }
+    if (opts.jobIds && opts.jobIds.length > 0) {
+      conditions.push(`runs.job_id IN (${opts.jobIds.map(() => '?').join(', ')})`);
+      params.push(...opts.jobIds);
+    }
     if (opts.since !== undefined) {
       conditions.push('runs.started_at >= ?');
       params.push(opts.since);
@@ -647,6 +661,24 @@ export class Store {
     if (opts.status !== undefined) {
       conditions.push('runs.status = ?');
       params.push(opts.status);
+    }
+    if (opts.statuses && opts.statuses.length > 0) {
+      conditions.push(`runs.status IN (${opts.statuses.map(() => '?').join(', ')})`);
+      params.push(...opts.statuses);
+    }
+    const q = opts.q?.trim();
+    if (q) {
+      const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+      conditions.push(`(
+        runs.id LIKE ? ESCAPE '\\'
+        OR runs.status LIKE ? ESCAPE '\\'
+        OR runs.error LIKE ? ESCAPE '\\'
+        OR runs.session_id LIKE ? ESCAPE '\\'
+        OR runs.job_id LIKE ? ESCAPE '\\'
+        OR runs.job_id IN (SELECT jobs.id FROM jobs WHERE jobs.alias LIKE ? ESCAPE '\\')
+        OR EXISTS (SELECT 1 FROM run_logs WHERE run_logs.run_id = runs.id AND CAST(run_logs.chunk AS TEXT) LIKE ? ESCAPE '\\')
+      )`);
+      params.push(like, like, like, like, like, like, like);
     }
 
     const join = existingJobsOnly ? 'INNER JOIN jobs ON jobs.id = runs.job_id' : '';

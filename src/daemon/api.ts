@@ -256,16 +256,13 @@ async function handleRequest(
 
     // ── Runs ─────────────────────────────────────────────────────────────────
     if (method === 'GET' && path === '/api/runs') {
-      const requestedJobId = url.searchParams.get('jobId') ?? undefined;
-      // Accept id-or-alias for the jobId filter, same as every other job lookup.
-      const jobId = requestedJobId !== undefined ? (ctx.store.getJob(requestedJobId)?.id ?? requestedJobId) : undefined;
+      const { jobIds, statuses, q } = runFilterParams(url, ctx);
       // Validate with the shared positive-int helper so NaN/negative/Infinity
       // yield a clean 400 (VALIDATION_ERROR) instead of reaching SQLite and
       // surfacing as an opaque 500.
       const limit = optionalPositiveInt(url.searchParams.get('limit'), 'limit');
       const since = optionalPositiveInt(url.searchParams.get('since'), 'since');
-      const status = (url.searchParams.get('status') ?? undefined) as RunStatus | undefined;
-      return sendJson(res, 200, redactValue(ctx.store.listRuns({ jobId, limit, since, status })));
+      return sendJson(res, 200, redactValue(ctx.store.listRuns({ jobIds, limit, since, statuses, q })));
     }
 
 
@@ -495,10 +492,8 @@ async function handleRequest(
 
     if (method === 'GET' && path === '/api/dashboard') {
       const runsLimit = optionalPositiveInt(url.searchParams.get('runsLimit'), 'runsLimit');
-      const requestedJobId = url.searchParams.get('jobId') ?? undefined;
-      // Accept id-or-alias for the jobId filter, same as every other job lookup.
-      const jobId = requestedJobId !== undefined ? (ctx.store.getJob(requestedJobId)?.id ?? requestedJobId) : undefined;
-      return sendJson(res, 200, buildDashboardData({ ...ctx, pid: process.pid }, { runsLimit, jobId }));
+      const { jobIds, statuses, q } = runFilterParams(url, ctx);
+      return sendJson(res, 200, buildDashboardData({ ...ctx, pid: process.pid }, { runsLimit, jobIds, statuses, q }));
     }
 
     if (method === 'GET' && (path === '/' || path === '/dashboard' || path.startsWith('/dashboard/'))) {
@@ -514,6 +509,22 @@ async function handleRequest(
     const msg = err instanceof Error ? err.message : String(err);
     return sendError(res, 500, 'INTERNAL_ERROR', msg);
   }
+}
+
+/**
+ * Shared run-list filters: `jobId` (id or alias; comma-separated for several), `status`
+ * (comma-separated for several) and `q` (free-text search incl. run logs).
+ */
+function runFilterParams(url: URL, ctx: ApiContext): { jobIds?: string[]; statuses?: RunStatus[]; q?: string } {
+  const split = (name: string): string[] => url.searchParams.getAll(name).flatMap((v) => v.split(',')).map((v) => v.trim()).filter(Boolean);
+  const jobIds = split('jobId').map((requested) => ctx.store.getJob(requested)?.id ?? requested);
+  const statuses = split('status') as RunStatus[];
+  const q = url.searchParams.get('q')?.trim() || undefined;
+  return {
+    jobIds: jobIds.length > 0 ? jobIds : undefined,
+    statuses: statuses.length > 0 ? statuses : undefined,
+    q,
+  };
 }
 
 function forceParam(url: URL): boolean {
