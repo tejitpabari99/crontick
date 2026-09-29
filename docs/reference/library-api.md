@@ -198,12 +198,18 @@ interface StatsSummary {
   totalRuns: number;
   succeeded: number;
   failed: number;
+  canceled: number;
+  skipped: number;
   avgDurationMs: number | null;
+  totalCostUsd: number;
+  totalTurns: number;
 }
 ```
 
+`canceled` counts runs that started and were terminated; `skipped` counts fires that never started because overlap `skip` found another run active. `totalCostUsd` and `totalTurns` sum the included runs; runs without usage contribute zero.
+
 `avgDurationMs` averages `durationMs` over runs that actually finished executing --
-`success`/`failed`/`timeout` -- and excludes `missed`, `queued`, `running`, and `canceled` runs,
+`success`/`failed`/`timeout` -- and excludes `missed`, `queued`, `running`, `canceled`, and `skipped` runs,
 since those either never ran to completion or never ran at all. `null` when there are no
 qualifying runs. These summary counts include only runs whose parent job still exists: deleting a
 job keeps its historical runs directly queryable by run id/logs, but removes those archived rows
@@ -218,10 +224,40 @@ interface JobStats {
   totalRuns: number;
   succeeded: number;
   failed: number;
+  canceled: number;
+  skipped: number;
   lastStatus: string | null;
   lastRunAt: number | null;
+  totalCostUsd: number;
+  totalTurns: number;
 }
 ```
+
+### RunRecord
+
+```ts
+interface RunRecord {
+  id: string;
+  jobId: string;
+  startedAt: number;
+  endedAt?: number;
+  status: string; // queued | running | success | failed | canceled | skipped | timeout | missed
+  exitCode?: number;
+  error?: string;
+  durationMs?: number;
+  pid?: number;
+  outputTruncated: boolean;
+  sessionId?: string;
+  command?: string;          // redacted resolved command line
+  costUsd?: number;          // Claude runs with a complete result
+  turns?: number;
+  usageJson?: string;        // redacted raw usage block, JSON string
+  transcriptPath?: string;
+  engineStatus?: string;     // Claude result subtype
+}
+```
+
+The last five fields are populated only for Claude runs with a complete `stream-json` result line; raw-engine runs omit them. See [job-schema.md](job-schema.md#run-statuses) for status meanings.
 
 ### NormalizeJobInputOptions
 
@@ -397,7 +433,11 @@ interface DashboardStats {
   totalRuns: number;
   succeeded: number;
   failed: number;
+  canceled: number;
+  skipped: number;
   avgDurationMs: number | null;
+  totalCostUsd: number;
+  totalTurns: number;
 }
 ```
 
@@ -436,6 +476,8 @@ interface DashboardRun {
   durationMs: number | null;
   exitCode: number | null;
   error: string | null;
+  /** Prompt-engine session id captured for this run; null when none. */
+  sessionId: string | null;
 }
 ```
 
@@ -611,7 +653,7 @@ function buildJobPatchFromUpdateOptions(input: JobPatchCliOptions, options?: Nor
 function applyConfigDefaults(job: Job, options?: NormalizeJobInputOptions): Job;
 ```
 
-Fills `action.engine` from config `defaultEngine` if unset on prompt actions.
+Fills `action.engine` from config `defaultEngine` if unset on prompt actions. Engine `type` (`claude` or `raw`) selects the adapter used by `buildPromptRunCommand()`.
 
 ### normalizeJobInput
 
@@ -705,7 +747,7 @@ values are redacted using the same shared read-surface contract described above.
 const VERSION: string;
 ```
 
-Build-time injected version from `package.json` (currently `"0.1.1"`).
+Build-time injected version from `package.json` (currently `"0.2.0"`).
 
 ### BUILT_IN_CONFIG
 

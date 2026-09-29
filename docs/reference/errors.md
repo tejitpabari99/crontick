@@ -77,6 +77,14 @@ class CrontickError extends Error {
 | **Message shape** | `MCP server script not found: <path>. Run: npm run build` |
 | **Details** | — |
 
+### JOB_NOT_FOUND
+
+| | |
+|---|---|
+| **When** | The daemon API cannot resolve a job identifier (GUID or alias) |
+| **Message shape** | `Job <idOrAlias> not found` |
+| **Details** | — |
+
 ### NOT_FOUND
 
 | | |
@@ -116,6 +124,14 @@ class CrontickError extends Error {
 | **When** | Input fails Zod schema validation (job creation, update, schedule, action) |
 | **Message shape** | `Invalid job` or specific validation failure |
 | **Details** | Zod formatted error (`.format()`) |
+
+### ALIAS_GENERATION_FAILED
+
+| | |
+|---|---|
+| **When** | `generateAlias()` could not find an unused auto-generated alias after 50 attempts |
+| **Message shape** | `Could not generate a unique job alias after <n> attempts. Provide an explicit alias.` |
+| **Details** | — |
 
 ### MISSING_ARG
 
@@ -197,6 +213,14 @@ class CrontickError extends Error {
 | **Message shape** | `Engine "<name>" is a built-in fallback engine and cannot be removed...` |
 | **Details** | `{ path, key }` |
 
+### NOT_IMPLEMENTED
+
+| | |
+|---|---|
+| **When** | The daemon API route is reached in a context that does not support it (HTTP 501), e.g. graceful shutdown without a shutdown hook |
+| **Message shape** | `Graceful shutdown is not wired for this context` |
+| **Details** | — |
+
 ### FORBIDDEN
 
 | | |
@@ -249,7 +273,8 @@ an unrelated, run-scoped vocabulary; do not conflate the two.
 | `run exceeded timeoutSec (<n>s)` | `Runner`'s per-action timer (`src/daemon/runner.ts`) | The job's `timeoutSec` elapsed before the process exited; the runner sent `SIGTERM` itself and recorded `status: 'timeout'`. Distinct from `status: 'canceled'`, which is a user- or overlap-policy-initiated stop — see [concepts/execution.md](../concepts/execution.md#timeouts). |
 | `RUNNER_CALLBACK_FAILED: ...` | `src/daemon/runner.ts` | A user-supplied run callback threw. |
 | `SESSION_ID_NOT_FOUND: ...` | `src/daemon/runner.ts` | `reuseSession` capture found no session id in prompt engine output. |
-| `SESSION_NOT_FOUND: ...` | `src/daemon/runner.ts` | Claude resume was rejected before spawn because no completed result for this job or no transcript exists for the session. |
+| `SESSION_NOT_FOUND: ...` | `src/daemon/runner.ts` | Claude resume was rejected before spawn because no completed result for this job or no transcript exists for the session. Thrown as a `CrontickError` internally and recorded on the failed run. |
+| `ACTION_CWD_INVALID: ...` | `src/daemon/runner.ts` | The job's `action.cwd` does not exist or is not a directory; the run fails before spawn. |
 | `SESSION_PERSIST_FAILED: ...` | `src/daemon/runner.ts` | Persisting a captured session id back to the job file failed. |
 
 See [error-model.md](../concepts/error-model.md#stored-runserror-values-are-not-crontickerror-codes)

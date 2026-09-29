@@ -47,6 +47,7 @@ The data directory is resolved by (in order):
   },
   "defaults": {
     "overlap": "skip",
+    "timeoutSec": 3600,
     "retry": { "max": 0, "backoffSec": 30 }
   }
 }

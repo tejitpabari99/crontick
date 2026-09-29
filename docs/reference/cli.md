@@ -94,7 +94,7 @@ Dedicated `--script`, `--exec`, `--arg`, `--shell`, and `--job-env-file` flags a
 ```bash
 crontick jobs new --every 30m --prompt "Summarize the current repository status" --name repo-summary --runner claude
 crontick jobs new --every 300 --prompt "Review this repository" --permission-mode acceptEdits
-crontick jobs new --file .\job.json
+crontick jobs new --file ./job.json
 ```
 
 ---
@@ -171,8 +171,7 @@ crontick jobs delete all --force
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--all` | boolean | `false` | Delete every job |
-| `--force` | boolean | `false` | Required with `--all` |
+| `--force` | boolean | `false` | Required to confirm `jobs delete all` (the reserved `all` keyword) |
 
 Deleting a single job cancels its in-flight run, if any. Historical runs remain queryable by run id, but live aggregates exclude runs whose parent job was deleted.
 

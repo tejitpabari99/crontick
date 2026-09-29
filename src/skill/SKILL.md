@@ -20,7 +20,7 @@ Drive crontick by running the `crontick` CLI in the shell. All commands below ar
 
 ### Step 1 — Create a prompt job
 
-The prompt MUST be passed with `--prompt`. Positional text is treated as engine passthrough args, **not** the prompt, and the job will fail with no prompt. Pick exactly one schedule flag.
+The prompt MUST be passed with `--prompt` (or `--prompt-file`). Positional text is treated as engine passthrough args, **not** the prompt, and the job will fail with no prompt. Pick exactly one schedule flag.
 
 ```sh
 # cron expression (quote it; add --tz for a timezone)
@@ -39,9 +39,9 @@ No `id` is needed — crontick assigns the GUID and auto-generates an `alias`. O
 - `--tz <tz>` — timezone for cron schedules (e.g. `America/Los_Angeles`).
 - `--runner <name>` — pick a configured engine (default: `claude`).
 - `--prompt-file <path>` — read the prompt from a UTF-8 `.txt` file instead of `--prompt` (mutually exclusive with `--prompt`; contents are stored, not the path).
-- `--timeout <sec>`, `--overlap skip|queue|cancel-previous` (default `skip`), `--retry <max>` (default `0`).
+- `--timeout <sec>`, `--overlap skip|queue|cancel-previous`, `--retry <max>` — defaults come from `config.json` `defaults` (built-in: no timeout, `skip`, `0`). Precedence: CLI flag > per-job JSON (`--file`) > `config.json` `defaults` > built-in; the resolved values are saved on the job.
 - `--force` — replace an existing job with the same alias.
-- Anything after the flags (`engineArgs...`) is passed verbatim to the engine, e.g. `crontick jobs new --cron "0 9 * * *" --prompt "…" --allow-all-tools --add-dir Q:\Repos\crontick`.
+- Unknown long flags are forwarded to the engine and stored in `action.args`, e.g. `crontick jobs new --cron "0 9 * * *" --prompt "…" --permission-mode acceptEdits`. Flags crontick manages itself (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, `-p`, `-r`) are rejected. The old `--alias` and `--engine` flags were renamed to `--name` and `--runner`.
 
 ### Step 2 — Inspect
 
@@ -57,7 +57,8 @@ crontick jobs schedule <id|alias> -n 5   # preview the next N fire times (defaul
 crontick jobs run-now <id|alias>   # trigger an immediate run
 crontick runs list                 # recent runs across all jobs
 crontick runs list --job <id|alias>   # runs for one job (also --status, --limit, --since)
-crontick runs get <runId>          # resolved command, status, timing, engine session id
+crontick runs list --status skipped   # statuses: queued|running|success|failed|canceled|skipped|timeout|missed
+crontick runs get <runId>          # resolved command, status, timing, engine session id; Claude runs add costUsd, turns, usage
 crontick runs logs <runId>         # both log streams
 crontick runs logs <runId> engine  # only the AI engine stdout/stderr
 crontick runs logs <runId> crontick  # only crontick lifecycle events (start, timeout, retry, exit)
@@ -91,7 +92,7 @@ A prompt engine is the AI CLI crontick invokes. The built-in default is `claude`
 { "command": "claude", "args": [], "env": {}, "type": "claude" }
 ```
 
-At run time the `claude` adapter builds the full invocation (`claude -p "<prompt>" --output-format stream-json --verbose --session-id <uuid> ...`), then appends any `engineArgs...`. A custom engine instead defaults to the `raw` adapter, which appends the prompt straight after `engine.args`, e.g. `{ "command": "my-cli", "args": ["--yes", "-p"], "type": "raw" }` → `my-cli --yes -p "<prompt>"`, then any `engineArgs...`, then a package-owned `--session-id=<id>` when session continuity is on.
+At run time the `claude` adapter builds the full invocation (`claude -p "<prompt>" --output-format stream-json --verbose --session-id <uuid> ...`), assigns the session id itself, parses the stream-json result (a result with `is_error` marks the run `failed` even at exit 0), and appends any passthrough args. A custom engine instead defaults to the `raw` adapter, which appends the prompt straight after `engine.args`, e.g. `{ "command": "my-cli", "args": ["--yes", "-p"], "type": "raw" }` → `my-cli --yes -p "<prompt>"`, then any passthrough args, then a package-owned `--session-id=<id>` when session continuity is on.
 
 - Select a configured engine per job with `--runner <name>` (default `claude`).
 - Add or edit engines by editing the `config.json` whose path `crontick info` prints. For a `raw` engine, the prompt-taking flag must stay **last** in `args`.
@@ -99,7 +100,7 @@ At run time the `claude` adapter builds the full invocation (`claude -p "<prompt
 **Multi-turn continuity** (carry the AI session across runs) — use at most one:
 
 - `--session-id <id>` — reuse a fixed engine session id every run.
-- `--reuse-session` — capture the session id from the first successful run and reuse it thereafter.
+- `--reuse-session` — capture the session id from the first completed run and reuse it thereafter. Requires `--overlap skip` (the default); other overlap policies are rejected. For Claude, resuming needs the session transcript on disk, otherwise the run fails with `SESSION_NOT_FOUND`.
 
 ```sh
 crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident queue" --reuse-session --name triage
@@ -132,8 +133,9 @@ crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident qu
 
 - The prompt goes in `--prompt` (or `--prompt-file`). Bare positional text is engine passthrough, not the prompt.
 - Always quote cron expressions: `--cron "0 9 * * *"`.
-- Exactly one schedule source per job: `--cron`, `--every <sec>`, or `--at <iso>`.
+- Exactly one schedule source per job: `--cron`, `--every <interval>` (seconds or `s|m|h|d` suffix), or `--at <iso>`.
 - The daemon auto-starts on first use — do not run setup, install services, or register OS login; the only remaining CLI admin helpers are `info daemon stop` and `info daemon reload`.
+- Run statuses: `queued`, `running`, `success`, `failed`, `canceled`, `skipped` (overlap `skip` found another run active; never started), `timeout`, `missed`.
 - Each run captures engine stdout/stderr, a separate `crontick` lifecycle log stream, and the engine session id (visible in `runs get`).
 - Confirm before `jobs delete`, `jobs update --disable`, or any `jobs delete all --force` clear.
 - `info` prints the config path — there are no `config get/set/engines` subcommands; edit `config.json` by hand.
@@ -149,7 +151,7 @@ Under the hood a prompt job stores its behavior as JSON with `action.kind: "prom
   "action": { "kind": "prompt", "prompt": "Continue triaging the incident queue", "reuseSession": true } }
 ```
 
-- `reuseSession: true` captures the engine `sessionId` from the first successful run and reuses it on every later run, so the AI carries context across runs (equivalent to `--reuse-session`).
+- `reuseSession: true` captures the engine `sessionId` from the first completed run and reuses it on every later run, so the AI carries context across runs (equivalent to `--reuse-session`). It requires `overlap: "skip"`.
 - The captured `sessionId` is visible in `crontick runs get <runId>`; a fixed id can be pinned instead via `--session-id`.
 
 ## Example
@@ -157,7 +159,7 @@ Under the hood a prompt job stores its behavior as JSON with `action.kind: "prom
 A daily standup summary at 9am local time:
 
 ```sh
-crontick jobs new --desc "daily standup" --cron "0 9 * * *" \
+crontick jobs new --desc "daily standup" --cron "0 9 * * *" --name daily-standup \
   --prompt "Summarize my open GitHub PRs and today's calendar" --reuse-session
 ```
 

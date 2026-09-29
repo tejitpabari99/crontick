@@ -67,6 +67,16 @@ crontick jobs new --file incident-triage-job.json
 
 `reuseSession` captures the engine session id after a run so the agent keeps conversational context on the next fire; it requires `overlap: "skip"` (the default).
 
+### Passing engine options through
+
+Unknown long flags are forwarded to the engine and stored in `action.args`:
+
+```sh
+crontick jobs new --every 300 --prompt 'Review this repository' --permission-mode acceptEdits --name repo-review
+```
+
+Flags crontick manages itself (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, `-p`, `-r`) are rejected. The old `--alias` and `--engine` flags are now `--name` and `--runner`.
+
 ### One-shot prompt job
 
 ```sh
@@ -131,13 +141,18 @@ Expected: prints `runId: <uuid>`.
 ```sh
 crontick runs list --job hello-world --limit 5
 crontick runs list --status success --limit 5
+crontick runs list --status skipped --limit 5
 ```
+
+`--status` accepts `queued`, `running`, `success`, `failed`, `canceled`, `skipped`, `timeout`, or `missed`. `skipped` means an overlap `skip` fire never started because another run was active.
 
 ### Get a specific run
 
 ```sh
 crontick runs get <runId>
 ```
+
+Claude runs also show `costUsd`, `turns`, `usageJson`, `transcriptPath`, and `engineStatus`.
 
 ### View logs
 

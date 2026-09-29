@@ -43,7 +43,7 @@ If crontick is installed locally (not globally), use the full path:
 
 ---
 
-## Available tools (29)
+## Available tools (21)
 
 All tools accept an optional `verbose: boolean` parameter for diagnostics.
 
@@ -51,13 +51,13 @@ All tools accept an optional `verbose: boolean` parameter for diagnostics.
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
-| `crontick_job_create` | Full job input (`schedule`, `action`, optional `alias`, etc.), `force?` | Create a new scheduled job |
+| `crontick_job_create` | Full job input (`schedule`, `action`, optional `alias`, `overlap`, `retry`), `force?` | Create a new scheduled job |
 | `crontick_job_list` | - | List all jobs |
 | `crontick_job_get` | `id` | Get a job by GUID or alias |
 | `crontick_job_update` | `id` + partial job fields | Update a job |
 | `crontick_job_enable` | `id` | Enable a disabled job |
 | `crontick_job_disable` | `id` | Disable a job |
-| `crontick_job_delete` | `id` | Delete a job |
+| `crontick_job_delete` | `id`, or `all: true` with `force: true` | Delete one job, or every job |
 | `crontick_job_run_now` | `id` | Trigger immediate execution |
 | `crontick_job_schedule` | `id`, `n?` (default 5, max 20) | Preview upcoming fire times for an existing job |
 | `crontick_job_cancel_run` | `id` | Cancel an active run by run id |
@@ -70,7 +70,7 @@ All tools accept an optional `verbose: boolean` parameter for diagnostics.
 | `crontick_run_get` | `id` | Get a specific run |
 | `crontick_run_logs_tail` | `id`, `lines?` (default 50), `source?` (`all`, `engine`, `crontick`) | Tail run output logs |
 
-`status` accepts one of `queued`, `running`, `success`, `failed`, `canceled`, `timeout`, `missed` (`missed` marks a schedule fire recorded but never executed because the daemon was down).
+`status` accepts one of `queued`, `running`, `success`, `failed`, `canceled`, `skipped`, `timeout`, `missed`. `skipped` marks a fire that never started because overlap `skip` found another run active; `missed` marks a schedule fire recorded but never executed because the daemon was down. `crontick_run_get` also returns `costUsd`, `turns`, `usageJson`, `transcriptPath`, and `engineStatus` for Claude runs.
 
 ### Stats
 

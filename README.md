@@ -100,7 +100,7 @@ Preview the next fire times for any job:
 crontick jobs schedule standup -n 5
 ```
 
-Other create/update options: `--timeout <sec>`, `--overlap skip|queue|cancel-previous` (default `skip`), `--retry <max>`, `--force` (replace a job with the same alias).
+Other create/update options: `--timeout <sec>`, `--overlap skip|queue|cancel-previous` (default `skip`), `--retry <max>`, `--force` (replace a job with the same alias). Omitted policy values come from the `defaults` section of `config.json` (`overlap`, `timeoutSec`, `retry`); precedence is CLI flag > per-job JSON > `config.json` > built-in, and the resolved values are saved on the job. When an overlap `skip` job fires while its previous run is still active, the fire is recorded as a `skipped` run (never started), distinct from `canceled`.
 
 ---
 
@@ -144,7 +144,7 @@ Pass engine options as unknown long flags on `jobs new` or `jobs update`, for ex
 Prompt jobs can carry an AI session across runs so the agent remembers prior context:
 
 - `--session-id <id>` — reuse a fixed engine session id on every run.
-- `--reuse-session` — capture a reusable session after a complete Claude result (including a failed result) or a successful raw-engine run. It requires `--overlap skip`.
+- `--reuse-session` — capture a reusable session after a complete Claude result (including a failed result) or a successful raw-engine run. It requires `--overlap skip`. Claude resumes need the session transcript on disk, otherwise the run fails with `SESSION_NOT_FOUND`.
 
 ```sh
 crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident queue" --reuse-session --name triage
@@ -163,7 +163,7 @@ Each run records two log streams and a per-job log file:
 
 ```sh
 crontick runs list --job standup --status failed
-crontick runs get <runId>            # includes the captured engine session id
+crontick runs get <runId>            # captured session id; Claude runs also show cost, turns, usage
 crontick runs logs <runId>           # both streams
 crontick runs logs <runId> crontick  # lifecycle events only
 ```
