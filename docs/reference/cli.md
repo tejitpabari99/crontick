@@ -427,22 +427,44 @@ job/run actions through the existing `/api/*` routes.
 
 - **Header** — shows the real daemon `version`, pid, node version and job count, plus an
   uptime badge (hover for a "daemon uptime" tooltip).
+- **Top bar** — Refresh button, the runs limit, and an **Auto-refresh** segmented control
+  (`Off`, `10s`, `15s`, `30s`, `60s`). The default is `Off`; the choice is persisted in
+  `localStorage` and the refresh timer honors it.
 - **Jobs table** — columns are `Alias` (falls back to `—`), `ID` (shortened GUID with a
   copy icon for the full id), `Description`, `Schedule`, `Action`, `Last status`,
-  `Next run`, and an `Actions` cell. Actions are icon buttons: enable (`▶`) / disable
-  (`⏹`, prompts for confirmation) and delete (`🗑`, prompts for confirmation). Clicking a
-  job row (outside the action buttons) sets the runs "Filter Job" control to that job and
-  reloads the filtered snapshot.
-- **Recent runs toolbar** — beside the heading: a **Filter Job** dropdown (server-side
-  filter via `jobId`, so it reflects all of a job's runs), a client-side **Filter Status**
-  dropdown, a **Sort** control (Time / Duration, ascending or descending; default Time ↓),
-  and the runs-limit input in the top toolbar.
+  `Next run`, and an `Actions` cell. Actions are icon buttons: **Run once now** (bolt icon,
+  `POST /api/jobs/:id/run-now`; works for disabled jobs and does not enable the job; shows a
+  toast), enable (`▶`) / disable (`⏹`, prompts for confirmation) and delete (`🗑`, prompts
+  for confirmation). A search icon at the top right expands into a text box that filters jobs
+  client-side over name, description, and the whole job config (schedule, prompt, runner, ...).
+- **Job details** — clicking a job row (outside the action buttons) opens a right-hand
+  drawer with the job config (name, id, description, enabled, schedule, runner, overlap,
+  timeout, retry, working dir, next/last run), the prompt, quick stats from
+  `GET /api/stats/jobs/:id` (runs, success rate, average duration in seconds), the ten most
+  recent runs (click one to open its run detail), and actions (Run now, Enable/Disable,
+  Filter runs). `Esc`, the ✕ button or a backdrop click closes it; focus is trapped inside
+  and restored on close.
+- **Recent runs toolbar** — beside the heading: a search icon (leftmost; expands into an
+  input) that searches run id, job name/id, status, error, session id **and the run logs**,
+  then multi-select **Filter Job** and **Filter Status** dropdowns. Options are checkboxes and
+  the menu stays open while toggling. Filtering is server-side: `GET /api/dashboard` (and
+  `GET /api/runs`) accept `jobId` and `status` as comma-separated lists and `q` for the
+  text search (a bounded, parameterised `LIKE`; `%`/`_` are literal). Search input is
+  debounced. Every active filter also appears as a removable chip (`job:trial`,
+  `status:failed`, ...) under the toolbar; the chip's ✕ shows on hover, on keyboard focus and
+  always on touch devices, and removing it also unchecks the option.
 - **Runs table** — shows the full run id and session id, each with a copy icon, plus Job
-  (`jobAlias || jobId`), Status, Started and Duration. Clicking a run row opens a log modal.
-- **Run log modal** — fetches `GET /api/runs/:id/logs?source=all` and renders two stacked,
-  independently scrollable panes: **Output** (stdout + crontick streams) and **Error**
-  (stderr plus the run's recorded `error`). Close with the ✕ button, a backdrop click, or
-  `Esc`.
+  (`jobAlias || jobId`), Status, Started and Duration (in seconds, e.g. `12.4 s`). The Job,
+  Status, Started and Duration headers are sort buttons (`aria-sort`, ▲/▼ indicator): default
+  Started descending; a first click on another column sorts ascending, clicking again toggles.
+  Clicking a run row opens the run detail.
+- **Run detail modal** — titled `Run log – <id> – <Status badge>`. It fetches the cleaned
+  `GET /api/runs/:id/output` view and shows the **Error** (when present) above the **Output**
+  (final result / readable transcript). The noisy raw log (`GET /api/runs/:id/logs?source=all`)
+  is only loaded when the collapsed **Raw log** section is expanded. Close with the ✕ button,
+  a backdrop click, or `Esc`.
+- **Durations** — average and per-run durations are shown in seconds (`avgDurationSec`);
+  `—` when unknown.
 
 ---
 

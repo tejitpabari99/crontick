@@ -266,6 +266,27 @@ describe('Dashboard serving', () => {
     expect(res.headers.get('content-type')).toContain('css');
   });
 
+  it('serves the dashboard UI wired to the run-now, output and search APIs', async () => {
+    const html = await (await fetch(`http://127.0.0.1:${port}/dashboard`)).text();
+    const js = await (await fetch(`http://127.0.0.1:${port}/dashboard/dashboard.js`)).text();
+    expect(html).not.toContain('id="sort-runs"');
+    expect(html).toContain('data-sort="started"');
+    expect(html).toContain('aria-sort="descending"');
+    expect(html).toContain('id="auto-refresh"');
+    for (const sec of ['10', '15', '30', '60']) expect(html).toContain(`data-sec="${sec}"`);
+    expect(js).toContain('/run-now');
+    expect(js).toContain('/output');
+    expect(js).toContain('avgDurationSec');
+    expect(js).not.toContain('avgDurationMs');
+  });
+
+  it('GET /api/runs and /api/dashboard accept multi-value jobId/status and q', async () => {
+    for (const path of ['/api/runs?jobId=a,b&status=failed,success&q=x%25y', '/api/dashboard?jobId=a,b&status=failed,success&q=needle']) {
+      const { status } = await apiCall(port, 'GET', path);
+      expect(status).toBe(200);
+    }
+  });
+
   it('path traversal /../package.json returns 400 or 404', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/dashboard/%2e%2e/%2e%2e/package.json`);
     expect([400, 404].includes(res.status)).toBe(true);

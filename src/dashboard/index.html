@@ -16,6 +16,16 @@
     <div class="toolbar">
       <button id="btn-refresh" class="btn">↻ Refresh</button>
       <label>Runs: <input id="runs-limit" type="number" min="1" value="100"></label>
+      <div class="auto-refresh" role="radiogroup" aria-label="Auto-refresh interval">
+        <span class="auto-refresh-label" aria-hidden="true">Auto-refresh:</span>
+        <div id="auto-refresh" class="segmented">
+          <button type="button" role="radio" aria-checked="true" data-sec="0">Off</button>
+          <button type="button" role="radio" aria-checked="false" data-sec="10">10s</button>
+          <button type="button" role="radio" aria-checked="false" data-sec="15">15s</button>
+          <button type="button" role="radio" aria-checked="false" data-sec="30">30s</button>
+          <button type="button" role="radio" aria-checked="false" data-sec="60">60s</button>
+        </div>
+      </div>
     </div>
 
     <div id="inline-error" class="inline-error" hidden></div>
@@ -23,7 +33,16 @@
     <section class="summary" id="summary"></section>
 
     <section class="page active">
-      <h2>Jobs</h2>
+      <div class="section-head">
+        <h2>Jobs</h2>
+        <div class="search" id="jobs-search">
+          <input type="search" class="search-input" id="jobs-search-input" placeholder="Search jobs…" aria-label="Search jobs" autocomplete="off" tabindex="-1">
+          <button type="button" class="icon-btn search-toggle" aria-label="Search jobs" aria-expanded="false" title="Search jobs">
+            <svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M13 13l5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="table-wrap">
       <table>
         <thead>
           <tr>
@@ -39,63 +58,81 @@
         </thead>
         <tbody id="jobs-tbody"></tbody>
       </table>
+      </div>
     </section>
 
     <section class="page active">
       <div class="section-head">
         <h2>Recent runs</h2>
         <div class="runs-toolbar">
-          <label>Filter Job:
-            <select id="filter-job"></select>
-          </label>
-          <label>Filter Status:
-            <select id="filter-status">
-              <option value="">All</option>
-              <option value="success">success</option>
-              <option value="failed">failed</option>
-              <option value="running">running</option>
-              <option value="canceled">canceled</option>
-              <option value="timeout">timeout</option>
-              <option value="queued">queued</option>
-            </select>
-          </label>
-          <label>Sort:
-            <select id="sort-runs">
-              <option value="started-desc">Time ↓</option>
-              <option value="started-asc">Time ↑</option>
-              <option value="duration-desc">Duration ↓</option>
-              <option value="duration-asc">Duration ↑</option>
-            </select>
-          </label>
+          <div class="search" id="runs-search">
+            <input type="search" class="search-input" id="runs-search-input" placeholder="Search runs and logs…" aria-label="Search runs and logs" autocomplete="off" tabindex="-1">
+            <button type="button" class="icon-btn search-toggle" aria-label="Search runs and logs" aria-expanded="false" title="Search runs and logs">
+              <svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M13 13l5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+          <div class="multi" id="filter-job">
+            <span class="multi-label">Filter Job:</span>
+            <button type="button" class="multi-btn" aria-haspopup="true" aria-expanded="false">All jobs</button>
+            <div class="multi-menu" role="group" aria-label="Filter by job" hidden></div>
+          </div>
+          <div class="multi" id="filter-status">
+            <span class="multi-label">Filter Status:</span>
+            <button type="button" class="multi-btn" aria-haspopup="true" aria-expanded="false">All</button>
+            <div class="multi-menu" role="group" aria-label="Filter by status" hidden></div>
+          </div>
         </div>
       </div>
+      <div id="filter-chips" class="chips" aria-label="Active filters"></div>
+      <div class="table-wrap">
       <table>
         <thead>
           <tr>
             <th>Run ID</th>
             <th>Session ID</th>
-            <th>Job</th>
-            <th>Status</th>
-            <th>Started</th>
-            <th>Duration</th>
+            <th aria-sort="none" data-sort="job"><button type="button" class="sort-btn">Job<span class="sort-ind" aria-hidden="true"></span></button></th>
+            <th aria-sort="none" data-sort="status"><button type="button" class="sort-btn">Status<span class="sort-ind" aria-hidden="true"></span></button></th>
+            <th aria-sort="descending" data-sort="started"><button type="button" class="sort-btn">Started<span class="sort-ind" aria-hidden="true"></span></button></th>
+            <th aria-sort="none" data-sort="duration"><button type="button" class="sort-btn">Duration<span class="sort-ind" aria-hidden="true"></span></button></th>
           </tr>
         </thead>
         <tbody id="runs-tbody"></tbody>
       </table>
+      </div>
     </section>
   </main>
 
-  <div id="log-modal" class="modal-backdrop" hidden>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <div id="job-drawer" class="drawer-backdrop" hidden>
+    <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" tabindex="-1">
       <div class="modal-header">
-        <h3 id="modal-title">Run logs</h3>
+        <h3 id="drawer-title">Job</h3>
+        <button id="drawer-close" class="icon-btn" title="Close" aria-label="Close job details">✕</button>
+      </div>
+      <div class="modal-body" id="drawer-body"></div>
+    </aside>
+  </div>
+
+  <div id="log-modal" class="modal-backdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabindex="-1">
+      <div class="modal-header">
+        <h3 id="modal-title"><span id="modal-title-text">Run log</span> <span id="modal-status"></span></h3>
         <button id="modal-close" class="icon-btn" title="Close" aria-label="Close">✕</button>
       </div>
       <div class="modal-body">
+        <div id="modal-meta" class="run-meta"></div>
+        <div id="modal-error-section" hidden>
+          <h4>Error</h4>
+          <pre id="modal-error" class="log-pane error-pane"></pre>
+        </div>
         <h4>Output</h4>
         <pre id="modal-output" class="log-pane"></pre>
-        <h4>Error</h4>
-        <pre id="modal-error" class="log-pane"></pre>
+        <details id="modal-raw-details" class="raw-details">
+          <summary>Raw log</summary>
+          <p class="muted">Unprocessed engine and crontick log streams. May contain large JSON payloads (thinking signatures, hook data).</p>
+          <pre id="modal-raw" class="log-pane"></pre>
+        </details>
       </div>
     </div>
   </div>

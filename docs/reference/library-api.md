@@ -395,6 +395,12 @@ state files.
 interface DashboardOptions {
   runsLimit?: number;
   jobId?: string;
+  /** Restrict runs to any of these job ids. */
+  jobIds?: string[];
+  /** Restrict runs to any of these statuses. */
+  statuses?: RunStatus[];
+  /** Substring search over run id, status, error, session id, job id/alias and run logs. */
+  q?: string;
 }
 ```
 

@@ -76,7 +76,7 @@ crontick runs logs <runId> engine  # just the AI engine's stdout/stderr
 crontick runs output <runId>        # cleaned output: final answer, error, readable transcript (no thinking/hook noise)
 ```
 
-Prefer a UI? `crontick info` prints the dashboard URL (`http://127.0.0.1:<port>/dashboard`) where you can browse jobs, runs, and per-run logs.
+Prefer a UI? `crontick info` prints the dashboard URL (`http://127.0.0.1:<port>/dashboard`) where you can browse jobs (with details, search and run-once), runs (multi-select filters, sortable columns, search across logs), and per-run output (a cleaned view, with the raw log on demand).
 
 ---
 
@@ -169,7 +169,7 @@ crontick runs logs <runId>           # both streams
 crontick runs logs <runId> crontick  # lifecycle events only
 ```
 
-When `logging.fileEnabled` is true (the default), every run is also mirrored to `<logsDir>/<jobGuid>.log`. Run `crontick info` for the exact `logsDir` and other storage paths, plus the **dashboard URL** — the dashboard offers job/run filters and a per-run log modal. Output is redacted for common secret patterns before storage.
+When `logging.fileEnabled` is true (the default), every run is also mirrored to `<logsDir>/<jobGuid>.log`. Run `crontick info` for the exact `logsDir` and other storage paths, plus the **dashboard URL** — the dashboard offers job/run filters, search, and a per-run output view with an optional raw log. Output is redacted for common secret patterns before storage.
 
 ---
 

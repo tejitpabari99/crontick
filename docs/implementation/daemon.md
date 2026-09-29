@@ -53,7 +53,7 @@ non-loopback gets 403 `FORBIDDEN`.
 | POST | `/api/jobs/:id/enable\|disable` | Enable/disable a job | 200/404 |
 | GET | `/api/runs/:id/output` | Cleaned output view (`RunOutput`): final result, error, readable transcript | 200/404 |
 | POST | `/api/jobs/:id/run-now` (alias `/run`) | Run a job once now, even if disabled, without changing `enabled` or the schedule; overlap policy applies. `202 { runId }` | 202/404 |
-| GET/POST | `/api/runs[/:id][/cancel]` | List/get/cancel runs | 200/404 |
+| GET/POST | `/api/runs[/:id][/cancel]` | List/get/cancel runs. The list accepts `jobId`/`status` (comma-separated for several), `limit`, `since`, and `q` (substring search over run fields, job alias and run logs) | 200/404 |
 | GET | `/api/runs/:id/logs[/stream]` | Log entries, or an SSE stream (`SSE_POLL_MS` = 200 ms; closes on terminal status) | 200/404 |
 | POST | `/api/schedules/validate\|preview` | Validate a schedule / preview next N fires | 200 |
 | GET | `/api/stats/summary\|jobs/:id` | Aggregate / per-job stats | 200/404 |
@@ -61,7 +61,7 @@ non-loopback gets 403 `FORBIDDEN`.
 | POST | `/api/daemon/reload` | Reload jobs from disk (see [Reload](#reload)) | 200 |
 | POST | `/api/daemon/stop` | Graceful in-process shutdown (see [Shutdown](#shutdown)) | 200/501 |
 | GET/POST | `/api/export`, `/api/import` | Export/import jobs (optionally run history) | 200 |
-| GET | `/api/dashboard[/status]` | Dashboard data / connection info | 200 |
+| GET | `/api/dashboard[/status]` | Dashboard data / connection info; `/api/dashboard` accepts `runsLimit`, `jobId`/`status` (comma-separated) and `q` for the runs list | 200 |
 | GET | `/` or `/dashboard{/*}` | Static dashboard assets | 200 |
 
 Error responses are JSON: `{ error: { code, message, details? } }`.
