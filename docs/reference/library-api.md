@@ -201,6 +201,7 @@ interface StatsSummary {
   canceled: number;
   skipped: number;
   avgDurationMs: number | null;
+  avgDurationSec: number | null;
   totalCostUsd: number;
   totalTurns: number;
 }
@@ -208,7 +209,7 @@ interface StatsSummary {
 
 `canceled` counts runs that started and were terminated; `skipped` counts fires that never started because overlap `skip` found another run active. `totalCostUsd` and `totalTurns` sum the included runs; runs without usage contribute zero.
 
-`avgDurationMs` averages `durationMs` over runs that actually finished executing --
+`avgDurationSec` is the same average expressed in seconds (2 decimals) and is the field to display; `avgDurationMs` is kept for backwards compatibility. `avgDurationMs` averages `durationMs` over runs that actually finished executing --
 `success`/`failed`/`timeout` -- and excludes `missed`, `queued`, `running`, `canceled`, and `skipped` runs,
 since those either never ran to completion or never ran at all. `null` when there are no
 qualifying runs. These summary counts include only runs whose parent job still exists: deleting a
@@ -228,6 +229,7 @@ interface JobStats {
   skipped: number;
   lastStatus: string | null;
   lastRunAt: number | null;
+  avgDurationSec: number | null;
   totalCostUsd: number;
   totalTurns: number;
 }
@@ -436,6 +438,7 @@ interface DashboardStats {
   canceled: number;
   skipped: number;
   avgDurationMs: number | null;
+  avgDurationSec: number | null;
   totalCostUsd: number;
   totalTurns: number;
 }
@@ -457,6 +460,7 @@ interface DashboardJob {
   actionKind: 'prompt';
   lastStatus: string | null;
   lastRunAt: number | null;
+  avgDurationSec: number | null;
   nextRunAt: string | null;
   job: Job;
 }

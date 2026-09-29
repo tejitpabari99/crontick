@@ -114,7 +114,10 @@ export interface StatsSummary {
   failed: number;
   canceled: number;
   skipped: number;
+  /** Kept for backwards compatibility; prefer `avgDurationSec`. */
   avgDurationMs: number | null;
+  /** Average execution time in seconds (2 decimals) over runs that finished executing; null when none. */
+  avgDurationSec: number | null;
   totalCostUsd: number;
   totalTurns: number;
 }
@@ -149,6 +152,8 @@ export interface JobStats {
   skipped: number;
   lastStatus: string | null;
   lastRunAt: number | null;
+  /** Average execution time in seconds (2 decimals) over runs that finished executing; null when none. */
+  avgDurationSec: number | null;
   totalCostUsd: number;
   totalTurns: number;
 }

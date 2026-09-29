@@ -158,6 +158,7 @@ describe('core dashboard data model', () => {
 
     // (50 + 150) / 2 = 100 — not dragged toward 0 by the 23 non-executed rows.
     expect(data.stats.avgDurationMs).toBe(100);
+    expect(data.stats.avgDurationSec).toBe(0.1);
     expect(data.stats.totalRuns).toBe(26);
     expect(data.stats).toMatchObject({ canceled: 1, skipped: 1 });
   });

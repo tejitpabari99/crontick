@@ -13,6 +13,8 @@ import { CrontickError } from '../errors.js';
 import { VERSION } from '../version.js';
 import { applyConfigDefaults, generateAlias } from '../job-input.js';
 import {
+  averageDurationMs,
+  msToSec,
   buildDashboardData,
   buildDashboardStats,
   dashboardStatusFromDaemon,
@@ -354,6 +356,7 @@ async function handleRequest(
         totalTurns: runs.reduce((sum, run) => sum + (run.turns ?? 0), 0),
         lastStatus: runs[0]?.status ?? null,
         lastRunAt: runs[0]?.startedAt ?? null,
+        avgDurationSec: msToSec(averageDurationMs(runs)),
       });
     }
 

@@ -19,6 +19,7 @@ type StatsSummary = {
   succeeded: number;
   failed: number;
   avgDurationMs: number | null;
+  avgDurationSec: number | null;
   totalCostUsd: number;
   totalTurns: number;
 };
@@ -188,6 +189,7 @@ describe('deleted-job aggregates', () => {
       canceled: 0,
       skipped: 0,
       avgDurationMs: expect.any(Number),
+      avgDurationSec: expect.any(Number),
       totalCostUsd: 0,
       totalTurns: 0,
     });

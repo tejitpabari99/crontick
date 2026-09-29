@@ -277,7 +277,7 @@ Get aggregate summary of all jobs.
 |-----------|------|----------|---------|-------------|
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ totalJobs, enabledJobs, totalRuns, succeeded, failed, canceled, skipped, avgDurationMs, totalCostUsd, totalTurns }`. `skipped` counts fires that never ran due to overlap; `canceled` counts terminated runs. Cost and turns sum the included runs; missing usage contributes zero.
+**Result:** `{ totalJobs, enabledJobs, totalRuns, succeeded, failed, canceled, skipped, avgDurationMs, avgDurationSec, totalCostUsd, totalTurns }`. `avgDurationSec` is the average execution time in seconds (2 decimals; `avgDurationMs` is kept for backwards compatibility). Per-job stats also include `avgDurationSec`. `skipped` counts fires that never ran due to overlap; `canceled` counts terminated runs. Cost and turns sum the included runs; missing usage contributes zero.
 
 ---
 

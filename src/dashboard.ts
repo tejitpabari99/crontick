@@ -45,7 +45,10 @@ export interface DashboardStats {
   failed: number;
   canceled: number;
   skipped: number;
+  /** Average execution time in milliseconds (kept for backwards compatibility; prefer `avgDurationSec`). */
   avgDurationMs: number | null;
+  /** Average execution time in seconds (2 decimals), over runs that finished executing; null when none. */
+  avgDurationSec: number | null;
   totalCostUsd: number;
   totalTurns: number;
 }
@@ -171,10 +174,23 @@ export function buildDashboardHealth(ctx: DashboardContext, jobs: Job[], runs24h
 // long jobs actually take to run.
 const EXECUTED_RUN_STATUSES: ReadonlySet<Run['status']> = new Set(['success', 'failed', 'timeout']);
 
+/** Average `durationMs` over runs that actually executed (success/failed/timeout); null when there are none. */
+export function averageDurationMs(runs: Run[]): number | null {
+  const executedRuns = runs.filter((run) => EXECUTED_RUN_STATUSES.has(run.status));
+  return executedRuns.length > 0
+    ? Math.round(executedRuns.reduce((sum, run) => sum + (run.durationMs ?? 0), 0) / executedRuns.length)
+    : null;
+}
+
+/** Milliseconds to seconds, rounded to 2 decimals; null passes through. */
+export function msToSec(ms: number | null): number | null {
+  return ms === null ? null : Math.round(ms / 10) / 100;
+}
+
 export function buildDashboardStats(jobs: Job[], runs: Run[]): DashboardStats {
   const failed = runs.filter((run) => run.status === 'failed').length;
   const succeeded = runs.filter((run) => run.status === 'success').length;
-  const executedRuns = runs.filter((run) => EXECUTED_RUN_STATUSES.has(run.status));
+  const avgDurationMs = averageDurationMs(runs);
   return {
     totalJobs: jobs.length,
     enabledJobs: jobs.filter((job) => job.enabled).length,
@@ -185,9 +201,8 @@ export function buildDashboardStats(jobs: Job[], runs: Run[]): DashboardStats {
     skipped: runs.filter((run) => run.status === 'skipped').length,
     totalCostUsd: runs.reduce((sum, run) => sum + (run.costUsd ?? 0), 0),
     totalTurns: runs.reduce((sum, run) => sum + (run.turns ?? 0), 0),
-    avgDurationMs: executedRuns.length > 0
-      ? Math.round(executedRuns.reduce((sum, run) => sum + (run.durationMs ?? 0), 0) / executedRuns.length)
-      : null,
+    avgDurationMs,
+    avgDurationSec: msToSec(avgDurationMs),
   };
 }
 

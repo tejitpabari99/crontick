@@ -275,6 +275,18 @@ describe('Daemon HTTP API', () => {
     await apiCall(port, 'POST', `/api/runs/${first.runId}/cancel`);
   });
 
+  it('GET /api/stats/jobs/:id and /api/stats/summary expose average duration in seconds', async () => {
+    const job = await apiCall(port, 'GET', '/api/stats/jobs/run-now-disabled');
+    expect(job.status).toBe(200);
+    const jobStats = job.data as { avgDurationSec: number | null };
+    expect(jobStats).toHaveProperty('avgDurationSec');
+    expect(typeof jobStats.avgDurationSec).toBe('number');
+    const summary = (await apiCall(port, 'GET', '/api/stats/summary')).data as { avgDurationMs: number | null; avgDurationSec: number | null };
+    expect(summary).toHaveProperty('avgDurationMs');
+    expect(summary).toHaveProperty('avgDurationSec');
+    if (summary.avgDurationMs !== null) expect(summary.avgDurationSec).toBeCloseTo(summary.avgDurationMs / 1000, 1);
+  });
+
   it('GET /api/runs lists runs', async () => {
     const { status, data } = await apiCall(port, 'GET', '/api/runs?jobId=api-test-job');
     expect(status).toBe(200);
