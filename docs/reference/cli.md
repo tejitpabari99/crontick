@@ -18,7 +18,7 @@ Running `crontick` with no subcommand prints help and exits `0`. `crontick --hel
 | Code | Meaning |
 |------|---------|
 | `0` | Success |
-| `1` | Error, failed `info doctor`, or validation/usage failure |
+| `1` | Error, failed `doctor`, or validation/usage failure |
 
 Errors are rendered as a single clean line on stderr; see [errors.md](errors.md#cli).
 
@@ -48,13 +48,16 @@ crontick share export [--out <file>] [--include-runs]
 crontick share import <file>
 
 crontick info
-crontick info doctor
-crontick info daemon stop
-crontick info daemon reload
+crontick doctor
+crontick daemon start [--foreground]
+crontick daemon stop
+crontick daemon restart
+crontick daemon status
+crontick daemon reload
 crontick mcp [--no-start-daemon] [--daemon-url <url>]
 ```
 
-Commands accept a job identifier as either the immutable GUID `id` or the human-friendly `alias`. `jobs new` assigns the GUID automatically; use `--name <name>` only when you want to control the human-friendly name.
+Commands accept a job identifier as either the immutable GUID `id` or the human-friendly name (`--name`, stored as `alias`). `jobs new` assigns the GUID automatically; use `--name <name>` only when you want to control the human-friendly name.
 
 ---
 
@@ -62,7 +65,7 @@ Commands accept a job identifier as either the immutable GUID `id` or the human-
 
 ### crontick jobs new
 
-Create a new job. The job's GUID `id` is always assigned by crontick. If `--name` is omitted, crontick auto-generates a unique alias.
+Create a new job. The job's GUID `id` is always assigned by crontick. If `--name` is omitted, crontick auto-generates a unique name.
 
 ```bash
 crontick jobs new [engineArgs...]
@@ -70,24 +73,24 @@ crontick jobs new [engineArgs...]
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--desc <description>` | string | — | Job description |
-| `--cron <expr>` | string | — | Cron expression (for example, `"0 9 * * *"`) |
-| `--every <interval>` | string | — | Interval in seconds, or with an `s`, `m`, `h`, or `d` suffix (for example `30m` = 1800 seconds) |
-| `--at <iso>` | string | — | One-shot run-at ISO-8601 time |
-| `--tz <tz>` | string | — | IANA timezone for cron schedules |
+| `--name <name>` | string | auto-generated | Unique, kebab-case job name; saved as the job's `alias` field |
 | `--prompt <text>` | string | — | Prompt text for a prompt action |
 | `--prompt-file <path>` | string | — | UTF-8 text file to read into the prompt |
+| `--cron <expr>` | string | — | Schedule: cron expression (for example, `"0 9 * * *"`) |
+| `--every <interval>` | string | — | Schedule: repeat every N seconds, or with an `s`, `m`, `h`, or `d` suffix (for example `30m` = 1800 seconds) |
+| `--at <datetime>` | string | — | Schedule: one-shot run time, ISO-8601 (for example `2026-10-01T09:00`). Interpreted in the machine's local timezone unless an offset (`Z`, `+02:00`) is given. Date-only values (`2026-10-01`) are parsed as UTC midnight, so include a time |
+| `--tz <tz>` | string | — | IANA timezone for `--cron` schedules |
 | `--runner <runner>` | string | config `defaultEngine` | Configured prompt engine name; saved as `action.engine` |
-| `--session-id <id>` | string | — | Reuse this prompt engine session every run |
-| `--reuse-session` | boolean | `false` | Capture a reusable session ID; resolved overlap must be `skip` |
+| `--session-id <id>` | string | — | Resume this existing prompt-engine (for example Claude) conversation session on every run of the job, instead of starting a fresh session each run |
+| `--reuse-session` | boolean | `false` | Start a session on the first successful run, then keep resuming that same session on later runs (alternative to `--session-id`); resolved overlap must be `skip` |
 | `--file <path>` | string | — | Create the job from a full prompt-job JSON file |
-| `--name <name>` | string | auto-generated | Human-friendly, unique, kebab-case job identifier; saved as `alias` |
 | `--timeout <sec>` | integer | config `defaults.timeoutSec` (unset by default) | Per-run timeout in seconds |
 | `--overlap <policy>` | `skip` \| `queue` \| `cancel-previous` | config `defaults.overlap` (`skip` by default) | Overlap policy |
 | `--retry <max>` | integer | config `defaults.retry.max` (`0` by default) | Retry count on failure |
-| `--force` | boolean | `false` | Replace an existing job when the same alias already exists |
+| `--desc <description>` | string | — | Job description |
+| `--force` | boolean | `false` | Replace an existing job when the same name already exists |
 
-Exactly one schedule source (`--cron`, `--every`, `--at`) and one prompt source (`--prompt`, `--prompt-file`) are required unless `--file` is used. Bare `--every` numbers remain seconds; suffixes `s`, `m`, `h`, and `d` mean seconds, minutes, hours, and days. Unrecognized long flags, with a following value when that token is not flag-shaped, are stored verbatim in `action.args`. The same flags work after `--`, which also accepts positional arguments. Their order is preserved. Flags that crontick manages for the engine (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, and the short forms `-p` and `-r`) are rejected, including `--flag=value` forms. Removed `--alias` and `--engine` switches are rejected as unknown options, including after `--`. If a token after `--` matches a crontick long flag, the CLI rejects it rather than silently storing it as a literal prompt arg.
+Exactly one schedule source (`--cron`, `--every`, `--at`) and one prompt source (`--prompt`, `--prompt-file`) are required unless `--file` is used. Supplying more than one schedule flag is an error (`VALIDATION_ERROR`: they cannot be combined); supplying none is `MISSING_ARG`. Bare `--every` numbers remain seconds; suffixes `s`, `m`, `h`, and `d` mean seconds, minutes, hours, and days. Unrecognized long flags, with a following value when that token is not flag-shaped, are stored verbatim in `action.args`. The same flags work after `--`, which also accepts positional arguments. Their order is preserved. Flags that crontick manages for the engine (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, and the short forms `-p` and `-r`) are rejected, including `--flag=value` forms. Removed `--alias` and `--engine` switches are rejected as unknown options, including after `--`. If a token after `--` matches a crontick long flag, the CLI rejects it rather than silently storing it as a literal prompt arg.
 
 Dedicated `--script`, `--exec`, `--arg`, `--shell`, and `--job-env-file` flags are not exposed on the CLI. The job schema supports prompt actions only; `--file` accepts a complete prompt-job definition.
 
@@ -101,7 +104,7 @@ crontick jobs new --file ./job.json
 
 ### crontick jobs update
 
-Update an existing job by GUID or alias.
+Update an existing job by GUID or name.
 
 ```bash
 crontick jobs update <id> [engineArgs...]
@@ -136,7 +139,7 @@ crontick jobs list
 
 ### crontick jobs get
 
-Get a job by GUID or alias.
+Get a job by GUID or name.
 
 ```bash
 crontick jobs get <id>
@@ -201,7 +204,7 @@ crontick runs list
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--job <id>` | string | — | Filter by job GUID or alias |
+| `--job <id>` | string | — | Filter by job GUID or name |
 | `--limit <n>` | integer | — | Maximum runs to return |
 | `--since <ms>` | integer | — | Only runs since epoch milliseconds |
 | `--status <status>` | string | — | Filter by run status: `queued`\|`running`\|`success`\|`failed`\|`canceled`\|`skipped`\|`timeout`\|`missed` |
@@ -328,39 +331,58 @@ The default output includes:
 - Node.js version
 - platform
 - daemon running status, including PID and port when available
-- config file path (`configPath`)
+- config file path (`configPath`), with `(not created yet - built-in defaults in use)` when the file does not exist (`configExists: false`)
 - dashboard URL when the daemon is running
 - `paths` block: `dataDir`, `jobsDir`, `logsDir`, `runsDb`, `portFile`, `pidFile`
+- a `commands` section listing every available command with a one-line description, generated from the live command tree
 
 `info` never starts the daemon; when the daemon is stopped it prints that state and notes that the dashboard becomes available again on the next daemon-backed command.
 
-### crontick info doctor
+### crontick doctor
 
 Check system health.
 
 ```bash
-crontick info doctor
+crontick doctor
 ```
 
-Exits with code `1` if any check fails. Checks include Node.js version, SQLite availability, data directory, daemon connectivity, dashboard reachability, and MCP server availability.
+Exits with code `1` if any check fails. Checks include Node.js version, SQLite availability, data directory (path shown), config file (path shown; reports when it has not been created yet and defaults are in use), daemon connectivity, dashboard reachability, and MCP server availability.
 
-### crontick info daemon stop
+### crontick daemon start
+
+Start the daemon explicitly. The daemon also starts automatically on first use, so this is optional.
+
+```bash
+crontick daemon start [--foreground]
+```
+
+By default the daemon is started in the background and the command prints its PID and URL (or reports it is already running). `--foreground` runs the daemon in the current terminal until it exits. This is an explicit, one-off start; it does not register the daemon to start at login or boot.
+
+### crontick daemon status
+
+Show whether the daemon is running (PID, port, uptime, job count). Exits `1` with a hint when it is not running. Never starts the daemon.
+
+### crontick daemon restart
+
+Stop the daemon and start it again.
+
+### crontick daemon stop
 
 Stop the daemon.
 
 ```bash
-crontick info daemon stop
+crontick daemon stop
 ```
 
-### crontick info daemon reload
+### crontick daemon reload
 
 Reload job definitions from disk without restarting the daemon.
 
 ```bash
-crontick info daemon reload
+crontick daemon reload
 ```
 
-Running `crontick info daemon` with no subcommand prints help. Config edits normally do not require reload; see [configuration.md](configuration.md#when-config-edits-take-effect).
+Running `crontick daemon` with no subcommand prints help. `crontick info daemon stop|reload` remains as a hidden, deprecated alias. Config edits normally do not require reload; see [configuration.md](configuration.md#when-config-edits-take-effect).
 
 ---
 

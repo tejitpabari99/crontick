@@ -54,7 +54,7 @@ Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `importJobs` | `(jobs: unknown[], options?: NormalizeJobInputOptions & { runs?: unknown[] }): Promise<unknown>` | Import result, including `runsImported`/`runsSkipped` when `options.runs` is passed | `CrontickError` |
 | `validateSchedule` | `(schedule: Schedule): Promise<unknown>` | Validation result | `CrontickError` |
 | `previewSchedule` | `(input: { schedule: Schedule; n?: number; tz?: string }): Promise<unknown>` | Fire times | `CrontickError` |
-| `jobSchedule` | `(id: string, options?: { n?: number }): Promise<unknown>` | Upcoming fire times for an existing job (id or alias); powers `crontick jobs schedule` and `crontick_job_schedule` | `CrontickError` (`NOT_FOUND`) |
+| `jobSchedule` | `(id: string, options?: { n?: number }): Promise<unknown>` | Upcoming fire times for an existing job (id or name); powers `crontick jobs schedule` and `crontick_job_schedule` | `CrontickError` (`NOT_FOUND`) |
 | `statsSummary` | `(): Promise<StatsSummary>` | `StatsSummary` | `CrontickError` |
 | `statsJob` | `(id: string): Promise<JobStats>` | `JobStats` | `CrontickError` |
 | `daemonStart` | `(options?: { foreground?: boolean }): Promise<DaemonStartResult>` | Start result (library-only after round-2 simplification) | `CrontickError` |
@@ -339,7 +339,7 @@ interface DaemonStopResult {
 }
 ```
 
-Returned by `daemonStop` (`CrontickClient`) and by `crontick info daemon stop`. `mode` reports how the daemon was actually stopped: `'graceful'` if the
+Returned by `daemonStop` (`CrontickClient`) and by `crontick daemon stop`. `mode` reports how the daemon was actually stopped: `'graceful'` if the
 `POST /api/daemon/stop` route accepted the request and the process exited before the poll
 timeout; `'hard-kill'` if that stalled or the route was unreachable and `stopDaemon()` had to
 escalate to `SIGTERM` then `SIGKILL`; `'already-stopped'` if no daemon was running. `activeRuns`

@@ -71,7 +71,7 @@ Only the daemon process writes to `runs.db` and the `jobs/` directory at runtime
 Each job retains at most `retention.maxRunsPerJob` runs (default `100`, configurable
 `1..100000`). The oldest terminal runs (never active ones) are deleted along with their
 `run_logs` once the cap is exceeded, on every new run and in a startup sweep that catches a cap
-just lowered via `crontick info daemon reload`. Pruning is best-effort and count-based only (no
+just lowered via `crontick daemon reload`. Pruning is best-effort and count-based only (no
 age limit): a job firing every minute keeps ~100 minutes of history, one firing monthly keeps
 years. Eviction is a hard delete with no undo -- back up first with `crontick share export
 --include-runs` if you need history past the cap. See
@@ -86,7 +86,7 @@ and `outputTruncated` is set, but the run itself completes normally. See
 ## Daemon log retention
 
 `retention.maxLogFiles` (default `30`) bounds how many daily `logs/daemon-YYYY-MM-DD.log` files
-are kept, oldest deleted first, applied at startup and on `crontick info daemon reload` without a
+are kept, oldest deleted first, applied at startup and on `crontick daemon reload` without a
 restart. Best-effort: a pruning failure is logged but never blocks startup or reload. See
 [configuration reference](../reference/configuration.md#retentionconfig).
 
@@ -105,7 +105,7 @@ cat <dataDir>/logs/daemon-$(date +%F).log | jq .
 
 ## Resetting state safely
 
-1. **Stop the daemon first**: `crontick info daemon stop`
+1. **Stop the daemon first**: `crontick daemon stop`
 2. **Delete runs only**: remove `runs.db` (the daemon recreates it with a fresh schema on next start).
 3. **Delete everything**: remove the entire data directory. Jobs, runs, logs, and config will all be lost.
 4. **Delete one job**: `crontick jobs delete <id>` removes the JSON file, schema sidecar, and SQLite

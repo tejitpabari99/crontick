@@ -162,7 +162,7 @@ crontick runs logs <run-id>
 
 # Clean up
 crontick jobs delete my-test
-crontick info daemon stop
+crontick daemon stop
 ```
 
 Expected: `list` shows the job enabled, `runs list` shows at least one `success` run after the interval fires, `logs` prints `hello`.
@@ -270,8 +270,8 @@ publishing.
 ### Daemon lifecycle
 
 - [ ] `crontick jobs list` demand-starts the daemon, and `crontick info` shows it running
-- [ ] `crontick info daemon stop` stops it; status confirms
-- [ ] `crontick info daemon stop`, then any daemon-backed command returns it to running
+- [ ] `crontick daemon stop` stops it; status confirms
+- [ ] `crontick daemon stop`, then any daemon-backed command returns it to running
 - [ ] Kill daemon process externally, then run any command: daemon demand-starts
 - [ ] Create a job while daemon is down; run any daemon-backed command to start it; job fires at next scheduled time
 

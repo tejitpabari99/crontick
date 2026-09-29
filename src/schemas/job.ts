@@ -12,22 +12,22 @@ import { EngineNameSchema } from './config.js';
 
 export const CronScheduleSchema = z.object({
   kind: z.literal('cron'),
-  cron: z.string().min(1),
-  tz: z.string().optional(),
+  cron: z.string().min(1).describe('Cron expression, e.g. "0 9 * * *"'),
+  tz: z.string().optional().describe('IANA timezone for the cron expression (default: machine local timezone)'),
 });
 
 export const IntervalScheduleSchema = z.object({
   kind: z.literal('interval'),
-  everySec: z.number().positive(),
-  startAt: z.string().optional(), // ISO-8601
+  everySec: z.number().positive().describe('Repeat interval in seconds (the CLI --every flag also accepts s/m/h/d suffixes, e.g. 30m)'),
+  startAt: z.string().optional().describe('ISO-8601 time the interval starts counting from'),
 });
 
 export const OneShotScheduleSchema = z.object({
   kind: z.literal('one-shot'),
-  runAt: z.string().min(1), // ISO-8601
+  runAt: z.string().min(1).describe('One-shot run time, ISO-8601 (e.g. 2026-10-01T09:00). Interpreted in the machine local timezone unless an offset such as Z or +02:00 is given'),
 });
 
-/** Schedule discriminated union; croner v9 validates the cron expression at runtime. */
+/** Schedule discriminated union (exactly one schedule per job); croner v9 validates the cron expression at runtime. */
 export const ScheduleSchema = z.discriminatedUnion('kind', [
   CronScheduleSchema,
   IntervalScheduleSchema,
@@ -112,7 +112,7 @@ export const JobBaseSchema = z.object({
    * tried first, falling back to `alias`. When omitted on create, one is
    * auto-generated (see generateAlias in job-input.ts).
    */
-  alias: z.string().regex(JOB_ALIAS_PATTERN, 'Job alias must be kebab-case (e.g. "my-job")').optional(),
+  alias: z.string().regex(JOB_ALIAS_PATTERN, 'Job name (alias) must be kebab-case (e.g. "my-job")').optional().describe('Unique kebab-case job name (the CLI --name flag); auto-generated when omitted'),
   description: z.string().optional(),
   enabled: z.boolean().default(true),
   schedule: ScheduleSchema,

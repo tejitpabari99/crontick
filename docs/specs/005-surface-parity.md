@@ -72,12 +72,12 @@ The command-tree reorganization intentionally narrowed some exposure without rem
 | `stats-job` | `statsJob` | `crontick stats job` | `crontick_stats_job` |
 | `export` | `exportJobs` | `crontick share export` | `crontick_export` |
 | `import` | `importJobs` | `crontick share import` | `crontick_import` |
-| `daemon-stop` | `daemonStop` | `crontick info daemon stop` | `crontick_daemon_stop` |
-| `daemon-reload` | `daemonReload` | `crontick info daemon reload` | `crontick_daemon_reload` |
-| `doctor` | `doctor` | `crontick info doctor` | `crontick_doctor` |
+| `daemon-stop` | `daemonStop` | `crontick daemon stop` | `crontick_daemon_stop` |
+| `daemon-reload` | `daemonReload` | `crontick daemon reload` | `crontick_daemon_reload` |
+| `doctor` | `doctor` | `crontick doctor` | `crontick_doctor` |
 | `info` | `info` | `crontick info` | `crontick_info` |
 
-Removed parity rows from the previous 37-capability surface include raw schedule validate/preview, dashboard data, dashboard start/status/stop, config get/set/unset/init/validate/engine management, `delete-run`, `config-path`, and the `daemon-start`/`daemon-status`/`daemon-restart` tools. The dashboard is always served by the daemon; `crontick info` (and `crontick_info`) surface `configPath`, daemon state, and `dashboardUrl`.
+Removed parity rows from the previous 37-capability surface include raw schedule validate/preview, dashboard data, dashboard start/status/stop, config get/set/unset/init/validate/engine management, `delete-run`, `config-path`, and the `daemon-start`/`daemon-status`/`daemon-restart` tools (the CLI keeps `crontick daemon start|status|restart` as CLI-only conveniences over the library-only client methods). The dashboard is always served by the daemon; `crontick info` (and `crontick_info`) surface `configPath`, daemon state, and `dashboardUrl`.
 
 ## Behavior
 

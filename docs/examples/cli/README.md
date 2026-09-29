@@ -181,12 +181,12 @@ crontick stats job hello-world
 
 ```sh
 crontick info
-crontick info doctor
-crontick info daemon reload
-crontick info daemon stop
+crontick doctor
+crontick daemon reload
+crontick daemon stop
 ```
 
-`info` prints version, runtime, config path, storage paths, daemon status, and dashboard URL. Edit `config.json` by hand; `info` tells you where it lives. If `retention.maxRunsPerJob` changes, stop the daemon with `crontick info daemon stop` and then run any daemon-backed command to start it again.
+`info` prints version, runtime, config path, storage paths, daemon status, and dashboard URL. Edit `config.json` by hand; `info` tells you where it lives. If `retention.maxRunsPerJob` changes, stop the daemon with `crontick daemon stop` and then run any daemon-backed command to start it again.
 
 ---
 

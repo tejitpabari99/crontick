@@ -101,7 +101,7 @@ On creation, each omitted job field takes its value from `config.json` `defaults
 
 ## When Config Edits Take Effect
 
-Most config is read fresh for each run and applies automatically on the **next run** without `crontick info daemon reload` or a restart:
+Most config is read fresh for each run and applies automatically on the **next run** without `crontick daemon reload` or a restart:
 
 - engine definitions under `engines`
 - the resolved prompt command built by `buildPromptRunCommand()`
@@ -116,11 +116,11 @@ engine and default values saved in their job files after a config edit.
 The exception is `retention.maxRunsPerJob`. The daemon's Store reads and caches that value at daemon startup. Changing `retention.maxRunsPerJob` requires:
 
 ```bash
-crontick info daemon stop
+crontick daemon stop
 # then run any daemon-backed command (for example `crontick jobs list`) to start it again
 ```
 
-`crontick info daemon reload` is for reloading job definitions from disk; it is not required for normal config edits and does not replace the restart requirement for `retention.maxRunsPerJob`.
+`crontick daemon reload` is for reloading job definitions from disk; it is not required for normal config edits and does not replace the restart requirement for `retention.maxRunsPerJob`.
 
 ---
 
@@ -128,7 +128,7 @@ crontick info daemon stop
 
 | Field | Type | Required | Default | Constraints | Runtime behavior |
 |-------|------|----------|---------|-------------|------------------|
-| `maxRunsPerJob` | `integer` | no | `100` | `min(1)`, `max(100_000)` | Cached by Store at daemon startup; changing requires a restart (CLI: `crontick info daemon stop`, then the next daemon-backed command) |
+| `maxRunsPerJob` | `integer` | no | `100` | `min(1)`, `max(100_000)` | Cached by Store at daemon startup; changing requires a restart (CLI: `crontick daemon stop`, then the next daemon-backed command) |
 | `maxOutputBytesPerRun` | `integer` | no | `2_000_000` | `min(1024)`, `max(1_000_000_000)` | Re-read per run; applies on the next run |
 | `maxLogFiles` | `integer` | no | `30` | `min(1)`, `max(3650)` | Applies the next time daemon log retention runs |
 

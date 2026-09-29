@@ -3,7 +3,7 @@
 ## Run doctor first
 
 ```sh
-crontick info doctor
+crontick doctor
 ```
 
 Typical output:
@@ -102,7 +102,7 @@ run. Start it explicitly with:
 crontick jobs list
 ```
 
-Then run `crontick info doctor`. If it still fails, inspect the ensure log in the crontick data directory:
+Then run `crontick doctor`. If it still fails, inspect the ensure log in the crontick data directory:
 `logs/daemon.ensure.log`. crontick is not a supervisor; if the daemon died while idle, scheduled jobs
 pause until you start it or run another daemon-backed command.
 
@@ -128,7 +128,7 @@ Check `crontick info` and inspect the latest daemon log in the crontick data dir
 
 - `crontick runs logs <run-id> --tail 100`
 - `crontick jobs get <job-id>`
-- `crontick info doctor`
+- `crontick doctor`
 
 For MCP workflows, load the run via `crontick_run_get` and `crontick_run_logs_tail`.
 
@@ -172,10 +172,10 @@ This means `runs.db` (the SQLite run-history database) is corrupted. The daemon 
 unconditionally on startup and does not attempt repair, so it fails to start entirely -- no jobs
 run, scheduled or otherwise -- until the file is removed. Recovery:
 
-1. Stop the daemon if it is still running (`crontick info daemon stop`); if it never started, skip this.
+1. Stop the daemon if it is still running (`crontick daemon stop`); if it never started, skip this.
 2. Find the data directory: `CRONTICK_HOME` if set, otherwise the platform default (Windows
    `%LOCALAPPDATA%\crontick`, macOS `~/Library/Application Support/crontick`, Linux
-   `~/.local/share/crontick`). `crontick info doctor` also prints the resolved path.
+   `~/.local/share/crontick`). `crontick doctor` also prints the resolved path.
 3. Delete `runs.db` and its WAL side files in that directory: `runs.db`, `runs.db-wal`,
    `runs.db-shm`. All three must go together -- removing only `runs.db` can leave a stale
    `-wal`/`-shm` pair that the next open tries to replay against the new, empty database file.
@@ -186,7 +186,7 @@ run, scheduled or otherwise -- until the file is removed. Recovery:
 and timestamps. **Job definitions are not affected**: jobs are the JSON files under
 `<dataDir>/jobs/`, a separate store from `runs.db`, and are untouched by this recovery.
 
-**Confirm recovery:** `crontick info doctor` should report the daemon and dashboard reachable again,
+**Confirm recovery:** `crontick doctor` should report the daemon and dashboard reachable again,
 and `crontick jobs list` should show your jobs unchanged with empty run history (`crontick runs logs
 <job-id>` returns no runs until the job fires again). See
 [implementation/storage.md](implementation/storage.md) for the on-disk schema and
@@ -210,7 +210,7 @@ Each job keeps at most `retention.maxRunsPerJob` runs (default `100`); older run
 logs) are pruned automatically and permanently — eviction has no dry-run, warning, or undo. This
 is a per-job **count** cap only: a job that fires every minute keeps far less calendar history
 than a job that fires monthly under the same cap. If you need to keep more history, raise
-`retention.maxRunsPerJob` in `config.json` and run `crontick info daemon reload` (existing runs beyond
+`retention.maxRunsPerJob` in `config.json` and run `crontick daemon reload` (existing runs beyond
 the old cap that were already pruned cannot be recovered after the fact). To avoid losing history
 in the first place, back it up before it is evicted: `crontick share export --include-runs` captures
 every job's run history, and `crontick share import` restores it — see
@@ -218,16 +218,16 @@ every job's run history, and `crontick share import` restores it — see
 [state-and-storage.md](concepts/state-and-storage.md#run-history-retention) and
 [configuration.md](reference/configuration.md).
 
-### `crontick info daemon stop` reports `mode: "hard-kill"` instead of `"graceful"`
+### `crontick daemon stop` reports `mode: "hard-kill"` instead of `"graceful"`
 
-`crontick info daemon stop` (and `daemon restart (library-only)`) prefer `POST /api/daemon/stop`, an in-process
+`crontick daemon stop` (and `daemon restart (library-only)`) prefer `POST /api/daemon/stop`, an in-process
 graceful shutdown that works identically on every platform, including Windows, where OS signals
 sent to another process do not invoke Node's signal handlers at all. A result of `mode:
 "hard-kill"` means the HTTP route could not be reached, so `stopDaemon()` fell back to a raw
 `SIGTERM`/process-kill instead — this is the only path left when the daemon is already wedged or
 unresponsive. Common causes:
 
-- **Stale or missing `daemon.port` file.** Run `crontick info doctor` to check daemon reachability;
+- **Stale or missing `daemon.port` file.** Run `crontick doctor` to check daemon reachability;
   if the port file is stale, the next `crontick jobs list` will overwrite it.
 - **The daemon is deadlocked or otherwise not answering HTTP**, in which case the hard-kill
   fallback is the correct, intended recovery path, not a bug.

@@ -78,7 +78,7 @@ export const JobCreateInputSchema = JobBaseSchema.omit({ action: true }).extend(
 
 export const JobPatchInputSchema = z.object({
   /** Alias is user-editable after creation; `id` (the GUID) is never patchable. */
-  alias: z.string().regex(JOB_ALIAS_PATTERN, 'Job alias must be kebab-case (e.g. "my-job")').optional(),
+  alias: z.string().regex(JOB_ALIAS_PATTERN, 'Job name (alias) must be kebab-case (e.g. "my-job")').optional().describe('Unique kebab-case job name (the CLI --name flag)'),
   description: z.string().optional(),
   enabled: z.boolean().optional(),
   schedule: ScheduleSchema.optional(),
@@ -101,7 +101,7 @@ export interface NormalizeJobInputOptions {
 }
 
 export interface JobCreateCliOptions {
-  /** Explicit alias on create; the only way to name a job's alias. When omitted, one is auto-generated (see generateAlias). Also the only way to rename a job's alias on update. */
+  /** Explicit job name (stored as `alias`) on create; the only way to name a job. When omitted, one is auto-generated (see generateAlias). Also the only way to rename a job's alias on update. */
   alias?: string;
   engineArgs?: string[];
   rawArgs?: string[];
@@ -505,7 +505,7 @@ function formatCliFlagList(flags: readonly string[]): string {
 
 function buildSchedule(input: JobCreateCliOptions): JobCreateInput['schedule'] {
   const schedule = maybeBuildSchedule(input);
-  if (!schedule) throw new CrontickError('MISSING_ARG', 'Provide --cron, --every <sec>, or --at <iso>');
+  if (!schedule) throw new CrontickError('MISSING_ARG', 'Provide exactly one schedule: --cron <expr>, --every <interval> (seconds, or a s/m/h/d suffix such as 30m), or --at <datetime> (one-shot ISO-8601 time, local timezone unless an offset is given)');
   return schedule;
 }
 
@@ -518,7 +518,7 @@ function maybeBuildSchedule(input: JobPatchCliOptions, strictUpdate = false): Jo
     );
   }
   if (count === 0) return undefined;
-  if (count > 1) throw new CrontickError('VALIDATION_ERROR', 'Provide only one schedule source: --cron, --every, or --at');
+  if (count > 1) throw new CrontickError('VALIDATION_ERROR', 'Provide only one schedule: --cron, --every, or --at (they cannot be combined)');
   if (input.cron !== undefined) return { kind: 'cron', cron: input.cron, tz: input.tz };
   if (input.every !== undefined) return { kind: 'interval', everySec: input.every };
   if (input.at !== undefined) return { kind: 'one-shot', runAt: input.at };

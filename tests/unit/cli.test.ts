@@ -163,9 +163,10 @@ describe('CLI binary (dist/cli/index.js)', () => {
     expect(logsHelp.stdout).not.toContain('--lines');
     expect(logsHelp.stdout).not.toContain('--follow');
     expect(cli(['runs', 'delete']).stderr).toContain("unknown command 'delete'");
-    expect(cli(['doctor']).stderr).toContain("unknown command 'doctor'");
     expect(cli(['config']).stderr).toContain("unknown command 'config'");
-    expect(cli(['daemon']).stderr).toContain("unknown command 'daemon'");
+    const topHelp = cli(['--help']);
+    expect(topHelp.stdout).toContain('doctor');
+    expect(topHelp.stdout).toContain('daemon');
     const newHelp = cli(['jobs', 'new', '--help']);
     expect(newHelp.stdout).toContain('--prompt <text>');
     expect(newHelp.stdout).toContain('--file <path>');
@@ -687,19 +688,24 @@ describe('CLI e2e with daemon', () => {
     expect(info.stdout).toContain('paths');
     expect(info.stdout).toMatch(/dashboard\s+http:\/\/127\.0\.0\.1:\d+\/dashboard/);
 
-    const infoHelp = cli(['info', '--help'], env());
-    expect(infoHelp.status, infoHelp.stderr).toBe(0);
-    expect(infoHelp.stdout).toContain('doctor');
-    expect(infoHelp.stdout).toContain('daemon');
+    // `info` output lists the available commands, derived from the live command tree.
+    expect(info.stdout).toContain('commands');
+    for (const name of ['jobs new', 'jobs run-now', 'runs list', 'daemon start', 'daemon stop', 'doctor']) {
+      expect(info.stdout, `info should list '${name}'`).toContain(name);
+    }
 
-    const daemonHelp = cli(['info', 'daemon', '--help'], env());
+    const daemonHelp = cli(['daemon', '--help'], env());
     expect(daemonHelp.status, daemonHelp.stderr).toBe(0);
-    expect(daemonHelp.stdout).toContain('stop');
-    expect(daemonHelp.stdout).toContain('reload');
+    for (const sub of ['start', 'stop', 'status', 'restart', 'reload']) expect(daemonHelp.stdout).toContain(sub);
 
-    const daemonBare = cli(['info', 'daemon'], env());
+    const daemonBare = cli(['daemon'], env());
     expect(daemonBare.status, daemonBare.stderr).toBe(0);
-    expect(daemonBare.stdout).toContain('Usage: crontick info daemon');
+    expect(daemonBare.stdout).toContain('Usage: crontick daemon');
+
+    // Legacy hidden alias keeps working.
+    const legacyBare = cli(['info', 'daemon'], env());
+    expect(legacyBare.status, legacyBare.stderr).toBe(0);
+    expect(legacyBare.stdout).toContain('Usage: crontick info daemon');
   }, 8000);
 
   it('jobs delete all requires --force and deletes all when confirmed', async () => {

@@ -138,7 +138,7 @@ class CrontickError extends Error {
 | | |
 |---|---|
 | **When** | CLI invocation omits a required argument (e.g., no schedule or action source) |
-| **Message shape** | `Provide --cron, --every <sec>, or --at <iso>` (or similar) |
+| **Message shape** | `Provide exactly one schedule: --cron <expr>, --every <interval> ..., or --at <datetime> ...` (or similar) |
 | **Details** | — |
 
 ### ENV_FILE_ERROR

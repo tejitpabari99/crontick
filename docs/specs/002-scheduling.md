@@ -37,7 +37,8 @@ correct behavior across regions.
 - **R-002-1**: The `schedule.kind` discriminator MUST be one of `cron`, `interval`, `one-shot`.
 - **R-002-2**: A `cron` schedule MUST have a non-empty `cron` string and MAY have a `tz` string.
 - **R-002-3**: An `interval` schedule MUST have a positive `everySec` number and MAY have a `startAt` ISO-8601 string.
-- **R-002-4**: A `one-shot` schedule MUST have a non-empty `runAt` ISO-8601 string.
+- **R-002-4**: A `one-shot` schedule MUST have a non-empty `runAt` ISO-8601 string. A date-time without an offset is interpreted in the machine's local timezone.
+- **R-002-4a**: A job MUST have exactly one schedule; supplying more than one of `--cron`, `--every`, `--at` MUST be rejected with `VALIDATION_ERROR`, and none with `MISSING_ARG`.
 - **R-002-5**: When `tz` is provided for a `cron` schedule, the scheduler MUST pass it to croner as `CronOptions.timezone`.
 - **R-002-6**: The scheduler MUST NOT schedule a disabled job (enabled=false); calling `schedule()` on a disabled job MUST be a no-op.
 - **R-002-7**: `schedule()` MUST be idempotent; calling it on an already-scheduled job MUST first unschedule the previous entry.

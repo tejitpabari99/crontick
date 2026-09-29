@@ -40,7 +40,7 @@ No `id` is needed — crontick assigns the GUID and auto-generates an `alias`. O
 - `--runner <name>` — pick a configured engine (default: `claude`).
 - `--prompt-file <path>` — read the prompt from a UTF-8 `.txt` file instead of `--prompt` (mutually exclusive with `--prompt`; contents are stored, not the path).
 - `--timeout <sec>`, `--overlap skip|queue|cancel-previous`, `--retry <max>` — defaults come from `config.json` `defaults` (built-in: no timeout, `skip`, `0`). Precedence: CLI flag > per-job JSON (`--file`) > `config.json` `defaults` > built-in; the resolved values are saved on the job.
-- `--force` — replace an existing job with the same alias.
+- `--force` — replace an existing job with the same name.
 - Unknown long flags are forwarded to the engine and stored in `action.args`, e.g. `crontick jobs new --cron "0 9 * * *" --prompt "…" --permission-mode acceptEdits`. Flags crontick manages itself (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, `-p`, `-r`) are rejected. The old `--alias` and `--engine` flags were renamed to `--name` and `--runner`.
 
 ### Step 2 — Inspect
@@ -77,9 +77,9 @@ crontick runs cancel <runId>       # cancel an in-progress run
 
 ```sh
 crontick info      # version, runtime, config path, storage paths, daemon status, dashboard URL
-crontick info doctor    # health check: Node.js, SQLite, data dir, daemon
-crontick info daemon stop   # stop the daemon when you really need a restart cycle
-crontick info daemon reload # reload jobs from disk after manual edits
+crontick doctor    # health check: Node.js, SQLite, data dir, daemon
+crontick daemon stop   # stop the daemon when you really need a restart cycle
+crontick daemon reload # reload jobs from disk after manual edits
 ```
 
 The dashboard (job/run browser) is served by the daemon; open the `dashboardUrl` from `crontick info` (`http://127.0.0.1:<port>/dashboard`).
@@ -125,8 +125,8 @@ crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident qu
 | **share** | `share export` / `share import <file>` | Export / import jobs |
 | **stats** | `stats summary` / `stats job <id\|alias>` | Aggregate / per-job stats |
 | **info** | `info` | Version, config path, paths, daemon status, dashboard URL |
-| | `info doctor` | System health check |
-| | `info daemon stop\|reload` | Stop or reload the daemon from the info group |
+| | `doctor` | System health check |
+| | `daemon stop\|reload` | Stop or reload the daemon from the info group |
 | **mcp** | `mcp` | Start the MCP server on stdio |
 
 ## Gotchas for the agent
@@ -134,7 +134,7 @@ crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident qu
 - The prompt goes in `--prompt` (or `--prompt-file`). Bare positional text is engine passthrough, not the prompt.
 - Always quote cron expressions: `--cron "0 9 * * *"`.
 - Exactly one schedule source per job: `--cron`, `--every <interval>` (seconds or `s|m|h|d` suffix), or `--at <iso>`.
-- The daemon auto-starts on first use — do not run setup, install services, or register OS login; the only remaining CLI admin helpers are `info daemon stop` and `info daemon reload`.
+- The daemon auto-starts on first use — do not run setup, install services, or register OS login; the only remaining CLI admin helpers are `daemon stop` and `daemon reload`.
 - Run statuses: `queued`, `running`, `success`, `failed`, `canceled`, `skipped` (overlap `skip` found another run active; never started), `timeout`, `missed`.
 - Each run captures engine stdout/stderr, a separate `crontick` lifecycle log stream, and the engine session id (visible in `runs get`).
 - Confirm before `jobs delete`, `jobs update --disable`, or any `jobs delete all --force` clear.
@@ -198,7 +198,7 @@ crontick also ships an MCP server that mirrors these commands one-to-one (tool p
 | `crontick_run_list` | `runs list` |
 | `crontick_run_logs_tail` | `runs logs` |
 | `crontick_info` | `info` |
-| `crontick_daemon_stop` | `info daemon stop` |
-| `crontick_daemon_reload` | `info daemon reload` |
+| `crontick_daemon_stop` | `daemon stop` |
+| `crontick_daemon_reload` | `daemon reload` |
 
 MCP hosts can also read the job JSON schema from the resource `crontick://schemas/job` to validate job definitions before calling `crontick_job_create`.

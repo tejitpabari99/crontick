@@ -9,6 +9,7 @@
  * machine-readable codes; see `src/errors.ts`.
  */
 import http from 'node:http';
+import { existsSync } from 'node:fs';
 import { CrontickError } from './errors.js';
 import { LOG_SOURCES, type LogSource } from './log-source.js';
 import { dirname, resolve as resolvePath } from 'node:path';
@@ -184,6 +185,8 @@ export interface CrontickInfo {
   node: string;
   platform: string;
   configPath: string;
+  /** Whether the config file exists on disk. When false, built-in defaults are in use (create it with initConfig). */
+  configExists: boolean;
   paths: CrontickInfoPaths;
   daemon: { running: boolean; pid?: number; port?: number };
   /**
@@ -473,6 +476,7 @@ export class CrontickClient {
       node: process.version,
       platform: process.platform,
       configPath: config.path,
+      configExists: existsSync(config.path),
       paths: {
         dataDir: dataDir(env),
         jobsDir: jobsDir(env),
@@ -497,7 +501,7 @@ export class CrontickClient {
     return {
       path: configFilePath({ env: this.effectiveEnv() }),
       note:
-        'Edit this file to change the config. Engine, logging, and per-run retention settings apply automatically on the next run; the store retention cap (retention.maxRunsPerJob) is read at daemon start, so changing it requires a daemon restart — from the CLI, run `crontick info daemon stop` and then any daemon-backed command to start it again.',
+        'Edit this file to change the config. Engine, logging, and per-run retention settings apply automatically on the next run; the store retention cap (retention.maxRunsPerJob) is read at daemon start, so changing it requires a daemon restart — from the CLI, run `crontick daemon stop` and then any daemon-backed command to start it again.',
     };
   }
 

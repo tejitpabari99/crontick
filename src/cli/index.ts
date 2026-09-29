@@ -207,18 +207,17 @@ function groupHelp(command: Command): Command {
 
 function commonJobOptions(command: Command): Command {
   return command
-    .option('--desc <description>', 'Job description')
-    .option('--cron <expr>', 'Cron expression (e.g. "0 9 * * *")')
-    .option('--every <interval>', 'Interval in seconds, or with s/m/h/d suffix (e.g. 30m)', parseEveryInterval)
-    .option('--at <iso>', 'One-shot run-at ISO-8601 time')
-    .option('--tz <tz>', 'Timezone for cron schedule')
+    .option('--name <name>', 'Unique kebab-case job name (auto-generated on create when omitted)')
     .option('--prompt <text>', 'Prompt text for a prompt action')
     .option('--prompt-file <path>', 'UTF-8 .txt file to read into the prompt')
+    .option('--cron <expr>', 'Schedule (one of --cron/--every/--at): cron expression, e.g. "0 9 * * *"')
+    .option('--every <interval>', 'Schedule (one of --cron/--every/--at): repeat every N seconds, or use an s/m/h/d suffix (e.g. 30m)', parseEveryInterval)
+    .option('--at <datetime>', 'Schedule (one of --cron/--every/--at): one-shot run time, ISO-8601 (e.g. 2026-10-01T09:00); local timezone unless an offset such as Z or +02:00 is given')
+    .option('--tz <tz>', 'IANA timezone for the --cron schedule (e.g. Europe/London)')
     .option('--runner <runner>', 'Configured prompt engine name (default: config defaultEngine)')
-    .option('--session-id <id>', 'Reuse this prompt engine session every run')
-    .option('--reuse-session', 'Capture the first successful run session id and reuse it')
+    .option('--session-id <id>', 'Resume this existing prompt-engine (e.g. Claude) conversation session on every run of the job, instead of starting a fresh session each run')
+    .option('--reuse-session', 'Start a session on the first successful run, then keep resuming that same session on later runs (alternative to --session-id)')
     .option('--file <path>', 'Create the job from a full job-definition JSON file (advanced)')
-    .option('--name <name>', 'Human-friendly, unique, kebab-case job identifier; auto-generated on create when omitted')
     // No hardcoded default here (unlike most flags): a Commander default would
     // be indistinguishable from the user explicitly typing the same value,
     // which on `update` previously caused an omitted flag to silently reset
@@ -228,7 +227,8 @@ function commonJobOptions(command: Command): Command {
     // `new` still defaults to skip explicitly in job-input.ts.
     .option('--timeout <sec>', 'Per-run timeout in seconds (default: none/unbounded; omit on update to leave unchanged)', parseInteger)
     .option('--overlap <policy>', 'Overlap policy: skip|queue|cancel-previous (default on create: skip; omit on update to leave unchanged)')
-    .option('--retry <max>', 'Retry count on failure (default: 0; omit on update to leave unchanged)', parseInteger);
+    .option('--retry <max>', 'Retry count on failure (default: 0; omit on update to leave unchanged)', parseInteger)
+    .option('--desc <description>', 'Job description');
 }
 
 function collectJobOptions(engineArgs: string[], passthroughArgs: string[], cliArgvOrder: string[], opts: Record<string, unknown>): JobCreateCliOptions {
@@ -403,9 +403,14 @@ program
 // ── jobs ─────────────────────────────────────────────────────────────────────
 const jobs = groupHelp(program.command('jobs').description('Create, inspect, and manage scheduled jobs'));
 
-commonJobOptions(jobs.command('new [engineArgs...]').description('Create a new job (alias auto-generated when --name is omitted)'))
+commonJobOptions(jobs.command('new [engineArgs...]').description('Create a new job (name auto-generated when --name is omitted)'))
   .allowUnknownOption()
-  .option('--force', 'Replace an existing job when the same alias already exists')
+  .option('--force', 'Replace an existing job when the same name already exists')
+  .addHelpText('after', `
+Schedule: give exactly one of --cron, --every, or --at (combining them is an error).
+  --cron "0 9 * * *"         recurring, cron expression (optionally with --tz)
+  --every 30m                recurring interval: seconds, or s/m/h/d suffix
+  --at 2026-10-01T09:00      run once; local timezone unless an offset (Z, +02:00) is given`)
   .action(async (engineArgs: string[], opts, cmd: Command) => {
     const c = client();
     try {
@@ -419,7 +424,7 @@ commonJobOptions(jobs.command('new [engineArgs...]').description('Create a new j
     }
   });
 
-commonJobOptions(jobs.command('update <id> [engineArgs...]').description('Update an existing job (id or alias)'))
+commonJobOptions(jobs.command('update <id> [engineArgs...]').description('Update an existing job (id or name)'))
   .allowUnknownOption()
   .option('--enable', 'Enable the job')
   .option('--disable', 'Disable the job')
@@ -445,19 +450,19 @@ jobs.command('list').description('List all jobs').action(async () => {
   try { print(await client().listJobs()); } catch (err) { handleError(err); }
 });
 
-jobs.command('get <id>').description('Get a job by id or alias').action(async (id: string) => {
+jobs.command('get <id>').description('Get a job by id or name').action(async (id: string) => {
   try { print(await client().getJob(id)); } catch (err) { handleError(err); }
 });
 
 jobs.command('schedule <id>')
-  .description('Show upcoming fire times for a job (id or alias)')
+  .description('Show upcoming fire times for a job (id or name)')
   .option('-n, --count <n>', 'Number of upcoming fire times to show (default: 5)', parseInteger, 5)
   .action(async (id: string, opts) => {
     try { print(await client().jobSchedule(id, { n: opts.count as number | undefined })); } catch (err) { handleError(err); }
   });
 
 jobs.command('delete <idOrAlias>')
-  .description('Delete a job (id or alias), or delete all jobs with the reserved `all` keyword and --force')
+  .description('Delete a job (id or name), or delete all jobs with the reserved `all` keyword and --force')
   .option('--force', 'Confirm a destructive delete when deleting all jobs')
   .action(async (idOrAlias: string, opts) => {
     try {
@@ -471,7 +476,7 @@ jobs.command('delete <idOrAlias>')
     } catch (err) { handleError(err); }
   });
 
-jobs.command('run-now <id>').description('Trigger an immediate run of a job (id or alias)').action(async (id: string) => {
+jobs.command('run-now <id>').description('Trigger an immediate run of a job (id or name)').action(async (id: string) => {
   try { print(await client().runNow(id)); } catch (err) { handleError(err); }
 });
 
@@ -481,7 +486,7 @@ const RUN_STATUSES = ['queued', 'running', 'success', 'failed', 'canceled', 'ski
 const runs = groupHelp(program.command('runs').description('Inspect and manage run history'));
 runs.command('list')
   .description('List recent runs, optionally filtered by job')
-  .option('--job <id>', 'Filter by job id or alias')
+  .option('--job <id>', 'Filter by job id or name')
   .option('--limit <n>', 'Maximum runs to return', parseInteger)
   .option('--since <ms>', 'Only runs since epoch milliseconds', parseInteger)
   .option('--status <status>', `Filter by run status (${RUN_STATUSES.join('|')})`)
@@ -524,7 +529,7 @@ const stats = groupHelp(program.command('stats').description('Show job/run stati
 stats.command('summary').description('Show aggregate statistics').action(async () => {
   try { print(await client().statsSummary()); } catch (err) { handleError(err); }
 });
-stats.command('job <id>').description('Show statistics for one job (id or alias)').action(async (id: string) => {
+stats.command('job <id>').description('Show statistics for one job (id or name)').action(async (id: string) => {
   try { print(await client().statsJob(id)); } catch (err) { handleError(err); }
 });
 
@@ -562,8 +567,29 @@ share.command('import <file>').description('Import jobs (and run history, if pre
 });
 
 // ── info ─────────────────────────────────────────────────────────────────────
+
+/** Flatten the live Commander tree into `[fullName, description]` rows (visible commands only). */
+function listCommands(parent: Command = program, prefix: string[] = []): Array<[string, string]> {
+  const rows: Array<[string, string]> = [];
+  for (const cmd of parent.commands) {
+    if ((cmd as Command & { _hidden?: boolean })._hidden) continue;
+    const path = [...prefix, cmd.name()];
+    const children = cmd.commands.filter((child) => !(child as Command & { _hidden?: boolean })._hidden);
+    if (children.length === 0 || cmd.name() === 'info') rows.push([path.join(' '), cmd.description()]);
+    if (children.length > 0) rows.push(...listCommands(cmd, path));
+  }
+  return rows;
+}
+
+function printCommandList(): void {
+  const rows = listCommands();
+  const width = Math.max(...rows.map(([name]) => name.length));
+  stdout('commands  (run `crontick <command> --help` for options)');
+  for (const [name, description] of rows) stdout(`  ${name.padEnd(width)}  ${description}`);
+}
+
 const info = program.command('info')
-  .description('Show version, runtime, config path, storage locations, and daemon status')
+  .description('Show version, runtime, config path, storage locations, daemon status, and the list of commands')
   .action(async () => {
     try {
       const result = await client(false).info();
@@ -573,8 +599,8 @@ const info = program.command('info')
       stdout('');
       stdout(result.daemon.running
         ? `daemon     running (pid ${String(result.daemon.pid ?? '?')}, port ${String(result.daemon.port ?? '?')})`
-        : 'daemon     stopped');
-      stdout(`config     ${result.configPath}`);
+        : 'daemon     stopped (starts automatically on first use, or run: crontick daemon start)');
+      stdout(`config     ${result.configPath}${result.configExists ? '' : ' (not created yet - built-in defaults in use)'}`);
       stdout(result.dashboardUrl
         ? `dashboard  ${result.dashboardUrl}${result.daemon.running ? '' : ' (available once the daemon is running; it starts automatically on first use)'}`
         : 'dashboard  available once the daemon is running (it starts automatically on first use)');
@@ -583,10 +609,12 @@ const info = program.command('info')
       for (const key of ['dataDir', 'jobsDir', 'logsDir', 'runsDb', 'portFile', 'pidFile'] as const) {
         stdout(`  ${key.padEnd(11)}${result.paths[key]}`);
       }
+      stdout('');
+      printCommandList();
     } catch (err) { handleError(err); }
   });
 
-info.command('doctor').description('Check system health').action(async () => {
+async function runDoctor(): Promise<void> {
   try {
     const result = await client(false).doctor({ mcpScript: mcpScript() });
     for (const check of result.checks) {
@@ -594,18 +622,66 @@ info.command('doctor').description('Check system health').action(async () => {
     }
     if (!result.ok) process.exitCode = 1;
   } catch (err) { handleError(err); }
-});
+}
 
-const infoDaemon = groupHelp(info.command('daemon').description('Manage daemon admin operations that remain on the CLI'));
-infoDaemon.command('stop').description('Stop the daemon').action(async () => {
+program.command('doctor').description('Check system health').action(runDoctor);
+info.command('doctor', { hidden: true }).description('Check system health (alias of `crontick doctor`)').action(runDoctor);
+
+// ── daemon ───────────────────────────────────────────────────────────────────
+// The daemon still demand-starts on first use; `daemon start` is the explicit,
+// manual way to start it (or run it in the foreground). It is NOT login/boot
+// registration (that removed feature is guarded by tests/unit/autostart-removal.test.ts).
+async function daemonStop(): Promise<void> {
   try {
     const result = await client(false).daemonStop();
     stdout(`${result.message} (mode: ${result.mode})`);
   } catch (err) { handleError(err); }
-});
-infoDaemon.command('reload').description('Reload jobs from disk').action(async () => {
+}
+async function daemonReload(): Promise<void> {
   try { print(await client().daemonReload()); } catch (err) { handleError(err); }
+}
+
+const daemon = groupHelp(program.command('daemon').description('Start, stop, and inspect the background daemon'));
+daemon.command('start')
+  .description('Start the daemon now (background by default; it also starts automatically on first use)')
+  .option('--foreground', 'Run the daemon in this terminal until it exits (Ctrl+C to stop)')
+  .action(async (opts) => {
+    try {
+      const result = await client().daemonStart({ foreground: booleanOption(opts.foreground) });
+      if (result.foregroundExitCode !== undefined) {
+        stdout(`Daemon exited (code ${String(result.foregroundExitCode)})`);
+        return;
+      }
+      stdout(result.started
+        ? `Daemon started (pid ${String(result.pid ?? '?')}, ${result.baseUrl})`
+        : `Daemon already running (pid ${String(result.pid ?? '?')}, ${result.baseUrl})`);
+    } catch (err) { handleError(err); }
+  });
+daemon.command('stop').description('Stop the daemon').action(daemonStop);
+daemon.command('restart').description('Stop the daemon and start it again').action(async () => {
+  try {
+    const result = await client().daemonRestart();
+    stdout(`Daemon restarted (pid ${String(result.pid ?? '?')}, ${result.baseUrl})`);
+  } catch (err) { handleError(err); }
 });
+daemon.command('status').description('Show whether the daemon is running').action(async () => {
+  try {
+    print(await client(false).daemonStatus());
+  } catch (err) {
+    if (err instanceof CrontickError && err.code === 'DAEMON_NOT_RUNNING') {
+      stdout('Daemon is not running (start it with: crontick daemon start)');
+      process.exitCode = 1;
+      return;
+    }
+    handleError(err);
+  }
+});
+daemon.command('reload').description('Reload jobs from disk').action(daemonReload);
+
+// Legacy location kept working for existing scripts; hidden from help.
+const infoDaemon = groupHelp(info.command('daemon', { hidden: true }).description('Deprecated: use `crontick daemon`'));
+infoDaemon.command('stop').description('Stop the daemon').action(daemonStop);
+infoDaemon.command('reload').description('Reload jobs from disk').action(daemonReload);
 
 // ── dashboard ────────────────────────────────────────────────────────────────
 // The dashboard has no dedicated command group: it is always served by the

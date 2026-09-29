@@ -4,7 +4,8 @@
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { ensureDirs, portFilePath } from './paths.js';
+import { dataDir, ensureDirs, portFilePath } from './paths.js';
+import { configFilePath } from './config.js';
 import { resolveDaemonBaseUrl } from './daemon/ensure.js';
 
 export interface DoctorCheck {
@@ -46,10 +47,19 @@ export async function runDoctorChecks(options: DoctorOptions = {}): Promise<Doct
 
   try {
     ensureDirs(env);
-    checks.push({ name: 'data dir writable', ok: true });
+    checks.push({ name: 'data dir writable', ok: true, note: dataDir(env) });
   } catch (err) {
     checks.push({ name: 'data dir writable', ok: false, note: String(err) });
   }
+
+  // The config file is optional and only created on demand; report truthfully
+  // whether it exists so users looking for the printed path are not misled.
+  const cfgPath = configFilePath({ env });
+  checks.push({
+    name: 'config file',
+    ok: true,
+    note: existsSync(cfgPath) ? cfgPath : `${cfgPath} - not created yet, built-in defaults in use`,
+  });
 
   const portPath = portFilePath(env);
   const portFileExists = existsSync(portPath);

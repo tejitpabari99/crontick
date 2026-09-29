@@ -74,7 +74,7 @@ Pre-1.0, a removed feature is removed, not deprecated-and-kept (ADR 0001). A cap
 
 Every error surfaced to a consumer is a typed `CrontickError` with a machine-readable `code` and a message that tells the user what to do, not just what went wrong.
 
-- **Do** give a new failure mode its own error code and a message that names the fix (e.g. "run `crontick info doctor`").
+- **Do** give a new failure mode its own error code and a message that names the fix (e.g. "run `crontick doctor`").
 - **Don't** surface a raw `Error`, a stack trace, or a message that only restates the failure with no next step.
 
 ### 8. Platform APIs over dependencies

@@ -57,6 +57,7 @@ on time even when no interactive session is open, without requiring OS service r
 - **R-004-19**: The health probe MUST validate `product === "crontick"`, that `pid`/`port` are positive integers, and that `port` matches the expected port.
 - **R-004-20**: The daemon MUST log to `<dataDir>/logs/daemon-YYYY-MM-DD.log` (JSON lines).
 - **R-004-21**: `POST /api/daemon/reload` MUST re-read config, unschedule all jobs, reload from disk, apply any changed retention caps, and reschedule enabled jobs. A config read failure MUST abort the reload with the prior schedule intact.
+- **R-004-35**: The CLI MUST offer an explicit `crontick daemon start [--foreground]` (plus `daemon stop|restart|status|reload`). It is a manual, one-off start of the same demand-started daemon: it MUST NOT register the daemon with the OS to run at login or boot (that removed capability stays removed; see `tests/unit/autostart-removal.test.ts`). `daemon start`, `status`, and `restart` are CLI conveniences over library-only client methods (`daemonStart`, `daemonStatus`, `daemonRestart`) and are intentionally not MCP tools, because MCP clients already demand-start the daemon.
 - **R-004-22**: `stopDaemon()` MUST prefer the graceful `POST /api/daemon/stop` route, escalating to `SIGTERM` then `SIGKILL` if the route stalls or is unreachable. It MUST report which path was used via `mode: 'already-stopped' | 'graceful' | 'hard-kill'`, and include `activeRuns` whenever available.
 - **R-004-23**: `startDaemon=false` (option or env `CRONTICK_MCP_START_DAEMON=0`) MUST prevent demand-start from spawning; it MUST throw `DAEMON_NOT_RUNNING` instead.
 - **R-004-24**: Stale lock files (older than `lockTimeoutMs` or held by a dead process) MUST be cleaned up by waiting clients.
@@ -66,7 +67,7 @@ on time even when no interactive session is open, without requiring OS service r
 - **R-004-30**: On startup, and again on reload, the daemon MUST prune daily log files beyond `retention.maxLogFiles` (default 30, range 1..3650), best-effort.
 - **R-004-31**: `DELETE /api/jobs/:id` MUST cancel the job's in-flight run, if any, and report `canceledRun: boolean`.
 - **R-004-32**: `POST /api/jobs` MUST reject a duplicate job ID with HTTP 409 / `JOB_ALREADY_EXISTS` unless `force` is passed. Both create and update MUST validate the schedule and, when `action.envFile` is present, preflight it before any call to `Store.upsertJob()`.
-- **R-004-33**: `crontick info daemon stop`/`reload` MUST emit human-readable output; the CLI has no global `--json` mode.
+- **R-004-33**: `crontick daemon stop`/`reload` MUST emit human-readable output; the CLI has no global `--json` mode.
 
 ### Non-functional requirements
 
@@ -114,7 +115,7 @@ a fallback only) are described in
 - [x] Startup prunes daemon log files beyond `retention.maxLogFiles`; reload applies a lowered cap without restart (test file: `tests/unit/integration.daemon-lifecycle.test.ts`)
 - [x] Missed fires across a crash/restart are recorded as `missed` runs and surfaced in `info`'s `missedFires` summary (test files: `tests/unit/integration.daemon-lifecycle.test.ts`, `tests/unit/api.test.ts`, `tests/unit/daemon-status-fields.test.ts`)
 - [x] Reload reschedules all jobs from disk, aborting cleanly on invalid config (test file: `tests/unit/integration.daemon-lifecycle.test.ts`)
-- [x] `crontick info daemon stop`/`reload` use human-readable CLI output (test file: `tests/unit/cli-daemon-json.test.ts`)
+- [x] `crontick daemon stop`/`reload` use human-readable CLI output (test file: `tests/unit/cli-daemon-json.test.ts`)
 
 ## Out of scope
 

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 const CLI = resolve('dist/cli/index.js');
 const INVALID_JOB_ALIAS = 'QA_Job_011_Bad';
-const ALIAS_ERROR_MESSAGE = 'Job alias must be kebab-case (e.g. "my-job")';
+const ALIAS_ERROR_MESSAGE = 'Job name (alias) must be kebab-case (e.g. "my-job")';
 
 function cli(args: string[]) {
   return spawnSync(process.execPath, [CLI, ...args], {

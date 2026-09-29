@@ -88,7 +88,7 @@ Create and schedule a new job.
 | `action` | `ActionInput` | yes | — | Prompt action with `kind: "prompt"` |
 | `overlap` | `"skip"\|"queue"\|"cancel-previous"` | no | config `defaults.overlap`, then `"skip"` | Overlap policy |
 | `retry` | `{ max?: number, backoffSec?: number }` | no | config `defaults.retry`, then `{ max: 0, backoffSec: 30 }` | Retry config |
-| `force` | `boolean` | no | `false` | Replace an existing job with the same alias/id |
+| `force` | `boolean` | no | `false` | Replace an existing job with the same name (alias) or id |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** The created `Job` object, with secret-like `action.env` values redacted.
@@ -111,11 +111,11 @@ List all scheduled jobs with their current status and next run time.
 
 ### crontick_job_get
 
-Get the full definition and status of a specific job by GUID or alias.
+Get the full definition and status of a specific job by GUID or name.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Job GUID or alias |
+| `id` | `string` | yes | — | Job GUID or name |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `Job` object.
@@ -124,11 +124,11 @@ Get the full definition and status of a specific job by GUID or alias.
 
 ### crontick_job_update
 
-Update an existing job by GUID or alias. The patch is merged with the existing definition; omitted fields remain unchanged.
+Update an existing job by GUID or name. The patch is merged with the existing definition; omitted fields remain unchanged.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Job GUID or alias |
+| `id` | `string` | yes | — | Job GUID or name |
 | `alias` | `string` | no | — | New human-friendly alias |
 | `description` | `string` | no | — | Job description |
 | `enabled` | `boolean` | no | — | Enable/disable |
@@ -150,7 +150,7 @@ Enable a disabled job.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Job GUID or alias |
+| `id` | `string` | yes | — | Job GUID or name |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Updated `Job` object.
@@ -163,7 +163,7 @@ Disable a job.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Job GUID or alias |
+| `id` | `string` | yes | — | Job GUID or name |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Updated `Job` object.
@@ -172,11 +172,11 @@ Disable a job.
 
 ### crontick_job_delete
 
-Permanently delete one job definition by GUID or alias, or delete every job with explicit confirmation.
+Permanently delete one job definition by GUID or name, or delete every job with explicit confirmation.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | no | — | Job GUID or alias for a single delete |
+| `id` | `string` | no | — | Job GUID or name for a single delete |
 | `all` | `boolean` | no | `false` | Delete every job |
 | `force` | `boolean` | no | `false` | Required when `all: true` |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
@@ -191,7 +191,7 @@ Trigger an immediate run of a job, bypassing its schedule.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Job GUID or alias |
+| `id` | `string` | yes | — | Job GUID or name |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `{ runId: string }`
@@ -204,7 +204,7 @@ Show upcoming fire times for an existing job.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Job GUID or alias |
+| `id` | `string` | yes | — | Job GUID or name |
 | `n` | `integer` (1-20) | no | `5` | Number of upcoming fire times |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
@@ -231,7 +231,7 @@ List recent runs, optionally filtered by job and/or status.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `jobId` | `string` | no | — | Job GUID or alias |
+| `jobId` | `string` | no | — | Job GUID or name |
 | `limit` | `integer` (positive) | no | — | Maximum runs to return |
 | `since` | `integer` | no | — | Only runs since epoch milliseconds |
 | `status` | `enum` | no | — | `queued`, `running`, `success`, `failed`, `canceled`, `skipped`, `timeout`, or `missed` |
@@ -287,7 +287,7 @@ Get run statistics for a specific job.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Job GUID or alias |
+| `id` | `string` | yes | — | Job GUID or name |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `{ jobId, totalRuns, succeeded, failed, canceled, skipped, lastStatus, lastRunAt, totalCostUsd, totalTurns }`.

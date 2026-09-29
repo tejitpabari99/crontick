@@ -34,9 +34,9 @@ export const SURFACE_CAPABILITIES = [
   { capability: 'stats-job', clientMethod: 'statsJob', cliCommand: ['stats', 'job'], mcpTool: 'crontick_stats_job' },
   { capability: 'export', clientMethod: 'exportJobs', cliCommand: ['share', 'export'], mcpTool: 'crontick_export' },
   { capability: 'import', clientMethod: 'importJobs', cliCommand: ['share', 'import'], mcpTool: 'crontick_import' },
-  { capability: 'daemon-stop', clientMethod: 'daemonStop', cliCommand: ['info', 'daemon', 'stop'], mcpTool: 'crontick_daemon_stop' },
-  { capability: 'daemon-reload', clientMethod: 'daemonReload', cliCommand: ['info', 'daemon', 'reload'], mcpTool: 'crontick_daemon_reload' },
-  { capability: 'doctor', clientMethod: 'doctor', cliCommand: ['info', 'doctor'], mcpTool: 'crontick_doctor' },
+  { capability: 'daemon-stop', clientMethod: 'daemonStop', cliCommand: ['daemon', 'stop'], mcpTool: 'crontick_daemon_stop' },
+  { capability: 'daemon-reload', clientMethod: 'daemonReload', cliCommand: ['daemon', 'reload'], mcpTool: 'crontick_daemon_reload' },
+  { capability: 'doctor', clientMethod: 'doctor', cliCommand: ['doctor'], mcpTool: 'crontick_doctor' },
   { capability: 'info', clientMethod: 'info', cliCommand: ['info'], mcpTool: 'crontick_info' },
 ] as const satisfies readonly SurfaceCapability[];
 

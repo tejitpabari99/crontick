@@ -29,7 +29,7 @@ Standard cron features (ranges, steps, lists, `L`, `W`, `#`) are supported as de
 
 The optional `tz` field on a `cron` schedule is passed directly to croner as `CronOptions.timezone`. When omitted, the daemon's local system timezone applies. There is no global timezone setting; each job owns its own.
 
-Interval and one-shot schedules use UTC timestamps (ISO-8601 strings) and are timezone-agnostic.
+Interval schedules are timezone-agnostic. A one-shot `runAt` is an ISO-8601 string parsed with JavaScript `Date`: with an explicit offset (`Z`, `+02:00`) it is that exact instant; a date-time without an offset (`2026-10-01T09:00`) is interpreted in the machine's local timezone; a date-only value (`2026-10-01`) is UTC midnight. A job has exactly one schedule (`cron`, `interval`, or `one-shot`); the CLI rejects combining `--cron`, `--every`, and `--at`.
 
 ## Interval alignment
 

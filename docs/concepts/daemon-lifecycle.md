@@ -35,7 +35,7 @@ concurrent start races. On startup the daemon reads `daemon.pid`: if that PID is
 
 ## Shutdown
 
-`crontick info daemon stop` (`stopDaemon()`) prefers an **in-process HTTP shutdown** over OS
+`crontick daemon stop` (`stopDaemon()`) prefers an **in-process HTTP shutdown** over OS
 signals, because it's the only mechanism that behaves identically on every platform. `POST
 /api/daemon/stop` responds `200 { ok, stopping: true, pid, activeRuns }` *before* the daemon
 actually tears down (close HTTP server, unschedule jobs, drain 100 ms, close SQLite, remove
@@ -92,3 +92,8 @@ OS startup registration was removed in favor of pure demand-start; see
 
 - [State and storage](./state-and-storage.md), [Error model](./error-model.md), [Architecture](../architecture.md)
 - [ADR 0001: Architecture and runtime model](../decisions/0001-architecture-and-runtime-model.md)
+
+
+## Explicit start
+
+The daemon demand-starts on first use, but `crontick daemon start` starts it explicitly (background by default, `--foreground` to run it in the terminal), `crontick daemon status` reports whether it is running, and `crontick daemon restart` cycles it. This is a manual start only; crontick does not register itself to start at login or boot.

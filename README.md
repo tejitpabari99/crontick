@@ -45,7 +45,7 @@ Verify your setup:
 
 ```sh
 crontick info      # version, runtime, config path, storage paths, daemon status, dashboard URL
-crontick info doctor    # system health check
+crontick doctor    # system health check
 ```
 
 ---
@@ -100,7 +100,7 @@ Preview the next fire times for any job:
 crontick jobs schedule standup -n 5
 ```
 
-Other create/update options: `--timeout <sec>`, `--overlap skip|queue|cancel-previous` (default `skip`), `--retry <max>`, `--force` (replace a job with the same alias). Omitted policy values come from the `defaults` section of `config.json` (`overlap`, `timeoutSec`, `retry`); precedence is CLI flag > per-job JSON > `config.json` > built-in, and the resolved values are saved on the job. When an overlap `skip` job fires while its previous run is still active, the fire is recorded as a `skipped` run (never started), distinct from `canceled`.
+Other create/update options: `--timeout <sec>`, `--overlap skip|queue|cancel-previous` (default `skip`), `--retry <max>`, `--force` (replace a job with the same name). Omitted policy values come from the `defaults` section of `config.json` (`overlap`, `timeoutSec`, `retry`); precedence is CLI flag > per-job JSON > `config.json` > built-in, and the resolved values are saved on the job. When an overlap `skip` job fires while its previous run is still active, the fire is recorded as a `skipped` run (never started), distinct from `canceled`.
 
 ---
 
@@ -116,7 +116,7 @@ The Claude adapter invokes `claude -p "<your prompt>" --output-format stream-jso
 
 ### The config file
 
-`crontick info` prints the path to `config.json` (under the data dir). **Edit that file directly.** Engine, logging, and per-run retention changes apply on the next run; `retention.maxRunsPerJob` is read at daemon start, so changing it needs a daemon restart — from the CLI, run `crontick info daemon stop` and then any daemon-backed command to start it again.
+`crontick info` prints the path to `config.json` (under the data dir). **Edit that file directly.** Engine, logging, and per-run retention changes apply on the next run; `retention.maxRunsPerJob` is read at daemon start, so changing it needs a daemon restart — from the CLI, run `crontick daemon stop` and then any daemon-backed command to start it again.
 
 ```jsonc
 {
@@ -225,8 +225,8 @@ Full API in [docs/reference/library-api.md](docs/reference/library-api.md); runn
 | **share** | `export` · `import` |
 | **stats** | `summary` · `job` |
 | **info** | `info` (version, paths, daemon status, dashboard URL) |
-| **doctor** | `info doctor` (system health check) |
-| **daemon** | `info daemon stop` · `info daemon reload` |
+| **doctor** | `doctor` (system health check) |
+| **daemon** | `daemon stop` · `daemon reload` |
 | **mcp** | `mcp` (start the MCP server on stdio) |
 
 Full CLI reference: [docs/reference/cli.md](docs/reference/cli.md).
