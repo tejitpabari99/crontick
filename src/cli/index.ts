@@ -611,15 +611,18 @@ function listCommands(parent: Command = program, prefix: string[] = []): Array<[
   return rows;
 }
 
+/** Top-level command groups that belong to `info` (status/health commands). */
+const INFO_GROUP_COMMANDS = new Set(['daemon', 'doctor']);
+
 function printCommandList(): void {
-  const rows = listCommands();
+  const rows = listCommands().filter(([name]) => INFO_GROUP_COMMANDS.has(name.split(' ')[0]!));
   const width = Math.max(...rows.map(([name]) => name.length));
   stdout('commands  (run `crontick <command> --help` for options)');
   for (const [name, description] of rows) stdout(`  ${name.padEnd(width)}  ${description}`);
 }
 
 const info = program.command('info')
-  .description('Show version, runtime, config path, storage locations, daemon status, and the list of commands')
+  .description('Show version, runtime, config path, storage locations, daemon status, and the daemon/doctor commands')
   .action(async () => {
     try {
       const result = await client(false).info();

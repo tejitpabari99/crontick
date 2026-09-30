@@ -58,8 +58,10 @@ describe('info, doctor and daemon commands', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain('not created yet');
     expect(result.stdout).toContain('commands');
-    expect(result.stdout).toMatch(/jobs new\s+Create a new job/);
-    expect(result.stdout).toContain('daemon start');
+    // Only the info-group commands (daemon + doctor) are listed, not every command.
+    expect(result.stdout).not.toMatch(/^ {2}jobs new\b/m);
+    expect(result.stdout).toMatch(/^ {2}daemon start\b/m);
+    expect(result.stdout).toMatch(/^ {2}doctor\b/m);
     expect(result.stdout).not.toContain('info daemon');
   }));
 

@@ -694,10 +694,13 @@ describe('CLI e2e with daemon', () => {
     expect(info.stdout).toContain('paths');
     expect(info.stdout).toMatch(/dashboard\s+http:\/\/127\.0\.0\.1:\d+\/dashboard/);
 
-    // `info` output lists the available commands, derived from the live command tree.
+    // `info` lists only the info-group commands (daemon + doctor), derived from the live command tree.
     expect(info.stdout).toContain('commands');
-    for (const name of ['jobs new', 'jobs run-now', 'runs list', 'runs output', 'daemon start', 'daemon stop', 'doctor']) {
+    for (const name of ['daemon start', 'daemon stop', 'daemon status', 'doctor']) {
       expect(info.stdout, `info should list '${name}'`).toContain(name);
+    }
+    for (const name of ['jobs new', 'jobs run-now', 'runs list', 'runs output', 'stats', 'share']) {
+      expect(info.stdout, `info should not list '${name}'`).not.toMatch(new RegExp(`^  ${name}\\b`, 'm'));
     }
 
     const daemonHelp = cli(['daemon', '--help'], env());

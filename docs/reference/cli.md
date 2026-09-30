@@ -352,7 +352,7 @@ The default output includes:
 - config file path (`configPath`), with `(not created yet - built-in defaults in use)` when the file does not exist (`configExists: false`)
 - dashboard URL when the daemon is running
 - `paths` block: `dataDir`, `jobsDir`, `logsDir`, `runsDb`, `portFile`, `pidFile`
-- a `commands` section listing every available command with a one-line description, generated from the live command tree
+- a `commands` section listing only the info-group commands (`daemon ...` and `doctor`) with a one-line description, generated from the live command tree; run `crontick --help` for every command
 
 `info` never starts the daemon; when the daemon is stopped it prints that state and notes that the dashboard becomes available again on the next daemon-backed command.
 
@@ -427,6 +427,11 @@ job/run actions through the existing `/api/*` routes.
 
 - **Header** — shows the real daemon `version`, pid, node version and job count, plus an
   uptime badge (hover for a "daemon uptime" tooltip).
+- **Theme** — a System / Light / Dark toggle in the header. Colors are CSS custom properties
+  on `:root`; by default the dashboard follows `prefers-color-scheme`. Choosing Light or Dark
+  sets `data-theme` on `<html>` and is persisted in `localStorage` (`crontick.theme`); choosing
+  System clears it. An inline script in `<head>` applies the saved theme before first paint to
+  avoid a flash of the wrong theme.
 - **Top bar** — Refresh button, the runs limit, and an **Auto-refresh** segmented control
   (`Off`, `10s`, `15s`, `30s`, `60s`). The default is `Off`; the choice is persisted in
   `localStorage` and the refresh timer honors it.
