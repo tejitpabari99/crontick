@@ -280,6 +280,24 @@ describe('Dashboard serving', () => {
     expect(js).not.toContain('avgDurationMs');
   });
 
+  it('serves a light/dark theme toggle backed by CSS custom properties', async () => {
+    const html = await (await fetch(`http://127.0.0.1:${port}/dashboard`)).text();
+    const css = await (await fetch(`http://127.0.0.1:${port}/dashboard/dashboard.css`)).text();
+    const js = await (await fetch(`http://127.0.0.1:${port}/dashboard/dashboard.js`)).text();
+    expect(html).toContain('id="theme-toggle"');
+    for (const c of ['system', 'light', 'dark']) expect(html).toContain(`data-theme-choice="${c}"`);
+    // The saved theme is applied by an inline script in <head> before the stylesheet loads.
+    const head = html.slice(0, html.indexOf('</head>'));
+    expect(head).toContain("localStorage.getItem('crontick.theme')");
+    expect(head.indexOf('data-theme')).toBeLessThan(head.indexOf('dashboard.css'));
+    expect(css).toMatch(/:root\s*\{[^}]*--bg:/);
+    expect(css).toContain('prefers-color-scheme: light');
+    expect(css).toContain(':root[data-theme="light"]');
+    expect(css.split("\n").filter((l) => /rgba\(/.test(l) && !l.trim().startsWith("--"))).toEqual([]);
+    expect(js).toContain('data-theme');
+    expect(js).toContain('crontick.theme');
+  });
+
   it('GET /api/runs and /api/dashboard accept multi-value jobId/status and q', async () => {
     for (const path of ['/api/runs?jobId=a,b&status=failed,success&q=x%25y', '/api/dashboard?jobId=a,b&status=failed,success&q=needle']) {
       const { status } = await apiCall(port, 'GET', path);

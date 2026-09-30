@@ -4,6 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>crontick</title>
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('crontick.theme');
+        if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable: follow the OS preference */ }
+    })();
+  </script>
   <link rel="stylesheet" href="/dashboard/dashboard.css">
 </head>
 <body>
@@ -11,6 +19,13 @@
     <h1>⏱ crontick</h1>
     <div id="version-info"></div>
     <div id="health-badge" class="badge badge-unknown">loading…</div>
+    <div class="theme-toggle" role="radiogroup" aria-label="Color theme">
+      <div id="theme-toggle" class="segmented">
+        <button type="button" role="radio" aria-checked="true" data-theme-choice="system" title="Follow system theme">System</button>
+        <button type="button" role="radio" aria-checked="false" data-theme-choice="light" title="Light theme">Light</button>
+        <button type="button" role="radio" aria-checked="false" data-theme-choice="dark" title="Dark theme">Dark</button>
+      </div>
+    </div>
   </header>
   <main>
     <div class="toolbar">

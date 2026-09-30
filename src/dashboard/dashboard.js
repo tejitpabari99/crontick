@@ -790,3 +790,30 @@ loadDashboard().catch((err) => {
   badge.className = 'badge badge-error';
   showInlineError(err.message);
 });
+
+
+// ── Theme toggle (system / light / dark) ─────────────────────────────────────
+// The saved choice is applied early by an inline script in index.html; this wires the buttons.
+const THEME_KEY = 'crontick.theme';
+function applyTheme(choice) {
+  if (choice === 'light' || choice === 'dark') document.documentElement.setAttribute('data-theme', choice);
+  else document.documentElement.removeAttribute('data-theme');
+  document.querySelectorAll('#theme-toggle button').forEach((b) => {
+    b.setAttribute('aria-checked', String(b.dataset.themeChoice === (choice === 'light' || choice === 'dark' ? choice : 'system')));
+  });
+}
+(function initTheme() {
+  let saved = 'system';
+  try { const v = window.localStorage.getItem(THEME_KEY); if (v === 'light' || v === 'dark') saved = v; } catch { /* storage unavailable */ }
+  applyTheme(saved);
+  document.getElementById('theme-toggle').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-theme-choice]');
+    if (!btn) return;
+    const choice = btn.dataset.themeChoice;
+    try {
+      if (choice === 'system') window.localStorage.removeItem(THEME_KEY);
+      else window.localStorage.setItem(THEME_KEY, choice);
+    } catch { /* storage unavailable */ }
+    applyTheme(choice);
+  });
+})();

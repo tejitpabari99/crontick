@@ -76,7 +76,7 @@ crontick runs logs <runId> engine  # just the AI engine's stdout/stderr
 crontick runs output <runId>        # cleaned output: final answer, error, readable transcript (no thinking/hook noise)
 ```
 
-Prefer a UI? `crontick info` prints the dashboard URL (`http://127.0.0.1:<port>/dashboard`) where you can browse jobs (with details, search and run-once), runs (multi-select filters, sortable columns, search across logs), and per-run output (a cleaned view, with the raw log on demand).
+Prefer a UI? `crontick info` prints the dashboard URL (`http://127.0.0.1:<port>/dashboard`) where you can browse jobs (with details, search and run-once) in a light or dark theme, runs (multi-select filters, sortable columns, search across logs), and per-run output (a cleaned view, with the raw log on demand).
 
 ---
 
