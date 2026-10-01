@@ -221,6 +221,8 @@ interface RunRecord {
   turns?: number;
   usageJson?: string;        // redacted raw usage block, JSON string
   logFile?: string | null;   // getRun() only: absolute per-JOB log file (all runs appended); null when logging.fileEnabled=false
+  logFileExists?: boolean;   // getRun() only: whether logFile exists on disk (set when logFile is non-null)
+  transcriptExists?: boolean; // getRun() only: whether transcriptPath exists on disk (set when transcriptPath is set)
   transcriptPath?: string;
   engineStatus?: string;     // Claude result subtype
 }

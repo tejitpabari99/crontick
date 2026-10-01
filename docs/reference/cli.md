@@ -225,7 +225,7 @@ Show a run and its cleaned output. This command replaces the former `runs logs` 
 crontick runs get <runId> [--json]
 ```
 
-The default output is one `Label: value` line per run field with local ISO-8601 timestamps (`Run ID`, `Job ID`, `Status` (printed once), `Started`, `Ended`, `Duration`, `Exit code`, `Engine status`, the resolved redacted `Command`, `Runner Session ID`, and for Claude runs `Cost (USD)` and `Turns`), then `Transcript:` (Claude's session file, a path pointer) with `Log file:` directly below it, a blank line, and the cleaned output: the `Error:` (if any), the engine's final answer (falling back to the readable transcript) and `[stderr]` only when there is no error. Thinking blocks, hook payloads and base64 blobs are omitted. The command shows `--settings <session-end-hook>` in place of the hook JSON.
+The default output is one `Label: value` line per run field with local ISO-8601 timestamps (`Run ID`, `Job ID`, `Status` (printed once), `Started`, `Ended`, `Duration`, `Exit code`, `Engine status`, the resolved redacted `Command`, `Runner Session ID`, and for Claude runs `Cost (USD)` and `Turns`), then `Transcript:` (Claude's session file, absolute path) with `Log file:` directly below it (each followed by `(file not found)` when the file does not exist on disk), a blank line, and the cleaned output: the `Error:` (if any), the engine's final answer (falling back to the readable transcript) and `[stderr]` only when there is no error. Thinking blocks, hook payloads and base64 blobs are omitted. The command shows `--settings <session-end-hook>` in place of the hook JSON.
 
 `Log file` is the absolute path of the job's single log file, which carries engine output and crontick lifecycle events for all runs of the job (`(file logging is disabled)` when `logging.fileEnabled` is false). The engine/crontick split exists only inside SQLite and is not exposed. The same path is the run record's `logFile`.
 
@@ -435,11 +435,12 @@ job/run actions through the existing `/api/*` routes.
   Started descending; a first click on another column sorts ascending, clicking again toggles.
   Clicking a run row opens the run detail.
 - **Run detail modal** — titled `Run log – <id> – <Status badge>`. It fetches the cleaned
-  `GET /api/runs/:id/output` view and shows the **Error** (when present) above the **Output**
-  (assistant text only: segments split by tool calls are separated by `---`; no tool lines). The **Log file**
-  row shows the absolute path of the per-job log file (crontick-side events only; it holds all runs of the job, each line tagged with its run id) as a link to
-  `GET /api/runs/:id/log/raw`, which serves the file as `text/plain`, plus a copy icon (the contents are never inlined in the modal; the engine's own transcript stays with the engine). Close with the ✕ button,
-  a backdrop click, or `Esc`.
+  `GET /api/runs/:id/output` view and `GET /api/runs/:id`, and shows the final answer (**Result**),
+  the **Error** (when present) and **stderr** (when present). Below are the absolute paths of the
+  per-job **Log file** (crontick-side events only; it holds all runs of the job, each line tagged with its run id) and the
+  Claude **Transcript** (`transcriptPath`) as plain selectable monospace text (not links), each with a
+  Copy button; a path whose file is missing on disk shows `file not found`. File contents are never
+  displayed. Close with the ✕ button, a backdrop click, or `Esc`.
 - **Durations** — average and per-run durations are shown in seconds (`avgDurationSec`);
   `—` when unknown.
 

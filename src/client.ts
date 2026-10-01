@@ -144,6 +144,10 @@ export interface RunRecord {
   engineStatus?: string;
   /** Absolute path of the per-job log file (crontick-side events only, all runs of the job); null when file logging is off. Only set by getRun(). */
   logFile?: string | null;
+  /** Whether the file at `logFile` exists on disk. Only set by getRun(), when `logFile` is not null. */
+  logFileExists?: boolean;
+  /** Whether the file at `transcriptPath` exists on disk. Only set by getRun(), when `transcriptPath` is set. */
+  transcriptExists?: boolean;
 }
 
 export interface JobStats {

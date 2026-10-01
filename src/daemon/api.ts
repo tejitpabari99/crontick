@@ -1,7 +1,7 @@
 // Loopback-only HTTP API for the daemon. All routes enforce localhost access.
 // See docs/implementation/daemon.md for the full route table.
 import http from 'node:http';
-import { createReadStream, readFileSync } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { URL } from 'node:url';
 import type { Store } from './store.js';
@@ -21,7 +21,7 @@ import {
   resolveDashboardAsset,
 } from '../dashboard.js';
 import { buildRunOutput } from '../run-output.js';
-import { nullLogger, redactText, redactValue, type Logger } from '../logger.js';
+import { nullLogger, redactValue, type Logger } from '../logger.js';
 import { readEnvFileForAction } from './env-file.js';
 import { resolveJobLogPath } from './job-log-file.js';
 import { describeDaemonPort } from './bind-port.js';
@@ -32,7 +32,6 @@ import { describeDaemonPort } from './bind-port.js';
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
 /** Run ids are generated identifiers; anything else cannot name a run. */
-const RUN_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 // ── Context shared with handlers ──────────────────────────────────────────────
 
@@ -292,7 +291,13 @@ async function handleRequest(
         const run = ctx.store.getRun(id);
         if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
         // Per-job (not per-run) mirror file; null when file logging is disabled.
-        return sendJson(res, 200, redactValue({ ...run, logFile: resolveJobLogPath(run.jobId) }));
+        const logFile = resolveJobLogPath(run.jobId);
+        return sendJson(res, 200, redactValue({
+          ...run,
+          logFile,
+          ...(logFile !== null ? { logFileExists: existsSync(logFile) } : {}),
+          ...(run.transcriptPath ? { transcriptExists: existsSync(run.transcriptPath) } : {}),
+        }));
       }
 
       if (method === 'POST' && sub === '/cancel') {
@@ -302,38 +307,12 @@ async function handleRequest(
         return sendJson(res, 200, { ok: true, canceled });
       }
 
-      // Cleaned, human-readable view of the run's engine output (final answer, error,
-      // assistant text) -- see src/run-output.ts. crontick does not store the engine's
+      // Cleaned, human-readable view of the run's engine output (final answer, error, stderr) -- see src/run-output.ts. crontick does not store the engine's
       // raw logs; `logFile` is the per-job file of crontick-side events.
       if (method === 'GET' && sub === '/output') {
         const run = ctx.store.getRun(id);
         if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
         return sendJson(res, 200, redactValue({ ...buildRunOutput(run, ctx.store.getRunOutput(run.id)), logFile: resolveJobLogPath(run.jobId) }));
-      }
-
-      // The run's job log file (crontick-side events only) served as plain text so the
-      // dashboard can link to it: browsers refuse file: links from http pages. The id is
-      // only ever looked up in the store; no filesystem path is derived from the URL.
-      if (method === 'GET' && sub === '/log/raw') {
-        const run = RUN_ID_PATTERN.test(id) ? ctx.store.getRun(id) : undefined;
-        if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
-        const logPath = resolveJobLogPath(run.jobId);
-        let text = '';
-        if (logPath) {
-          try {
-            text = readFileSync(logPath, 'utf-8');
-          } catch {
-            // no log file yet
-          }
-        }
-        res.writeHead(200, {
-          'Content-Type': 'text/plain; charset=utf-8',
-          'Content-Disposition': `inline; filename="${run.id}.log"`,
-          'X-Content-Type-Options': 'nosniff',
-          'Cache-Control': 'no-store',
-        });
-        res.end(redactText(text));
-        return;
       }
     }
 

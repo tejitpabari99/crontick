@@ -39,6 +39,15 @@ describe('formatRunDetail', () => {
   });
 });
 
+describe('formatRunDetail file not found', () => {
+  it('flags paths whose files are missing on disk and leaves existing ones plain', () => {
+    const text = formatRunDetail({ ...run, logFileExists: true, transcriptExists: false }, { error: null, result: 'x', stderr: '' });
+    expect(text).toContain('Transcript: /t/sess-1.jsonl  (file not found)');
+    expect(text).toContain('Log file: /logs/job-1.log\n');
+    expect(text).not.toContain('Log file: /logs/job-1.log  (file not found)');
+  });
+});
+
 describe('formatJobStats', () => {
   it('converts lastRunAt to local ISO and labels totalTurns', () => {
     const out = formatJobStats({ jobId: 'j', succeeded: 1, failed: 0, canceled: 0, skipped: 0, lastStatus: 'success', lastRunAt: run.startedAt, avgDurationSec: 1, totalCostUsd: 0, totalTurns: 6 });

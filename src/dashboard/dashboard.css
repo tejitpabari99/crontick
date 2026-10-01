@@ -427,7 +427,8 @@ th.sorted .sort-ind, th.sorted .sort-btn { opacity: 1; color: var(--accent); }
 .error-pane { border-color: var(--error); color: var(--error); }
 .log-file-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
 .log-file-row code { overflow-wrap: anywhere; }
-.log-file-row .muted { flex-basis: 100%; }
+.log-file-row code { user-select: text; }
+.log-file-row .file-missing { color: var(--error); }
 .modal-backdrop { z-index: 200; }
 
 /* ── Job details drawer ───────────────────────────────────────────────────── */

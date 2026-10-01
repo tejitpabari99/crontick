@@ -84,8 +84,9 @@ export function formatRunDetail(run: RunRecord, out: RunDetailOutput): string {
   field('Cost (USD)', run.costUsd);
   field('Turns', run.turns);
   if (run.outputTruncated) field('Output truncated', 'yes');
-  field('Transcript', run.transcriptPath);
-  field('Log file', run.logFile === undefined ? undefined : (run.logFile ?? '(file logging is disabled)'));
+  const missing = (exists: boolean | undefined): string => (exists === false ? '  (file not found)' : '');
+  if (run.transcriptPath) lines.push(`Transcript: ${run.transcriptPath}${missing(run.transcriptExists)}`);
+  if (run.logFile !== undefined) lines.push(`Log file: ${run.logFile === null ? '(file logging is disabled)' : `${run.logFile}${missing(run.logFileExists)}`}`);
   const body: string[] = [];
   if (out.error) body.push(`Error: ${out.error}`);
   const text = out.result;

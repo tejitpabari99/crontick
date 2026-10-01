@@ -497,12 +497,19 @@ async function openRunModal(runId) {
   document.getElementById('modal-error-section').hidden = true;
   document.getElementById('modal-output').textContent = 'Loading…';
   document.getElementById('modal-logfile').innerHTML = '';
+  document.getElementById('modal-transcript').innerHTML = '';
+  document.getElementById('modal-stderr-section').hidden = true;
   document.getElementById('modal-output-section').hidden = false;
   modal.hidden = false;
   modal.querySelector('.modal').focus();
   try {
-    const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/output`);
+    const [res, runRes] = await Promise.all([
+      fetch(`/api/runs/${encodeURIComponent(runId)}/output`),
+      fetch(`/api/runs/${encodeURIComponent(runId)}`),
+    ]);
     const out = await res.json();
+    let detail = null;
+    try { detail = runRes.ok ? await runRes.json() : null; } catch { /* paths are optional */ }
     if (modalRunId !== runId) return;
     if (!res.ok) throw new Error(out?.error?.message || 'Failed to load run output');
     document.getElementById('modal-status').innerHTML = statusBadge(out.status);
@@ -517,29 +524,30 @@ async function openRunModal(runId) {
       out.truncated ? 'Output truncated' : null,
     ].filter(Boolean);
     document.getElementById('modal-meta').textContent = meta.join(' · ');
-    const errorText = [out.error, out.stderr ? `stderr:\n${out.stderr}` : ''].filter(Boolean).join('\n\n');
-    document.getElementById('modal-error-section').hidden = errorText.length === 0;
-    document.getElementById('modal-error').textContent = errorText;
-    let text = out.output || '';
-    if (out.result && !text.includes(out.result)) text = `${out.result}${text ? `\n\n${text}` : ''}`;
+    document.getElementById('modal-error-section').hidden = !out.error;
+    document.getElementById('modal-error').textContent = out.error || '';
+    document.getElementById('modal-stderr-section').hidden = !out.stderr;
+    document.getElementById('modal-stderr').textContent = out.stderr || '';
+    const text = out.result || '';
     document.getElementById('modal-output-section').hidden = text.length === 0;
     document.getElementById('modal-output').textContent = text;
-    renderLogFileRow(runId, out.logFile);
+    renderPathRow('modal-logfile', detail ? detail.logFile : out.logFile, detail?.logFileExists, 'per-job log file disabled');
+    renderPathRow('modal-transcript', detail?.transcriptPath, detail?.transcriptExists, 'no transcript recorded');
   } catch (err) {
     document.getElementById('modal-output-section').hidden = true;
     document.getElementById('modal-output').textContent = '';
-    renderLogFileRow(runId, null);
+    renderPathRow('modal-logfile', null, undefined, 'unavailable');
+    renderPathRow('modal-transcript', null, undefined, 'unavailable');
     document.getElementById('modal-error-section').hidden = false;
     document.getElementById('modal-error').textContent = `Failed to load run output: ${err.message}`;
   }
 }
 
-/** Log file row: the absolute path, linked to the daemon-served file (browsers block file: links from http pages). Contents are never rendered inline. */
-function renderLogFileRow(runId, logFile) {
-  const href = `/api/runs/${encodeURIComponent(runId)}/log/raw`;
-  document.getElementById('modal-logfile').innerHTML = logFile
-    ? `<a href="${escHtml(href)}" target="_blank" rel="noopener"><code>${escHtml(logFile)}</code></a>${copyIcon(logFile)}`
-    : '<span class="muted">per-job log file disabled</span>';
+/** Path row: the absolute path as plain selectable text (never a link) with a Copy button; file contents are never rendered. */
+function renderPathRow(elId, path, exists, emptyText) {
+  document.getElementById(elId).innerHTML = path
+    ? `<code>${escHtml(path)}</code><button class="icon-btn copy-btn" title="Copy path" aria-label="Copy path" data-copy="${escHtml(path)}">Copy</button>${exists === false ? ' <span class="muted file-missing">file not found</span>' : ''}`
+    : `<span class="muted">${escHtml(emptyText)}</span>`;
 }
 
 function closeRunModal() {
@@ -760,6 +768,7 @@ document.getElementById('log-modal').addEventListener('click', (e) => {
 });
 document.getElementById('log-modal').addEventListener('keydown', (e) => trapTab(e, document.querySelector('#log-modal .modal')));
 document.getElementById('modal-logfile').addEventListener('click', handleCopyClick);
+document.getElementById('modal-transcript').addEventListener('click', handleCopyClick);
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;

@@ -537,7 +537,7 @@ describe('CLI e2e with daemon', () => {
     expect(run['Run ID']).toBe(runId);
     expect(run).toHaveProperty('Command');
     expect(getRun.stdout.match(/^Status:/gm)).toHaveLength(1);
-    expect(getRun.stdout).toMatch(/^Log file: .*\.log$/m);
+    expect(getRun.stdout).toMatch(/^Log file: .*\.log/m);
     expect(getRun.stdout).toMatch(/^Started: \d{4}-\d\d-\d\dT/m);
     const rawRun = JSON.parse(cli(['runs', 'get', runId, '--json'], env()).stdout) as { run: { id: string; logFile: string | null; startedAt: number }; output: { runId: string } };
     expect(rawRun.run.id).toBe(runId);

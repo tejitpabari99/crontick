@@ -32,15 +32,19 @@ describe('dashboard labels and run modal', () => {
     expect(js.replace(/Runner Session ID/g, '')).not.toMatch(/Session(:| ID)/);
   });
 
-  it('shows the crontick log file as a linked absolute path instead of inlining it', () => {
+  it('shows result, error, stderr and the log/transcript paths as plain text with Copy buttons', () => {
     expect(html).not.toContain('<details');
     expect(html).toContain('id="modal-logfile"');
-    expect(html).not.toContain('Raw log');
+    expect(html).toContain('id="modal-transcript"');
+    expect(html).toContain('id="modal-stderr"');
+    expect(js).not.toContain('out.output');
+    expect(js).toContain('out.result');
+    expect(js).not.toContain('log/raw');
     expect(js).not.toContain('rawLogPath');
-    expect(js).not.toContain('loadRawLog');
-    expect(js).not.toContain('source=all');
-    expect(js).toMatch(/\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/log\/raw/);
-    expect(js).toContain('target="_blank" rel="noopener"');
+    expect(js).toContain('file not found');
+    expect(js).toContain('data-copy');
+    const row = js.slice(js.indexOf('function renderPathRow'), js.indexOf('function closeRunModal'));
+    expect(row).not.toContain('<a ');
   });
 
   it('does not display a total run count', () => {
