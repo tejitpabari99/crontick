@@ -13,7 +13,7 @@ Source of truth: docs/agent_files/users-tejitpabari-claude-engine-20260927-2325/
 | 3 | Assistant-text-only run output contract | - | done |
 | 4 | Raw-log daemon route and `rawLogPath` | SP05 T1 | done |
 | 5 | Dashboard UI: theme icons, action alignment, run modal | 3, 4 | done |
-| 6 | Dashboard data display: full ids, Alias, working directory | 5 | todo |
+| 6 | Dashboard data display: full ids, Alias, working directory | 5 | done |
 | 7 | Tests, docs, reference, specs, changeset | 1-6 | todo |
 
 ## Task 1 — Fixed default daemon port with fallback

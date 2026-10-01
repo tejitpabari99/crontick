@@ -68,6 +68,8 @@ export interface DashboardJob {
   /** Human-friendly, optional, user-editable identifier; unique among currently-defined jobs. Null when unset. */
   alias: string | null;
   description: string | null;
+  /** The job's working directory (`action.cwd`); null when unset (the engine then starts in the daemon's directory). */
+  cwd: string | null;
   enabled: boolean;
   scheduleLabel: string;
   actionKind: Job['action']['kind'];
@@ -305,6 +307,7 @@ function buildDashboardJob(ctx: DashboardContext, job: Job): DashboardJob {
     id: job.id,
     alias: job.alias ?? null,
     description: job.description ?? null,
+    cwd: job.action.cwd ?? null,
     enabled: job.enabled,
     scheduleLabel: scheduleLabel(job.schedule),
     actionKind: job.action.kind,

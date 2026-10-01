@@ -86,17 +86,13 @@ function statusBadge(status) {
   return `<span class="status-badge status-badge-${escHtml(status)}">${escHtml(capitalize(status))}</span>`;
 }
 
-function shortId(id) {
-  return id && id.length > 12 ? id.slice(0, 12) + '…' : (id || '');
-}
-
 function jobName(job) {
-  return job.alias || shortId(job.id);
+  return job.alias || job.id;
 }
 
 function jobLabelFor(jobId) {
   const job = (lastData?.jobs || []).find((j) => j.id === jobId);
-  return job ? jobName(job) : shortId(jobId);
+  return job ? jobName(job) : (jobId || '');
 }
 
 function escHtml(value) {
@@ -143,7 +139,7 @@ const RUN_NOW_TITLE = "Run once now (doesn't enable the job)";
 const RUN_NOW_ICON = '<svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M11.5 1.5L4 11h5l-1 7.5L16 8.5h-5z" fill="currentColor"/></svg>';
 
 function jobSearchText(job) {
-  return JSON.stringify([job.alias, job.id, job.description, job.scheduleLabel, job.actionKind, job.lastStatus, job.job]).toLowerCase();
+  return JSON.stringify([job.alias, job.id, job.description, job.cwd, job.scheduleLabel, job.actionKind, job.lastStatus, job.job]).toLowerCase();
 }
 
 function visibleJobs(jobs) {
@@ -161,7 +157,7 @@ function renderJobs(allJobs) {
     return `
     <tr class="job-row" data-id="${escHtml(job.id)}" tabindex="0" aria-label="Show details for ${escHtml(jobName(job))}">
       <td>${escHtml(job.alias || '—')}</td>
-      <td class="id-cell"><code title="${escHtml(job.id)}">${escHtml(shortId(job.id))}</code>${copyIcon(job.id)}</td>
+      <td class="id-cell"><code title="${escHtml(job.id)}">${escHtml(job.id)}</code>${copyIcon(job.id)}</td>
       <td>${escHtml(job.description || '—')}</td>
       <td><code>${escHtml(job.scheduleLabel)}</code></td>
       <td>${escHtml(job.actionKind)}</td>
@@ -237,7 +233,7 @@ function anyMultiOpen() {
 
 function renderChips() {
   const chips = [
-    ...[...state.jobIds].map((v) => ({ kind: 'job', value: v, text: `job:${jobLabelFor(v)}` })),
+    ...[...state.jobIds].map((v) => ({ kind: 'job', value: v, text: `alias:${jobLabelFor(v)}` })),
     ...[...state.statuses].map((v) => ({ kind: 'status', value: v, text: `status:${v}` })),
   ];
   document.getElementById('filter-chips').innerHTML = chips.map((c) => `
@@ -432,7 +428,7 @@ async function renderDrawer(jobId, opts = {}) {
     </div>
     <h4>Config</h4>
     <dl class="kv-list">
-      ${kv('Name', escHtml(wrapped.alias || '—'))}
+      ${kv('Alias', escHtml(wrapped.alias || '—'))}
       ${kv('ID', `<code>${escHtml(wrapped.id)}</code>${copyIcon(wrapped.id)}`)}
       ${kv('Description', escHtml(wrapped.description || '—'))}
       ${kv('Enabled', wrapped.enabled ? 'Yes' : 'No (disabled)')}
@@ -441,7 +437,7 @@ async function renderDrawer(jobId, opts = {}) {
       ${kv('Overlap', escHtml(job.overlap || '—'))}
       ${kv('Timeout', escHtml(timeouts))}
       ${kv('Retry', escHtml(retry))}
-      ${kv('Working dir', action.cwd ? `<code>${escHtml(action.cwd)}</code>` : '—')}
+      ${kv('Working directory', (wrapped.cwd || action.cwd) ? `<code>${escHtml(wrapped.cwd || action.cwd)}</code>` : '—')}
       ${kv('Next run', escHtml(formatTime(wrapped.nextRunAt)))}
       ${kv('Last run', wrapped.lastRunAt ? `${escHtml(formatTime(wrapped.lastRunAt))} ${statusBadge(wrapped.lastStatus)}` : '—')}
     </dl>

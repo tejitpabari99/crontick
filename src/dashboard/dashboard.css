@@ -192,8 +192,10 @@ code { color: var(--text); }
 .icon-btn.copied { color: var(--success); }
 .copy-btn { margin-left: 6px; }
 
-.id-cell { white-space: nowrap; }
-.id-cell code { word-break: break-all; }
+.id-cell { white-space: normal; }
+.id-cell code { overflow-wrap: anywhere; }
+/* Keep a full GUID on one line; the table scrolls inside .table-wrap on narrow screens (no page-level scroll). */
+.id-cell code { display: inline-block; min-width: 37ch; }
 
 /* Actions column */
 .actions-col, .actions-cell { text-align: right; white-space: nowrap; }
@@ -453,7 +455,7 @@ th.sorted .sort-ind, th.sorted .sort-btn { opacity: 1; color: var(--accent); }
 .drawer-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .drawer-actions .btn { display: inline-flex; align-items: center; gap: 5px; }
 .kv-list { display: grid; gap: 4px; }
-.kv { display: grid; grid-template-columns: 110px 1fr; gap: 8px; font-size: 13px; }
+.kv { display: grid; grid-template-columns: 130px 1fr; gap: 8px; font-size: 13px; }
 .kv dt { color: var(--muted); }
 .kv dd { word-break: break-word; }
 .drawer-stats { margin-bottom: 4px; }
