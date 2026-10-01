@@ -5,10 +5,11 @@
  * serialize behind api.test.ts's ~30 unrelated CRUD tests sharing one daemon.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { teardownDaemon } from '../helpers/cleanup.js';
 import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 
 const DAEMON_SCRIPT = join(process.cwd(), 'dist', 'daemon', 'index.js');
@@ -92,9 +93,8 @@ describe('Integration: one-shot jobs through a live daemon', () => {
     port = await waitForPortFile(dir, 30_000, () => stderrChunks.join(''));
   }, TIMEOUT_MS);
 
-  afterAll(() => {
-    daemonProc?.kill('SIGTERM');
-    try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  afterAll(async () => {
+    await teardownDaemon(daemonProc, dir);
   });
 
   it('fires exactly once, is never rescheduled, and survives a reload without refiring', async () => {

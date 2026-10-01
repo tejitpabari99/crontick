@@ -7,7 +7,6 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
   mkdtempSync,
   mkdirSync,
-  rmSync,
   readFileSync,
   existsSync,
   writeFileSync,
@@ -19,6 +18,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { jobJsonSchemaText } from '../../src/schema-json.js';
 import { MCP_TOOLS } from '../../src/surface.js';
+import { teardownDaemon } from '../helpers/cleanup.js';
 import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 
 const DAEMON_SCRIPT = join(process.cwd(), 'dist', 'daemon', 'index.js');
@@ -53,15 +53,6 @@ function makeTmpDir(): string {
   mkdirSync(join(d, 'jobs'), { recursive: true });
   mkdirSync(join(d, 'logs'), { recursive: true });
   return d;
-}
-
-function stopDaemonInHome(dir: string): void {
-  const pidFile = join(dir, 'daemon.pid');
-  if (!existsSync(pidFile)) return;
-  const pid = parseInt(readFileSync(pidFile, 'utf-8').trim(), 10);
-  if (!isNaN(pid)) {
-    try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
-  }
 }
 
 function waitForPortFile(dir: string, maxMs = 30_000, getStderr?: () => string): Promise<number> {
@@ -130,8 +121,7 @@ describe('MCP server — full contract', () => {
   afterAll(async () => {
     try { await client?.close(); } catch { /* ignore */ }
     try { await transport?.close(); } catch { /* ignore */ }
-    daemonProc?.kill('SIGTERM');
-    try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    await teardownDaemon(daemonProc, dir);
   });
 
   // ── Handshake ───────────────────────────────────────────────────────────────
@@ -1008,7 +998,7 @@ describe('MCP server — CRONTICK_MCP_START_DAEMON path', () => {
     } finally {
       try { await isolatedClient?.close(); } catch { /* ignore */ }
       try { await isolatedTransport?.close(); } catch { /* ignore */ }
-      try { rmSync(isolatedDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      await teardownDaemon(undefined, isolatedDir);
     }
   }, TIMEOUT_MS);
 
@@ -1048,8 +1038,7 @@ describe('MCP server — CRONTICK_MCP_START_DAEMON path', () => {
     } finally {
       try { await isolatedClient?.close(); } catch { /* ignore */ }
       try { await isolatedTransport?.close(); } catch { /* ignore */ }
-      stopDaemonInHome(isolatedDir);
-      try { rmSync(isolatedDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      await teardownDaemon(undefined, isolatedDir);
     }
   }, TIMEOUT_MS);
 });
@@ -1084,8 +1073,7 @@ describe('MCP server — daemon-backed tools start daemon on demand', () => {
     } finally {
       try { await isolatedClient?.close(); } catch { /* ignore */ }
       try { await isolatedTransport?.close(); } catch { /* ignore */ }
-      stopDaemonInHome(isolatedDir);
-      try { rmSync(isolatedDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      await teardownDaemon(undefined, isolatedDir);
     }
   }, TIMEOUT_MS);
 });

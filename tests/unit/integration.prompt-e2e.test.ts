@@ -7,10 +7,11 @@
  * cannot share api.test.ts's single pre-spawned daemon.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { teardownDaemon } from '../helpers/cleanup.js';
 
 const DAEMON_SCRIPT = join(process.cwd(), 'dist', 'daemon', 'index.js');
 const TIMEOUT_MS = 30_000;
@@ -108,9 +109,8 @@ describe('Integration: prompt job session capture through a live daemon', () => 
     port = await waitForPortFile(dir, 30_000, () => stderrChunks.join(''));
   }, TIMEOUT_MS);
 
-  afterAll(() => {
-    daemonProc?.kill('SIGTERM');
-    try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  afterAll(async () => {
+    await teardownDaemon(daemonProc, dir);
   });
 
   it('runs a one-shot prompt job through the stub engine, captures the session id, and persists it on the job', async () => {

@@ -10,6 +10,7 @@ import { buildDashboardData, resolveDashboardAsset } from '../../src/dashboard.j
 import { Scheduler } from '../../src/daemon/scheduler.js';
 import { Store } from '../../src/daemon/store.js';
 import { CrontickError } from '../../src/errors.js';
+import { teardownDaemon } from '../helpers/cleanup.js';
 import type { Job } from '../../src/schemas/job.js';
 
 const DAEMON_SCRIPT = resolve('dist/daemon/index.js');
@@ -53,18 +54,6 @@ async function apiCall(port: number, method: string, path: string) {
   let data: unknown;
   try { data = JSON.parse(text); } catch { data = text; }
   return { status: res.status, headers: res.headers, data };
-}
-
-async function rmWithRetry(path: string): Promise<void> {
-  for (let attempt = 0; attempt < 10; attempt++) {
-    try {
-      rmSync(path, { recursive: true, force: true });
-      return;
-    } catch {
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 200));
-    }
-  }
-  rmSync(path, { recursive: true, force: true });
 }
 
 describe('core dashboard data model', () => {
@@ -224,8 +213,7 @@ describe('Dashboard serving', () => {
   }, TIMEOUT_MS);
 
   afterAll(async () => {
-    daemonProc?.kill('SIGTERM');
-    await rmWithRetry(dir);
+    await teardownDaemon(daemonProc, dir);
   });
 
   it('GET / returns 200 with text/html and <title>crontick</title>', async () => {

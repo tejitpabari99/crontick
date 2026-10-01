@@ -3,10 +3,12 @@
  * Starts a real daemon and verifies the extended health shape.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
+
+import { teardownDaemon } from '../helpers/cleanup.js';
 
 const DAEMON_SCRIPT = resolve('dist/daemon/index.js');
 const TIMEOUT_MS = 30_000;
@@ -58,13 +60,8 @@ describe('/health extended shape', () => {
     port = await waitForPortFile(dir, 30_000, () => stderrChunks.join(''));
   }, TIMEOUT_MS);
 
-  afterAll(() => {
-    daemonProc?.kill('SIGTERM');
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+  afterAll(async () => {
+    await teardownDaemon(daemonProc, dir);
   });
 
   it('/health returns ok:true with extended fields', async () => {

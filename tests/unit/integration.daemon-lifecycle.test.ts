@@ -9,7 +9,6 @@ import { describe, it, expect, afterEach } from 'vitest';
 import {
   mkdtempSync,
   mkdirSync,
-  rmSync,
   readFileSync,
   writeFileSync,
   existsSync,
@@ -20,6 +19,7 @@ import { tmpdir, platform } from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
 import { stopDaemon } from '../../src/daemon/lifecycle.js';
+import { stopProc, teardownDaemon } from '../helpers/cleanup.js';
 import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 
 const DAEMON_SCRIPT = join(process.cwd(), 'dist', 'daemon', 'index.js');
@@ -155,14 +155,10 @@ describe('Integration: daemon lifecycle', () => {
   const liveProcs = new Set<ChildProcess>();
   const liveDirs = new Set<string>();
 
-  afterEach(() => {
-    for (const proc of liveProcs) {
-      try { proc.kill('SIGTERM'); } catch { /* ignore */ }
-    }
+  afterEach(async () => {
+    for (const proc of liveProcs) await stopProc(proc);
     liveProcs.clear();
-    for (const dir of liveDirs) {
-      try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
-    }
+    for (const dir of liveDirs) await teardownDaemon(undefined, dir);
     liveDirs.clear();
   });
 

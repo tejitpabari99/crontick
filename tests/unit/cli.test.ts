@@ -1,9 +1,10 @@
 import { spawnSync, spawn, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { jobJsonSchemaText } from '../../src/schema-json.js';
+import { teardownDaemon } from '../helpers/cleanup.js';
 import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 
 const CLI = resolve('dist/cli/index.js');
@@ -18,13 +19,6 @@ function makeTmpDir(): string {
   mkdirSync(join(d, 'jobs'), { recursive: true });
   mkdirSync(join(d, 'logs'), { recursive: true });
   return d;
-}
-
-function stopDaemonInHome(dir: string): void {
-  const pidFile = join(dir, 'daemon.pid');
-  if (!existsSync(pidFile)) return;
-  const pid = parseInt(readFileSync(pidFile, 'utf-8').trim(), 10);
-  if (!isNaN(pid)) try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
 }
 
 function readPidFile(dir: string): number | undefined {
@@ -202,13 +196,11 @@ describe('CLI binary (dist/cli/index.js)', () => {
       expect(secondPid).toBeGreaterThan(0);
       expect(secondPid).not.toBe(firstPid);
     } finally {
-      stopDaemonInHome(tmp);
-      await new Promise((r) => setTimeout(r, 300));
-      rmSync(tmp, { recursive: true, force: true });
+      await teardownDaemon(undefined, tmp);
     }
   }, 30_000);
 
-  it('daemon-free commands do not start the daemon', () => {
+  it('daemon-free commands do not start the daemon', async () => {
     const tmp = makeTmpDir();
     try {
       expect(cli(['--help'], { CRONTICK_HOME: tmp }).status).toBe(0);
@@ -224,7 +216,7 @@ describe('CLI binary (dist/cli/index.js)', () => {
       expect(existsSync(join(tmp, 'daemon.pid'))).toBe(false);
       expect(existsSync(join(tmp, 'daemon.ensure.lock'))).toBe(false);
     } finally {
-      rmSync(tmp, { recursive: true, force: true });
+      await teardownDaemon(undefined, tmp);
     }
   }, 15_000);
 
@@ -244,9 +236,7 @@ describe('CLI binary (dist/cli/index.js)', () => {
       expect(info.stdout).toContain(join(tmp, 'config.json'));
       expect(info.stdout).toContain('config');
     } finally {
-      stopDaemonInHome(tmp);
-      await new Promise((r) => setTimeout(r, 300));
-      rmSync(tmp, { recursive: true, force: true });
+      await teardownDaemon(undefined, tmp);
     }
   }, 15_000);
 });
@@ -266,9 +256,7 @@ describe('CLI e2e with daemon', () => {
   }, 30_000);
 
   afterAll(async () => {
-    daemonProc?.kill('SIGTERM');
-    await new Promise((r) => setTimeout(r, 300));
-    try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    await teardownDaemon(daemonProc, dir);
   });
 
   const env = () => ({ CRONTICK_HOME: dir });
