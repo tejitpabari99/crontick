@@ -49,6 +49,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "vitest run",
+    "clean:test": "node scripts/clean-test.mjs",
     "test:watch": "vitest",
     "e2e": "node tests/integration/run-harness.mjs",
     "e2e:smoke": "node tests/integration/run-harness.mjs --tier smoke",

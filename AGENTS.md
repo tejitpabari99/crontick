@@ -30,6 +30,7 @@ npm run typecheck            # TypeScript type-check (src)
 npm run typecheck:examples   # TypeScript type-check (examples, against source types)
 npm run typecheck:examples:dist  # TypeScript type-check (examples, against built dist/index.d.ts -- requires `npm run build` first, or run `npm run validate` which builds for you)
 npm test                     # Vitest run (requires prior build for integration tests)
+npm run clean:test           # Kill leaked test daemons + remove /tmp/crontick-* dirs (teardown does this automatically; use after a crashed run)
 npm run build                # tsup build + sqlite fix
 npm run verify-package-install  # CI-only, not part of validate: packs+installs a real tarball, exercises every public export and all three bins
 ```

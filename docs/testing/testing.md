@@ -55,6 +55,39 @@ node tests/integration/run-harness.mjs --id CT-DAEMON-001   # single test
 See [`docs/testing/e2e-testing.md`](e2e-testing.md) for all CLI flags, the isolation model, and log locations.
 For adding tests and check types, see [`tests/integration/README.md`](../../tests/integration/README.md).
 
+## Cleaning up after tests
+
+**What used to leak.** Several suites spawn real daemons (`api`, `mcp`, `health`,
+`integration.autofire`, `integration.daemon-lifecycle`). Their cleanup sent
+`SIGTERM` and immediately called `rmSync` without waiting for the daemon to exit, so
+a daemon still shutting down could recreate files (ENOTEMPTY, swallowed) or never
+exit at all. Failed `beforeAll` hooks, runs killed by OOM, and runs interrupted with
+Ctrl-C left daemons, their detached job children, and `/tmp/crontick-*` dirs behind.
+
+**What prevents it now.**
+
+1. `tests/helpers/cleanup.ts` (`teardownDaemon`, `stopProc`) stops the process,
+   waits for exit (escalating to `SIGKILL`), kills any daemon named in
+   `<dir>/daemon.pid`, then removes the dir with retries. Use it in every
+   `afterAll`/`afterEach` of a test that spawns a daemon.
+2. `tests/helpers/tmp-isolation.ts` (vitest `globalSetup`) points `TMPDIR`/`TMP`/`TEMP`
+   at one run-scoped root, `<os tmpdir>/crontick-vitest-XXXX`, so every temp dir and
+   daemon of a run lives under it. Its teardown kills every process tied to that root
+   (by `CRONTICK_HOME`, working directory, argv, or `daemon.pid`), removes the root, and
+   then verifies nothing remains. If a leak is found it prints `TEST LEAK` and sets a
+   non-zero exit code.
+3. Safety: only processes tied to a path inside the target `crontick-*` temp dirs are
+   ever killed. A real user daemon (data dir outside the OS temp dir) is never touched.
+   Regression coverage: `tests/unit/test-cleanup.test.ts`.
+
+**Manual cleanup** (after a crashed or interrupted run, or for old leftovers):
+
+```sh
+npm run clean:test   # kills leaked test daemons, removes <os tmpdir>/crontick-* dirs
+```
+
+Verify with `ps aux | grep -E 'crontick|vitest'` and `ls /tmp | grep crontick-`.
+
 ## Test layout
 
 ```

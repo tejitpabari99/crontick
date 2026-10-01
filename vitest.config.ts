@@ -40,7 +40,7 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    globalSetup: ['tests/helpers/claude-config-setup.ts'],
+    globalSetup: ['tests/helpers/claude-config-setup.ts', 'tests/helpers/tmp-isolation.ts'],
     // Isolated Claude config (root trusted) so tests never read ~/.claude.json.
     env: {
       CLAUDE_CONFIG_DIR: resolve('.crontick', 'test-claude-config'),
