@@ -34,8 +34,9 @@ export const EngineConfigSchema = z.object({
  * the per-insert eviction query (COUNT + ORDER BY ... LIMIT) pointlessly
  * expensive on a table that's supposed to stay small.
  *
- * `maxOutputBytesPerRun`: caps stdout+stderr bytes captured per run before
- * the daemon stops persisting further output for that run (see
+ * `maxOutputBytesPerRun`: caps plain stdout bytes captured per run (text/raw
+ * engines) before the daemon stops persisting further stdout for that run;
+ * stderr has its own fixed cap (DEFAULT_MAX_STDERR_BYTES_PER_RUN) (see
  * docs/implementation/prompt-execution.md and src/daemon/runner.ts's captureChunk).
  * `min(1024)`: below this, even the truncation marker line barely fits.
  * `max(1_000_000_000)`: a sanity ceiling, same rationale as maxRunsPerJob.

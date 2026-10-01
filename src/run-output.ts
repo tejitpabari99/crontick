@@ -4,7 +4,7 @@
  * crontick does not store the engine's raw logs: the runner (e.g. Claude) keeps its own
  * transcript. While a run executes, the daemon parses the engine's stdout line by line as it
  * arrives (see `src/daemon/output-collector.ts`) and keeps only the final `result` event and
- * the full stderr; everything else (tool calls, interim assistant text, system events) is
+ * stderr (capped); everything else (tool calls, interim assistant text, system events) is
  * discarded immediately. This module holds the persisted/returned shapes and the pure helpers
  * shared by every layer (daemon, tests).
  */
@@ -75,7 +75,7 @@ export interface EngineOutput {
   result: string | null;
   /** Error reported by the engine's final `result` event (`is_error`); `null` otherwise. */
   engineError: string | null;
-  /** Full engine stderr (redacted, no size cap). */
+  /** Engine stderr (redacted, capped at `DEFAULT_MAX_STDERR_BYTES_PER_RUN`). */
   stderr: string;
 }
 
@@ -89,7 +89,7 @@ export interface RunOutput {
   result: string | null;
   /** Error message, if any: the run's recorded error, else an error reported in the engine output. `null` when there is none. */
   error: string | null;
-  /** Full engine stderr (redacted), for diagnosing failures. */
+  /** Engine stderr (redacted, capped), for diagnosing failures. */
   stderr: string;
   sessionId: string | null;
   costUsd: number | null;
@@ -99,7 +99,7 @@ export interface RunOutput {
   usage: NormalizedUsage | null;
   /** Absolute path of the per-job crontick log file (crontick-side events only); `null` when file logging is disabled. Added by the daemon route, not by `buildRunOutput`. */
   logFile?: string | null;
-  /** True when a text engine's stdout hit `retention.maxOutputBytesPerRun` and was cut. */
+  /** True when a text engine's stdout hit `retention.maxOutputBytesPerRun`, or stderr hit its cap, and was cut. */
   truncated: boolean;
 }
 

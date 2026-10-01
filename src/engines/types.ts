@@ -42,6 +42,15 @@ export interface TerminalEngineError {
   retryable: boolean;
 }
 
+/** One structured stdout event, as classified by an adapter's `parseStreamEvent`. */
+export interface StreamEvent {
+  type: string;
+  /** Final answer text, for `result` events. */
+  result?: string;
+  /** True when a `result` event reports an error. */
+  isError?: boolean;
+}
+
 export interface FolderTrustContext {
   env?: NodeJS.ProcessEnv;
 }
@@ -57,6 +66,14 @@ export abstract class EngineAdapter {
     void line;
     return undefined;
   }
+
+  /**
+   * Classify one complete stdout line as a structured stream event, or return
+   * undefined for plain output. Only adapters that own a structured output
+   * format implement this (Claude stream-json); without it the runner treats
+   * stdout as plain text and warns that the runner has no adapter support.
+   */
+  parseStreamEvent?(line: string): StreamEvent | undefined;
 
   /** Raw engines retain their original success-only session capture rule. */
   canCaptureSession(result: EngineResult): boolean {

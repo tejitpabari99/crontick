@@ -54,7 +54,7 @@ describe('Claude run: stream trimming and transcript path', () => {
     expect(JSON.stringify(out)).not.toContain('noise');
   });
 
-  it('stores the full stderr without a size cap', async () => {
+  it('stores stderr in full while it is under the stderr cap', async () => {
     const job = setup({ stderrBytes: 300_000 });
     const run = store.insertRun(job.id);
     await new Runner(nodeSpawn).run(job, run.id, store);

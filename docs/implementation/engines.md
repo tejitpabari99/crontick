@@ -29,6 +29,7 @@ abstract class EngineAdapter {
   canCaptureSession(result: EngineResult): boolean;        // default: result.status === 'success'
   resumeTranscriptPath(cwd: string, sessionId: string): string | undefined; // default: undefined
   resumableSessionId(result: EngineResult): string | undefined;             // default: undefined
+  parseStreamEvent?(line: string): StreamEvent | undefined;                 // optional; absent = generic plain-text stdout handling (runner warns)
 }
 ```
 

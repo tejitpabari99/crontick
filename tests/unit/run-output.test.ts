@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { buildRunOutput, cleanOutputText, normalizeUsage, type RunOutputSource } from '../../src/run-output.js';
-import { EngineOutputCollector } from '../../src/daemon/output-collector.js';
+import { EngineOutputCollector, type EngineOutputCollectorOptions } from '../../src/daemon/output-collector.js';
+import { ClaudeAdapter } from '../../src/engines/claude-adapter.js';
+import { DEFAULT_MAX_STDERR_BYTES_PER_RUN } from '../../src/constants/retention.js';
+
+const claude = new ClaudeAdapter();
+/** Collector wired like the runner wires a Claude run (adapter stream-event parser). */
+const claudeCollector = (max: number, onLine?: (l: string) => void, opts: EngineOutputCollectorOptions = {}) =>
+  new EngineOutputCollector(max, onLine, { parseEvent: (l) => claude.parseStreamEvent(l), ...opts });
 
 /** Feed captured engine chunks through the streaming collector and build the run's output view. */
 function build(run: RunOutputSource, chunks: Array<{ stream: string; data: string }>) {
-  const collector = new EngineOutputCollector(1_000_000);
+  const collector = claudeCollector(1_000_000);
   for (const c of chunks) {
     if (c.stream === 'stdout') collector.pushStdout(Buffer.from(c.data));
     else if (c.stream === 'stderr') collector.pushStderr(Buffer.from(c.data));
@@ -28,9 +35,9 @@ const baseRun = { id: 'r1', status: 'success', sessionId: 's1', costUsd: 0.01, t
 
 describe('EngineOutputCollector stream trimming', () => {
   it('keeps only the final result event and discards every other event immediately', () => {
-    const c = new EngineOutputCollector(1000);
+    const c = claudeCollector(1000);
     const lines: string[] = [];
-    const tracked = new EngineOutputCollector(1000, (l) => lines.push(l));
+    const tracked = claudeCollector(1000, (l) => lines.push(l));
     for (const ev of [hookEvent, thinking, answer, toolResult]) {
       tracked.pushStdout(Buffer.from(line(ev)));
       c.pushStdout(Buffer.from(line(ev)));
@@ -45,7 +52,7 @@ describe('EngineOutputCollector stream trimming', () => {
   });
 
   it('does not grow with stream length: a million discarded events leave only the result', () => {
-    const c = new EngineOutputCollector(1000);
+    const c = claudeCollector(1000);
     const event = Buffer.from(line({ type: 'assistant', message: { content: [{ type: 'text', text: 'x'.repeat(1000) }] } }));
     for (let i = 0; i < 2000; i++) c.pushStdout(event);
     c.pushStdout(Buffer.from(line({ type: 'result', is_error: false, result: 'done' })));
@@ -57,7 +64,7 @@ describe('EngineOutputCollector stream trimming', () => {
   it('has no line-size limit: a multi-megabyte result line split across chunks is kept whole', () => {
     const big = 'word '.repeat(1024 * 1024);
     const full = line({ type: 'result', is_error: false, result: big });
-    const c = new EngineOutputCollector(1000);
+    const c = claudeCollector(1000);
     for (let i = 0; i < full.length; i += 65536) c.pushStdout(Buffer.from(full.slice(i, i + 65536)));
     c.end();
     expect(c.toEngineOutput()?.result?.length).toBe(big.length);
@@ -65,20 +72,52 @@ describe('EngineOutputCollector stream trimming', () => {
 
   it('keeps a final result line with no trailing newline and multibyte characters split across chunks', () => {
     const bytes = Buffer.from(JSON.stringify({ type: 'result', is_error: false, result: 'h\u00e9llo \u{1F600}' }));
-    const c = new EngineOutputCollector(1000);
+    const c = claudeCollector(1000);
     c.pushStdout(bytes.subarray(0, 40));
     c.pushStdout(bytes.subarray(40));
     c.end();
     expect(c.toEngineOutput()?.result).toBe('h\u00e9llo \u{1F600}');
   });
 
-  it('keeps stderr in full (no size cap) and redacts secrets', () => {
+  it('keeps stderr below its cap and redacts secrets', () => {
     const c = new EngineOutputCollector(10);
     c.pushStderr(Buffer.from('err '.repeat(20_000) + ' sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789ABCD'));
     c.end();
     const out = c.toEngineOutput();
     expect(out?.stderr.length).toBeGreaterThan(50_000);
     expect(out?.stderr).not.toContain('abcdefghijklmnop');
+    expect(c.truncated).toBe(false);
+  });
+
+  it('caps stderr with a marker at a UTF-8 boundary, flags truncation, and drops further stderr', () => {
+    const c = new EngineOutputCollector(1000, undefined, { maxStderrBytes: 11 });
+    c.pushStderr(Buffer.from('abcdefghi\u00e9\u00e9')); // 9 ASCII + two 2-byte chars; cap lands mid-character
+    c.pushStderr(Buffer.from('never stored'));
+    c.end();
+    expect(c.truncated).toBe(true);
+    const stderr = c.toEngineOutput()?.stderr ?? '';
+    expect(stderr).toContain('abcdefghi\u00e9');
+    expect(stderr).not.toContain('\u00e9\u00e9');
+    expect(stderr).not.toContain('\ufffd');
+    expect(stderr).toContain('stderr truncated');
+    expect(stderr).not.toContain('never stored');
+    expect(stderr.match(/stderr truncated/g)).toHaveLength(1);
+  });
+
+  it('bounds unbounded stderr at the default cap', () => {
+    const c = new EngineOutputCollector(1000);
+    const chunk = Buffer.from('e'.repeat(65536));
+    for (let i = 0; i < 40; i++) c.pushStderr(chunk); // ~2.6 MB
+    c.end();
+    expect(c.truncated).toBe(true);
+    expect(c.parseSource().stderr.length).toBeLessThan(DEFAULT_MAX_STDERR_BYTES_PER_RUN + 500);
+  });
+
+  it('treats event-shaped JSON as plain output without an adapter stream parser (generic handling)', () => {
+    const c = new EngineOutputCollector(1000);
+    c.pushStdout(Buffer.from(line({ type: 'assistant', message: 'done' })));
+    c.end();
+    expect(c.toEngineOutput()).toMatchObject({ format: 'text', result: '{"type":"assistant","message":"done"}' });
   });
 
   it('caps plain stdout with a marker and reports truncation', () => {

@@ -147,7 +147,7 @@ engine's raw stdout/stderr anywhere: the `run_logs` table, `appendLog`/`getLogs`
 `/api/runs/:id/logs` and `/logs/stream` routes and the per-job mirror of engine output are removed.
 While a run executes, the runner parses the engine stream line by line as it arrives and keeps
 in memory only the final `result` event and the full stderr (plain stdout of non-stream engines
-is still bounded by `retention.maxOutputBytesPerRun`); when the run finishes it stores just that
+is still bounded by `retention.maxOutputBytesPerRun`, and stderr by a fixed 1,000,000-byte cap); when the run finishes it stores just that
 result, error and stderr in `run_outputs`. Assistant text segments are not kept. For Claude,
 `transcriptPath` is the path reported by the SessionEnd hook once the run ends, else the computed
 `<CLAUDE_CONFIG_DIR or ~/.claude>/projects/<encoded-cwd>/<sessionId>.jsonl`; crontick never reads

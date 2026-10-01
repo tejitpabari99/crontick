@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -6,6 +6,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { spawn as nodeSpawn } from 'node:child_process';
+import { nullLogger } from '../../src/logger.js';
 import { Runner, ADOPTED_RUN_EXITED_MESSAGE } from '../../src/daemon/runner.js';
 import { truncationMarker, truncateToUtf8Boundary } from '../../src/daemon/output-collector.js';
 import { DEFAULT_MAX_OUTPUT_BYTES_PER_RUN } from '../../src/constants/retention.js';
@@ -187,6 +188,19 @@ describe('Runner', () => {
     const run = store.insertRun(job.id);
     await runner.run(job, run.id, store);
     expect(store.getRunOutput(run.id)?.stderr).toContain('error line');
+  });
+
+  it('raw engine: event-shaped JSON on stdout is persisted as the plain result, with a generic-handling warning', async () => {
+    const warn = vi.fn();
+    const fakeLogger: Record<string, unknown> = { warn, error: vi.fn(), info: vi.fn(), debug: vi.fn(), isDebugEnabled: () => false };
+    fakeLogger['child'] = () => fakeLogger;
+    runner = new Runner(undefined, fakeLogger as unknown as typeof nullLogger);
+    const payload = '{"type":"assistant","message":"done"}';
+    const job = execJob('raw-event-json', node, ['-e', `process.stdout.write(${JSON.stringify(payload)} + "\\n")`]);
+    const run = store.insertRun(job.id);
+    await runner.run(job, run.id, store);
+    expect(store.getRunOutput(run.id)).toMatchObject({ format: 'text', result: payload });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no adapter support'), expect.anything());
   });
 
   it('exec: durationMs is set after completion', async () => {

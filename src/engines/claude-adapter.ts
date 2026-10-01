@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { buildClaudeHookCommand, claudeCompletionMarkerPath, claudeHookHelperPath, ensureClaudeHookHelper } from '../claude-completion-marker.js';
-import { EngineAdapter, type EngineInvocation, type FolderTrustContext, type EngineOptions, type EngineResult, type TerminalEngineError } from './types.js';
+import { EngineAdapter, type EngineInvocation, type FolderTrustContext, type EngineOptions, type EngineResult, type StreamEvent, type TerminalEngineError } from './types.js';
 import { resolveTranscriptPath } from './claude-transcript.js';
 import { isFolderTrusted, trustFolder, type TrustDeps } from './claude-trust.js';
 
@@ -60,6 +60,29 @@ export class ClaudeAdapter extends EngineAdapter {
       ],
       env: { ...opts.env },
       sessionId,
+    };
+  }
+
+  /**
+   * Claude stream-json: one JSON object per line with a string `type`. Claude-specific
+   * on purpose (the collector's generic default is plain text) so the two can diverge.
+   */
+  parseStreamEvent(line: string): StreamEvent | undefined {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('{')) return undefined;
+    let value: unknown;
+    try {
+      value = JSON.parse(trimmed);
+    } catch {
+      return undefined;
+    }
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+    const event = value as Record<string, unknown>;
+    if (typeof event['type'] !== 'string') return undefined;
+    return {
+      type: event['type'],
+      ...(typeof event['result'] === 'string' ? { result: event['result'] } : {}),
+      isError: event['is_error'] === true,
     };
   }
 

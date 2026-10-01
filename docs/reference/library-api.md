@@ -419,7 +419,7 @@ interface RunOutput {
   result: string | null;   // the engine's final answer (Claude `result` event text, else plain stdout for text engines)
   error: string | null;    // run.error, else an error reported in the engine output
   logFile?: string | null; // per-job file of crontick-side events (all runs of the job), null when file logging is off; set by the daemon route
-  stderr: string;          // full engine stderr, redacted (no size cap)
+  stderr: string;          // engine stderr, redacted (capped at 1,000,000 bytes per run)
   sessionId: string | null;
   costUsd: number | null;
   turns: number | null;

@@ -8,7 +8,7 @@ import { basename } from 'node:path';
 import type { Job, PromptAction } from '../schemas/job.js';
 import type { Store, RunStatus } from './store.js';
 import type { EngineOutput } from '../run-output.js';
-import { EngineOutputCollector } from './output-collector.js';
+import { EngineOutputCollector, type EngineOutputCollectorOptions } from './output-collector.js';
 import { CrontickError } from '../errors.js';
 import { resolvePromptRunCommand, loadConfig } from '../config.js';
 import { dataDir } from '../paths.js';
@@ -153,8 +153,8 @@ class RunLogWriter {
   ) {}
 
   /** Start collecting a fresh attempt's engine output (retries each get their own). */
-  beginCapture(maxPlainBytes: number, onLine: (line: string) => void): EngineOutputCollector {
-    this.collector = new EngineOutputCollector(maxPlainBytes, onLine);
+  beginCapture(maxPlainBytes: number, onLine: (line: string) => void, options?: EngineOutputCollectorOptions): EngineOutputCollector {
+    this.collector = new EngineOutputCollector(maxPlainBytes, onLine, options);
     return this.collector;
   }
 
@@ -557,8 +557,8 @@ export class Runner {
     // cached at Runner construction) so a config change via `crontick daemon
     // reload` takes effect for new runs without a full restart. The child is
     // never killed or throttled; only storage of further plain output stops.
-    // Stream-json events are trimmed as they arrive and need no cap (see
-    // EngineOutputCollector); stderr is kept in full.
+    // Stream-json events (adapters with parseStreamEvent) are trimmed as they
+    // arrive and need no cap (see EngineOutputCollector); stderr has its own fixed cap.
     const maxOutputBytes = this.maxOutputBytesPerRunOverride ?? resolveMaxOutputBytesPerRun();
     let outputTruncated = false;
     let collector: EngineOutputCollector;
@@ -664,11 +664,17 @@ export class Runner {
       // Structured engines (Claude stream-json) announce failure in-band. Every
       // complete stdout line is checked as it arrives so a reported error ends
       // the run immediately instead of waiting for the process to exit.
+      const parseEvent = adapter.parseStreamEvent?.bind(adapter);
+      if (!parseEvent) {
+        const message = `no adapter support for runner '${promptEngineBinary}', running generic output handling (stdout treated as plain text)`;
+        this.logger.warn(message, { jobId: job.id, runId });
+        log.crontick(`warning: ${message}`);
+      }
       collector = log.beginCapture(maxOutputBytes, (line) => {
         if (settled) return;
         const detected = adapter.detectTerminalError(line);
         if (detected) onTerminalError(detected);
-      });
+      }, parseEvent ? { parseEvent } : {});
 
       child.stdout?.on('data', (chunk: Buffer) => {
         try {
