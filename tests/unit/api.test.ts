@@ -311,8 +311,9 @@ describe('Daemon HTTP API', () => {
     }
     const output = await apiCall(port, 'GET', `/api/runs/${runId}/output`);
     expect(output.status).toBe(200);
-    expect(output.data).toMatchObject({ runId, status: 'success', format: 'claude-stream-json', result: 'All done.', error: null, output: 'All done.' });
+    expect(output.data).toMatchObject({ runId, status: 'success', format: 'claude-stream-json', result: 'All done.', error: null });
     expect(JSON.stringify(output.data)).not.toContain('SIGNATURE-BLOB');
+    expect(output.data).not.toHaveProperty('output');
     expect((await apiCall(port, 'GET', `/api/runs/${runId}/logs?source=engine`)).status).toBe(404);
     expect((await apiCall(port, 'GET', '/api/runs/nope/output')).status).toBe(404);
     const detail = (await apiCall(port, 'GET', `/api/runs/${runId}`)).data as { jobId: string; logFile: string | null };

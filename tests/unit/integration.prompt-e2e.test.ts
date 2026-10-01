@@ -128,7 +128,7 @@ describe('Integration: prompt job session capture through a live daemon', () => 
     expect(runs[0].status).toBe('success');
 
     const { data: view } = await apiCall(port, 'GET', `/api/runs/${runs[0].id}/output`);
-    const { output: stdoutText, logFile } = view as { output: string; logFile: string };
+    const { result: stdoutText, logFile } = view as { result: string; logFile: string };
     const crontickText = readFileSync(logFile, 'utf-8');
     expect(stdoutText).toContain('stub engine ran');
     // The captured-session-id lifecycle line is a crontick-side event: it lands
