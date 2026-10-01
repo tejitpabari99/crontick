@@ -456,6 +456,12 @@ export class Store {
         const raw: unknown = JSON.parse(readFileSync(filePath, 'utf-8'));
         const parsed = JobSchema.safeParse(raw);
         if (parsed.success) {
+          // `schedule.tz` was removed: cron schedules fire in machine local
+          // time. The schema strips a legacy value, so warn once per job file.
+          const legacyTz = (raw as { schedule?: { tz?: unknown } } | null)?.schedule?.tz;
+          if (typeof legacyTz === 'string' && legacyTz.length > 0) {
+            this.logger.warn('Ignoring legacy schedule.tz: cron schedules now fire in the machine local timezone', { jobId: parsed.data.id, alias: parsed.data.alias, tz: legacyTz });
+          }
           const json = JSON.stringify(parsed.data);
           this.db
             .prepare(

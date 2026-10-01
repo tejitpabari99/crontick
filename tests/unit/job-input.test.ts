@@ -499,7 +499,6 @@ describe('buildJobPatchFromUpdateOptions - no update flag silently no-ops', () =
       { flag: '--cron', opts: patchOpts({ cron: '0 9 * * *' }), assert: (patch) => expect(patch.schedule).toEqual({ kind: 'cron', cron: '0 9 * * *' }) },
       { flag: '--every', opts: patchOpts({ every: 60 }), assert: (patch) => expect(patch.schedule).toEqual({ kind: 'interval', everySec: 60 }) },
       { flag: '--at', opts: patchOpts({ at: '2030-01-01T00:00:00.000Z' }), assert: (patch) => expect(patch.schedule).toEqual({ kind: 'one-shot', runAt: '2030-01-01T00:00:00.000Z' }) },
-      { flag: '--tz', opts: patchOpts({ tz: 'UTC' }), error: /--tz requires --cron on update/ },
       { flag: '--prompt', opts: patchOpts({ prompt: 'hello' }), assert: (patch) => expect(patch.action).toMatchObject({ kind: 'prompt', prompt: 'hello' }) },
       { flag: '--prompt-file', opts: patchOpts({ promptFile }), assert: (patch) => expect(patch.action).toMatchObject({ kind: 'prompt', prompt: 'from file' }) },
       { flag: '--arg', opts: patchOpts({ args: ['x'] }), error: /Arguments \(via --arg or --\) are valid only/ },
@@ -528,9 +527,10 @@ describe('buildJobPatchFromUpdateOptions - no update flag silently no-ops', () =
     }
   });
 
-  it('rejects --tz on non-cron update schedules instead of silently dropping it', () => {
-    expect(() => buildJobPatchFromUpdateOptions(patchOpts({ every: 60, tz: 'UTC' }))).toThrow(/--tz requires --cron on update/);
-    expect(() => buildJobPatchFromUpdateOptions(patchOpts({ at: '2030-01-01T00:00:00.000Z', tz: 'UTC' }))).toThrow(/--tz requires --cron on update/);
+  it('rejects the removed schedule.tz on create and patch input', () => {
+    const withTz = { kind: 'cron', cron: '0 9 * * *', tz: 'UTC' } as unknown as JobCreateInput['schedule'];
+    expect(() => normalizeJobInput({ schedule: withTz, action: { kind: 'prompt', prompt: 'x' } })).toThrow(/schedule\.tz is no longer supported/);
+    expect(() => normalizeJobPatch('job-1', existingJob({ kind: 'prompt', prompt: 'x', args: [] }), { schedule: withTz })).toThrow(/schedule\.tz is no longer supported/);
   });
 
   it('resolves --enable/--disable flags in core and rejects passing both together', () => {

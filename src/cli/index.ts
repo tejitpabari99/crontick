@@ -208,16 +208,15 @@ function groupHelp(command: Command): Command {
 
 function commonJobOptions(command: Command): Command {
   return command
-    .option('--name <name>', 'Unique kebab-case job alias (auto-generated when omitted)')
-    .option('--prompt <text>', 'Prompt text for a prompt action')
+    .option('-n, --name <name>', 'Unique kebab-case job alias (auto-generated when omitted)')
+    .option('-p, --prompt <text>', 'Prompt text for a prompt action')
     .option('--prompt-file <path>', 'UTF-8 .txt file to read into the prompt')
-    .option('--cron <expr>', 'Schedule (one of --cron/--every/--at): cron expression, e.g. "0 9 * * *"')
-    .option('--every <interval>', 'Schedule (one of --cron/--every/--at): repeat every N seconds, or use an s/m/h/d suffix (e.g. 30m)', parseEveryInterval)
-    .option('--at <datetime>', 'Schedule (one of --cron/--every/--at): one-shot run time, ISO-8601 (e.g. 2026-10-01T09:00); local timezone unless an offset such as Z or +02:00 is given')
-    .option('--tz <tz>', 'IANA timezone for the --cron schedule (e.g. Europe/London)')
+    .option('--cron <expr>', 'Schedule (exactly one of --cron/--every/--at): cron expression, e.g. "0 9 * * *"')
+    .option('--every <interval>', 'Schedule (exactly one of --cron/--every/--at): repeat every N seconds, or use an s/m/h/d suffix (e.g. 30m)', parseEveryInterval)
+    .option('--at <datetime>', 'Schedule (exactly one of --cron/--every/--at): one-shot run time, ISO-8601 (e.g. 2026-10-01T09:00)')
     .option('--runner <runner>', 'Configured prompt engine name (default: config defaultEngine)')
-    .option('--session-id <id>', 'Resume this existing prompt-engine (e.g. Claude) conversation session on every run of the job, instead of starting a fresh session each run')
-    .option('--reuse-session', 'Start a session on the first successful run, then keep resuming that same session on later runs (alternative to --session-id)')
+    .option('--session-id <id>', 'Run it on a given session ID')
+    .option('--reuse-session', 'Start session and resume on succeeding runs.')
     .option('--file <path>', 'Create the job from a full job-definition JSON file (advanced)')
     // No hardcoded default here (unlike most flags): a Commander default would
     // be indistinguishable from the user explicitly typing the same value,
@@ -227,7 +226,7 @@ function commonJobOptions(command: Command): Command {
     // "explicitly set to the default value" on both `new` and `update`.
     // `new` still defaults to skip explicitly in job-input.ts.
     .option('--timeout <sec>', 'Per-run timeout in seconds (default: none/unbounded; omit on update to leave unchanged)', parseInteger)
-    .option('--overlap <policy>', 'Overlap policy: skip|queue|cancel-previous (default on create: skip; omit on update to leave unchanged)')
+    .option('--overlap <policy>', 'Overlap policy: skip|queue|cancel-previous (default: skip)')
     .option('--retry <max>', 'Retry count on failure (default: 0; omit on update to leave unchanged)', parseInteger)
     .option('--desc <description>', 'Job description');
 }
@@ -242,7 +241,6 @@ function collectJobOptions(engineArgs: string[], passthroughArgs: string[], cliA
     cron: stringOption(opts.cron),
     every: numberOption(opts.every),
     at: stringOption(opts.at),
-    tz: stringOption(opts.tz),
     prompt: stringOption(opts.prompt),
     promptFile: stringOption(opts.promptFile),
     engine: stringOption(opts.runner),
@@ -266,7 +264,6 @@ function collectPatchOptions(engineArgs: string[], passthroughArgs: string[], cl
     cron: stringOption(opts.cron),
     every: numberOption(opts.every),
     at: stringOption(opts.at),
-    tz: stringOption(opts.tz),
     prompt: stringOption(opts.prompt),
     promptFile: stringOption(opts.promptFile),
     engine: stringOption(opts.runner),
@@ -357,7 +354,7 @@ function splitPromptEngineArgs(engineArgs: string[]): { rawArgs: string[]; passt
         // Removed CLI switches must stay unknown instead of being forwarded
         // to the prompt runner through the generic long-flag passthrough.
         const flag = token.split('=', 1)[0]!;
-        if (flag === '--job-env-file' || flag === '--alias' || flag === '--engine') {
+        if (flag === '--job-env-file' || flag === '--alias' || flag === '--engine' || flag === '--tz') {
           throw new Error(`unknown option '${flag}'`);
         }
         passthroughArgs.push(token);
@@ -407,11 +404,6 @@ const jobs = groupHelp(program.command('jobs').description('Create, inspect, and
 commonJobOptions(jobs.command('new [engineArgs...]').description('Create a new job (alias auto-generated when --name is omitted)'))
   .allowUnknownOption()
   .option('--force', 'Replace an existing job when the same alias already exists')
-  .addHelpText('after', `
-Schedule: give exactly one of --cron, --every, or --at (combining them is an error).
-  --cron "0 9 * * *"         recurring, cron expression (optionally with --tz)
-  --every 30m                recurring interval: seconds, or s/m/h/d suffix
-  --at 2026-10-01T09:00      run once; local timezone unless an offset (Z, +02:00) is given`)
   .action(async (engineArgs: string[], opts, cmd: Command) => {
     const c = client();
     try {

@@ -353,7 +353,7 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     await expect(client.listJobs()).resolves.toEqual([original]);
   }, 15_000);
 
-  it('updates cron schedules with explicit timezone objects through updateJob', async () => {
+  it('rejects the removed schedule.tz field on createJob and updateJob', async () => {
     makeHome();
     const client = createClient({ daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 15_000 });
 
@@ -363,11 +363,19 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
       action: { kind: 'prompt', prompt: 'before', args: [], reuseSession: false },
     });
 
-    await expect(client.updateJob('client-cron-tz-update-job', {
-      schedule: { kind: 'cron', cron: '0 1 * * *', tz: 'UTC' },
-    })).resolves.toMatchObject({
-      schedule: { kind: 'cron', cron: '0 1 * * *', tz: 'UTC' },
+    const withTz = { kind: 'cron', cron: '0 1 * * *', tz: 'UTC' } as unknown as { kind: 'cron'; cron: string };
+    await expect(client.updateJob('client-cron-tz-update-job', { schedule: withTz })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: expect.stringContaining('schedule.tz is no longer supported'),
     });
+    await expect(client.createJob({
+      alias: 'client-cron-tz-create-job',
+      schedule: withTz,
+      action: { kind: 'prompt', prompt: 'x', args: [], reuseSession: false },
+    })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    await expect(client.updateJob('client-cron-tz-update-job', {
+      schedule: { kind: 'cron', cron: '0 1 * * *' },
+    })).resolves.toMatchObject({ schedule: { kind: 'cron', cron: '0 1 * * *' } });
   }, 15_000);
 
   it('accepts modifier-only engine/envFile/timeout action patches through updateJob and merges them (CTD-026)', async () => {

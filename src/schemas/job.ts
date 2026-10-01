@@ -12,8 +12,7 @@ import { EngineNameSchema } from './config.js';
 
 export const CronScheduleSchema = z.object({
   kind: z.literal('cron'),
-  cron: z.string().min(1).describe('Cron expression, e.g. "0 9 * * *"'),
-  tz: z.string().optional().describe('IANA timezone for the cron expression (default: machine local timezone)'),
+  cron: z.string().min(1).describe('Cron expression, e.g. "0 9 * * *" (fires in the machine local timezone)'),
 });
 
 export const IntervalScheduleSchema = z.object({

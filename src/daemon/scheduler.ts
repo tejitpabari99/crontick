@@ -16,7 +16,6 @@ export interface TickEvent {
 
 export interface PreviewOptions {
   n?: number;
-  tz?: string;
 }
 
 export interface ValidateResult {
@@ -54,8 +53,8 @@ export class Scheduler extends EventEmitter {
 
     const { schedule } = job;
     if (schedule.kind === 'cron') {
-      this.logger.debug('Scheduling cron job', { jobId: job.id, cron: schedule.cron, tz: schedule.tz });
-      this.scheduleCron(job, schedule.cron, schedule.tz);
+      this.logger.debug('Scheduling cron job', { jobId: job.id, cron: schedule.cron });
+      this.scheduleCron(job, schedule.cron);
     } else if (schedule.kind === 'interval') {
       this.logger.debug('Scheduling interval job', { jobId: job.id, everySec: schedule.everySec, startAt: schedule.startAt });
       this.scheduleInterval(job, schedule.everySec, schedule.startAt);
@@ -87,7 +86,7 @@ export class Scheduler extends EventEmitter {
     const n = opts.n ?? 5;
 
     if (schedule.kind === 'cron') {
-      return cronNextN(schedule.cron, opts.tz ?? schedule.tz, n);
+      return cronNextN(schedule.cron, n);
     }
 
     if (schedule.kind === 'interval') {
@@ -166,7 +165,7 @@ export class Scheduler extends EventEmitter {
     if (fromExclusiveMs >= toExclusiveMs) return { fires: [], capped: false };
 
     if (schedule.kind === 'cron') {
-      return enumerateCronFires(schedule.cron, schedule.tz, fromExclusiveMs, toExclusiveMs, cap);
+      return enumerateCronFires(schedule.cron, fromExclusiveMs, toExclusiveMs, cap);
     }
     if (schedule.kind === 'interval') {
       return enumerateIntervalFires(schedule.everySec, fromExclusiveMs, toExclusiveMs, cap);
@@ -188,10 +187,9 @@ export class Scheduler extends EventEmitter {
   private scheduleCron(
     job: Job,
     pattern: string,
-    tz: string | undefined,
   ): void {
+    // Cron expressions fire in the machine local timezone (croner's default).
     const options: CronOptions = {};
-    if (tz) options.timezone = tz;
 
     const cron = new Cron(pattern, options, () => {
       this.fireTick(job.id, new Date());
@@ -304,14 +302,12 @@ function safeSetTimeout(cb: () => void, ms: number): SafeTimer {
 /** Iterate croner's nextRun() forward from `fromExclusiveMs`, capped, without registering a live timer. */
 function enumerateCronFires(
   pattern: string,
-  tz: string | undefined,
   fromExclusiveMs: number,
   toExclusiveMs: number,
   cap: number,
 ): EnumerateFiresResult {
   try {
     const options: CronOptions = { paused: true };
-    if (tz) options.timezone = tz;
     const cron = new Cron(pattern, options);
     const fires: number[] = [];
     let ref = new Date(fromExclusiveMs);
@@ -357,10 +353,9 @@ function enumerateIntervalFires(
 }
 
 /** Iterate croner's nextRun() N times from now without registering a live timer. */
-function cronNextN(pattern: string, tz: string | undefined, n: number): string[] {
+function cronNextN(pattern: string, n: number): string[] {
   try {
     const options: CronOptions = { paused: true };
-    if (tz) options.timezone = tz;
     const cron = new Cron(pattern, options);
     const results: string[] = [];
     let ref: Date | undefined;

@@ -27,12 +27,21 @@ function withHome<T>(fn: (home: string) => T): T {
 describe('jobs new help and schedule errors', () => {
   it('orders options name, prompt, schedule flags, then the rest, with description last', () => withHome((home) => {
     const help = cli(['jobs', 'new', '--help'], home).stdout.replace(/[ ]*\n[ ]*/g, ' ').replace(/ {2,}/g, ' ');
-    const order = ['--name', '--prompt <text>', '--cron', '--every', '--at', '--tz', '--session-id', '--desc'].map((flag) => help.indexOf(flag));
+    const order = ['--name', '--prompt <text>', '--cron', '--every', '--at', '--session-id', '--desc'].map((flag) => help.indexOf(flag));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
-    expect(help).toContain('give exactly one of --cron, --every, or --at');
-    expect(help).toContain('local timezone unless an offset');
-    expect(help).toContain('instead of starting a fresh session each run');
+    // Each schedule flag appears exactly once (no duplicate "Schedule:" block) and --tz is gone.
+    for (const flag of ['--cron <expr>', '--every <interval>', '--at <datetime>']) {
+      expect(help.split(flag).length - 1, flag).toBe(1);
+    }
+    expect(help).not.toContain('--tz');
+    expect(help).not.toMatch(/timezone/i);
+    expect(help).toContain('Schedule (exactly one of --cron/--every/--at)');
+    expect(help).toContain('-n, --name <name> Unique kebab-case job alias (auto-generated when omitted)');
+    expect(help).toContain('-p, --prompt <text>');
+    expect(help).toContain('--session-id <id> Run it on a given session ID');
+    expect(help).toContain('--reuse-session Start session and resume on succeeding runs.');
+    expect(help).toContain('--overlap <policy> Overlap policy: skip|queue|cancel-previous (default: skip)');
     expect(help).toMatch(/same alias/i);
   }));
 

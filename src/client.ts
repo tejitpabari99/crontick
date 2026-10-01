@@ -396,7 +396,7 @@ export class CrontickClient {
   }
 
   /** Library-only: preview upcoming fire times for a raw schedule object. Surfaced via jobSchedule (per-job). */
-  async previewSchedule(input: { schedule: Schedule; n?: number; tz?: string }): Promise<unknown> {
+  async previewSchedule(input: { schedule: Schedule; n?: number }): Promise<unknown> {
     return this.request('POST', '/api/schedules/preview', {
       ...input,
       n: input.n ?? 5,

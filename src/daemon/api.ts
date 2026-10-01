@@ -353,8 +353,7 @@ async function handleRequest(
         return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid schedule');
       }
       const n = typeof body?.n === 'number' ? body.n : 5;
-      const tz = body?.tz as string | undefined;
-      const next = ctx.scheduler.previewNext(scheduleResult.data, { n, tz });
+      const next = ctx.scheduler.previewNext(scheduleResult.data, { n });
       return sendJson(res, 200, { next });
     }
 

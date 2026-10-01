@@ -422,7 +422,7 @@ describe('MCP server — full contract', () => {
     expect(data.description).toBe('no overlap field');
   });
 
-  it('crontick_job_update applies explicit cron timezone updates', async () => {
+  it('crontick_job_update applies cron schedule updates', async () => {
     const created = await callTool(client, 'crontick_job_create', {
       alias: 'mcp-cron-tz-update-job',
       schedule: { kind: 'cron', cron: '0 9 * * *' },
@@ -432,10 +432,10 @@ describe('MCP server — full contract', () => {
 
     const updated = await callTool(client, 'crontick_job_update', {
       id: 'mcp-cron-tz-update-job',
-      schedule: { kind: 'cron', cron: '0 10 * * *', tz: 'UTC' },
+      schedule: { kind: 'cron', cron: '0 10 * * *' },
     });
     expect(updated.isError).toBe(false);
-    expect((updated.json as { schedule: unknown }).schedule).toEqual({ kind: 'cron', cron: '0 10 * * *', tz: 'UTC' });
+    expect((updated.json as { schedule: unknown }).schedule).toEqual({ kind: 'cron', cron: '0 10 * * *' });
   });
 
   it('crontick_job_update preserves prompt/engine when only envFile/timeoutSec are patched', async () => {

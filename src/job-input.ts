@@ -123,7 +123,6 @@ export interface JobCreateCliOptions {
   cron?: string;
   every?: number;
   at?: string;
-  tz?: string;
   prompt?: string;
   promptFile?: string;
   engine?: string;
@@ -144,11 +143,27 @@ export interface JobCreateCliOptions {
 
 export type JobPatchCliOptions = JobCreateCliOptions;
 
+/**
+ * Cron schedules fire in the machine local timezone; the `tz` field was removed.
+ * Rejecting it on new input beats silently stripping a timezone the caller
+ * expected to apply. (Legacy stored jobs that still carry `tz` are tolerated:
+ * their `tz` is ignored and the daemon warns once per job at startup.)
+ */
+function assertNoScheduleTimezone(schedule: unknown): void {
+  if (isRecord(schedule) && 'tz' in schedule && schedule['tz'] !== undefined) {
+    throw new CrontickError(
+      'VALIDATION_ERROR',
+      'schedule.tz is no longer supported: cron schedules fire in the machine local timezone. Remove tz from the schedule.',
+    );
+  }
+}
+
 /** Validates and normalizes a full job create input into the canonical persisted shape. */
 export function normalizeJobInput(
   input: JobCreateInput,
   options: NormalizeJobInputOptions = {},
 ): Job {
+  assertNoScheduleTimezone(input.schedule);
   const config = loadConfig({ env: options.env });
   const normalized = {
     ...input,
@@ -237,6 +252,7 @@ export function normalizeJobPatch(
   patch: JobPatchInput,
   options: NormalizeJobInputOptions = {},
 ): Job {
+  assertNoScheduleTimezone(patch.schedule);
   const parsedPatch = JobPatchInputSchema.safeParse(patch);
   if (!parsedPatch.success) throw new CrontickError('VALIDATION_ERROR', 'Invalid job patch', parsedPatch.error.format());
 
@@ -394,7 +410,7 @@ export function buildJobPatchFromUpdateOptions(
   if (input.alias !== undefined) patch.alias = input.alias;
   if (input.desc !== undefined) patch.description = input.desc;
   if (enabled !== undefined) patch.enabled = enabled;
-  const schedule = maybeBuildSchedule(input, true);
+  const schedule = maybeBuildSchedule(input);
   if (schedule !== undefined) patch.schedule = schedule;
   const action = maybeBuildAction(input, resolvedArgs, true);
   if (action !== undefined) patch.action = normalizeActionInput(action, options, false) as ActionInput;
@@ -519,17 +535,11 @@ function buildSchedule(input: JobCreateCliOptions): JobCreateInput['schedule'] {
   return schedule;
 }
 
-function maybeBuildSchedule(input: JobPatchCliOptions, strictUpdate = false): JobCreateInput['schedule'] | undefined {
+function maybeBuildSchedule(input: JobPatchCliOptions): JobCreateInput['schedule'] | undefined {
   const count = [input.cron, input.every, input.at].filter((value) => value !== undefined).length;
-  if (strictUpdate && input.tz !== undefined && input.cron === undefined) {
-    throw new CrontickError(
-      'VALIDATION_ERROR',
-      '--tz requires --cron on update. Repeat the cron schedule with --cron <expr> when changing its timezone, or remove --tz.',
-    );
-  }
   if (count === 0) return undefined;
   if (count > 1) throw new CrontickError('VALIDATION_ERROR', 'Provide only one schedule: --cron, --every, or --at (they cannot be combined)');
-  if (input.cron !== undefined) return { kind: 'cron', cron: input.cron, tz: input.tz };
+  if (input.cron !== undefined) return { kind: 'cron', cron: input.cron };
   if (input.every !== undefined) return { kind: 'interval', everySec: input.every };
   if (input.at !== undefined) return { kind: 'one-shot', runAt: input.at };
   return undefined;
@@ -593,7 +603,6 @@ function assertFileModeExclusive(opts: JobPatchCliOptions, rawArgs: string[]): v
     || opts.cron !== undefined
     || opts.every !== undefined
     || opts.at !== undefined
-    || opts.tz !== undefined
     || opts.prompt !== undefined
     || opts.promptFile !== undefined
     || opts.engine !== undefined

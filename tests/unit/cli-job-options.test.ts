@@ -1,0 +1,135 @@
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { Scheduler } from '../../src/daemon/scheduler.js';
+import { Store } from '../../src/daemon/store.js';
+import { createLogger, type LogEvent } from '../../src/logger.js';
+
+const CLI = resolve('dist/cli/index.js');
+
+function cli(args: string[], home: string) {
+  return spawnSync(process.execPath, [CLI, ...args], {
+    encoding: 'utf-8',
+    env: { ...process.env, CRONTICK_HOME: home, CRONTICK_VERBOSE: '' },
+    timeout: 30_000,
+  });
+}
+
+const homes: string[] = [];
+function newHome(): string {
+  const home = mkdtempSync(join(tmpdir(), 'crontick-jobopts-'));
+  homes.push(home);
+  return home;
+}
+afterEach(() => {
+  for (const home of homes.splice(0)) {
+    cli(['daemon', 'stop'], home);
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+/** Long (and short) option flags listed under "Options:" in a command's --help output. */
+function optionFlags(help: string): Set<string> {
+  const flags = new Set<string>();
+  const options = help.split('Options:')[1] ?? '';
+  for (const line of options.split('\n')) {
+    const match = /^ {2}((?:-\w, )?--[\w-]+)/.exec(line);
+    if (match) flags.add(match[1]!);
+  }
+  return flags;
+}
+
+describe('jobs new / jobs update option parity', () => {
+  it('differ only by --force vs --enable/--disable', () => {
+    const home = newHome();
+    const created = optionFlags(cli(['jobs', 'new', '--help'], home).stdout);
+    const updated = optionFlags(cli(['jobs', 'update', '--help'], home).stdout);
+    const onlyNew = [...created].filter((flag) => !updated.has(flag)).sort();
+    const onlyUpdate = [...updated].filter((flag) => !created.has(flag)).sort();
+    expect(onlyNew).toEqual(['--force']);
+    expect(onlyUpdate).toEqual(['--disable', '--enable']);
+    // Guard against the parser silently matching nothing.
+    expect(created.size).toBeGreaterThan(10);
+    expect(created.has('-n, --name')).toBe(true);
+    expect(created.has('-p, --prompt')).toBe(true);
+  });
+
+  it('shows the same option help strings on update as on new', () => {
+    const home = newHome();
+    const normalize = (text: string): string => text.replace(/\s+/g, ' ');
+    for (const sub of ['new', 'update']) {
+      const help = normalize(cli(['jobs', sub, '--help'], home).stdout);
+      expect(help, sub).toContain('--overlap <policy> Overlap policy: skip|queue|cancel-previous (default: skip)');
+      expect(help, sub).toContain('--session-id <id> Run it on a given session ID');
+    }
+  });
+});
+
+describe('short flags -n and -p', () => {
+  it('create a job via -n/-p, and short flags after -- still pass through to the engine', () => {
+    const home = newHome();
+    const created = cli(['jobs', 'new', '-n', 'short-flags', '-p', 'say hi', '--every', '1h', '--', '-v'], home);
+    expect(created.status, created.stderr).toBe(0);
+    const got = cli(['jobs', 'get', 'short-flags'], home);
+    expect(got.stdout).toContain('"prompt":"say hi"');
+    expect(got.stdout).toContain('"args":["-v"]');
+    const updated = cli(['jobs', 'update', 'short-flags', '-p', 'say bye'], home);
+    expect(updated.status, updated.stderr).toBe(0);
+    expect(updated.stdout).toContain('say bye');
+  }, 60_000);
+
+  it('rejects the removed --tz flag instead of storing it as an engine argument', () => {
+    const home = newHome();
+    const result = cli(['jobs', 'new', '-p', 'x', '--cron', '0 9 * * *', '--tz', 'UTC'], home);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("unknown option '--tz'");
+  }, 30_000);
+});
+
+describe('cron fires in machine local time', () => {
+  const original = process.env['TZ'];
+  afterEach(() => {
+    if (original === undefined) delete process.env['TZ'];
+    else process.env['TZ'] = original;
+  });
+
+  it.each(['America/New_York', 'Asia/Kolkata', 'UTC'])('previews 09:00 local under TZ=%s', (zone) => {
+    process.env['TZ'] = zone;
+    const next = new Scheduler().previewNext({ kind: 'cron', cron: '0 9 * * *' }, { n: 3 });
+    expect(next).toHaveLength(3);
+    for (const iso of next) {
+      const d = new Date(iso);
+      expect(d.getHours()).toBe(9);
+      expect(d.getMinutes()).toBe(0);
+    }
+  });
+});
+
+describe('legacy stored schedule.tz', () => {
+  it('is ignored and warned about once per job file at load', () => {
+    const dir = newHome();
+    mkdirSync(join(dir, 'jobs'), { recursive: true });
+    const id = '11111111-1111-4111-8111-111111111111';
+    writeFileSync(join(dir, 'jobs', `${id}.json`), JSON.stringify({
+      id,
+      alias: 'legacy-tz',
+      enabled: true,
+      schedule: { kind: 'cron', cron: '0 9 * * *', tz: 'Europe/London' },
+      action: { kind: 'prompt', prompt: 'x', args: [], reuseSession: false },
+    }), 'utf-8');
+    const events: LogEvent[] = [];
+    const store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'), createLogger({ level: 'debug', sink: (event) => events.push(event) }));
+    store.open();
+    try {
+      store.loadJobsFromDisk();
+      expect(store.getJob(id)?.schedule).toEqual({ kind: 'cron', cron: '0 9 * * *' });
+      const warnings = events.filter((e) => e.level === 'warn' && e.message.includes('legacy schedule.tz'));
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]!.data).toMatchObject({ jobId: id, tz: 'Europe/London' });
+    } finally {
+      store.close();
+    }
+  });
+});

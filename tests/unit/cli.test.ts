@@ -500,8 +500,12 @@ describe('CLI e2e with daemon', () => {
     expect(parseCliObject(updated.stdout)).toMatchObject({ overlap: 'skip', enabled: false });
     updated = cli(['jobs', 'update', 'merge-check-job', '--overlap', 'cancel-previous', '--enable'], env());
     expect(parseCliObject(updated.stdout)).toMatchObject({ overlap: 'cancel-previous', enabled: true });
-    updated = cli(['jobs', 'update', 'merge-check-job', '--cron', '0 10 * * *', '--tz', 'UTC'], env());
-    expect(parseCliObject(updated.stdout).schedule).toEqual({ kind: 'cron', cron: '0 10 * * *', tz: 'UTC' });
+    updated = cli(['jobs', 'update', 'merge-check-job', '--cron', '0 10 * * *'], env());
+    expect(parseCliObject(updated.stdout).schedule).toEqual({ kind: 'cron', cron: '0 10 * * *' });
+    // --tz was removed and must not leak into the engine args as a passthrough flag.
+    const removedTz = cli(['jobs', 'update', 'merge-check-job', '--cron', '0 10 * * *', '--tz', 'UTC'], env());
+    expect(removedTz.status).toBe(1);
+    expect(removedTz.stderr).toContain("unknown option '--tz'");
     const invalid = cli(['jobs', 'update', 'merge-check-job', '--enable', '--disable'], env());
     expectCleanError(invalid, 'VALIDATION_ERROR');
   });
