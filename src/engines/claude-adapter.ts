@@ -146,8 +146,8 @@ export class ClaudeAdapter extends EngineAdapter {
     return this.resumableSessionId(result) !== undefined;
   }
 
-  resumeTranscriptPath(cwd: string, sessionId: string): string {
-    return resolveTranscriptPath(cwd, sessionId);
+  resumeTranscriptPath(cwd: string, sessionId: string, env?: NodeJS.ProcessEnv): string {
+    return resolveTranscriptPath(cwd, sessionId, env ? { env } : {});
   }
 
   resumableSessionId(result: EngineResult): string | undefined {

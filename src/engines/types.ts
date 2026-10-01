@@ -63,9 +63,10 @@ export abstract class EngineAdapter {
     return result.status === 'success';
   }
 
-  /** Only adapters with transcript-backed resume return a path to preflight. */
-  resumeTranscriptPath(cwd: string, sessionId: string): string | undefined {
+  /** Only adapters with transcript-backed resume return a path to preflight. `env` is the engine's effective environment (e.g. `CLAUDE_CONFIG_DIR`). */
+  resumeTranscriptPath(cwd: string, sessionId: string, env?: NodeJS.ProcessEnv): string | undefined {
     void cwd;
+    void env;
     void sessionId;
     return undefined;
   }
