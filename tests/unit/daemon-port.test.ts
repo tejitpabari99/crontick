@@ -68,7 +68,12 @@ describe('daemon port', () => {
   it('falls back to a free port with the foreign-process message when a plain listener holds the preferred port', async () => {
     const blocker = await listenOn(0);
     const sockets = new Set<net.Socket>();
-    blocker.on('connection', (sock) => sockets.add(sock)); // the daemon probes it; sockets must be destroyed so close() resolves
+    blocker.on('connection', (sock) => {
+      // The daemon probes it; sockets must be destroyed so close() resolves.
+      // On Windows the probe's teardown can reset the connection (ECONNRESET), which would be an uncaught 'error'.
+      sock.on('error', () => undefined);
+      sockets.add(sock);
+    });
     cleanups.push(() => new Promise<void>((r) => { sockets.forEach((sock) => sock.destroy()); blocker.close(() => r()); }));
     const preferred = (blocker.address() as net.AddressInfo).port;
     const d = startDaemon({ CRONTICK_DAEMON_PORT: String(preferred) });
