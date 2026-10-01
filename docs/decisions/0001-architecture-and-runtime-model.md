@@ -79,9 +79,9 @@ contract: `mode: "graceful" | "hard-kill" | "already-stopped"`.
 ### State: SQLite WAL plus JSON job files, capped and unmigrated
 
 Job definitions are human-editable, diffable JSON files (`<dataDir>/jobs/<id>.json`) --
-the source of truth for what is scheduled. Run history and logs live in a WAL-mode
+the source of truth for what is scheduled. Run history and parsed run output live in a WAL-mode
 SQLite database (`node:sqlite`, no native addon), because that access pattern is
-append-heavy and query-heavy in a way flat files are not. `runs`/`run_logs` are capped
+append-heavy and query-heavy in a way flat files are not. `runs`/`run_outputs` are capped
 per job (`retention.maxRunsPerJob`, default 100): only terminal runs are eviction
 candidates, oldest evicted first, in batches of 500 (SQLite's bound-parameter limit
 forces batching), best-effort so a pruning failure never blocks a run insert or daemon
@@ -91,7 +91,7 @@ no `ALTER TABLE` upgrade path. Pre-1.0, this is a deliberate simplification, not
 oversight: crontick has no released schema and no real installs to preserve compatibility
 with, so a `runs.db`/job file from an earlier crontick version is unsupported input, and
 a capability that is removed is deleted outright rather than kept behind a compatibility
-shim (no dead code, no legacy branches -- see `docs/tech/design-principles.md` #6). Both
+shim, deprecated alias or tolerant reader (no dead code, no legacy branches -- see `docs/tech/design-principles.md` #6). Both
 policies are revisited together once crontick has real 1.x installs to protect.
 
 ### Process lifecycle: detached children, reported not replayed
@@ -117,7 +117,7 @@ catch-up executions for a job that was due many times during a long gap.
 
 Every surface that emits user-visible text (CLI, MCP, dashboard, config reads, exports,
 daemon logs, persisted run output) redacts secrets through one shared contract in
-`src/logger.ts`, not per-surface masking rules. Persisted run-log capture uses a
+`src/logger.ts`, not per-surface masking rules. Captured engine output uses a
 streaming redactor so a private-key block is still recognized when its `BEGIN`/body/`END`
 lines arrive in separate stdout/stderr chunks; read-time redaction remains as defense in
 depth. Key-hint matching uses precise, high-confidence suffixes (`api_key`,
@@ -131,15 +131,31 @@ unlabeled bare secret unredacted.
 
 ### Amendment (2026-10-01): deleting a job deletes its history
 
-Deleting a job removes its runs, run logs, schedule state and per-job log file in one
-transaction instead of archiving the runs; orphans left by older versions are purged at
-daemon start. This keeps `runs list`, `runs get`, stats and the dashboard consistent (the
+Deleting a job removes its runs, stored run output, schedule state and per-job log file in one
+transaction instead of archiving the runs. This keeps `runs list`, `runs get`, stats and the dashboard consistent (the
 earlier archive behavior only hid runs from some of them). Share files (`schema: 1`) carry
 job definitions only: no run history and no ids, so an import always mints new ids and
 suffixes alias collisions rather than overwriting. Cron schedules fire in machine local time
-(the per-job `tz` field was removed), and `config.json` is created with the full defaults on
+(there is no per-job `tz` field; a `tz` in a stored job file is silently ignored, with no warning or log), and `config.json` is created with the full defaults on
 first use and never overwritten (trade-off: later built-in default changes do not reach
 users who already have the file).
+
+### Amendment (2026-10-01): crontick stores only its own logs
+
+The engine (e.g. Claude) already keeps its own transcript, so crontick no longer copies the
+engine's raw stdout/stderr anywhere: the `run_logs` table, `appendLog`/`getLogs`/`tailLogs`, the
+`/api/runs/:id/logs` and `/logs/stream` routes and the per-job mirror of engine output are removed.
+While a run executes, the runner holds the redacted engine output in memory (bounded by
+`retention.maxOutputBytesPerRun`); when the run finishes it stores only the parsed result (final
+answer, assistant text, stderr tail) in `run_outputs`, which backs the unchanged `output`, `result`
+and `error` fields. crontick's own scheduling and execution events are written to one per-job file
+`<logsDir>/<jobId>.log` (one timestamped, run-id-tagged line per event). Every surface that
+displays logs (`runs get`, the dashboard run detail, `GET /api/runs/:id/output`) shows only that
+file's absolute path (a link in the dashboard, never inlined contents). Total run counts were
+dropped from stats and the dashboard, and the remaining legacy/back-compat code (orphan purge at
+daemon start, `avgDurationMs`) was deleted. Trade-off: output of a run that is still executing is
+not visible until it finishes, and the output of a run adopted after a daemon restart is not
+captured.
 
 ## Consequences
 

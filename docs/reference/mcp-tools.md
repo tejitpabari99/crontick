@@ -185,7 +185,7 @@ Permanently delete one job definition by GUID or alias, or delete every job with
 | `force` | `boolean` | no | `false` | Required when `all: true` |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-Deleting a job also deletes its runs, run logs, schedule state and per-job log file; Claude's session transcripts are untouched.
+Deleting a job also deletes its runs, stored run output, schedule state and per-job log file; Claude's session transcripts are untouched.
 
 **Result:** `{ ok: true, canceledRun: boolean, deletedRuns: number }` for a single delete, or `{ ok: true, deleted: number }` when `all: true`. The literal CLI keyword `all` is only reserved on the CLI; MCP callers may still delete an alias `all` job by passing `id: "all"`.
 
@@ -256,7 +256,7 @@ Get the details and current status of a run.
 | `id` | `string` | yes | — | Run ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Run object, including the cleaned `output` (a `RunOutput`: the engine's final answer `result`, `error`, and the assistant text only (a tool call ends a segment; segments are joined by a `---` line; thinking blocks, tool lines, hook payloads and base64 are removed); see [library-api.md](library-api.md#runoutput)), resolved/redacted `command`, engine/status/timing fields, `pid` when spawned, `sessionId` (the Runner Session ID) when available, `outputTruncated`, and `logFile` (absolute path of the per-job log file that holds raw engine output and crontick events for all runs of the job, or `null` when file logging is off; read the file for the raw log). Claude runs with a complete result include `costUsd`, `turns`, redacted `usageJson` (JSON string), `transcriptPath`, and `engineStatus` (Claude result subtype). Raw-engine runs omit these fields.
+**Result:** Run object, including the cleaned `output` (a `RunOutput`: the engine's final answer `result`, `error`, and the assistant text only (a tool call ends a segment; segments are joined by a `---` line; thinking blocks, tool lines, hook payloads and base64 are removed); see [library-api.md](library-api.md#runoutput)), resolved/redacted `command`, engine/status/timing fields, `pid` when spawned, `sessionId` (the Runner Session ID) when available, `outputTruncated`, and `logFile` (absolute path of the per-job file of crontick-side events for all runs of the job, or `null` when file logging is off; crontick does not store the engine's raw logs, see `transcriptPath` for the engine's own transcript). Claude runs with a complete result include `costUsd`, `turns`, redacted `usageJson` (JSON string), `transcriptPath`, and `engineStatus` (Claude result subtype). Raw-engine runs omit these fields.
 
 ---
 
@@ -268,7 +268,7 @@ Get aggregate summary of all jobs.
 |-----------|------|----------|---------|-------------|
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ totalJobs, enabledJobs, totalRuns, succeeded, failed, canceled, skipped, avgDurationMs, avgDurationSec, totalCostUsd, totalTurns }`. `avgDurationSec` is the average execution time in seconds (2 decimals; `avgDurationMs` is kept for backwards compatibility). Per-job stats also include `avgDurationSec`. `skipped` counts fires that never ran due to overlap; `canceled` counts terminated runs. Cost and turns sum the included runs; missing usage contributes zero.
+**Result:** `{ totalJobs, enabledJobs, succeeded, failed, canceled, skipped, avgDurationSec, totalCostUsd, totalTurns }`. `avgDurationSec` is the average execution time in seconds (2 decimals). Per-job stats also include `avgDurationSec`. `skipped` counts fires that never ran due to overlap; `canceled` counts terminated runs. Cost and turns sum the included runs; missing usage contributes zero.
 
 ---
 
@@ -281,7 +281,7 @@ Get run statistics for a specific job.
 | `id` | `string` | yes | — | Job GUID or alias |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ jobId, totalRuns, succeeded, failed, canceled, skipped, lastStatus, lastRunAt (epoch ms), avgDurationSec, totalCostUsd, totalTurns }`, over every retained run of the job. `totalTurns` sums the agent turns (Claude `num_turns`: model round-trips) of all runs.
+**Result:** `{ jobId, succeeded, failed, canceled, skipped, lastStatus, lastRunAt (epoch ms), avgDurationSec, totalCostUsd, totalTurns }`, over every retained run of the job. `totalTurns` sums the agent turns (Claude `num_turns`: model round-trips) of all runs.
 
 ---
 

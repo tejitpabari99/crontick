@@ -132,9 +132,9 @@ crontick daemon stop
 | `maxOutputBytesPerRun` | `integer` | no | `2_000_000` | `min(1024)`, `max(1_000_000_000)` | Re-read per run; applies on the next run |
 | `maxLogFiles` | `integer` | no | `30` | `min(1)`, `max(3650)` | Applies the next time daemon log retention runs |
 
-`maxRunsPerJob` retains at most that many runs per job. Oldest terminal runs (not `running`/`queued`) and their crontick-side log rows are evicted best-effort.
+`maxRunsPerJob` retains at most that many runs per job. Oldest terminal runs (not `running`/`queued`) and their stored output are evicted best-effort.
 
-`maxOutputBytesPerRun` bounds a single run's captured stdout/stderr. Once hit, further output is dropped at a UTF-8 character boundary, a truncation marker is appended, and the run's `outputTruncated` field is set.
+`maxOutputBytesPerRun` bounds a single run's captured engine stdout/stderr (held in memory while the run executes, then parsed into the stored output view). Once hit, further output is dropped at a UTF-8 character boundary, a truncation marker is appended, and the run's `outputTruncated` field is set.
 
 `maxLogFiles` bounds daily `daemon-YYYY-MM-DD.log` files under the daemon log directory; oldest files beyond the cap are deleted best-effort.
 
@@ -149,7 +149,7 @@ See [state-and-storage.md](../concepts/state-and-storage.md#run-history-retentio
 | `fileEnabled` | `boolean` | no | `true` | — |
 | `dir` | `string` | no | `<dataDir>/logs` | Non-empty when set |
 
-Every run's logs are stored in SQLite and surfaced as cleaned output by `crontick runs get`. When file logging is enabled, the same engine and crontick lifecycle streams are mirrored to a single per-job file `<dir>/<jobId>.log` (appended across all runs of the job with no run delimiter; `crontick runs get` prints its path and `getRun` exposes it as `logFile`). Deleting the job deletes this file. File logging is best-effort and never blocks or fails a run. Logging config is read per run, so edits apply automatically to new runs.
+crontick stores only its own logs: when file logging is enabled, crontick-side lifecycle events (run started, executing, retries, session capture, run finished) are written to a single per-job file `<dir>/<jobId>.log` (appended across all runs of the job, each line prefixed with a timestamp and the run id; `crontick runs get` prints its path and `getRun` exposes it as `logFile`). The engine's raw stdout/stderr is never written to the database or this file; the runner keeps its own transcript. The cleaned output shown by `crontick runs get` is stored with the run. Deleting the job deletes this file. File logging is best-effort and never blocks or fails a run. Logging config is read per run, so edits apply automatically to new runs.
 
 ---
 
@@ -253,11 +253,11 @@ Root: `CRONTICK_HOME` or platform default.
 ├── jobs/                       Per-job JSON files (source of truth)
 │   ├── <job-id>.json           Job definition
 │   └── <job-id>.schema.json    JSON Schema sidecar
-├── runs.db                     SQLite (WAL mode): runs, run_logs, jobs cache
+├── runs.db                     SQLite (WAL mode): runs, run_outputs, jobs cache
 ├── logs/
 │   ├── daemon-YYYY-MM-DD.log   Daemon runtime logs (JSON lines)
 │   ├── daemon.ensure.log       Demand-start output capture
-│   └── <job-id>.log            Per-job full log (engine output + crontick lifecycle events)
+│   └── <job-id>.log            Per-job log (crontick lifecycle events only)
 ├── daemon.pid                  PID of running daemon process
 ├── daemon.port                 Port of daemon HTTP API
 └── daemon.ensure.lock          Exclusive startup lock file

@@ -35,7 +35,7 @@ correct behavior across regions.
 ### Functional requirements
 
 - **R-002-1**: The `schedule.kind` discriminator MUST be one of `cron`, `interval`, `one-shot`.
-- **R-002-2**: A `cron` schedule MUST have a non-empty `cron` string and MUST NOT have a `tz` field: cron expressions fire in the machine local timezone. (`tz` was removed; new input containing it is rejected with `VALIDATION_ERROR`, and a legacy stored `tz` is ignored with one daemon warning per job file at load.)
+- **R-002-2**: A `cron` schedule MUST have a non-empty `cron` string and MUST NOT have a `tz` field: cron expressions fire in the machine local timezone. (New input containing `tz` is rejected with `VALIDATION_ERROR`; a `tz` in an already-stored job file is silently ignored: no warning, log or event.)
 - **R-002-3**: An `interval` schedule MUST have a positive `everySec` number and MAY have a `startAt` ISO-8601 string.
 - **R-002-4**: A `one-shot` schedule MUST have a non-empty `runAt` ISO-8601 string. A date-time without an offset is interpreted in the machine's local timezone.
 - **R-002-4a**: A job MUST have exactly one schedule; supplying more than one of `--cron`, `--every`, `--at` MUST be rejected with `VALIDATION_ERROR`, and none with `MISSING_ARG`.

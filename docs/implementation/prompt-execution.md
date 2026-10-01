@@ -4,7 +4,7 @@ Implements: `src/daemon/runner.ts`, `src/daemon/prompt-session.ts`, `src/config.
 (`resolvePromptRunCommand`)
 
 Audience: contributors changing the runner's spawn, capture, or restart-recovery mechanics.
-Non-duplication: for the execution mental model (overlap, timeouts, log streams) see
+Non-duplication: for the execution mental model (overlap, timeouts, log file) see
 [concepts/execution.md](../concepts/execution.md); for the engine adapter contract see
 [engines.md](./engines.md).
 
@@ -77,10 +77,13 @@ The same guards cover timeouts and cancels (SIGTERM, then a forced tree kill, th
 
 ## Stream capture, redaction, and the output cap
 
-`RunLogWriter` fans each chunk to two sinks: `store.appendLog()` (SQLite, source of truth) and a
-best-effort per-job file mirror (`JobLogFileFactory`, injectable; sanitizes the job id and never
-blocks or fails a run on a write error). `safeRedact()` applies `redactText()` only to valid
-UTF-8 chunks; binary data passes through unmodified. Once a run's captured bytes would exceed
+crontick never persists the engine's raw stdout/stderr (the runner keeps its own transcript).
+`RunLogWriter` holds each redacted engine chunk in memory (bounded by the output cap) so that, when
+the run is finalized, `parseEngineOutput()` can store only the parsed output (`store.setRunOutput()`,
+the `run_outputs` table). Its other job is crontick's own events: `crontick()` appends one
+timestamped, run-id-tagged line per event to the per-job log file (`JobLogFileFactory`,
+injectable; sanitizes the job id and never blocks or fails a run on a write error). `safeRedact()` applies `redactText()` only to valid
+UTF-8 chunks; binary data is not redacted. Once a run's captured bytes would exceed
 `retention.maxOutputBytesPerRun`, the runner trims the final chunk to a UTF-8 character boundary
 (`truncateToUtf8Boundary()`, scanning back up to 4 bytes), appends one truncation marker, sets
 `outputTruncated`, and silently drops all further chunks -- the child process itself is never
@@ -122,6 +125,6 @@ failure resolves to `undefined` (inconclusive), never throws.
 
 ## Diagnostic logging
 
-When `logger.isDebugEnabled()`, the runner writes `[crontick:debug]` lines to the run's log via
-`appendDiagnosticLog()`, visible in the per-job log file (`Log file:` in `crontick runs get <runId>`) when verbose was active during
+When `logger.isDebugEnabled()`, the runner writes `[debug]` lines to the per-job log file via
+`appendDiagnosticLog()`, visible there (`Log file:` in `crontick runs get <runId>`) when verbose was active during
 the run.

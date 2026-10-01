@@ -44,7 +44,7 @@ Discriminated union on `kind`.
 | `kind` | `"cron"` | yes | — | Literal | Schedule discriminator |
 | `cron` | `string` | yes | — | Min length 1; parsed by croner v9 | Cron expression, evaluated in the machine's local timezone |
 
-The former `tz` field was removed (pre-1.0 breaking change). New input containing `tz` is rejected; a legacy stored `tz` is ignored and the daemon logs one warning per affected job at load.
+Cron schedules have no `tz` field. New input containing `tz` is rejected; a `tz` in an already-stored job file is silently ignored.
 
 ### kind: `interval`
 

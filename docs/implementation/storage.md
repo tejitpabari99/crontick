@@ -29,8 +29,7 @@ Resolved by `src/paths.ts`. Root: `CRONTICK_HOME` env var, or `envPaths('crontic
 ## Schema
 
 Opened with `node:sqlite` `DatabaseSync`. The full schema is created in one idempotent `CREATE
-TABLE/INDEX IF NOT EXISTS` pass on `open()` -- no migration ledger, no prior shape to reconcile. A
-`runs.db` from before 1.0.0 is not a supported input (see
+TABLE/INDEX IF NOT EXISTS` pass on `open()` -- no migrations (see
 [ADR 0001](../decisions/0001-architecture-and-runtime-model.md)). `PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;` are set on every `open()`.
 
@@ -38,12 +37,12 @@ PRAGMA foreign_keys=ON;` are set on every `open()`.
 |-------|-------------|
 | `jobs` | `id` (PK GUID), `alias` (nullable, unique via `idx_jobs_alias`), `json`, `updated_at` |
 | `runs` | `id` (PK UUID), `job_id`, `started_at`, `ended_at`, `status`, `exit_code`, `error`, `duration_ms`, `pid` (nullable, absent for `missed`), `output_truncated`, `session_id`, `command`, `claude_result_completed` (internal resume-eligibility flag), `cost_usd`, `turns`, `usage_json`, `transcript_path`, `engine_status` |
-| `run_logs` | `id` (PK autoincrement), `run_id`, `stream` (`stdout`/`stderr`/`crontick`), `ts`, `chunk` (BLOB) |
+| `run_outputs` | `run_id` (PK), `format` (`claude-stream-json`/`text`), `result`, `engine_error`, `output`, `stderr`, `truncated` -- the parsed engine output written when a run finishes. The engine's raw stdout/stderr is never stored |
 | `job_schedule_state` | `job_id` (PK), `last_tick_at`, `updated_at` -- one row per job that has ticked live at least once |
 
 Indexes: `idx_runs_job_id_started_at` (composite, also serves single-`job_id` lookups so a
 narrower `idx_runs_job_id` is deliberately never added), `idx_runs_started_at`,
-`idx_run_logs_run_id`, `idx_jobs_alias` (UNIQUE partial, `WHERE alias IS NOT NULL`, a
+`idx_jobs_alias` (UNIQUE partial, `WHERE alias IS NOT NULL`, a
 defense-in-depth backstop behind the app-level alias check in `api.ts`).
 
 Imported run rows never restore `claude_result_completed` -- a Claude transcript has no crontick
@@ -56,14 +55,13 @@ class Store {
   constructor(dbPath?: string, jobsPath?: string, logger?: Logger, runRetentionCap?: number);
   open(): void; close(): void;
   upsertJob(job: Job): void; getJob(id): Job | undefined; deleteJob(id): boolean;
-  deleteJobAndRuns(id): { jobId; deletedRuns } | undefined;  // one transaction: run_logs, runs, schedule state, job
-  purgeOrphans(): { runs; logs; scheduleState };              // daemon start: data of jobs that no longer exist
+  deleteJobAndRuns(id): { jobId; deletedRuns } | undefined;  // one transaction: run_outputs, runs, schedule state, job
   loadJobsFromDisk(): void; tryCapturePromptSession(jobId, expectedAction, sessionId): boolean;
   insertRun(jobId, startedAt?): Run;        // also prunes the job's history to the cap
   updateRun(id, update): void;              // pid, outputTruncated, status incl. 'missed'
   listRuns(opts?): Run[];                   // opts.status filters to one RunStatus
   recordMissedRun(jobId, firedAt): Run;
-  appendLog(runId, stream, chunk): void; getLogs(runId, source?): RunLog[];
+  setRunOutput(runId, out: EngineOutput): void; getRunOutput(runId): EngineOutput | undefined;
   recordTick(jobId, tickAt): void; getScheduleState(jobId): { lastTickAt } | undefined;
   reconcileOrphanRuns(check?): { canceled: number; adopted: number };
   setRunRetentionCap(cap): void; pruneAllJobsRunHistory(cap?): number;
@@ -109,8 +107,8 @@ replayed -- see [ADR 0001](../decisions/0001-architecture-and-runtime-model.md).
 ## Run retention
 
 Every `insertRun()` prunes that job's terminal runs (`status NOT IN ('running', 'queued')`) down
-to `retention.maxRunsPerJob`, oldest-first; `run_logs` rows are deleted before their parent `runs`
-row (no FK cascade -- a crash mid-eviction leaves at worst a logless run). `pruneAllJobsRunHistory()`
+to `retention.maxRunsPerJob`, oldest-first; `run_outputs` rows are deleted before their parent `runs`
+row (no FK cascade -- a crash mid-eviction leaves at worst a run without output). `pruneAllJobsRunHistory()`
 sweeps every job at startup to catch a cap lowered while the daemon was down;
 `setRunRetentionCap()` applies a reload-time change live. Eviction batches 500 ids per transaction
 (`node:sqlite`'s ~32766 bound-parameter ceiling). Both paths are best-effort -- logged on failure,
@@ -118,13 +116,12 @@ never fail a run or block startup. See [ADR 0001](../decisions/0001-architecture
 
 ## Job deletion
 
-`deleteJobAndRuns()` deletes a job's `run_logs`, `runs`, `job_schedule_state` row and the job row in
+`deleteJobAndRuns()` deletes a job's `run_outputs`, `runs`, `job_schedule_state` row and the job row in
 one transaction, then unlinks the job JSON files and the per-job log file (`resolveJobLogPath`)
 best-effort. Run history is not archived and there is no run import (`importRuns`/`RunImportSchema`
-were removed with `share export --include-runs`). `appendLog()` only inserts for runs that still
+were removed with `share export --include-runs`). `setRunOutput()` only inserts for runs that still
 exist and `updateRun()` ignores a vanished run, so a run that is still in flight when its job is
-deleted cannot leave orphan rows. `purgeOrphans()` runs at daemon start (before orphan-run
-reconciliation) to clean up data left by older versions that archived runs.
+deleted cannot leave orphan rows.
 
 ## JSON job file format
 

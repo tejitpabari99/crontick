@@ -80,7 +80,8 @@ The client's `ensureDaemon` logic already handles the retryable daemon errors in
 | Location | What is recorded |
 |----------|-----------------|
 | SQLite `runs.error` column | Run-level failure message (exit info, timeout, overlap skip) |
-| SQLite `run_logs` table | Stderr output from the child process |
+| SQLite `run_outputs` table | Parsed engine output, including the stderr tail of the child process |
+| `logs/<job-id>.log` | crontick-side events of the job's runs (one line per event, tagged with the run id) |
 | `logs/daemon-YYYY-MM-DD.log` | Daemon-level errors (startup, scheduler, unhandled) |
 | `logs/daemon.ensure.log` | Demand-start failure output |
 

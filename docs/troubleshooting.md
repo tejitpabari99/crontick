@@ -111,8 +111,8 @@ pause until you start it or run another daemon-backed command.
 Use `crontick --verbose ...` (or `-v`) or set `CRONTICK_VERBOSE=1`. Verbose output goes to stderr,
 so `crontick --verbose ...` writes human-readable output to stdout and diagnostics to stderr. Daemon logs live under the
 crontick data directory `logs/`: `daemon.ensure.log` for demand-start and `daemon-YYYY-MM-DD.log` for
-daemon lifecycle/API/scheduler diagnostics. In verbose daemon mode, run logs can also contain
-`[crontick:debug]` lines for spawn/retry/session decisions.
+daemon lifecycle/API/scheduler diagnostics. In verbose daemon mode, the per-job log file can also contain
+`[debug]` lines for spawn/retry/session decisions.
 
 ### `node:sqlite` import errors
 
@@ -126,7 +126,7 @@ Check `crontick info` and inspect the latest daemon log in the crontick data dir
 
 ### A run keeps failing
 
-- `crontick runs get <run-id>` (the `Log file:` line is the raw log; `tail -n 100` it)
+- `crontick runs get <run-id>` (the `Log file:` line is the per-job file of crontick-side events; `tail -n 100` it; the engine's own transcript is the `Transcript:` line)
 - `crontick jobs get <job-id>`
 - `crontick doctor`
 
@@ -182,7 +182,7 @@ run, scheduled or otherwise -- until the file is removed. Recovery:
 4. Start the daemon again (`crontick jobs list`, or let the next daemon-backed command
    demand-start it). A fresh `runs.db` is created automatically.
 
-**What this loses:** run history and logs only -- every past run, its stdout/stderr, exit code,
+**What this loses:** run history only -- every past run, its stored output, exit code,
 and timestamps. **Job definitions are not affected**: jobs are the JSON files under
 `<dataDir>/jobs/`, a separate store from `runs.db`, and are untouched by this recovery.
 

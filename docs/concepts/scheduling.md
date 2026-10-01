@@ -27,7 +27,7 @@ Standard cron features (ranges, steps, lists, `L`, `W`, `#`) are supported as de
 
 ## Timezone handling
 
-Cron expressions always fire in the machine's local timezone (the daemon's system timezone). The former per-job `tz` field and the CLI `--tz` flag were removed; a legacy stored `tz` is ignored and the daemon logs one warning per affected job.
+Cron expressions always fire in the machine's local timezone (the daemon's system timezone). There is no per-job `tz` field or `--tz` flag; new input containing `tz` is rejected, and a `tz` in an already-stored job file is silently ignored.
 
 Interval schedules are timezone-agnostic. A one-shot `runAt` is an ISO-8601 string parsed with JavaScript `Date`: with an explicit offset (`Z`, `+02:00`) it is that exact instant; a date-time without an offset (`2026-10-01T09:00`) is interpreted in the machine's local timezone; a date-only value (`2026-10-01`) is UTC midnight. A job has exactly one schedule (`cron`, `interval`, or `one-shot`); the CLI rejects combining `--cron`, `--every`, and `--at`.
 

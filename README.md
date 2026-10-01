@@ -22,7 +22,7 @@ crontick is a standalone daemon, CLI, and MCP server. Its job kind is a **prompt
 - **AI-first.** Schedule a prompt to run against Claude Code out of the box or another configured CLI engine.
 - **Local & single-machine.** A demand-started daemon binds to `127.0.0.1` only. No cloud, no accounts, no remote listeners — the trust boundary is your user session.
 - **Three faces, one behavior.** The same operations are available from the **CLI**, a **Node.js library**, and an **MCP server** so a human, a script, or an AI assistant can manage the same jobs.
-- **Observable.** Every run captures engine stdout/stderr, crontick-side lifecycle events, the engine **session id**, and a per-job log file — browsable in a built-in **web dashboard**.
+- **Observable.** Every run records its status, the engine's cleaned output and **session id**, and crontick-side lifecycle events in a per-job log file (the engine keeps its own transcript) — browsable in a built-in **web dashboard**.
 
 Think of it as cron where the thing on a schedule is an **AI agent** instead of a shell script.
 
@@ -73,7 +73,7 @@ crontick runs list                 # recent runs across all jobs
 crontick runs get <runId>          # status, timing, Runner Session ID, transcript + log file path, then the cleaned output (final answer, error, readable transcript; no thinking/hook noise)
 ```
 
-Prefer a UI? `crontick info` prints the dashboard URL (by default `http://127.0.0.1:47615/dashboard`; if that port is taken the daemon starts on a free port and says so) where you can browse jobs (with details, search and run-once) in a light or dark theme, runs (multi-select filters, sortable columns, search across logs), and per-run output (assistant text only, with a link to the raw log).
+Prefer a UI? `crontick info` prints the dashboard URL (by default `http://127.0.0.1:47615/dashboard`; if that port is taken the daemon starts on a free port and says so) where you can browse jobs (with details, search and run-once) in a light or dark theme, runs (multi-select filters, sortable columns, search across run output), and per-run output (assistant text only, with a link to the log file).
 
 ---
 
@@ -154,14 +154,14 @@ See [docs/reference/configuration.md](docs/reference/configuration.md) for the f
 
 ## Observing runs
 
-Each run records the engine's stdout + stderr and crontick's lifecycle events (start, timeout, retry, exit) in one per-job log file. `runs get` prints the file's path and the cleaned output.
+crontick stores only its own logs: lifecycle events (start, timeout, retry, exit) go to one per-job log file, and the cleaned output (final answer and assistant text) is kept with the run. The engine's raw logs and transcript stay with the engine; crontick does not copy them. `runs get` prints the log file's path and the cleaned output.
 
 ```sh
 crontick runs list --job standup --status failed
 crontick runs get <runId>            # Runner Session ID, log file path and cleaned output; Claude runs also show cost, turns, usage
 ```
 
-When `logging.fileEnabled` is true (the default), every run is also mirrored to `<logsDir>/<jobGuid>.log` (one file per job, deleted with the job). Run `crontick info` for the exact `logsDir` and other storage paths, plus the **dashboard URL** — the dashboard offers job/run filters, search, and a per-run output view with an optional raw log. Output is redacted for common secret patterns before storage.
+When `logging.fileEnabled` is true (the default), crontick-side events are written to `<logsDir>/<jobGuid>.log` (one file per job, each line tagged with its run id, deleted with the job). Run `crontick info` for the exact `logsDir` and other storage paths, plus the **dashboard URL** — the dashboard offers job/run filters, search, and a per-run output view with a link to the log file. Output is redacted for common secret patterns before storage.
 
 ---
 

@@ -40,20 +40,20 @@ already exited. The child's `pid` is persisted onto its run row as soon as known
 The child inherits `action.cwd` if set, otherwise `process.cwd()`. Environment merges (highest
 wins): `action.env` > `envFile` variables > engine-config `env` > `process.env`.
 
-## Log streams and capture
+## Output and the log file
 
-Each run's logs combine **engine streams** (`stdout`/`stderr`: the job process's own output) and
-a **crontick stream** (its own lifecycle events -- run started, executing, run finished, overlap
-skips, retry backoffs, session capture). The store and the daemon route `GET /api/runs/:id/logs` accept a `source` filter (`all` default,
-`engine`, or `crontick`); the CLI and MCP no longer expose a log command (`runs get` shows the cleaned
-output and the log file path), and logs are also mirrored, best-effort, to a
-per-job file at `<dataDir>/logs/<jobId>.log` (see
-[configuration reference](../reference/configuration.md#loggingconfig)).
+crontick does not store the engine's raw stdout/stderr; the engine keeps its own transcript. The
+runner captures the engine's output chunk by chunk through `safeRedact()` (secrets are redacted in
+valid UTF-8 text; binary is not redacted), holds it in memory, and when the run finishes stores only
+the parsed result (final answer, assistant text, stderr tail) with the run. crontick's own lifecycle
+events -- run started, executing, run finished, overlap skips, retry backoffs, session capture -- go
+to a per-job file at `<dataDir>/logs/<jobId>.log`, one timestamped line per event tagged with the run
+id (see [configuration reference](../reference/configuration.md#loggingconfig)). `runs get` shows the
+cleaned output and the log file path; there is no log command.
 
-Both streams are captured chunk-by-chunk through `safeRedact()`, which redacts secrets only in
-valid UTF-8 text (binary passes through as-is). Output per run is bounded by
-`retention.maxOutputBytesPerRun` (default 2,000,000 bytes); once hit, crontick trims to a UTF-8
-character boundary, appends a truncation marker, and stops persisting further chunks -- the
+Output per run is bounded by `retention.maxOutputBytesPerRun` (default 2,000,000 bytes); once hit,
+crontick trims to a UTF-8 character boundary, appends a truncation marker, and stops capturing
+further chunks -- the
 child process itself is never killed or throttled by hitting the cap.
 
 ## Timeouts
@@ -111,4 +111,4 @@ seconds between them, stopping early on `success`, `canceled`, or `timeout`.
 - [Jobs](./jobs.md) - the job model and its action
 - [Scheduling](./scheduling.md) - how ticks are generated
 - [Error model](./error-model.md) - how failures surface to users
-- [State and storage](./state-and-storage.md) - where runs and logs are persisted
+- [State and storage](./state-and-storage.md) - where runs and logs are stored

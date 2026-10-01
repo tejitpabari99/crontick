@@ -64,7 +64,7 @@ When a create input omits `overlap`, `timeoutSec`, or `retry`, crontick fills th
    list. The daemon re-persists and re-schedules after applying the merge.
 3. **Delete** - unschedules the job, cancels its in-flight run, if any (`Runner.cancelJob()`, reported as
    `canceledRun: boolean`), then removes the JSON file, schema sidecar, SQLite row **and all of the job's
-   runs, run logs, schedule state and per-job log file** in one transaction (`deletedRuns` reports how
+   runs, stored run output, schedule state and per-job log file** in one transaction (`deletedRuns` reports how
    many runs went). Nothing is archived; Claude's own session transcripts are untouched. See
    [reference/mcp-tools.md](../reference/mcp-tools.md#crontickjobdelete) and
    [reference/cli.md](../reference/cli.md#crontick-jobs-delete).
@@ -80,7 +80,7 @@ A job runs in `action.cwd`. `jobs new` records the invoking directory (or `--cwd
 | `jobs/<id>.json` file | Active schedule timer |
 | `jobs/<id>.schema.json` sidecar | Run queue / abort controller |
 | SQLite `jobs` row (cache) | Next-run time |
-| SQLite `runs` / `run_logs` rows | Stats aggregates |
+| SQLite `runs` / `run_outputs` rows | Stats aggregates |
 
 On daemon start, the JSON files in the `jobs/` directory are the source of truth; the SQLite `jobs` table is rebuilt from them via `Store.loadJobsFromDisk()`.
 

@@ -35,7 +35,7 @@ Key public categories: the `CrontickClient`/`createClient` core; `CrontickError`
 | **Runner** | `src/daemon/runner.ts` | Spawns each job's prompt engine, enforcing overlap/retry/timeout, capturing redacted output. See [implementation/prompt-execution.md](implementation/prompt-execution.md). |
 | **Shared modules** | `src/constants/`, `src/utils/` | Cross-file constants and defaults, grouped by domain (`daemon`, `job-input`, `retention`, `scheduler`); pure single-concern helpers. See [design principles](tech/design-principles.md). |
 | **Engine adapters** | `src/engines/` | Per-engine invocation/result-parsing behind one contract (see [Engine adapters](#engine-adapters) below). |
-| **Store** | `src/daemon/store.ts` | Dual persistence: job JSON files (source of truth) + SQLite (runs, logs, schedule state). See [implementation/storage.md](implementation/storage.md). |
+| **Store** | `src/daemon/store.ts` | Dual persistence: job JSON files (source of truth) + SQLite (runs, run outputs, schedule state). See [implementation/storage.md](implementation/storage.md). |
 
 ## Control and data flow
 
@@ -58,11 +58,12 @@ flowchart TD
         Sched -->|tick event| Runner[Runner]
         Runner -->|adapter| Engine[Engine adapter]
         Runner -->|spawn| Child[Engine child process]
-        Runner -->|appendLog| Store
+        Runner -->|setRunOutput| Store
+        Runner -->|events| LogFile[(per-job log file)]
     end
 ```
 
-Request sequence: a shim instantiates `CrontickClient` -> `ensureDaemon()` resolves/starts the daemon -> an HTTP request hits `daemon/api.ts` -> the route validates and delegates to Store/Scheduler -> on a schedule tick, the Scheduler emits, the daemon inserts a `queued` run, and `Runner` resolves the job's engine adapter, spawns it, streams redacted output into `Store`, and finalizes the run. See [implementation/daemon.md](implementation/daemon.md) for the full startup sequence and HTTP route table.
+Request sequence: a shim instantiates `CrontickClient` -> `ensureDaemon()` resolves/starts the daemon -> an HTTP request hits `daemon/api.ts` -> the route validates and delegates to Store/Scheduler -> on a schedule tick, the Scheduler emits, the daemon inserts a `queued` run, and `Runner` resolves the job's engine adapter, spawns it, holds redacted engine output in memory, writes crontick-side events to the per-job log file, and finalizes the run by storing the parsed output in `Store`. See [implementation/daemon.md](implementation/daemon.md) for the full startup sequence and HTTP route table.
 
 ### On-disk state layout
 

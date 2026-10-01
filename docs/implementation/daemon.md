@@ -62,11 +62,10 @@ non-loopback gets 403 `FORBIDDEN`.
 | GET/POST | `/api/jobs[/:id]` | List/create/get job | 200/201/404 |
 | PUT/DELETE | `/api/jobs/:id` | Update/delete job (delete cancels an in-flight run: `canceledRun`) | 200/404 |
 | POST | `/api/jobs/:id/enable\|disable` | Enable/disable a job | 200/404 |
-| GET | `/api/runs/:id/output` | Cleaned output view (`RunOutput`): final result, error, assistant text only (segments split by tool calls joined with `---`), plus `rawLogPath` | 200/404 |
-| GET | `/api/runs/:id/log/raw` | The run's raw engine + crontick log (all `run_logs` sources) as redacted `text/plain; charset=utf-8`, `Content-Disposition: inline`, `X-Content-Type-Options: nosniff`. The id must match `[A-Za-z0-9_-]{1,128}` and exist in the store (404 otherwise); no path is built from the URL. Used by the dashboard's Raw log **Open** link (browsers block `file:` links from `http:` pages) | 200/404 |
+| GET | `/api/runs/:id/output` | Cleaned output view (`RunOutput`): final result, error, assistant text only (segments split by tool calls joined with `---`), plus `logFile` (path of the per-job crontick log file) | 200/404 |
+| GET | `/api/runs/:id/log/raw` | The run's per-job crontick log file (crontick-side events only; the engine's raw logs are not stored) as redacted `text/plain; charset=utf-8`, `Content-Disposition: inline`, `X-Content-Type-Options: nosniff`; empty when the file does not exist or file logging is off. The id must match `[A-Za-z0-9_-]{1,128}` and exist in the store (404 otherwise); the path comes from the job id, never from the URL. Used by the dashboard's Log file link (browsers block `file:` links from `http:` pages) | 200/404 |
 | POST | `/api/jobs/:id/run-now` (alias `/run`) | Run a job once now, even if disabled, without changing `enabled` or the schedule; overlap policy applies. `202 { runId }` | 202/404 |
-| GET/POST | `/api/runs[/:id][/cancel]` | List/get/cancel runs. The list accepts `jobId`/`status` (comma-separated for several), `limit`, `since`, and `q` (substring search over run fields, job alias and run logs) | 200/404 |
-| GET | `/api/runs/:id/logs[/stream]` | Log entries, or an SSE stream (`SSE_POLL_MS` = 200 ms; closes on terminal status) | 200/404 |
+| GET/POST | `/api/runs[/:id][/cancel]` | List/get/cancel runs. The list accepts `jobId`/`status` (comma-separated for several), `limit`, `since`, and `q` (substring search over run fields, job alias and stored run output) | 200/404 |
 | POST | `/api/schedules/validate\|preview` | Validate a schedule / preview next N fires | 200 |
 | GET | `/api/stats/summary\|jobs/:id` | Aggregate / per-job stats | 200/404 |
 | GET | `/api/daemon/status` | PID, `port`/`baseUrl`/`dashboardUrl`, `portNote` (set when on a fallback port), version, uptime, job count, `missedFires` | 200 |

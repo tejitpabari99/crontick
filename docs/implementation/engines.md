@@ -92,9 +92,10 @@ newline, `--settings` is omitted entirely (the hook is best-effort and a run sti
 The stored and displayed command (run record, diagnostic logs) shows `--settings <session-end-hook>`
 instead of the JSON value.
 
-Observability notes: the raw log is the engine child's stdout/stderr, stored in SQLite `run_logs`
-(source of truth, per run) and mirrored best-effort to a per-**job** file (all runs appended; see
-`resolveJobLogPath` in `src/daemon/job-log-file.ts`, null when `logging.fileEnabled=false`). Cost,
+Observability notes: crontick does not store the engine's raw stdout/stderr; the engine keeps its own transcript
+(`transcriptPath`). Only the parsed output is stored (`run_outputs`), and crontick-side events go to a
+per-**job** file (all runs appended; see `resolveJobLogPath` in `src/daemon/job-log-file.ts`, null when
+`logging.fileEnabled=false`). Cost,
 turns and usage are reported by Claude's final `result` event (`total_cost_usd`, `num_turns`,
 `usage`); crontick computes nothing per run, sums cost/turns and adds numeric usage counters across
 retry attempts, and measures `durationMs` itself as wall clock. `normalizeUsage` (`src/run-output.ts`)

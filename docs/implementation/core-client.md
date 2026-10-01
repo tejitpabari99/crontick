@@ -59,7 +59,7 @@ async disableJob(id: string): Promise<Job>
 async runNow(id: string): Promise<{ runId: string }>
 async cancelRun(runId: string): Promise<{ ok: true; canceled: boolean }>
 async listRuns(options?: { jobId?; limit?; since? }): Promise<unknown[]>
-async getOutput(runId: string): Promise<RunOutput>   // library-only; getLogs was removed (raw log = getRun().logFile)
+async getOutput(runId: string): Promise<RunOutput>   // library-only; crontick stores no raw engine log (crontick-side events file = getRun().logFile)
 async statsSummary(): Promise<StatsSummary>
 async daemonStart(options?: { foreground? }): Promise<DaemonStartResult>
 async daemonStop(): Promise<DaemonStopResult>

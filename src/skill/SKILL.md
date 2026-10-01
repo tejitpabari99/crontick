@@ -132,7 +132,7 @@ crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident qu
 - Exactly one schedule source per job: `--cron`, `--every <interval>` (seconds or `s|m|h|d` suffix), or `--at <iso>`.
 - The daemon auto-starts on first use — do not run setup, install services, or register OS login; the only remaining CLI admin helpers are `daemon stop` and `daemon reload`.
 - Run statuses: `queued`, `running`, `success`, `failed`, `canceled`, `skipped` (overlap `skip` found another run active; never started), `timeout`, `missed`.
-- Each run captures engine stdout/stderr and crontick lifecycle events in one per-job log file (its path is shown by `runs get`), plus the Runner Session ID (also in `runs get`).
+- crontick stores only its own logs: lifecycle events go to one per-job log file (its path is shown by `runs get`); the engine keeps its own transcript. `runs get` also shows the cleaned output and the Runner Session ID.
 - Confirm before `jobs delete`, `jobs update --disable`, or any `jobs delete all --force` clear.
 - `info` prints the config path — there are no `config get/set/engines` subcommands; edit `config.json` by hand.
 - crontick is prompt-only: every job's action is `kind: "prompt"`. There is no shell-script or raw-executable action kind.

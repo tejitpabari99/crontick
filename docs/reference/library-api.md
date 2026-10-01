@@ -49,7 +49,7 @@ Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `cancelRun` | `(runId: string): Promise<{ ok: true; canceled: boolean }>` | Cancel result | `CrontickError` |
 | `getRun` | `(runId: string): Promise<RunRecord>` | Run object | `CrontickError` |
 | `listRuns` | `(options?: { jobId?: string; limit?: number; since?: number; status?: string }): Promise<RunRecord[]>` | Array of runs | `CrontickError` |
-| `getOutput` | `(runId: string): Promise<RunOutput>` (cleaned output view; library-only, shown by `crontick runs get` and `crontick_run_get`; the raw log is the file at `getRun().logFile`) | `RunOutput` | `CrontickError` (`NOT_FOUND`) |
+| `getOutput` | `(runId: string): Promise<RunOutput>` (cleaned output view; library-only, shown by `crontick runs get` and `crontick_run_get`; the file of crontick-side events is `getRun().logFile`; crontick stores no raw engine log) | `RunOutput` | `CrontickError` (`NOT_FOUND`) |
 | `exportJobs` | `(options?: { onlyJobs?: string[] }): Promise<ExportFile>` | Share file `{ schema: 1, exportedAt, crontickVersion, jobs }` (jobs only, ids omitted) | `CrontickError` (`JOB_NOT_FOUND` listing every unknown `onlyJobs` entry) |
 | `importJobs` | `(file: unknown, options?: NormalizeJobInputOptions & { trustFolder?: boolean }): Promise<ImportResult>` | `{ imported, results }`; each row `{ id, alias, ok, renamedFrom?, error? }`. Every job gets a new GUID, alias collisions get `-2`, `-3`, ... | `CrontickError` (`VALIDATION_ERROR` for a bad file or wrong `schema`, nothing imported; `TRUST_REQUIRED`) |
 | `validateSchedule` | `(schedule: Schedule): Promise<unknown>` | Validation result | `CrontickError` |
@@ -103,7 +103,7 @@ and leave previously stored job state unchanged.
 
 **Working directory and Claude trust.** A job runs in `action.cwd`, which `createJob`/`updateJob`/`importJobs` resolve to an absolute, existing directory (`INVALID_CWD` otherwise); an omitted cwd on create defaults to the client's `cwd` option, else `process.cwd()`. For Claude jobs the client checks Claude's trust config (`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`) before persisting anything and throws `TRUST_REQUIRED` (`details: { cwd, folders, engine }`) for an untrusted folder unless `trustFolder: true` is passed, in which case it records the trust first. Only the `hasTrustDialogAccepted` flag of that folder is written; all other keys are preserved and an unparsable file aborts with `CLAUDE_CONFIG_UNREADABLE`. `updateJob` checks only when the cwd or engine changes; engines without a trust concept (raw) are skipped. Changing the cwd of a job with a session throws `CWD_CHANGE_BREAKS_SESSION`. `claude -p` itself skips Claude's trust dialog, so this is a guardrail rather than a hard requirement.
 
-`schedule.tz` was removed: cron expressions fire in the machine's local timezone, and passing `tz` is rejected on create/update input (a legacy stored `tz` is ignored, with one daemon warning per job).
+Cron expressions fire in the machine's local timezone; passing `tz` is rejected on create/update input, and a `tz` in an already-stored job file is silently ignored.
 
 ---
 
@@ -165,12 +165,10 @@ interface CrontickClientOptions {
 interface StatsSummary {
   totalJobs: number;
   enabledJobs: number;
-  totalRuns: number;
   succeeded: number;
   failed: number;
   canceled: number;
   skipped: number;
-  avgDurationMs: number | null;
   avgDurationSec: number | null;
   totalCostUsd: number;
   totalTurns: number;
@@ -179,12 +177,11 @@ interface StatsSummary {
 
 `canceled` counts runs that started and were terminated; `skipped` counts fires that never started because overlap `skip` found another run active. `totalCostUsd` and `totalTurns` sum the included runs; runs without usage contribute zero.
 
-`avgDurationSec` is the same average expressed in seconds (2 decimals) and is the field to display; `avgDurationMs` is kept for backwards compatibility. `avgDurationMs` averages `durationMs` over runs that actually finished executing --
+`avgDurationSec` is the average of `durationMs` (in seconds, 2 decimals) over runs that actually finished executing --
 `success`/`failed`/`timeout` -- and excludes `missed`, `queued`, `running`, `canceled`, and `skipped` runs,
 since those either never ran to completion or never ran at all. `null` when there are no
 qualifying runs. These summary counts include only runs whose parent job still exists: deleting a
-job keeps its historical runs directly queryable by run id/logs, but removes those archived rows
-from live aggregate totals. Same computation backs [`DashboardStats`](#dashboardstats) (`GET
+job removes its runs, so they no longer count toward live aggregate totals. Same computation backs [`DashboardStats`](#dashboardstats) (`GET
 /api/stats/summary` and the dashboard both call `buildDashboardStats()`).
 
 ### JobStats
@@ -192,7 +189,6 @@ from live aggregate totals. Same computation backs [`DashboardStats`](#dashboard
 ```ts
 interface JobStats {
   jobId: string;
-  totalRuns: number;
   succeeded: number;
   failed: number;
   canceled: number;
@@ -375,7 +371,7 @@ interface DashboardOptions {
   jobIds?: string[];
   /** Restrict runs to any of these statuses. */
   statuses?: RunStatus[];
-  /** Substring search over run id, status, error, session id, job id/alias and run logs. */
+  /** Substring search over run id, status, error, session id, job id/alias and stored run output. */
   q?: string;
 }
 ```
@@ -421,7 +417,7 @@ interface RunOutput {
   result: string | null;   // the engine's final answer (Claude `result` text, else last assistant text, else plain stdout)
   error: string | null;    // run.error, else an error reported in the engine output
   output: string;          // assistant text only; segments split by tool calls are joined with "---"
-  rawLogPath?: string | null; // per-job raw log file (all runs of the job), null when file logging is off; set by the daemon route
+  logFile?: string | null; // per-job file of crontick-side events (all runs of the job), null when file logging is off; set by the daemon route
   stderr: string;          // engine stderr, redacted, last 4000 chars
   sessionId: string | null;
   costUsd: number | null;
@@ -434,7 +430,7 @@ interface RunOutput {
 
 `NormalizedUsage` is `{ inputTokens?, outputTokens?, cacheReadTokens?, cacheCreationTokens?, thinkingTokens? }`; fields are `undefined` when missing or non-numeric. It reads the run-total counters of Claude's usage block and ignores `iterations[]`. Cost (`costUsd`) is Claude-reported `total_cost_usd`, not computed by crontick.
 
-The view drops Claude `thinking` blocks (and their opaque `signature`), hook/system events, tool results, and base64 hook payloads, and applies secret redaction. The raw log is untouched and remains in the per-job log file (`getRun().logFile`).
+The view drops Claude `thinking` blocks (and their opaque `signature`), hook/system events, tool results, and base64 hook payloads, and applies secret redaction. crontick does not store the engine's raw logs: the runner keeps its own transcript (`transcriptPath`), and `logFile` holds only crontick's own events.
 
 ### DashboardStats
 
@@ -442,12 +438,10 @@ The view drops Claude `thinking` blocks (and their opaque `signature`), hook/sys
 interface DashboardStats {
   totalJobs: number;
   enabledJobs: number;
-  totalRuns: number;
   succeeded: number;
   failed: number;
   canceled: number;
   skipped: number;
-  avgDurationMs: number | null;
   avgDurationSec: number | null;
   totalCostUsd: number;
   totalTurns: number;
@@ -455,9 +449,8 @@ interface DashboardStats {
 ```
 
 Same shape and computation as [`StatsSummary`](#statssummary) -- see there for how
-`avgDurationMs` is averaged and how deleted-job history is excluded from live aggregates.
-`DashboardData.runs` likewise lists only runs whose parent job still exists, even though deleted
-job runs remain directly queryable by run id.
+`avgDurationSec` is averaged and how deleted-job history is excluded from live aggregates.
+`DashboardData.runs` likewise lists only runs whose parent job still exists.
 
 ### DashboardJob
 

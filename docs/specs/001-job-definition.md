@@ -97,7 +97,7 @@ unresolved identifier fails with `JOB_NOT_FOUND`.
 - Invalid alias (uppercase, spaces, dots): `VALIDATION_ERROR`.
 - Job identifier not resolvable on update/delete: `JOB_NOT_FOUND` ("Job X not found (id or alias)").
 - `action.cwd` missing or not a directory: `INVALID_CWD`; cwd change on a job with a session: `CWD_CHANGE_BREAKS_SESSION`; Claude folder not trusted: `TRUST_REQUIRED` (see spec 003 R-003-40).
-- `schedule.tz` in new input: `VALIDATION_ERROR` (removed field; see spec 002).
+- `schedule.tz` in new input: `VALIDATION_ERROR` (unsupported field; see spec 002).
 - Missing required fields (`schedule`, `action`), or `kind: "script"`/`kind: "exec"`: `VALIDATION_ERROR`.
 - Duplicate create without explicit overwrite intent: `JOB_ALREADY_EXISTS`; prior definition unchanged.
 - Invalid schedule, or missing/unreadable `envFile`, on create/update: rejected before persistence.

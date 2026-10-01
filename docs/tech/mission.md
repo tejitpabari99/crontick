@@ -26,7 +26,7 @@ Agent CLIs are great at *one conversation*. They have no answer for "run this pr
 | # | Tenet | What this means in practice |
 |---|-------|------------------------------|
 | 7 | **Local-first & private** | No cloud service; all state (jobs, run history, logs) stays on the machine; the daemon speaks loopback-only HTTP, never a remote listener. |
-| 8 | **Observable** | Every run is recorded with a status, logs, and session id; nothing fails silently. Missed fires are reported, never silently replayed (see ADR 0001). |
+| 8 | **Observable** | Every run is recorded with a status, output, a log of crontick-side events, and session id; nothing fails silently. Missed fires are reported, never silently replayed (see ADR 0001). |
 | 9 | **Safe by default** | Secrets are redacted from logs; least-privilege by default; explicit engine permission flags; destructive operations ask for confirmation. |
 | 10 | **Recoverable** | Survives daemon restarts — in-flight runs are adopted rather than lost or duplicated, and job definitions are plain files, not opaque state. |
 | 11 | **Predictable** | Same input, same behavior, regardless of whether you used the CLI, MCP, or the library — enforced by surface parity. |

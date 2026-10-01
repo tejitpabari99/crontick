@@ -177,7 +177,7 @@ crontick jobs delete all --force
 |------|------|---------|-------------|
 | `--force` | boolean | `false` | Required to confirm `jobs delete all` (the reserved `all` keyword) |
 
-Deleting a job cancels its in-flight run, if any, and deletes the job together with its runs, run logs, schedule state and per-job log file, in one transaction. Nothing of the job remains in `runs list`, `runs get`, stats or the dashboard. Claude's own session transcripts are not touched. The daemon also purges orphaned runs left by older versions (which archived runs on delete) at startup.
+Deleting a job cancels its in-flight run, if any, and deletes the job together with its runs, stored run output, schedule state and per-job log file, in one transaction. Nothing of the job remains in `runs list`, `runs get`, stats or the dashboard. Claude's own session transcripts are not touched.
 
 `jobs delete all --force` removes every job atomically in a single daemon transaction, deleting all jobs together with their associated runs and logs. `--force` is required and is validated in the core client.
 
@@ -421,7 +421,7 @@ job/run actions through the existing `/api/*` routes.
   Filter runs). `Esc`, the ✕ button or a backdrop click closes it; focus is trapped inside
   and restored on close.
 - **Recent runs toolbar** — beside the heading: a search icon (leftmost; expands into an
-  input) that searches run id, job name/id, status, error, session id **and the run logs**,
+  input) that searches run id, job name/id, status, error, session id **and the stored run output**,
   then multi-select **Filter Job** and **Filter Status** dropdowns. Options are checkboxes and
   the menu stays open while toggling. Filtering is server-side: `GET /api/dashboard` (and
   `GET /api/runs`) accept `jobId` and `status` as comma-separated lists and `q` for the
@@ -436,9 +436,9 @@ job/run actions through the existing `/api/*` routes.
   Clicking a run row opens the run detail.
 - **Run detail modal** — titled `Run log – <id> – <Status badge>`. It fetches the cleaned
   `GET /api/runs/:id/output` view and shows the **Error** (when present) above the **Output**
-  (assistant text only: segments split by tool calls are separated by `---`; no tool lines). The **Raw log**
-  row shows the absolute path of the per-job log file (copy icon; the file holds all runs of the job) and an **Open** link to
-  `GET /api/runs/:id/log/raw`, which serves this run's raw log as `text/plain` (nothing is inlined in the modal). Close with the ✕ button,
+  (assistant text only: segments split by tool calls are separated by `---`; no tool lines). The **Log file**
+  row shows the absolute path of the per-job log file (crontick-side events only; it holds all runs of the job, each line tagged with its run id) as a link to
+  `GET /api/runs/:id/log/raw`, which serves the file as `text/plain`, plus a copy icon (the contents are never inlined in the modal; the engine's own transcript stays with the engine). Close with the ✕ button,
   a backdrop click, or `Esc`.
 - **Durations** — average and per-run durations are shown in seconds (`avgDurationSec`);
   `—` when unknown.

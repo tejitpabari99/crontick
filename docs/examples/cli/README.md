@@ -154,7 +154,7 @@ crontick runs get <runId>
 
 Shows the run fields, the Runner Session ID, `Transcript:` and `Log file:` paths, then the cleaned output. Claude runs also show cost and turns. `--json` prints `{ run, output }`.
 
-The raw log is the single per-job file named on the `Log file:` line (`tail -n 20 <path>`).
+The `Log file:` line names the per-job file of crontick-side events (`tail -n 20 <path>`); the engine's own transcript is the `Transcript:` line.
 
 ### Cancel a running run
 
