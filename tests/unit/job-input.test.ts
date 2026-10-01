@@ -267,6 +267,7 @@ describe('normalizeJobInput', () => {
       engine: 'claude',
       args: [],
       reuseSession: false,
+      cwd: process.cwd(),
     });
   });
 

@@ -411,7 +411,7 @@ export class CrontickClient {
   async jobSchedule(id: string, options: { n?: number } = {}): Promise<unknown> {
     const job = await this.getJob(id);
     const preview = await this.previewSchedule({ schedule: job.schedule, n: options.n });
-    return { jobId: job.id, alias: job.alias ?? null, schedule: job.schedule, ...(preview as Record<string, unknown>) };
+    return { jobId: job.id, alias: job.alias ?? null, cwd: job.action.cwd ?? null, schedule: job.schedule, ...(preview as Record<string, unknown>) };
   }
 
   async statsSummary(): Promise<StatsSummary> {

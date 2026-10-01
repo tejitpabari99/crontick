@@ -123,6 +123,8 @@ export interface JobCreateCliOptions {
   cron?: string;
   every?: number;
   at?: string;
+  /** Working directory the engine runs in (`--cwd`/`-C`); stored as `action.cwd`. Defaults to the invoking directory on create. */
+  cwd?: string;
   prompt?: string;
   promptFile?: string;
   engine?: string;
@@ -258,7 +260,9 @@ export function normalizeJobPatch(
 
   let normalizedPatch: JobPatchInput = parsedPatch.data;
   if (patch.action) {
-    const merged = mergeActionPatch(existing.action, normalizeActionInput(patch.action as ActionInput, options, false));
+    const normalizedAction = normalizeActionInput(patch.action as ActionInput, options, false);
+    let merged = mergeActionPatch(existing.action, normalizedAction);
+    merged = applyCwdSessionRule(existing.action, normalizedAction, merged);
     normalizedPatch = { ...normalizedPatch, action: withEngineDefaultForNewPromptAction(existing.action, merged, options) as ActionInput };
   }
   if (patch.retry) {
@@ -269,6 +273,37 @@ export function normalizeJobPatch(
     throw new CrontickError('VALIDATION_ERROR', 'Invalid job', parsed.error.format());
   }
   return parsed.data;
+}
+
+/**
+ * Claude sessions are keyed by working directory, so a stored session cannot
+ * follow a job to a different cwd. When a patch moves a job that has a session
+ * (explicit `sessionId`, or `reuseSession` state) to another directory, require
+ * the caller to say what happens to the session: give a new `sessionId`, or pass
+ * `reuseSession: true` to start a fresh session in the new directory (which
+ * drops the stored one). Anything else would silently break resume.
+ */
+function applyCwdSessionRule(existingAction: unknown, patchAction: unknown, merged: unknown): unknown {
+  if (!isRecord(existingAction) || !isRecord(patchAction) || !isRecord(merged)) return merged;
+  if (existingAction.kind !== 'prompt' || typeof patchAction.cwd !== 'string') return merged;
+  const cwdChanged = patchAction.cwd !== existingAction.cwd;
+  const hasSession = typeof existingAction.sessionId === 'string' || existingAction.reuseSession === true;
+  if (!cwdChanged || !hasSession) return merged;
+  const newSession = typeof patchAction.sessionId === 'string';
+  const resetSession = patchAction.reuseSession === true;
+  if (!newSession && !resetSession) {
+    throw new CrontickError(
+      'CWD_CHANGE_BREAKS_SESSION',
+      `Changing the working directory of a job that has a session (sessionId/reuseSession) would break resume: Claude sessions are stored per directory. Also pass --session-id <id> for a session that exists in the new directory, or --reuse-session to start a fresh session there.`,
+      { from: existingAction.cwd, to: patchAction.cwd },
+    );
+  }
+  if (resetSession && !newSession) {
+    const { sessionId: _dropped, ...rest } = merged;
+    void _dropped;
+    return rest;
+  }
+  return merged;
 }
 
 /** Merges a patch object's defined fields onto a copy of the existing object,
@@ -442,6 +477,7 @@ export function buildJobPatchFromUpdateOptions(
  */
 function normalizeActionInput(action: ActionInput, options: NormalizeJobInputOptions, isCreate: boolean, config?: CrontickConfig): unknown {
   if (!isRecord(action) || action.kind !== 'prompt') return action;
+  action = withResolvedCwd(action, options, isCreate);
 
   const prompt = typeof action.prompt === 'string' ? action.prompt : undefined;
   const promptFile = typeof action.promptFile === 'string' ? action.promptFile : undefined;
@@ -503,6 +539,29 @@ function normalizeActionInput(action: ActionInput, options: NormalizeJobInputOpt
   }
   validatePromptActionRuntimeArgs(normalized);
   return normalized;
+}
+
+/**
+ * Resolves `action.cwd` to an absolute, existing directory (relative values
+ * resolve against the caller's cwd). On create an omitted cwd defaults to the
+ * caller's cwd, so a job always records where it was created; on a patch an
+ * omitted cwd stays untouched. The runner re-checks the directory at spawn time.
+ */
+function withResolvedCwd(action: ActionInput, options: NormalizeJobInputOptions, isCreate: boolean): ActionInput {
+  const base = options.cwd ?? process.cwd();
+  const requested = typeof action.cwd === 'string' && action.cwd.length > 0 ? action.cwd : undefined;
+  if (requested === undefined && !isCreate) return action;
+  const resolved = resolve(base, requested ?? '.');
+  let stat;
+  try {
+    stat = statSync(resolved);
+  } catch {
+    throw new CrontickError('INVALID_CWD', `Working directory does not exist: ${resolved}. Pass an existing directory with --cwd/-C (or action.cwd).`, { cwd: resolved });
+  }
+  if (!stat.isDirectory()) {
+    throw new CrontickError('INVALID_CWD', `Working directory is not a directory: ${resolved}. Pass an existing directory with --cwd/-C (or action.cwd).`, { cwd: resolved });
+  }
+  return { ...action, cwd: resolved } as ActionInput;
 }
 
 function validatePromptActionRuntimeArgs(action: Record<string, unknown>): void {
@@ -569,6 +628,11 @@ function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[], strictUp
         'Arguments (via --arg or --) are valid only with --prompt or --prompt-file. Remove them or use one of those action sources.',
       );
     }
+    if (strictUpdate && input.cwd !== undefined) {
+      // `jobs update --cwd` changes only the working directory (and, with
+      // --session-id / --reuse-session, the session handling that must go with it).
+      return { kind: 'prompt', cwd: input.cwd, sessionId: input.sessionId, reuseSession: input.reuseSession, engine: promptEngine(input.engine) };
+    }
     if (input.engine !== undefined || input.sessionId !== undefined || input.reuseSession) {
       throw new CrontickError(
         'VALIDATION_ERROR',
@@ -594,6 +658,7 @@ function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[], strictUp
     reuseSession: input.reuseSession,
     envFile: input.envFile,
     timeoutSec: input.timeout,
+    cwd: input.cwd,
   };
 }
 
@@ -603,6 +668,7 @@ function assertFileModeExclusive(opts: JobPatchCliOptions, rawArgs: string[]): v
     || opts.cron !== undefined
     || opts.every !== undefined
     || opts.at !== undefined
+    || opts.cwd !== undefined
     || opts.prompt !== undefined
     || opts.promptFile !== undefined
     || opts.engine !== undefined

@@ -214,6 +214,7 @@ function commonJobOptions(command: Command): Command {
     .option('--cron <expr>', 'Schedule (exactly one of --cron/--every/--at): cron expression, e.g. "0 9 * * *"')
     .option('--every <interval>', 'Schedule (exactly one of --cron/--every/--at): repeat every N seconds, or use an s/m/h/d suffix (e.g. 30m)', parseEveryInterval)
     .option('--at <datetime>', 'Schedule (exactly one of --cron/--every/--at): one-shot run time, ISO-8601 (e.g. 2026-10-01T09:00)')
+    .option('-C, --cwd <dir>', 'Working directory the job runs in (default: the current directory)')
     .option('--runner <runner>', 'Configured prompt engine name (default: config defaultEngine)')
     .option('--session-id <id>', 'Run it on a given session ID')
     .option('--reuse-session', 'Start session and resume on succeeding runs.')
@@ -241,6 +242,7 @@ function collectJobOptions(engineArgs: string[], passthroughArgs: string[], cliA
     cron: stringOption(opts.cron),
     every: numberOption(opts.every),
     at: stringOption(opts.at),
+    cwd: stringOption(opts.cwd),
     prompt: stringOption(opts.prompt),
     promptFile: stringOption(opts.promptFile),
     engine: stringOption(opts.runner),
@@ -264,6 +266,7 @@ function collectPatchOptions(engineArgs: string[], passthroughArgs: string[], cl
     cron: stringOption(opts.cron),
     every: numberOption(opts.every),
     at: stringOption(opts.at),
+    cwd: stringOption(opts.cwd),
     prompt: stringOption(opts.prompt),
     promptFile: stringOption(opts.promptFile),
     engine: stringOption(opts.runner),
