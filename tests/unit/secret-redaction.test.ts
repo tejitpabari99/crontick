@@ -417,7 +417,7 @@ async function createFixture(prefix: string) {
     client,
     scheduler,
     /** Engine output (assistant text, then stderr) via the daemon's GET /api/runs/:id/output route. */
-    async getLogs(runId: string, _options: { source?: string } = {}): Promise<{ lines: Array<{ data: string }> }> {
+    async getLogs(runId: string): Promise<{ lines: Array<{ data: string }> }> {
       const res = await fetch(`http://127.0.0.1:${ctx.port}/api/runs/${runId}/output`);
       const view = (await res.json()) as { output: string; stderr: string };
       return { lines: [{ data: view.output }, { data: view.stderr }] };
@@ -605,7 +605,7 @@ describe('shared secret redaction', () => {
       expect(logBytes.toString('utf-8')).toBe('[REDACTED] [REDACTED]');
       expect(logText(fixture.store, captureRun.id)).toBe('[REDACTED] [REDACTED]');
 
-      const logs = await fixture.getLogs(captureRun.id, { source: 'engine' });
+      const logs = await fixture.getLogs(captureRun.id);
       const tailed = logs.lines.map((line) => line.data).join('');
       expect(tailed).toBe('[REDACTED] [REDACTED]');
       expect(tailed).not.toContain(AWS_ACCESS_KEY_ID);
