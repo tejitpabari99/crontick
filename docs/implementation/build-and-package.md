@@ -141,11 +141,18 @@ npx changeset
 
 ### Release process
 
-1. **CI** (`workflows/release.yml`): on push to `main`, the
-   `changesets/action` GitHub Action opens a "Version Packages" PR that bumps
-   `package.json` and updates `CHANGELOG.md`.
+Releases are manual only; nothing publishes on merge to `main`
+(`workflows/release.yml` triggers on `workflow_dispatch`). See
+[RELEASING.md](../../RELEASING.md).
+
+1. **Run workflow, `mode: version`** (after `verify-package` passes): runs
+   `npm run check:changesets` (blocks pending `major` bumps unless the
+   `allow_major` input is set), then `changesets/action` opens/updates the
+   "Version Packages" PR that bumps `package.json` and updates `CHANGELOG.md`.
+   Does not publish.
 2. Merge the version PR.
-3. The release workflow runs `changeset publish` with npm provenance.
+3. **Run workflow, `mode: publish`**: same guard, then build,
+   `npx changeset publish` with npm provenance, and `git push --follow-tags`.
 
 npm script: `"release": "changeset publish"`.
 

@@ -50,7 +50,7 @@ NNNN-kebab-case-title.md
 |---|-------|--------|------|
 | [0001](0001-architecture-and-runtime-model.md) | Architecture and runtime model | Accepted | 2026-09-28 |
 | [0002](0002-prompt-only-jobs-and-engine-adapters.md) | Prompt-only jobs and the engine adapter framework | Accepted | 2026-09-28 |
-| [0003](0003-toolchain-and-distribution.md) | Toolchain and distribution | Accepted | 2026-09-28 |
+| [0003](0003-toolchain-and-distribution.md) | Toolchain and distribution | Accepted | 2026-10-01 |
 
 ## History and mapping
 

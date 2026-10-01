@@ -272,7 +272,7 @@ imports it and checks every required public export, then runs `crontick --versio
 
 Additional workflows:
 
-- `.github/workflows/release.yml` -- changesets publish on main push (after build, typecheck examples against dist, test, tarball verify, and `verify-package-install`).
+- `.github/workflows/release.yml` -- manual `workflow_dispatch` release (`mode: version` opens the Version Packages PR, `mode: publish` publishes to npm; neither runs on push) behind the `verify-package` job (build, typecheck examples against dist, test, tarball verify, and `verify-package-install`).
 - `.github/workflows/audit.yml` -- weekly `npm audit --production` + signature check.
 
 ## Manual pre-release verification
@@ -360,8 +360,8 @@ publishing.
    npx crontick --version
    ```
 5. Commit the changeset file and push to `main`.
-6. The `release.yml` workflow creates a version PR via `changesets/action`; merge it.
-7. On merge, `changesets/action` publishes to npm with provenance.
+6. Manually run the `Release` workflow (Actions -> Release -> Run workflow) with `mode: version`; it opens a version PR via `changesets/action`. Merge it.
+7. Manually run the `Release` workflow with `mode: publish`; it publishes to npm with provenance and pushes the release tag. Nothing publishes automatically on merge.
 
 See [../../RELEASING.md](../../RELEASING.md) and [../../CONTRIBUTING.md](../../CONTRIBUTING.md) for full details.
 

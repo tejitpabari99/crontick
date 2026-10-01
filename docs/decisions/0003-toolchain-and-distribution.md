@@ -1,7 +1,7 @@
 # 0003: Toolchain and distribution
 
 - Status: Accepted
-- Date: 2026-09-28
+- Date: 2026-10-01 (release-trigger amendment; originally 2026-09-28)
 - Supersedes: former ADRs 0002, 0006, 0007, 0009, 0010, 0011 (the vitest/test-runner
   portion only; the surface-drift architectural test itself is covered by
   [ADR 0001](0001-architecture-and-runtime-model.md)).
@@ -58,12 +58,21 @@ message rather than a deep stack trace.
 
 `@changesets/cli` drives version bumps and `CHANGELOG.md` generation. Contributors add a
 changeset file describing a change's semver impact; `release.yml` opens a "Version
-Packages" PR on `main` that batches pending changesets, and merging it triggers
-`npm publish` with provenance. This was chosen over commit-message-driven tools
+Packages" PR on `main` that batches pending changesets, and a separate manual run
+publishes to npm with provenance. This was chosen over commit-message-driven tools
 (`release-please`, `semantic-release`) because it lets multiple breaking changes
 accumulate deliberately across several PRs before one release, which matters for a
 pre-1.0, single-maintainer project that wants to review a changelog before it ships
 rather than publish on every merge.
+
+**Amendment (2026-10-01): manual-only release trigger.** `release.yml` no longer runs on
+push to `main`; it is `workflow_dispatch` only, with a `mode` input: `version` opens/updates
+the Version Packages PR, `publish` publishes the version already on `main` and pushes
+tags. Merging the Version Packages PR no longer publishes. A major-bump guard
+(`npm run check:changesets`, `allow_major` input) blocks accidental `1.0.0` jumps. Rationale:
+publishing stays a deliberate maintainer action. The `release.yml` change was explicitly
+approved by the repository owner (it is otherwise restricted by CLAUDE.md). See
+[RELEASING.md](../../RELEASING.md).
 
 ### tsup for the build
 
@@ -114,7 +123,7 @@ for the same underlying gap (bundlers/test runners not yet externalizing the `no
 protocol) that would need updating if either tool changes its resolution behavior.
 
 **Impossible:** `require('crontick')` without an async wrapper; publishing without a
-changeset (by design, to prevent an accidental release).
+changeset (by design, to prevent an accidental release); an automatic publish on merge to `main`.
 
 ## Revisit when
 
