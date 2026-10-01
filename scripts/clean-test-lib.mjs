@@ -9,6 +9,7 @@
  * never matches. This file is shared by the vitest teardown
  * (tests/helpers/tmp-isolation.ts) and `npm run clean:test`.
  */
+import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
@@ -53,6 +54,26 @@ function readProcFile(pid, name) {
   try { return readFileSync(`/proc/${pid}/${name}`, 'utf-8'); } catch { return ''; }
 }
 
+/**
+ * Command line of a live process, or undefined when it cannot be determined.
+ * Linux reads /proc; other POSIX platforms (macOS, BSD) use `ps`. Windows has no
+ * dependency-free equivalent here, so identity is "unknown" there (callers skip).
+ */
+export function processCommandLine(pid) {
+  if (process.platform === 'linux') {
+    const cmd = readProcFile(pid, 'cmdline').split('\0').join(' ').trim();
+    return cmd === '' ? undefined : cmd;
+  }
+  if (process.platform === 'win32') return undefined;
+  try {
+    const out = execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf-8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return out === '' ? undefined : out;
+  } catch { return undefined; }
+}
+
+/** A pid-file pid is only trusted when its command line looks like a crontick daemon. */
+const DAEMON_IDENTITY = /daemon|crontick/;
+
 /** Walks each target (2 levels) for daemon.pid files; returns the pids found. */
 function pidFilePids(targets) {
   const out = new Set();
@@ -73,8 +94,13 @@ function safeSubdirs(dir) {
   } catch { return []; }
 }
 
-/** Pids of live processes tied to any of `targets`. */
-export function findLeakedPids(targets) {
+/**
+ * Pids of live processes tied to any of `targets`.
+ * `commandLine` is injectable (tests): a pid-file pid is only returned when its command
+ * line is known and matches a crontick daemon, so a stale daemon.pid whose pid was reused
+ * by an unrelated process (or whose identity cannot be established) is never killed.
+ */
+export function findLeakedPids(targets, { commandLine = processCommandLine } = {}) {
   const dirs = targets.map(real);
   const skip = protectedPids();
   const found = new Set();
@@ -93,8 +119,9 @@ export function findLeakedPids(targets) {
   }
   for (const pid of pidFilePids(dirs)) {
     if (skip.has(pid) || !isAlive(pid)) continue;
-    // On Linux the /proc scan above is authoritative; a bare pid file could be a reused pid.
-    if (process.platform === 'linux' && !/daemon|crontick/.test(readProcFile(pid, 'cmdline'))) continue;
+    // A bare pid file could hold a reused pid: require a positive identity match on every platform.
+    const cmd = commandLine(pid);
+    if (cmd === undefined || !DAEMON_IDENTITY.test(cmd)) continue;
     found.add(pid);
   }
   return [...found].filter(isAlive);
