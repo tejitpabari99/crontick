@@ -1,5 +1,123 @@
 # crontick
 
+## 0.3.0
+
+### Minor Changes
+
+- fbbf4c5: Forward unknown long CLI flags from prompt job create and update to the selected engine, and reject crontick-managed `--output-format` and `--settings` arguments at validation time.
+- fbbf4c5: Make Claude Code the sole built-in default prompt engine through a typed
+  engine-adapter registry, while keeping custom engines on the raw adapter by
+  default. Add configurable job defaults for overlap, timeout, and retry.
+
+  **Breaking (pre-1.0):** the built-in Copilot engine is removed. A config that
+  still selects Copilot must define it explicitly; jobs needing that engine
+  must use a custom raw engine entry. The job CLI uses `--runner` in place
+  of `--engine` (`--alias`/`-a` names the job).
+
+  Claude runs pre-assign session IDs, parse structured results, and expose cost,
+  turns, redacted usage, transcript path, and engine status through library,
+  CLI, and MCP run fields. Run and statistics surfaces also expose `skipped`
+  separately from `canceled`, plus aggregate cost and turns. Unrecognized
+  long job flags pass through to engine arguments, while crontick-managed
+  flags remain reserved.
+
+- fbbf4c5: Store Claude run cost, turns, redacted usage, transcript path, and engine status; expose them through run queries and aggregate cost and turns in statistics.
+- fbbf4c5: Claude runs now trim the engine stream as it arrives: only the final `result` event and stderr are kept (no assistant text segments, no line-size limit; stderr is capped at 1,000,000 bytes per run with a truncation marker, for every engine). Only Claude (stream-json) runs are trimmed this way; other engines' stdout is plain output under `retention.maxOutputBytesPerRun`, and the runner warns that it has no adapter support. `RunOutput.output` and the `run_outputs.output`/`truncated` columns are removed. `transcriptPath` honors `CLAUDE_CONFIG_DIR`, is available while the run is in progress, and prefers the path reported by Claude's SessionEnd hook once the run ends.
+- fbbf4c5: CLI and job model overhaul (pre-1.0, breaking changes in a minor):
+
+  - One user-facing term, **alias** (`--alias`/`-a` sets it); every command and MCP tool that takes a job accepts an id or an alias. Alias generation falls back to a random suffix after many collisions and retries create races. `jobs new`/`jobs update` share one option list (`-p`, `-a`, `-C`).
+  - Per-job working directory (`--cwd`/`-C`, `action.cwd`, defaults to the invoking directory) plus a Claude folder-trust check: `TRUST_REQUIRED`, an interactive y/N prompt, `--trust-folder` / `trustFolder`, `CWD_CHANGE_BREAKS_SESSION`.
+  - `config.json` is created automatically with the full defaults (never overwritten); `crontick info` no longer lists commands and the hidden `info daemon` / `info doctor` aliases are removed.
+  - BREAKING: `--tz` / `schedule.tz` removed (cron fires in machine local time; a `tz` in an already-stored job file is silently ignored).
+  - BREAKING: deleting a job now deletes its runs, logs and schedule state (orphans are purged at daemon start); `jobs delete` reports `deletedRuns`.
+  - BREAKING: `runs logs`, `runs output`, `crontick_run_logs_tail`, `crontick_run_output` and `CrontickClient.getLogs` (with `LogsResult`, `LogEntry`, `LogSource`, `LOG_SOURCES`) are removed; `runs get` / `crontick_run_get` now show the run, its `logFile` and the cleaned output.
+  - BREAKING: `share export`/`share import` use a validated `schema: 1` jobs-only file (`--only-jobs`, `.json` suffix appended to `--out`, new ids and alias suffixing on import); `--include-runs` and run import are removed.
+  - `jobs schedule` shows `status: enabled|disabled`; `stats job` counts all retained runs and prints `lastRunAt` as local ISO-8601.
+
+- fbbf4c5: CLI review fixes:
+
+  - `jobs new` help: options ordered alias, prompt, schedule flags, then the rest; states that exactly one of `--cron`/`--every`/`--at` is allowed; accurate `--at` (ISO-8601, local timezone unless an offset is given), `--every` (seconds or s/m/h/d suffix) and `--session-id` text.
+  - New top-level `crontick daemon start [--foreground]|stop|restart|status|reload` and `crontick doctor` (there is no `info daemon` / `info doctor`). `crontick info` reports whether the config file exists (`configExists`) and does not list commands; `doctor` shows the data dir and config file state. The `daemon-stop`, `daemon-reload` and `doctor` surface entries point at the new command paths.
+  - Fix: a Claude run that reports an error (`result` with `is_error`, or a 401 authentication error) and then hangs no longer stays `running`. The run is failed immediately with the parsed error, the process tree is terminated (taskkill /T /F or process-group kill, then force-kill), the active-run lock is released so the next tick is not `skipped`, authentication failures are not retried, and timeouts/cancels/exit-without-close always finalize.
+  - `jobs run-now` is documented and tested as running a job once even when disabled, without enabling it or changing its schedule (overlap still applies); the daemon accepts `POST /api/jobs/:id/run-now` (alias of `/run`).
+  - Stats: `avgDurationSec` added to `statsSummary`, the dashboard stats and per-job stats (the older `avgDurationMs` is removed).
+  - `crontick runs list` prints a table with local ISO times, durations in seconds and truncated errors; `--json` prints the raw records.
+  - Cleaned run output: `getOutput(runId)` and `GET /api/runs/:id/output` return the run's final result, error and stderr (no thinking signatures, hook payloads or transcript); `runs get` / `crontick_run_get` show it. There is no separate `runs output` command or `crontick_run_output` tool.
+  - Dashboard: auto-refresh selector (Off/10s/15s/30s/60s, remembered in localStorage); run detail shows a status badge in the title and the error above the cleaned output; multi-select job and status filters with removable chips; sortable Job/Status/Started/Duration headers (the Sort dropdown is gone); expanding search for jobs (config text) and runs (including run logs); a job details drawer (config, stats, recent runs, actions); a "Run once now" button per job; durations shown in seconds. `GET /api/runs` and `GET /api/dashboard` accept comma-separated `jobId`/`status` and a `q` search (also `DashboardOptions.jobIds`/`statuses`/`q`).
+
+- fbbf4c5: Dashboard polish and a stable daemon port. The daemon now prefers port 47615 (env `CRONTICK_DAEMON_PORT` overrides) and, when it is taken, prints whether another crontick daemon or another process holds it and starts on a free port; `daemon start`/`restart`, `daemon status` (`portNote`, `dashboardUrl`), `info` and `doctor` ("daemon port" check) report fallback ports, and `daemon.port` always holds the real port. Dashboard: icon-only theme switcher, aligned row-action icons, run modal shows the log file path (never inlines the log), "Runner Session ID" label, full job ids, "Alias" term, and the job working directory in the drawer and search.
+- fbbf4c5: Add a System / Light / Dark theme toggle to the dashboard. Colors are now CSS custom properties, the choice is persisted in `localStorage`, and the saved theme is applied before first paint.
+- fbbf4c5: Add an optional engine `type` discriminator to config. Existing engines default to `raw`; the `claude` type is accepted for the Claude adapter implementation.
+- fbbf4c5: Replace the Claude SessionEnd base64/eval hook with a plain helper script (`<dataDir>/hooks/session-end.cjs`), show `--settings <session-end-hook>` in stored commands, expose `logFile` on run get, and add display-only `usage` (normalized token counts) to run output.
+- fbbf4c5: crontick now stores only its own logs. The engine's raw stdout/stderr is no longer
+  written to the database (the `run_logs` table, the `/api/runs/:id/logs` and
+  `/logs/stream` routes and the SSE stream are gone); only the parsed output (final
+  answer, error, capped stderr) is kept with each run. crontick-side lifecycle
+  events go to one per-job log file, and `runs get`, the dashboard run detail and
+  `GET /api/runs/:id/output` show only that file's absolute path (`logFile`;
+  the dashboard shows it as plain text with a Copy button, not a link, and never inlines contents).
+
+  Total run counts are removed from `stats summary`, `stats job` and the dashboard
+  (`totalRuns`).
+
+  **Breaking (pre-1.0):** all legacy and backward-compatibility code is removed,
+  including `avgDurationMs` (use `avgDurationSec`), the startup purge of orphaned
+  runs left by older versions and unsupported older database layouts. A `tz` in an
+  already-stored job file is silently ignored (no warning is logged); creating or
+  updating a job with `schedule.tz` is still rejected.
+
+- fbbf4c5: **Breaking:** crontick is now prompt-only. The `script` and `exec` job action kinds are removed -- every job's `action.kind` must be `"prompt"`. Existing jobs using `kind: "script"` or `kind: "exec"` will be rejected by validation on next create/update and must be migrated by hand to a prompt action. The `--script`/`--exec`/`--shell` CLI flags, the corresponding MCP validation branches, and all script/exec runner internals (temp-file/shell handling, the PowerShell exit/UTF-8 wrapper) are removed. The Copilot marketplace plugin (`plugin/`) and this repo's Copilot-specific `.github/skills/` are also removed from this branch (preserved on `users/tejitpabari/copilot-init`); the bundled `src/skill/SKILL.md` is now engine-neutral. Session-ID capture (`extractSessionId`) drops the Copilot-specific `--resume=<uuid>` pattern in favor of a minimal generic fallback (`--session-id=<id>`, `session id: <id>`). See ADR 0002 for the full rationale.
+- fbbf4c5: Job CLI flags: `jobs new` and `jobs update` rename `--engine` to `--runner` and add `-a` as the short form of `--alias` (the alias flag keeps its name). The old `--engine` switch now fails as an unknown option, including through engine-argument passthrough. CLI `--every` also accepts `s`, `m`, `h`, and `d` duration suffixes while bare numbers remain seconds.
+- fbbf4c5: Run detail shows the final answer, error and stderr plus the full log file and Claude transcript paths as plain text (dashboard with Copy buttons, `runs get` as labelled lines). A path whose file is missing is flagged `file not found`; `getRun` / `GET /api/runs/:id` gain `logFileExists` and `transcriptExists`.
+- fbbf4c5: Record overlap skips as `skipped`, expose separate skipped and canceled statistics, and require `overlap: skip` for jobs that reuse a session.
+
+### Patch Changes
+
+- fbbf4c5: Record Claude `SessionEnd` completion markers and use valid markers to recover run exit status after a daemon restart.
+- fbbf4c5: Fail Claude resume runs before spawning unless a completed prior run and transcript both exist, capture only completed Claude sessions for reuse, and ignore stdin for prompt children.
+- fbbf4c5: Safely restart imported Claude sessions without trusting archival run provenance, resolve Windows transcript paths, and account for usage across retries.
+- 364cb8e: Running `crontick` with no subcommand now prints help and exits `0` instead of
+  `1`. Previously the bare invocation used Commander's default "no command"
+  behavior (help to stderr, exit code 1), which PowerShell 7.4+ surfaces as a
+  noisy `NativeCommandExitException` on a purely informational invocation.
+  `crontick --help` and every subcommand are unchanged.
+- 364cb8e: Reorganize the CLI and MCP surfaces around grouped jobs/runs/stats/share commands: config now prints the file path, info reports version/runtime/path status, runs delete removes run history/log rows, and jobs schedule previews existing jobs. The global --json flag and dedicated script/exec/config CLI/MCP exposure were removed while script and exec remain available through job JSON and the core client; CLI errors now render as clean colored single-line messages with verbose diagnostics on request.
+- 364cb8e: Remove the `dashboard` CLI command group and `crontick_dashboard_*` MCP tools; the dashboard is always served by the daemon, and `crontick info` (and `crontick_info`) now expose its URL via `dashboardUrl`.
+- 364cb8e: Overhaul the dashboard web UI: the jobs table now shows a job `Alias` column and a
+  copyable GUID `ID` column (the `Enabled` column is dropped) plus a right-aligned
+  actions cell with enable/disable and delete icon buttons (disable and delete prompt
+  for confirmation). Clicking a job row filters the runs list to that job. The recent
+  runs section gains a server-side "Filter Job" dropdown, a client-side status filter,
+  and a time/duration sort control. Run rows now show the full run id and session id
+  (each with a copy button) and open a log modal that splits Output (stdout + crontick
+  streams) from Error (stderr + the run's recorded error), each independently scrollable.
+  The stale `crontick dashboard data --runs-limit` hint in the dashboard runsLimit
+  validation errors is replaced with guidance to provide a positive integer.
+- 364cb8e: Jobs now have an immutable, server-assigned GUID `id` (`node:crypto` `randomUUID()`) as their internal primary key, plus an optional, user-editable, unique `alias`. Auto-generated when omitted (`<word>-<1-1000>`, retried on collision). Every surface that accepts a job identifier (CLI, MCP, HTTP API) now accepts either the GUID `id` or the `alias` and resolves it internally, returning `JOB_NOT_FOUND` when neither matches. This fixes a bug where deleting a job and recreating it with the same identifier would show the previous job's stale run status/history in the dashboard, since runs are now permanently tied to the GUID rather than a reusable human string. Existing on-disk jobs are migrated in place on daemon startup: their old id becomes the `alias` and a fresh GUID becomes the `id`, with run history remapped to match. The dashboard now exposes both `id` and `alias` for each job (and each run's associated `alias`) without changing any existing fields or the frontend markup.
+- 364cb8e: Fix Copilot session-id capture and add full per-job logging.
+
+  - Session-id extraction now matches the Copilot CLI's real `--resume=<uuid>` stats-footer form (and `--session-id=`/`--session-id <id>`), so `reuseSession` jobs no longer fail with `SESSION_ID_NOT_FOUND` when the id is present in the transcript.
+  - The extracted (or explicitly provided) session id is now persisted on the run record and surfaced via `runs get`, the logs API, and the dashboard run data model (`sessionId`).
+  - Runs now emit crontick-side lifecycle events (run started, executing, run finished, skips, retries, session captured) on a dedicated `crontick` log stream, in addition to engine `stdout`/`stderr`. Log retrieval accepts a `source` filter (`all` | `engine` | `crontick`) across the client, MCP tool (`crontick_run_logs_tail`), daemon `/api/runs/:id/logs` route, and the CLI `logs --source` flag.
+  - Every run's logs are additionally mirrored to a best-effort per-job log file at `<dataDir>/logs/<jobId>.log`. New `logging` config (`logging.fileEnabled`, `logging.dir`) controls this; file writes never block or fail a run.
+
+- fbbf4c5: Fix two leftover fallbacks that still defaulted to the removed Copilot engine when a prompt action's engine was unset: the Windows command-line length estimate and the args-only patch runtime validation now fall back to `claude`, the sole remaining built-in engine.
+- 364cb8e: docs: rewrite README to foreground crontick's AI-native prompt-job workflow and current command surface
+- 364cb8e: Remove pre-production migration, legacy, and back-compatibility code: fold all columns and the alias-uniqueness index directly into the base SQLite schema (no `ALTER TABLE` upgrades), drop on-disk job-file migration, and remove the `coerceLegacyIdToAlias` shim and its public export.
+- 364cb8e: Review fixes and hardening:
+
+  - Captured-session-id lifecycle events are now written to the `crontick` log stream (retrievable via `getLogs(runId, 'crontick')`) instead of the engine stdout stream, matching every other lifecycle event.
+  - `getLogs` `source` validation now lives solely in the core `CrontickClient` (throws `VALIDATION_ERROR` for values outside `all`/`engine`/`crontick`); the duplicate CLI-shim guard was removed. `LOG_SOURCES` and `LogSource` are now exported from the public API.
+  - Bulk delete (`jobs delete all --force`) is now atomic: a new internal daemon `DELETE /api/jobs` route deletes every job together with its runs, logs, and schedule state in a single store transaction via `Store.deleteAllJobs()`, instead of looping per-job HTTP requests.
+  - `GET /api/runs` `limit`/`since` are validated as positive integers, returning a clean `VALIDATION_ERROR` instead of a 500 for `NaN`/negative/`Infinity`; `queryRuns` binds `LIMIT` as a parameter.
+  - MCP `redactForLlm` now also redacts single-segment POSIX absolute paths (e.g. `/tmp`) and IPv6 loopback forms (`::1`, `[::1]:port`), and applies redaction to `ENV_FILE_ERROR` messages.
+  - Domain validation (`--enable`/`--disable` mutual exclusion, `jobs delete all` force requirement) moved out of the CLI shim into the core, keeping shims logic-free.
+
+- 364cb8e: Review polish: route the reuseSession-ignored notice to the `crontick` log stream, derive the `getLogs` source-validation message (and MCP/daemon schemas) from a single canonical `LOG_SOURCES` module, remove the orphaned `DashboardStartResult`/`DashboardStopResult` exports, use Commander's `InvalidArgumentError` for integer option coercion, and avoid per-chunk transcript-tail reallocation during prompt session-id capture.
+- 364cb8e: Round-2 command simplification: fold doctor/daemon/config into `info`, remove delete-run, jobs delete all --force, surface capabilities 26→21.
+- 364cb8e: Align SKILL.md with the current CLI/MCP surface, update stale skill test assertions to reference existing tools, and fix the plugin install example command.
+- 364cb8e: Rewrite the packaged SKILL.md as a concise, CLI-first guide for driving crontick prompt jobs from an AI agent, aligned with the current 26-capability command surface and the copilot default engine.
+
 ## 0.2.0
 
 ### Minor Changes
