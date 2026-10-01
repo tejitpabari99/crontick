@@ -46,7 +46,7 @@ The `runs.db` file is opened with `PRAGMA journal_mode=WAL` and `PRAGMA foreign_
 full schema is created in one idempotent pass on open -- there are no migrations (see
 [ADR 0001](../decisions/0001-architecture-and-runtime-model.md)). Tables: `jobs` (cache,
 rebuilt from disk on start), `runs` (status, exit code, timing, spawned `pid`,
-output-truncation flag, and for engine runs `sessionId`, `costUsd`, `turns`, `usageJson`, `transcriptPath`, `engineStatus`), `run_outputs` (the parsed engine output of a finished run: final answer, assistant text, stderr tail), and
+output-truncation flag, and for engine runs `sessionId`, `costUsd`, `turns`, `usageJson`, `transcriptPath`, `engineStatus`), `run_outputs` (the parsed engine output of a finished run: final answer, error, full stderr), and
 `job_schedule_state` (per-job "last observed ticking" watermark for missed-fire computation). See
 [implementation/storage.md](../implementation/storage.md) for exact columns and indexes.
 

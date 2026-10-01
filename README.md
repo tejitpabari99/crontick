@@ -70,7 +70,7 @@ Watch what the agent did:
 
 ```sh
 crontick runs list                 # recent runs across all jobs
-crontick runs get <runId>          # status, timing, Runner Session ID, transcript + log file path, then the cleaned output (final answer, error, readable transcript; no thinking/hook noise)
+crontick runs get <runId>          # status, timing, Runner Session ID, transcript + log file path, then the cleaned output (final answer, error, stderr; no tool calls, thinking or hook noise)
 ```
 
 Prefer a UI? `crontick info` prints the dashboard URL (by default `http://127.0.0.1:47615/dashboard`; if that port is taken the daemon starts on a free port and says so) where you can browse jobs (with details, search and run-once) in a light or dark theme, runs (multi-select filters, sortable columns, search across run output), and per-run results (final answer, error, stderr, plus the log file and transcript paths with copy buttons).

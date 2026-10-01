@@ -67,7 +67,7 @@ All tools accept an optional `verbose: boolean` parameter for diagnostics.
 | Tool | Parameters | Description |
 |------|------------|-------------|
 | `crontick_run_list` | `jobId?`, `limit?`, `since?`, `status?` | List run records |
-| `crontick_run_get` | `id` | Get a specific run, its `logFile` path and the cleaned output (final result, error, readable transcript) |
+| `crontick_run_get` | `id` | Get a specific run, its `logFile` path and the cleaned output (final result, error, stderr) |
 
 `status` accepts one of `queued`, `running`, `success`, `failed`, `canceled`, `skipped`, `timeout`, `missed`. `skipped` marks a fire that never started because overlap `skip` found another run active; `missed` marks a schedule fire recorded but never executed because the daemon was down. `crontick_run_get` also returns `costUsd`, `turns`, `usageJson`, `transcriptPath`, and `engineStatus` for Claude runs.
 

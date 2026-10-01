@@ -145,13 +145,17 @@ users who already have the file).
 The engine (e.g. Claude) already keeps its own transcript, so crontick no longer copies the
 engine's raw stdout/stderr anywhere: the `run_logs` table, `appendLog`/`getLogs`/`tailLogs`, the
 `/api/runs/:id/logs` and `/logs/stream` routes and the per-job mirror of engine output are removed.
-While a run executes, the runner holds the redacted engine output in memory (bounded by
-`retention.maxOutputBytesPerRun`); when the run finishes it stores only the parsed result (final
-answer, assistant text, stderr tail) in `run_outputs`, which backs the unchanged `output`, `result`
-and `error` fields. crontick's own scheduling and execution events are written to one per-job file
+While a run executes, the runner parses the engine stream line by line as it arrives and keeps
+in memory only the final `result` event and the full stderr (plain stdout of non-stream engines
+is still bounded by `retention.maxOutputBytesPerRun`); when the run finishes it stores just that
+result, error and stderr in `run_outputs`. Assistant text segments are not kept. For Claude,
+`transcriptPath` is the path reported by the SessionEnd hook once the run ends, else the computed
+`<CLAUDE_CONFIG_DIR or ~/.claude>/projects/<encoded-cwd>/<sessionId>.jsonl`; crontick never reads
+the transcript. crontick's own scheduling and execution events are written to one per-job file
 `<logsDir>/<jobId>.log` (one timestamped, run-id-tagged line per event). Every surface that
-displays logs (`runs get`, the dashboard run detail, `GET /api/runs/:id/output`) shows only that
-file's absolute path (a link in the dashboard, never inlined contents). Total run counts were
+displays logs (`runs get`, the dashboard run detail, `GET /api/runs/:id/output`) shows only the
+log file and transcript absolute paths as plain text (a Copy button in the dashboard, `file not
+found` when missing), never file contents; there is no route serving them. Total run counts were
 dropped from stats and the dashboard, and the remaining legacy/back-compat code (orphan purge at
 daemon start, `avgDurationMs`) was deleted. Trade-off: output of a run that is still executing is
 not visible until it finishes, and the output of a run adopted after a daemon restart is not

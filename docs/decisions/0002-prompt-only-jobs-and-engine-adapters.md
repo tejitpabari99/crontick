@@ -75,9 +75,9 @@ into elevated engine permissions only through explicit passthrough arguments.
 
 ### CLI naming: `--alias` and `--runner`
 
-`jobs new`/`jobs update` use `--alias` for the job's `alias` field and `--runner` for the
-prompt action's `engine` field (previously `--alias`/`--engine`). There is no
-compatibility alias for the old flags -- they are rejected as unknown options, before
+`jobs new`/`jobs update` use `--alias`/`-a` for the job's `alias` field and `--runner` for the
+prompt action's `engine` field (previously `--name`/`-n` and `--engine`). There is no
+compatibility alias for the old flags (`--name`, `--engine`) -- they are rejected as unknown options, before
 engine-argument passthrough would otherwise silently absorb them as literal engine
 arguments -- because crontick is pre-1.0 with no released users to preserve compatibility
 for.
@@ -147,7 +147,7 @@ a Claude run that finished while the daemon was down.
 **Harder:** a user who wants crontick to run an arbitrary shell command directly must
 front it with a prompt engine, with no automatic migration for old `script`/`exec` job
 JSON; two argument-passing flags (`--arg`, unknown-option passthrough) exist alongside
-`--`, each with its own precedence rule; existing scripts using the old `--alias`/
+`--`, each with its own precedence rule; existing scripts using the old `--name`/
 `--engine`/`--script`/`--exec` flags must be updated with no compatibility shim.
 
 **Impossible (by design):** reintroducing `script`/`exec` without fresh, explicit

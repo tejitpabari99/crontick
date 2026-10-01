@@ -26,12 +26,18 @@ await new Promise((resolve) => setTimeout(resolve, 2000));
 const run = await client.getRun(runId);
 console.log('Run record:', JSON.stringify(run, null, 2));
 
-// The record carries the per-job log file path (raw engine output + crontick events); null when file logging is off.
+// The record carries the per-job log file path (crontick's own lifecycle events); null when file logging is off.
 console.log('Log file:', run.logFile);
 
-// The cleaned view of what the run produced (final answer, error, readable transcript).
+// The output view: the engine's final answer, error and full stderr. Tool calls and
+// interim assistant text are never kept.
 const output = await client.getOutput(runId);
-console.log('Result:', output.result ?? output.output);
+console.log('Result:', output.result);
+console.log('Error:', output.error);
+console.log('Stderr:', output.stderr);
+
+// Claude runs also carry the path of the engine's own transcript (crontick never reads it).
+console.log('Transcript:', run.transcriptPath ?? '(none)');
 
 // List recent runs for this job.
 const runs = await client.listRuns({ jobId: 'run-history-demo', limit: 5 });
