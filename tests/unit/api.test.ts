@@ -314,6 +314,8 @@ describe('Daemon HTTP API', () => {
     const raw = await apiCall(port, 'GET', `/api/runs/${runId}/logs?source=engine`);
     expect(JSON.stringify(raw.data)).toContain('SIGNATURE-BLOB');
     expect((await apiCall(port, 'GET', '/api/runs/nope/output')).status).toBe(404);
+    const detail = (await apiCall(port, 'GET', `/api/runs/${runId}`)).data as { jobId: string; logFile: string | null };
+    expect(detail.logFile).toBe(resolve(join(dir, 'logs', `${detail.jobId}.log`)));
   });
 
   it('GET /api/runs lists runs', async () => {

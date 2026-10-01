@@ -24,6 +24,7 @@ import { buildRunOutput } from '../run-output.js';
 import { nullLogger, redactValue, type Logger } from '../logger.js';
 import { readEnvFileForAction } from './env-file.js';
 import { SSE_POLL_MS } from '../constants/daemon.js';
+import { resolveJobLogPath } from './job-log-file.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -275,7 +276,8 @@ async function handleRequest(
       if (method === 'GET' && sub === '') {
         const run = ctx.store.getRun(id);
         if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
-        return sendJson(res, 200, redactValue(run));
+        // Per-job (not per-run) mirror file; null when file logging is disabled.
+        return sendJson(res, 200, redactValue({ ...run, logFile: resolveJobLogPath(run.jobId) }));
       }
 
       if (method === 'POST' && sub === '/cancel') {

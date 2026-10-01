@@ -5,7 +5,7 @@
 // is emitted). The factory is injectable so the runner and tests can supply a
 // fake sink without touching real disk. See docs/implementation/prompt-execution.md.
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { loadConfig } from '../config.js';
 import { logsDir } from '../paths.js';
 import { nullLogger, type Logger } from '../logger.js';
@@ -30,6 +30,25 @@ export const nullJobLogFileFactory: JobLogFileFactory = { open: () => nullJobLog
 function safeLogFileName(jobId: string): string {
   const safe = jobId.replace(/[^A-Za-z0-9._-]/g, '_');
   return `${safe || 'job'}.log`;
+}
+
+/**
+ * Absolute path of the per-job log file mirror, or null when file logging is
+ * disabled (`logging.fileEnabled=false`). The file is per job (appended across
+ * runs, no run delimiter); the SQLite `run_logs` table is the per-run source of truth.
+ */
+export function resolveJobLogPath(jobId: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  let fileEnabled = true;
+  let dir: string;
+  try {
+    const logging = loadConfig({ env }).logging;
+    fileEnabled = logging.fileEnabled;
+    dir = logging.dir ?? logsDir(env);
+  } catch {
+    dir = logsDir(env);
+  }
+  if (!fileEnabled) return null;
+  return resolve(join(dir, safeLogFileName(jobId)));
 }
 
 /**

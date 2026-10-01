@@ -143,6 +143,8 @@ export interface RunRecord {
   usageJson?: string;
   transcriptPath?: string;
   engineStatus?: string;
+  /** Absolute path of the per-job log file (all runs of the job, appended); null when file logging is off. Only set by getRun(). */
+  logFile?: string | null;
 }
 
 export interface JobStats {
