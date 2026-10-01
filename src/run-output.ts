@@ -21,7 +21,53 @@ export interface RunOutputSource {
   costUsd?: number;
   turns?: number;
   durationMs?: number;
+  usageJson?: string;
   outputTruncated?: boolean;
+}
+
+/** Stable, display-only token counts derived from an engine's raw usage block. Missing or non-numeric fields are `undefined`. */
+export interface NormalizedUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  thinkingTokens?: number;
+}
+
+function counter(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/**
+ * Map Claude's raw `usage` object (the stored `usageJson`, parsed) to display
+ * token counts. Top-level counters are the run total; `iterations[]` is ignored.
+ * Non-object input yields all-undefined fields. Storage keeps the raw block.
+ */
+export function normalizeUsage(usage: unknown): NormalizedUsage {
+  const u = asRecord(usage);
+  if (!u) return {};
+  const out: NormalizedUsage = {};
+  const input = counter(u['input_tokens']);
+  const output = counter(u['output_tokens']);
+  const cacheRead = counter(u['cache_read_input_tokens']);
+  const cacheCreation = counter(u['cache_creation_input_tokens']);
+  const thinking = counter(asRecord(u['output_tokens_details'])?.['thinking_tokens']);
+  if (input !== undefined) out.inputTokens = input;
+  if (output !== undefined) out.outputTokens = output;
+  if (cacheRead !== undefined) out.cacheReadTokens = cacheRead;
+  if (cacheCreation !== undefined) out.cacheCreationTokens = cacheCreation;
+  if (thinking !== undefined) out.thinkingTokens = thinking;
+  return out;
+}
+
+/** Normalize a stored `usageJson` string; `null` when absent or unparseable. */
+export function normalizeUsageJson(usageJson: string | undefined): NormalizedUsage | null {
+  if (usageJson === undefined) return null;
+  try {
+    return normalizeUsage(JSON.parse(usageJson));
+  } catch {
+    return null;
+  }
 }
 
 export interface RunOutputLogChunk {
@@ -47,6 +93,8 @@ export interface RunOutput {
   costUsd: number | null;
   turns: number | null;
   durationMs: number | null;
+  /** Display-only normalized token counts from the stored usage block; `null` when the run has none. */
+  usage: NormalizedUsage | null;
   /** True when the run's captured output hit `retention.maxOutputBytesPerRun` (the transcript may be incomplete) or this view was itself capped. */
   truncated: boolean;
 }
@@ -167,6 +215,7 @@ export function buildRunOutput(run: RunOutputSource, logs: readonly RunOutputLog
     costUsd: run.costUsd ?? null,
     turns: run.turns ?? null,
     durationMs: run.durationMs ?? null,
+    usage: normalizeUsageJson(run.usageJson),
     truncated,
   };
 }

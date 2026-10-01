@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildRunOutput, cleanOutputText } from '../../src/run-output.js';
+import { buildRunOutput, cleanOutputText, normalizeUsage } from '../../src/run-output.js';
 
 const line = (value: unknown): string => `${JSON.stringify(value)}\n`;
 const b64 = Buffer.from('const fs = require("node:fs"); fs.writeFileSync("x", "y");'.repeat(8)).toString('base64');
@@ -66,5 +66,38 @@ describe('buildRunOutput', () => {
   it('cleanOutputText strips hook eval payloads and long base64 blobs', () => {
     expect(cleanOutputText(`node -e "eval(Buffer.from('${b64}','base64').toString('utf8'))"`)).toContain('<hook payload omitted>');
     expect(cleanOutputText(`blob ${b64}`)).toContain('<base64 omitted>');
+  });
+});
+
+const sampleUsage = {
+  input_tokens: 34, cache_creation_input_tokens: 100, cache_read_input_tokens: 2000, output_tokens: 500,
+  output_tokens_details: { thinking_tokens: 120 }, service_tier: 'standard',
+  iterations: [{ input_tokens: 8, output_tokens: 10 }],
+};
+
+describe('normalizeUsage', () => {
+  it('maps the sample usage object to totals and ignores iterations', () => {
+    expect(normalizeUsage(sampleUsage)).toEqual({
+      inputTokens: 34, outputTokens: 500, cacheReadTokens: 2000, cacheCreationTokens: 100, thinkingTokens: 120,
+    });
+  });
+
+  it('leaves thinking tokens undefined when missing', () => {
+    const n = normalizeUsage({ ...sampleUsage, output_tokens_details: undefined });
+    expect(n.thinkingTokens).toBeUndefined();
+    expect(n.inputTokens).toBe(34);
+  });
+
+  it('returns no fields for non-object input and ignores non-numeric fields', () => {
+    for (const bad of [null, undefined, 'x', 5, [1, 2]]) expect(normalizeUsage(bad)).toEqual({});
+    expect(normalizeUsage({ input_tokens: '3', output_tokens: -1 })).toEqual({});
+  });
+
+  it('is exposed on the run output view without changing the stored usageJson', () => {
+    const usageJson = JSON.stringify(sampleUsage);
+    const out = buildRunOutput({ ...baseRun, usageJson }, []);
+    expect(out.usage).toMatchObject({ inputTokens: 34, outputTokens: 500 });
+    expect(usageJson).toBe(JSON.stringify(sampleUsage));
+    expect(buildRunOutput(baseRun, []).usage).toBeNull();
   });
 });

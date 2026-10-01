@@ -13,6 +13,7 @@
 export { VERSION } from './version.js';
 export { CrontickError, ORPHAN_RUN_ERROR_CODE, ORPHAN_RUN_ERROR_MESSAGE } from './errors.js';
 export { CrontickClient, createClient, LOG_SOURCES } from './client.js';
+export type { NormalizedUsage } from './run-output.js';
 export type {
   ConfigPathInfo,
   CreateJobOptions,

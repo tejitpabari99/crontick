@@ -9,7 +9,7 @@ Source of truth: docs/agent_files/users-tejitpabari-claude-engine-20260927-2325/
 | # | Task | Depends on | Status |
 |---|---|---|---|
 | 1 | Job log path helper and `logFile` in run payload | - | done |
-| 2 | Display-only `normalizeUsage` | - | todo |
+| 2 | Display-only `normalizeUsage` | - | done |
 | 3 | Eval-free SessionEnd hook helper and shortened command | - | todo |
 | 4 | Tests, docs, reference, specs, changeset | 1-3 | todo |
 
