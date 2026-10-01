@@ -18,7 +18,7 @@ Agent CLIs are great at *one conversation*. They have no answer for "run this pr
 | 2 | **Engine-agnostic** | One core lifecycle, many engine adapters. Starts with Claude Code; Copilot, Codex, and others follow the same adapter contract. Users (and the core) should never have to special-case an engine by name. | Partial |
 | 3 | **Agent-accessible** | An agent (e.g. Claude Code) can set up and manage its own jobs — create, list, inspect, delete — via the CLI or MCP server, no human required to run the commands. | Implemented |
 | 4 | **Session-aware** | crontick creates the engine session itself and knows its identity (session id) and real status — running / finished / failed — not just a process exit code. | Planned / Partial |
-| 5 | **Usage-aware** | Follows from session awareness: surface timeouts, token usage, and cost whenever the engine exposes that data. | Planned |
+| 5 | **Usage-aware** | Follows from session awareness: surface timeouts, token usage, and cost whenever the engine exposes that data. | Partial: Claude runs persist and surface token usage, cost, turns, and engine status (library, CLI, MCP, aggregate stats); other engines expose none yet |
 | 6 | **Lightweight** | The daemon and CLI are cheap to run — idle timers, small memory footprint, no heavy dependencies, no polling loops beyond what scheduling needs. The real compute cost is the engine sessions themselves, not crontick. | Implemented |
 
 ### Proposed additional tenets — owner to confirm

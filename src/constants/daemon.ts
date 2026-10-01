@@ -31,9 +31,11 @@ export const KILL_GRACE_MS = 5_000;
 export const EXIT_CLOSE_GRACE_MS = 3_000;
 
 /**
- * Preferred daemon HTTP port on loopback. Outside the Linux ephemeral range
- * (32768-60999) and IANA-registered services. When taken, the daemon falls back
- * to an OS-assigned free port; clients always discover the real port via `daemon.port`.
+ * Preferred daemon HTTP port on loopback. A stable, memorable default, not a
+ * guarantee: the port sits inside the Linux default ephemeral range (32768-60999),
+ * so another process may already hold it. That is accepted as normal: the daemon
+ * falls back to an OS-assigned free port and clients always discover the real
+ * port via `daemon.port`.
  * Override with env `CRONTICK_DAEMON_PORT` (tests).
  */
 export const DEFAULT_DAEMON_PORT = 47615;
