@@ -1,5 +1,5 @@
 ---
-status: draft
+status: done
 summary: Evidence-backed answers to the owner's questions on raw-log source, usage/cost origin, the SessionEnd base64 hook, and totalTurns; replaces eval/base64 hook with a plain helper script and shortens displayed --settings.
 date: 2026-10-01
 ---

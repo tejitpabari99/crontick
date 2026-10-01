@@ -1,5 +1,5 @@
 ---
-status: draft
+status: done
 summary: Four tasks - shared job-log path helper plus logFile payload, display-only usage normalizer, eval-free SessionEnd hook helper with shortened stored command, then tests/docs/changeset.
 date: 2026-10-01
 ---

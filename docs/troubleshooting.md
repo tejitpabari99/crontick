@@ -217,6 +217,26 @@ in the first place, note that `crontick share export` backs up job definitions o
 [state-and-storage.md](concepts/state-and-storage.md#run-history-retention) and
 [configuration.md](reference/configuration.md).
 
+### Daemon port is occupied
+
+The daemon prefers port `47615` (override with `CRONTICK_DAEMON_PORT`). When that port is held, the daemon
+still starts, on a free port, and says why: `Port 47615 is in use by another crontick daemon (pid N, data dir
+<dir>); starting on a free port` (for example a second data dir) or `Port 47615 is in use by another process
+(not crontick); starting on a free port`. `crontick daemon start`/`status`, `crontick info` and `crontick doctor`
+(the "daemon port" check) print the fallback note and the real `dashboardUrl`; `<dataDir>/daemon.port` always holds the
+port actually in use, so bookmarked URLs on `47615` only work while that port is free. To get the stable port back,
+stop whatever holds it (or the other crontick daemon) and run `crontick daemon restart`.
+
+### `TRUST_REQUIRED` when creating a Claude job
+
+`jobs new`/`jobs update`/`share import` fail with `TRUST_REQUIRED` (nothing is saved) when the job's working
+directory (`--cwd`/`-C`, default: the folder you ran the command in) is not trusted in Claude's config
+(`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`). On a terminal crontick asks `Trust it? (y/N)`; in scripts or
+without a TTY re-run with `--trust-folder` (library/MCP: `trustFolder: true`), or open the folder once in Claude and
+accept its trust dialog. `CLAUDE_CONFIG_UNREADABLE` means that file is not valid JSON; fix it by hand. Changing the
+`cwd` of a job that already has a session fails with `CWD_CHANGE_BREAKS_SESSION`; see
+[cli.md](reference/cli.md#working-directory-and-claude-trust).
+
 ### `crontick daemon stop` reports `mode: "hard-kill"` instead of `"graceful"`
 
 `crontick daemon stop` (and `daemon restart (library-only)`) prefer `POST /api/daemon/stop`, an in-process

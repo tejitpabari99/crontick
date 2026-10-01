@@ -1,5 +1,5 @@
 ---
-status: draft
+status: done
 summary: Dashboard polish (icon theme switcher, action alignment, text-only run output, raw-log link, full job ids, Runner Session ID, alias/cwd) plus a fixed default daemon port with occupied-port fallback.
 date: 2026-10-01
 ---

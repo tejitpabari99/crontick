@@ -134,7 +134,7 @@ See [decisions/README.md](decisions/README.md) for the full list of architecture
 | [02-cron-schedule.ts](examples/02-cron-schedule.ts) | Cron-scheduled job |
 | [04-prompt-job.ts](examples/04-prompt-job.ts) | Prompt action with engine, list engines |
 | [05-one-shot.ts](examples/05-one-shot.ts) | One-shot scheduled job |
-| [06-run-history.ts](examples/06-run-history.ts) | Querying run history and logs |
+| [06-run-history.ts](examples/06-run-history.ts) | Querying run history and run output |
 | [07-lifecycle.ts](examples/07-lifecycle.ts) | Daemon lifecycle management |
 | [cli/README.md](examples/cli/README.md) | CLI usage examples |
 | [mcp/README.md](examples/mcp/README.md) | MCP integration examples |

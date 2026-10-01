@@ -1,5 +1,5 @@
 ---
-status: draft
+status: done
 summary: SP03 CLI and job model - 9 commit-sized tasks covering alias term, CLI cleanup, tz removal, run deletion, cwd, Claude trust, runs get/stats, share schema 1, and final tests/docs/changeset.
 date: 2026-10-01
 ---

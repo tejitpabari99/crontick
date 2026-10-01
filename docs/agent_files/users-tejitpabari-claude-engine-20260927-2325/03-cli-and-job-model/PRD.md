@@ -1,5 +1,5 @@
 ---
-status: draft
+status: done
 summary: SP03 CLI and job model (Phase 1) - alias as the one term, per-job cwd with Claude trust check, default config file, run-delete fix, share export/import schema v1, CLI/MCP surface cleanup.
 date: 2026-10-01
 ---

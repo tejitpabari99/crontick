@@ -44,8 +44,9 @@ wins): `action.env` > `envFile` variables > engine-config `env` > `process.env`.
 
 Each run's logs combine **engine streams** (`stdout`/`stderr`: the job process's own output) and
 a **crontick stream** (its own lifecycle events -- run started, executing, run finished, overlap
-skips, retry backoffs, session capture). Log retrieval accepts a `source` filter (`all` default,
-`engine`, or `crontick`) across every surface, and logs are also mirrored, best-effort, to a
+skips, retry backoffs, session capture). The store and the daemon route `GET /api/runs/:id/logs` accept a `source` filter (`all` default,
+`engine`, or `crontick`); the CLI and MCP no longer expose a log command (`runs get` shows the cleaned
+output and the log file path), and logs are also mirrored, best-effort, to a
 per-job file at `<dataDir>/logs/<jobId>.log` (see
 [configuration reference](../reference/configuration.md#loggingconfig)).
 

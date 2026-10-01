@@ -213,6 +213,36 @@ class CrontickError extends Error {
 | **Message shape** | `Engine "<name>" is a built-in fallback engine and cannot be removed...` |
 | **Details** | `{ path, key }` |
 
+### TRUST_REQUIRED
+
+| | |
+|---|---|
+| **When** | A Claude job's working directory is not trusted in Claude's config (`hasTrustDialogAccepted`); thrown before anything is saved |
+| **Message shape** | Names the folder and how to trust it (`--trust-folder` / `trustFolder: true`) |
+| **Details** | — |
+
+See [troubleshooting.md](../troubleshooting.md#trust_required-when-creating-a-claude-job).
+
+### CLAUDE_CONFIG_UNREADABLE
+
+| | |
+|---|---|
+| **When** | Recording folder trust needs Claude's `.claude.json`, which is not parsable JSON |
+| **Details** | — |
+
+### CWD_CHANGE_BREAKS_SESSION
+
+| | |
+|---|---|
+| **When** | An update changes `cwd` of a job that has a session (`sessionId` or `reuseSession`) |
+| **Fix** | Also pass `--session-id <id>` for the new directory, or `--reuse-session` for a fresh one |
+
+### INVALID_CWD
+
+| | |
+|---|---|
+| **When** | A job's working directory does not exist (also reported per row on `share import`) |
+
 ### NOT_IMPLEMENTED
 
 | | |

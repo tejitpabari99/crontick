@@ -72,7 +72,7 @@ non-loopback gets 403 `FORBIDDEN`.
 | GET | `/api/daemon/status` | PID, `port`/`baseUrl`/`dashboardUrl`, `portNote` (set when on a fallback port), version, uptime, job count, `missedFires` | 200 |
 | POST | `/api/daemon/reload` | Reload jobs from disk (see [Reload](#reload)) | 200 |
 | POST | `/api/daemon/stop` | Graceful in-process shutdown (see [Shutdown](#shutdown)) | 200/501 |
-| GET/POST | `/api/export`, `/api/import` | Export/import jobs (optionally run history) | 200 |
+| GET/POST | `/api/export`, `/api/import` | Export/import jobs (schema 1, jobs only; never run history) | 200 |
 | GET | `/api/dashboard[/status]` | Dashboard data / connection info; `/api/dashboard` accepts `runsLimit`, `jobId`/`status` (comma-separated) and `q` for the runs list | 200 |
 | GET | `/` or `/dashboard{/*}` | Static dashboard assets | 200 |
 

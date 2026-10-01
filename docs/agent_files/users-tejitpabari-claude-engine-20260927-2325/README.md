@@ -1,6 +1,6 @@
 ---
 status: approved
-summary: Design index for the Claude engine initiative — engine-adapter framework (SP01) and post-adapter cleanup/docs rewrite (SP02).
+summary: Design index for the Claude engine initiative — engine-adapter framework (SP01), cleanup/docs rewrite (SP02), CLI and job model (SP03), dashboard and daemon port (SP04), engine observability and QA (SP05).
 date: 2026-09-28
 ---
 
@@ -12,11 +12,14 @@ date: 2026-09-28
 |---|------|-------|------------|--------|-------|------|
 | SP01 | Engine framework + Claude adapter | 1 | none | done | Pluggable `EngineAdapter` contract/registry; session-aware, usage-aware `ClaudeAdapter`; `RawAdapter` preserves today's generic behavior; run-record + storage delta. | [01-claude-code-engine/PRD.md](01-claude-code-engine/PRD.md) |
 | SP02 | Code cleanup + doc rewrite | 2 | SP01 | approved | Consolidate constants/helpers into `src/constants/`+`src/utils/`; audit/rename/trim tests; fix `validate` build-before-test ordering; rewrite `docs/` for the prompt-only + Claude-adapter end state. | [02-cleanup-and-docs/PRD.md](02-cleanup-and-docs/PRD.md) |
+| SP03 | CLI and job model | 3 | SP01, SP02 | done | Alias as the single term (`<id\|alias>` everywhere, `-n`/`-p`/`-C`), per-job `--cwd` plus Claude trust check (`TRUST_REQUIRED`, `--trust-folder`), default `config.json`, `info` cleanup, `--tz` removed, delete removes runs, `runs get` absorbs `runs logs`/`runs output`, `stats job`, `jobs schedule` status, share export/import schema 1 (jobs only). | [03-cli-and-job-model/PRD.md](03-cli-and-job-model/PRD.md) |
+| SP04 | Dashboard and daemon port | 3 | SP03 | done | Fixed daemon port 47615 (`CRONTICK_DAEMON_PORT`, occupied fallback, `daemon.port`), assistant-text-only run output with `---`, raw-log route, dashboard theme icons, full ids, Alias and Runner Session ID labels. | [04-dashboard-and-daemon/PRD.md](04-dashboard-and-daemon/PRD.md) |
+| SP05 | Engine observability and QA | 3 | SP03 | done | Per-job `logFile` helper, display-only `usage` normalization, eval-free `SessionEnd` hook helper script, QA pass. | [05-engine-observability-qa/PRD.md](05-engine-observability-qa/PRD.md) |
 
 ## Dependency graph
 
 ```
-SP01 (engine framework) → SP02 (cleanup + docs)
+SP01 (engine framework) → SP02 (cleanup + docs) → SP03 (CLI + job model) → SP04 (dashboard + daemon port), SP05 (observability + QA)
 ```
 
 SP02 documents SP01's shipped shape; it does not redesign `src/engines/`, `prompt-session.ts`, `runner.ts`'s prompt path, or the engine config schema.
@@ -27,6 +30,7 @@ SP02 documents SP01's shipped shape; it does not redesign `src/engines/`, `promp
 - The Copilot plugin is preserved, but only on branch `users/tejitpabari/copilot-init`, not on this branch.
 - Claude Code is the first engine, delivered via a general adapter framework (not a Claude-only special case).
 - Follow `docs/tech/design-principles.md` and `docs/tech/mission.md` for all structural decisions.
+- SP03-SP05 (all pre-1.0, one minor changeset each): one user-facing term, **alias** (`--name`/`-n`); every job argument is `<id|alias>`. Cron fires in machine local time (`--tz` removed). Deleting a job deletes its runs/logs; `runs logs`/`runs output` and their MCP tools are removed in favor of `runs get` (run + `logFile` + cleaned output). Share files are `schema: 1`, jobs only. Jobs run in a per-job cwd (default: invocation folder); Claude jobs need a trusted folder (`TRUST_REQUIRED`, `--trust-folder`). Default `config.json` is written automatically (precedence CLI > per-job > config.json > built-ins). Daemon prefers fixed port 47615 with a free-port fallback; run output is assistant text only (`---` between segments); the SessionEnd hook is a plain helper script (no eval/base64); the display label for `sessionId` is "Runner Session ID".
 - No daemon reboot autostart (ADR 0001 stands).
 - No new runtime dependencies (AGENTS.md rule 1) — CLI-subprocess model only, no Claude Agent SDK this phase.
 - Pre-1.0: breaking changes are allowed without back-compat shims (ADR 0001), but still need explicit owner sign-off per AGENTS.md rule 8.
@@ -39,7 +43,7 @@ SP02 documents SP01's shipped shape; it does not redesign `src/engines/`, `promp
 
 ## Open items
 
-**None.** Both PRDs are approved with zero `[OPEN]` items (`grep -n "\[OPEN\]"` on both returns nothing). What remains is either resolved-with-a-concrete-design or explicitly deferred to a later, non-blocking point:
+**None.** SP01 and SP02 PRDs are approved with zero `[OPEN]` items (`grep -n "\[OPEN\]"` on both returns nothing). What remains is either resolved-with-a-concrete-design or explicitly deferred to a later, non-blocking point:
 
 **SP01 — Engine framework + Claude adapter**
 
@@ -54,4 +58,4 @@ SP02 documents SP01's shipped shape; it does not redesign `src/engines/`, `promp
 
 ---
 
-Next: implement SP02 from its approved [TASKS.md](02-cleanup-and-docs/TASKS.md).
+Next: SP01 to SP05 are implemented on this branch; remaining work is release (see `futures.md`).

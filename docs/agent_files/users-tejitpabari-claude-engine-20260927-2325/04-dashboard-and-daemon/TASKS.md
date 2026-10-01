@@ -1,5 +1,5 @@
 ---
-status: draft
+status: done
 summary: Seven tasks - fixed daemon port with fallback, port surfacing, assistant-text-only run output, raw-log route, dashboard UI polish, id/alias/cwd display, then tests/docs/changeset.
 date: 2026-10-01
 ---
