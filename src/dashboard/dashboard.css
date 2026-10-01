@@ -197,7 +197,17 @@ code { color: var(--text); }
 
 /* Actions column */
 .actions-col, .actions-cell { text-align: right; white-space: nowrap; }
-.actions-cell .icon-btn { font-size: 14px; }
+.actions-cell .icon-btn {
+  font-size: 14px;
+  /* One shared box so the run-now <svg> and the glyph buttons (⏹ ▶ 🗑) centre on the same line. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+}
 
 /* Clickable rows */
 .job-row, .run-row { cursor: pointer; }
@@ -413,9 +423,9 @@ th.sorted .sort-ind, th.sorted .sort-btn { opacity: 1; color: var(--accent); }
 .modal-header h3 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .run-meta { color: var(--muted); font-size: 12px; margin-bottom: 4px; word-break: break-word; }
 .error-pane { border-color: var(--error); color: var(--error); }
-.raw-details { margin-top: 12px; }
-.raw-details summary { cursor: pointer; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
-.raw-details .log-pane { margin-top: 6px; }
+.raw-log-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+.raw-log-row code { overflow-wrap: anywhere; }
+.raw-log-row .muted { flex-basis: 100%; }
 .modal-backdrop { z-index: 200; }
 
 /* ── Job details drawer ───────────────────────────────────────────────────── */
@@ -480,3 +490,9 @@ th.sorted .sort-ind, th.sorted .sort-btn { opacity: 1; color: var(--accent); }
 /* ── Theme toggle ─────────────────────────────────────────────────────────── */
 .theme-toggle { margin-left: auto; }
 header .theme-toggle ~ .badge { margin-left: 0; }
+
+/* Icon-only theme switcher */
+#theme-toggle button { display: inline-flex; align-items: center; justify-content: center; padding: 5px 9px; }
+#theme-toggle button svg { display: block; }
+#theme-toggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+a.btn { text-decoration: none; display: inline-block; }

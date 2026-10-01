@@ -501,10 +501,8 @@ async function openRunModal(runId) {
   document.getElementById('modal-meta').textContent = '';
   document.getElementById('modal-error-section').hidden = true;
   document.getElementById('modal-output').textContent = 'Loading…';
-  document.getElementById('modal-raw').textContent = '';
-  const details = document.getElementById('modal-raw-details');
-  details.open = false;
-  details.dataset.loaded = '';
+  document.getElementById('modal-rawlog').innerHTML = '';
+  document.getElementById('modal-output-section').hidden = false;
   modal.hidden = false;
   modal.querySelector('.modal').focus();
   try {
@@ -520,7 +518,7 @@ async function openRunModal(runId) {
       `Duration: ${formatMs(out.durationMs)}`,
       out.turns != null ? `Turns: ${out.turns}` : null,
       out.costUsd != null ? `Cost: $${Number(out.costUsd).toFixed(4)}` : null,
-      out.sessionId ? `Session: ${out.sessionId}` : null,
+      out.sessionId ? `Runner Session ID: ${out.sessionId}` : null,
       out.truncated ? 'Output truncated' : null,
     ].filter(Boolean);
     document.getElementById('modal-meta').textContent = meta.join(' · ');
@@ -529,30 +527,27 @@ async function openRunModal(runId) {
     document.getElementById('modal-error').textContent = errorText;
     let text = out.output || '';
     if (out.result && !text.includes(out.result)) text = `${out.result}${text ? `\n\n${text}` : ''}`;
-    document.getElementById('modal-output').textContent = text || '(no output)';
+    document.getElementById('modal-output-section').hidden = text.length === 0;
+    document.getElementById('modal-output').textContent = text;
+    renderRawLogRow(runId, out.rawLogPath);
   } catch (err) {
+    document.getElementById('modal-output-section').hidden = true;
     document.getElementById('modal-output').textContent = '';
+    renderRawLogRow(runId, null);
     document.getElementById('modal-error-section').hidden = false;
     document.getElementById('modal-error').textContent = `Failed to load run output: ${err.message}`;
   }
 }
 
-async function loadRawLog() {
-  const runId = modalRunId;
-  const details = document.getElementById('modal-raw-details');
-  if (!runId || details.dataset.loaded === runId) return;
-  details.dataset.loaded = runId;
-  const pane = document.getElementById('modal-raw');
-  pane.textContent = 'Loading…';
-  try {
-    const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/logs?source=all`);
-    const logs = await res.json();
-    if (!res.ok) throw new Error(logs?.error?.message || 'Failed to load logs');
-    if (modalRunId !== runId) return;
-    pane.textContent = logs.map((l) => l.data).join('') || '(empty)';
-  } catch (err) {
-    pane.textContent = `Failed to load raw log: ${err.message}`;
-  }
+/** Raw log row: absolute path (copyable) plus an Open link served by the daemon (browsers block file: links from http pages). */
+function renderRawLogRow(runId, rawLogPath) {
+  const href = `/api/runs/${encodeURIComponent(runId)}/log/raw`;
+  const path = rawLogPath ? `<code>${escHtml(rawLogPath)}</code>${copyIcon(rawLogPath)}` : '<span class="muted">per-job log file disabled</span>';
+  document.getElementById('modal-rawlog').innerHTML = `
+    ${path}
+    <a class="btn" href="${escHtml(href)}" target="_blank" rel="noopener">Open</a>
+    <span class="muted">The file holds all runs of this job; the link serves this run only.</span>
+  `;
 }
 
 function closeRunModal() {
@@ -772,9 +767,7 @@ document.getElementById('log-modal').addEventListener('click', (e) => {
   if (e.target.id === 'log-modal') closeRunModal();
 });
 document.getElementById('log-modal').addEventListener('keydown', (e) => trapTab(e, document.querySelector('#log-modal .modal')));
-document.getElementById('modal-raw-details').addEventListener('toggle', (e) => {
-  if (e.target.open) void loadRawLog();
-});
+document.getElementById('modal-rawlog').addEventListener('click', handleCopyClick);
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;

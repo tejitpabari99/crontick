@@ -21,9 +21,15 @@
     <div id="health-badge" class="badge badge-unknown">loading…</div>
     <div class="theme-toggle" role="radiogroup" aria-label="Color theme">
       <div id="theme-toggle" class="segmented">
-        <button type="button" role="radio" aria-checked="true" data-theme-choice="system" title="Follow system theme">System</button>
-        <button type="button" role="radio" aria-checked="false" data-theme-choice="light" title="Light theme">Light</button>
-        <button type="button" role="radio" aria-checked="false" data-theme-choice="dark" title="Dark theme">Dark</button>
+        <button type="button" role="radio" aria-checked="true" data-theme-choice="system" aria-label="System theme" title="System theme">
+          <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><rect x="2.5" y="3.5" width="15" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 17h6M10 13.5V17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+        <button type="button" role="radio" aria-checked="false" data-theme-choice="light" aria-label="Light theme" title="Light theme">
+          <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="3.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2v2.2M10 15.8V18M2 10h2.2M15.8 10H18M4.3 4.3l1.6 1.6M14.1 14.1l1.6 1.6M4.3 15.7l1.6-1.6M14.1 5.9l1.6-1.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+        <button type="button" role="radio" aria-checked="false" data-theme-choice="dark" aria-label="Dark theme" title="Dark theme">
+          <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M16.5 11.6A7 7 0 0 1 8.4 3.5a7 7 0 1 0 8.1 8.1z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        </button>
       </div>
     </div>
   </header>
@@ -104,7 +110,7 @@
         <thead>
           <tr>
             <th>Run ID</th>
-            <th>Session ID</th>
+            <th>Runner Session ID</th>
             <th aria-sort="none" data-sort="job"><button type="button" class="sort-btn">Job<span class="sort-ind" aria-hidden="true"></span></button></th>
             <th aria-sort="none" data-sort="status"><button type="button" class="sort-btn">Status<span class="sort-ind" aria-hidden="true"></span></button></th>
             <th aria-sort="descending" data-sort="started"><button type="button" class="sort-btn">Started<span class="sort-ind" aria-hidden="true"></span></button></th>
@@ -141,13 +147,12 @@
           <h4>Error</h4>
           <pre id="modal-error" class="log-pane error-pane"></pre>
         </div>
-        <h4>Output</h4>
-        <pre id="modal-output" class="log-pane"></pre>
-        <details id="modal-raw-details" class="raw-details">
-          <summary>Raw log</summary>
-          <p class="muted">Unprocessed engine and crontick log streams. May contain large JSON payloads (thinking signatures, hook data).</p>
-          <pre id="modal-raw" class="log-pane"></pre>
-        </details>
+        <div id="modal-output-section">
+          <h4>Output</h4>
+          <pre id="modal-output" class="log-pane"></pre>
+        </div>
+        <h4>Raw log</h4>
+        <div id="modal-rawlog" class="raw-log-row"></div>
       </div>
     </div>
   </div>
