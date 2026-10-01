@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { cleanTargets, findLeakedPids } from '../../scripts/clean-test.mjs';
+import { cleanTargets, findLeakedPids } from '../../scripts/clean-test-lib.mjs';
 
 const procs: ChildProcess[] = [];
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };

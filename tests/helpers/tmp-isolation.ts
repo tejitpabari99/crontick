@@ -9,7 +9,7 @@
 import { mkdtempSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { cleanTargets, findLeakedPids, TEMP_PREFIX } from '../../scripts/clean-test.mjs';
+import { cleanTargets, findLeakedPids, TEMP_PREFIX } from '../../scripts/clean-test-lib.mjs';
 
 const VARS = ['TMPDIR', 'TMP', 'TEMP'] as const;
 const saved: Record<string, string | undefined> = {};
