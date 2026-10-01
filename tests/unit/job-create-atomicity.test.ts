@@ -237,7 +237,9 @@ describe('create/update schedule atomicity', () => {
 
       const exported = await apiCall(port, 'GET', '/api/export');
       expect(exported.status).toBe(200);
-      expect(exported.data).toMatchObject({ jobs: [original] });
+      const { id: _exportedId, ...originalWithoutId } = original;
+      void _exportedId;
+      expect(exported.data).toMatchObject({ schema: 1, jobs: [originalWithoutId] });
     } finally {
       await stopServer(server);
       store.close();

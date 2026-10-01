@@ -28,8 +28,8 @@ const EXPECTED_TOOL_PARAMS = {
   crontick_stats_job: ['id'],
   crontick_daemon_stop: [],
   crontick_daemon_reload: [],
-  crontick_export: ['includeRuns'],
-  crontick_import: ['jobs', 'runs'],
+  crontick_export: ['onlyJobs'],
+  crontick_import: ['schema', 'jobs', 'exportedAt', 'crontickVersion', 'trustFolder'],
   crontick_doctor: [],
   crontick_info: [],
 } as const;

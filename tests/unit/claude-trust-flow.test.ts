@@ -116,6 +116,28 @@ describe('Claude folder trust through the client', () => {
   }, 60_000);
 });
 
+describe('Claude folder trust on import', () => {
+  it('checks each distinct folder once before importing anything; trustFolder:true trusts them all', async () => {
+    const sb = sandbox();
+    const client = createClient({ env: sb.env, daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 15_000 });
+    const other = tmp('crontick-trust-import-other-');
+    const job = (alias: string, cwd: string) => ({ alias, schedule: { kind: 'interval', everySec: 3600 }, action: { kind: 'prompt', prompt: 'hi', cwd } });
+    const file = { schema: 1, jobs: [job('imp-a', sb.project), job('imp-b', sb.project), job('imp-c', other)] };
+
+    await expect(client.importJobs(file)).rejects.toMatchObject({
+      code: 'TRUST_REQUIRED',
+      details: { folders: [sb.project, other] },
+    });
+    expect(await client.listJobs()).toEqual([]);
+
+    const result = await client.importJobs(file, { trustFolder: true });
+    expect(result.imported).toBe(3);
+    const claude = JSON.parse(readFileSync(sb.claudeJson, 'utf-8')) as { projects: Record<string, { hasTrustDialogAccepted: boolean }> };
+    expect(claude.projects[sb.project]?.hasTrustDialogAccepted).toBe(true);
+    expect(claude.projects[other]?.hasTrustDialogAccepted).toBe(true);
+  }, 60_000);
+});
+
 describe('--trust-folder on the CLI (non-interactive)', () => {
   function cli(sb: Sandbox, args: string[]) {
     return spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf-8', cwd: sb.project, env: { ...sb.env, CRONTICK_VERBOSE: '' }, timeout: 30_000 });

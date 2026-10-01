@@ -145,7 +145,7 @@ const server = http.createServer(async (req, res) => {
       const job = { ...incoming, id: incoming.id ?? randomUUID() };
       jobs.set(job.id, job);
     }
-    return json(res, 200, { imported: (body.jobs ?? []).length });
+    return json(res, 200, { imported: (body.jobs ?? []).length, results: [] });
   }
   if (req.method === 'POST' && url.pathname === '/api/schedules/validate') return json(res, 200, { ok: true });
   if (req.method === 'POST' && url.pathname === '/api/schedules/preview') return json(res, 200, { next: [] });
@@ -291,7 +291,7 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     const client = createClient({ daemonUrl: server.baseUrl, startDaemon: false });
 
     await expect(client.createJob({ ...testJob, alias: 'not valid' })).rejects.toBeInstanceOf(Error);
-    await expect(client.importJobs([{ ...testJob, alias: 'also invalid' }])).rejects.toBeInstanceOf(Error);
+    await expect(client.importJobs({ schema: 1, jobs: [{ ...testJob, alias: 'also invalid' }] })).rejects.toBeInstanceOf(Error);
   });
 
   it('surfaces ENV_FILE_ERROR from createJob without persisting a broken job', async () => {
@@ -423,7 +423,7 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     await expect(client.statsSummary()).resolves.toMatchObject({ totalJobs: expect.any(Number) });
     await expect(client.statsJob(jobId)).resolves.toMatchObject({ jobId });
     await expect(client.exportJobs()).resolves.toMatchObject({ jobs: expect.any(Array) });
-    await expect(client.importJobs([{ ...testJob, alias: 'imported-client-job' }])).resolves.toMatchObject({ imported: 1 });
+    await expect(client.importJobs({ schema: 1, jobs: [{ ...testJob, alias: 'imported-client-job' }] })).resolves.toMatchObject({ imported: 1 });
     await expect(client.validateSchedule(testJob.schedule)).resolves.toMatchObject({ ok: true });
     await expect(client.previewSchedule({ schedule: testJob.schedule, n: 1 })).resolves.toMatchObject({ next: [] });
     await expect(client.daemonReload()).resolves.toMatchObject({ ok: true });
@@ -482,13 +482,13 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     });
 
     await expect(
-      client.importJobs([
+      client.importJobs({ schema: 1, jobs: [
         {
           alias: 'client-import-prompt-job',
           schedule: { kind: 'cron', cron: '0 10 * * *' },
           action: { kind: 'prompt', promptFile: promptPath },
         },
-      ]),
+      ] }),
     ).resolves.toMatchObject({ imported: 1 });
   });
 

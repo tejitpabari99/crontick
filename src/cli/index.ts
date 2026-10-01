@@ -17,6 +17,7 @@ import { buildJobPatchFromUpdateOptions, type JobCreateCliOptions, type JobPatch
 import { isVerboseEnv, type LogEvent } from '../logger.js';
 import { readJsonFile } from '../json-file.js';
 import { formatJobStats, formatRunDetail, formatRunsTable } from '../run-format.js';
+import { resolveExportPath } from '../share.js';
 import { terminalTrustPromptIo, withTrustPrompt } from './trust-prompt.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -549,35 +550,42 @@ stats.command('job <id|alias>').description('Show statistics for one job (id or 
 // ── share ────────────────────────────────────────────────────────────────────
 const share = groupHelp(program.command('share').description('Export and import jobs'));
 share.command('export')
-  .description('Export all jobs')
-  .option('--out <file>', 'Output file (default: stdout)')
-  .option('--include-runs', 'Also include run history in the export')
+  .description('Export jobs to a crontick export file (schema 1, jobs only)')
+  .option('--out <file>', 'Output file; ".json" is appended unless the name already ends in .json (default: print to stdout)')
+  .option('--only-jobs <id|alias,...>', 'Comma-separated ids or aliases of the jobs to export (default: all jobs)')
   .action(async (opts) => {
     try {
-      const data = await client().exportJobs({ includeRuns: opts.includeRuns as boolean | undefined });
+      const onlyJobs = typeof opts.onlyJobs === 'string' ? opts.onlyJobs.split(',').map((v: string) => v.trim()).filter(Boolean) : undefined;
+      const data = await client().exportJobs({ onlyJobs });
       const json = JSON.stringify(data, null, 2);
       if (opts.out) {
-        writeFileSync(resolve(process.cwd(), opts.out as string), json, 'utf-8');
-        stdout(`Exported to ${opts.out as string}`);
+        const target = resolveExportPath(opts.out as string, process.cwd());
+        writeFileSync(target, `${json}\n`, 'utf-8');
+        stdout(`Exported ${data.jobs.length} job(s) to ${target}`);
       } else {
         stdout(json);
       }
     } catch (err) { handleError(err); }
   });
 
-share.command('import <file>').description('Import jobs (and run history, if present) from a JSON file').action(async (file: string) => {
-  try {
-    const filePath = resolve(process.cwd(), file);
-    const data = readJsonFile(filePath, {
-      errorCode: 'VALIDATION_ERROR',
-      subject: 'import file',
-      expectedShape: 'expected either a JSON array of jobs or an export object with jobs and optional runs',
-    }) as { jobs?: unknown[]; runs?: unknown[] } | unknown[];
-    const importJobs = Array.isArray(data) ? data : data.jobs;
-    const importRuns = Array.isArray(data) ? undefined : data.runs;
-    print(await client().importJobs(Array.isArray(importJobs) ? importJobs : [], { fileBaseDir: dirname(filePath), runs: importRuns }));
-  } catch (err) { handleError(err); }
-});
+share.command('import <file>')
+  .description('Import jobs from a crontick export file (schema 1). Jobs get new ids.')
+  .option('--trust-folder', 'Trust the jobs\' working directories in Claude without asking (when not trusted yet)')
+  .action(async (file: string, opts) => {
+    try {
+      const filePath = resolve(process.cwd(), file);
+      const data = readJsonFile(filePath, {
+        errorCode: 'VALIDATION_ERROR',
+        subject: 'import file',
+        expectedShape: 'expected a crontick export object: {"schema": 1, "jobs": [...]}',
+      });
+      const c = client();
+      print(await withTrustPrompt(
+        (trustFolder) => c.importJobs(data, { fileBaseDir: dirname(filePath), trustFolder }),
+        { trustFolder: booleanOption(opts.trustFolder), io: terminalTrustPromptIo() },
+      ));
+    } catch (err) { handleError(err); }
+  });
 
 // ── info ─────────────────────────────────────────────────────────────────────
 

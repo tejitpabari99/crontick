@@ -366,27 +366,34 @@ export function createMcpServer(): McpServer {
     'crontick_export',
     {
       description:
-        'Export all job definitions as a JSON object. Use this to back up or migrate jobs. Set includeRuns to also include run history (the mitigation for retention\'s hard-delete of old runs).',
+        'Export job definitions as a crontick export file ({ schema: 1, exportedAt, crontickVersion, jobs }). Jobs only: no run history, and job ids are omitted (importing assigns new ids). Use this to back up or migrate jobs. Set onlyJobs (ids or aliases) to export a subset; an unknown entry fails the whole export with JOB_NOT_FOUND.',
       inputSchema: withVerbose({
-        includeRuns: z.boolean().optional(),
+        onlyJobs: z.array(z.string()).optional().describe('Ids or aliases of the jobs to export (default: all jobs)'),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.exportJobs({ includeRuns: args.includeRuns })),
+    async (args) => toolWrap(args, (client) => client.exportJobs({ onlyJobs: args.onlyJobs })),
   );
 
   server.registerTool(
     'crontick_import',
     {
       description:
-        'Import job definitions from a JSON array. Jobs are upserted (existing jobs with the same ID are updated), each import persisting recurring jobs that execute AI prompts on the user\'s machine -- confirm the imported job definitions with the user before calling. An optional runs array (as produced by crontick_export with includeRuns) is restored archivally: no execution, no scheduler interaction.',
+        'Import jobs from a crontick export file (pass the object returned by crontick_export: schema 1 plus jobs). The whole file is validated first and a bad file imports nothing. Every job gets a new id; an alias already in use is renamed with a -2, -3, ... suffix (reported as renamedFrom); existing jobs are never overwritten and run history is never imported. Each import persists recurring jobs that execute AI prompts on the user\'s machine -- confirm the imported job definitions with the user before calling. Claude jobs in a folder Claude does not trust yet fail with TRUST_REQUIRED: ask the user, then call again with trustFolder: true.',
       inputSchema: withVerbose({
+        schema: z.number().describe('Export format version; must be 1'),
         jobs: z.array(z.unknown()),
-        runs: z.array(z.unknown()).optional(),
+        exportedAt: z.string().optional(),
+        crontickVersion: z.string().optional(),
+        trustFolder: TRUST_FOLDER_INPUT,
       }),
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.importJobs(args.jobs, { runs: args.runs })),
+    async (args) => {
+      const { trustFolder, verbose: _verbose, ...file } = args;
+      void _verbose;
+      return toolWrap(args, (client) => client.importJobs(file, { trustFolder }));
+    },
   );
 
   server.registerTool(

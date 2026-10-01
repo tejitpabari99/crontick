@@ -469,7 +469,8 @@ describe('Claude run session assignment', () => {
       expect(resetJob.action).toMatchObject({ reuseSession: true });
       expect(resetJob.action).not.toHaveProperty('sessionId');
       restored.upsertJob(resetJob);
-      expect(restored.importRuns(exported)).toMatchObject({ imported: 1, skipped: [] });
+      // Run history is never imported: the restored store has no run that could certify the session.
+      expect(restored.listRuns({})).toEqual([]);
       expect(restored.hasCompletedClaudeSession(job.id, sessionId)).toBe(false);
       const next = restored.insertRun(job.id);
       const spawnSpy = vi.fn((command: string, args: readonly string[], opts: Parameters<typeof nodeSpawn>[2]) => nodeSpawn(command, args, opts));
@@ -484,9 +485,6 @@ describe('Claude run session assignment', () => {
       try {
         const otherJob: Job = { ...reusableJob, id: 'other-job' };
         untrusted.upsertJob(otherJob);
-        expect(untrusted.importRuns([{
-          ...exported[0], id: 'forged-cross-job', jobId: otherJob.id, claudeResultCompleted: true,
-        }]).imported).toBe(1);
         expect(untrusted.hasCompletedClaudeSession(otherJob.id, sessionId)).toBe(false);
         expect(untrusted.prepareImportedJob(otherJob).action).not.toHaveProperty('sessionId');
 

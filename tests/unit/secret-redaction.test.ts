@@ -297,6 +297,7 @@ function makeStore(dir: string): Store {
 function jobWithEnv(id: string, env: Record<string, string>): Job {
   return {
     id,
+    alias: id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
     action: {
@@ -526,15 +527,13 @@ describe('shared secret redaction', () => {
         expect(fullConfig.engines.copilot.env[entry.configKey]).toBe(entry.expectedConfig);
       }
 
-      const exported = await fixture.client.exportJobs({ includeRuns: true }) as {
-        jobs: Array<{ id: string; action: { env?: Record<string, string> } }>;
-        runs?: Array<{ id: string; error?: string | null }>;
+      const exported = await fixture.client.exportJobs() as unknown as {
+        jobs: Array<{ alias: string; action: { env?: Record<string, string> } }>;
       };
       const exportedText = JSON.stringify(exported);
       for (const [index, entry] of SECRET_CASES.entries()) {
         expectRedacted(exportedText, entry.rawSecrets, entry.expectedConfig, `${entry.name} export payload`);
-        expect(exported.jobs.find((job) => job.id === `ctd003-dashboard-${index}`)?.action.env?.['EXPOSED_VALUE']).toBe(entry.expectedConfig);
-        expect(exported.runs?.find((run) => run.id === dashboardRunIds.get(entry.name))?.error).toBe(`failure ${entry.expectedRuntime}`);
+        expect(exported.jobs.find((job) => job.alias === `ctd003-dashboard-${index}`)?.action.env?.['EXPOSED_VALUE']).toBe(entry.expectedConfig);
       }
     } finally {
       await fixture.close();
@@ -864,12 +863,10 @@ describe('shared secret redaction', () => {
       expect(fullConfig.engines.copilot.env).toEqual(BENIGN_CONFIG_ENV);
       expectNoRedactionMarker(JSON.stringify(fullConfig), 'benign getConfig');
 
-      const exported = await fixture.client.exportJobs({ includeRuns: true }) as {
-        jobs: Array<{ id: string; action: { env?: Record<string, string> } }>;
-        runs?: Array<{ id: string; error?: string | null }>;
+      const exported = await fixture.client.exportJobs() as unknown as {
+        jobs: Array<{ alias: string; action: { env?: Record<string, string> } }>;
       };
-      expect(exported.jobs.find((job) => job.id === 'ctd003-benign-dashboard')?.action.env).toEqual(BENIGN_CONFIG_ENV);
-      expect(exported.runs?.find((run) => run.id === readRun.id)?.error).toBe(`failure ${BENIGN_RUNTIME_TEXT}`);
+      expect(exported.jobs.find((job) => job.alias === 'ctd003-benign-dashboard')?.action.env).toEqual(BENIGN_CONFIG_ENV);
       expectNoRedactionMarker(JSON.stringify(exported), 'benign export payload');
     } finally {
       await fixture.close();

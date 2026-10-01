@@ -823,49 +823,40 @@ describe('MCP server — full contract', () => {
 
   // ── Admin tools ──────────────────────────────────────────────────────────────
 
-  it('crontick_export returns jobs array', async () => {
+  it('crontick_export returns a schema 1 jobs-only file', async () => {
     const { json, isError } = await callTool(client, 'crontick_export');
     expect(isError).toBe(false);
-    expect(Array.isArray((json as { jobs: unknown[] }).jobs)).toBe(true);
-    // includeRuns defaults to off -- keeps the common export small.
+    expect(json).toMatchObject({ schema: 1, jobs: expect.any(Array) });
     expect((json as { runs?: unknown }).runs).toBeUndefined();
   });
 
-  it('L7: crontick_export includeRuns and crontick_import round-trip run history', async () => {
-    const jobId = 'mcp-export-runs-job';
-    const created = await callTool(client, 'crontick_job_create', {
+  it('crontick_export onlyJobs filters and crontick_import round-trips with new ids and renamed aliases', async () => {
+    const jobId = 'mcp-export-roundtrip-job';
+    await callTool(client, 'crontick_job_create', {
       alias: jobId,
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: { kind: 'prompt', prompt: 'process.exit(0)', args: [], reuseSession: false },
     });
-    const createdId = (created.json as { id: string }).id;
-    await callTool(client, 'crontick_job_run_now', { id: jobId });
-    await new Promise((resolve) => setTimeout(resolve, 2000)); // let the exec job finish
-
-    const { json: exportJson, isError: exportErr } = await callTool(client, 'crontick_export', { includeRuns: true });
+    const { json: exportJson, isError: exportErr } = await callTool(client, 'crontick_export', { onlyJobs: [jobId] });
     expect(exportErr).toBe(false);
-    const exported = exportJson as { jobs: Array<{ id: string; alias?: string }>; runs: Array<{ id: string; jobId: string }> };
-    expect(exported.runs.some((r) => r.jobId === createdId)).toBe(true);
+    const exported = exportJson as { schema: number; jobs: Array<{ alias?: string; id?: string }> };
+    expect(exported.jobs.map((j) => j.alias)).toEqual([jobId]);
+    expect(exported.jobs[0]).not.toHaveProperty('id');
 
-    // Delete the job (job history rows are untouched by job delete -- that's
-    // exactly the retention gap L7 exists to mitigate), then restore both the
-    // job and its run history from the export -- proving the wire format
-    // export produces is exactly what import consumes, end to end.
-    await callTool(client, 'crontick_job_delete', { id: jobId });
-    const { json: importJson, isError: importErr } = await callTool(client, 'crontick_import', {
-      jobs: exported.jobs.filter((j) => j.id === createdId),
-      runs: exported.runs,
-    });
+    const missing = await callTool(client, 'crontick_export', { onlyJobs: [jobId, 'ghost-job'] });
+    expect(missing.isError).toBe(true);
+    expect(missing.text).toContain('ghost-job');
+
+    const { json: importJson, isError: importErr } = await callTool(client, 'crontick_import', exported);
     expect(importErr).toBe(false);
-    expect(importJson as { runsImported?: number; runsSkipped?: unknown[] }).toMatchObject({
-      runsImported: expect.any(Number),
-      runsSkipped: expect.any(Array),
-    });
+    expect(importJson).toMatchObject({ imported: 1, results: [{ alias: `${jobId}-2`, renamedFrom: jobId, ok: true }] });
 
-    const { json: listJson } = await callTool(client, 'crontick_run_list', { jobId });
-    expect((listJson as Array<{ id: string }>).some((r) => exported.runs.some((er) => er.id === r.id))).toBe(true);
+    const bad = await callTool(client, 'crontick_import', { schema: 2, jobs: [] });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toContain('schema');
 
     await callTool(client, 'crontick_job_delete', { id: jobId });
+    await callTool(client, 'crontick_job_delete', { id: `${jobId}-2` });
   }, 10_000);
 
   it('crontick_doctor returns check results', async () => {

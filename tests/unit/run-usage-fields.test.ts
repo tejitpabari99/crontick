@@ -44,11 +44,6 @@ describe('run usage fields', () => {
       });
       expect(record.transcriptPath).toContain(record.sessionId);
       expect(JSON.parse(record.usageJson!)).toEqual({ input_tokens: 10, output_tokens: 5, api_key: '[REDACTED]' });
-      expect(store.importRuns([{ ...record, id: 'imported-usage-run' }])).toMatchObject({ imported: 1, skipped: [] });
-      expect(store.getRun('imported-usage-run')).toMatchObject({
-        costUsd: 0.01, turns: 1, usageJson: record.usageJson,
-        transcriptPath: record.transcriptPath, engineStatus: 'success',
-      });
 
       const raw = job('raw-job', 'test-raw', 'process.exit(0)');
       store.upsertJob(raw);

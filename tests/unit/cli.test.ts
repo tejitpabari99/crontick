@@ -595,35 +595,82 @@ describe('CLI e2e with daemon', () => {
     expect(parseCliObject(withForce.stdout)).toMatchObject({ ok: true, deleted: expect.any(Number) });
   });
 
-  it('share export/import handles stdout JSON, --out, include-runs, and BOM-prefixed imports', async () => {
+  it('share export/import: schema 1 jobs only, --out .json suffix, --only-jobs, BOM-prefixed import with new ids', async () => {
     const { file, id } = writeJobFile(dir, 'import-export-job');
     expect(cli(['jobs', 'new', '--file', file], env()).status).toBe(0);
     const runNow = cli(['jobs', 'run-now', 'import-export-job'], env());
-    const { runId } = parseCliObject<{ runId: string }>(runNow.stdout);
+    expect(runNow.status, runNow.stderr).toBe(0);
     await new Promise((resolve) => setTimeout(resolve, 1500));
     const exported = cli(['share', 'export'], env());
     expect(exported.status, exported.stderr).toBe(0);
-    const data = JSON.parse(exported.stdout) as { jobs: Array<{ id: string; alias: string }>; runs?: unknown[] };
+    const data = JSON.parse(exported.stdout) as { schema: number; exportedAt: string; crontickVersion: string; jobs: Array<{ id?: string; alias: string }>; runs?: unknown[] };
+    expect(data).toMatchObject({ schema: 1, exportedAt: expect.any(String), crontickVersion: expect.any(String) });
     expect(data.jobs.some((job) => job.alias === 'import-export-job')).toBe(true);
+    expect(data.jobs.every((job) => job.id === undefined)).toBe(true);
     expect(data.runs).toBeUndefined();
-    const outFile = join(dir, 'export-out.json');
-    const toFile = cli(['share', 'export', '--out', outFile], env());
-    expect(toFile.status, toFile.stderr).toBe(0);
-    expect(toFile.stdout.trim()).toBe(`Exported to ${outFile}`);
-    expect(JSON.parse(readFileSync(outFile, 'utf-8')).jobs).toEqual(expect.any(Array));
 
-    const withRuns = cli(['share', 'export', '--include-runs'], env());
-    const withRunsData = JSON.parse(withRuns.stdout) as { runs: Array<{ id: string; jobId: string }> };
-    expect(withRunsData.runs.some((run) => run.id === runId && run.jobId === id)).toBe(true);
-    expect(cli(['jobs', 'delete', 'import-export-job'], env()).status).toBe(0);
+    // --out: ".json" appended unless already present (case-insensitive); absolute path printed.
+    const plain = join(dir, 'export-out');
+    const toFile = cli(['share', 'export', '--out', plain], env());
+    expect(toFile.status, toFile.stderr).toBe(0);
+    expect(toFile.stdout.trim()).toBe(`Exported ${data.jobs.length} job(s) to ${plain}.json`);
+    expect(JSON.parse(readFileSync(`${plain}.json`, 'utf-8')).jobs).toEqual(expect.any(Array));
+    const txt = cli(['share', 'export', '--out', join(dir, 'try_me.txt')], env());
+    expect(txt.stdout.trim()).toBe(`Exported ${data.jobs.length} job(s) to ${join(dir, 'try_me.txt')}.json`);
+    const upper = cli(['share', 'export', '--out', join(dir, 'KEEP.JSON')], env());
+    expect(upper.stdout.trim()).toBe(`Exported ${data.jobs.length} job(s) to ${join(dir, 'KEEP.JSON')}`);
+
+    // --only-jobs filters by id or alias; a miss reports every unknown entry and writes nothing.
+    const only = cli(['share', 'export', '--only-jobs', `${id},import-export-job`], env());
+    expect((JSON.parse(only.stdout) as { jobs: unknown[] }).jobs).toHaveLength(1);
+    const outMissing = join(dir, 'never-written');
+    const missing = cli(['share', 'export', '--only-jobs', 'import-export-job,ghost-1,ghost-2', '--out', outMissing], env());
+    expectCleanError(missing, 'JOB_NOT_FOUND');
+    expect(missing.stderr).toContain('ghost-1, ghost-2');
+    expect(existsSync(`${outMissing}.json`)).toBe(false);
+    expect(cli(['share', 'export', '--include-runs'], env()).stderr).toContain("unknown option '--include-runs'");
+
+    // Import: a collision with the live job is suffixed, ids are new, runs are never imported.
     const importFile = join(dir, 'import-bom.json');
-    writeFileSync(importFile, `\uFEFF${withRuns.stdout}`, 'utf-8');
+    writeFileSync(importFile, `\uFEFF${exported.stdout}`, 'utf-8');
+    const jobsBefore = parseCliTable(cli(['jobs', 'list'], env()).stdout).length;
     const imported = cli(['share', 'import', importFile], env());
     expect(imported.status, imported.stderr).toBe(0);
-    expect(parseCliObject(imported.stdout).imported).toBe(1);
-    const listRuns = cli(['runs', 'list', '--job', 'import-export-job', '--json'], env());
-    expect((JSON.parse(listRuns.stdout) as Array<{ id: string }>).some((run) => run.id === runId)).toBe(true);
-  }, 10_000);
+    expect(parseCliObject(imported.stdout).imported).toBe(data.jobs.length);
+    expect(imported.stdout).toContain('"renamedFrom":"import-export-job"');
+    expect(parseCliTable(cli(['jobs', 'list'], env()).stdout).length).toBe(jobsBefore + data.jobs.length);
+    expect(cli(['jobs', 'get', 'import-export-job-2'], env()).status).toBe(0);
+    expect(cli(['jobs', 'get', 'import-export-job'], env()).stdout).toContain(id);
+    const runsOfCopy = cli(['runs', 'list', '--job', 'import-export-job-2', '--json'], env());
+    expect(JSON.parse(runsOfCopy.stdout)).toEqual([]);
+  }, 15_000);
+
+  it('share import rejects bare arrays, a missing or wrong schema and bad rows, importing nothing', () => {
+    const count = () => parseCliTable(cli(['jobs', 'list'], env()).stdout).length;
+    const before = count();
+    const job = { alias: 'should-not-import', schedule: { kind: 'cron', cron: '0 12 * * *' }, action: { kind: 'prompt', prompt: 'x' } };
+    const bad = (name: string, body: unknown): string => {
+      const f = join(dir, `${name}.json`);
+      writeFileSync(f, JSON.stringify(body), 'utf-8');
+      return f;
+    };
+    let result = cli(['share', 'import', bad('bare-array', [job])], env());
+    expectCleanError(result, 'VALIDATION_ERROR');
+    expect(result.stderr).toContain('bare array');
+    result = cli(['share', 'import', bad('no-schema', { jobs: [job] })], env());
+    expectCleanError(result, 'VALIDATION_ERROR');
+    expect(result.stderr).toContain('schema');
+    result = cli(['share', 'import', bad('schema-2', { schema: 2, jobs: [job] })], env());
+    expectCleanError(result, 'VALIDATION_ERROR');
+    result = cli(['share', 'import', bad('bad-row', { schema: 1, jobs: [job, { ...job, alias: 'second', schedule: { kind: 'cron' } }] })], env());
+    expectCleanError(result, 'VALIDATION_ERROR');
+    expect(result.stderr).toContain('jobs.1.schedule');
+    expect(count()).toBe(before);
+    const missingDir = cli(['share', 'import', bad('bad-cwd', { schema: 1, jobs: [{ ...job, action: { kind: 'prompt', prompt: 'x', cwd: '/definitely/not/here' } }, { ...job, alias: 'good-one' }] })], env());
+    expect(missingDir.status, missingDir.stderr).toBe(0);
+    expect(parseCliObject(missingDir.stdout).imported).toBe(1);
+    expect(missingDir.stdout).toContain('INVALID_CWD');
+  });
 
   it('share import and jobs new/update --file report JSON parse errors without mutation', () => {
     const badImport = join(dir, 'import-bad.json');
@@ -631,9 +678,9 @@ describe('CLI e2e with daemon', () => {
     let result = cli(['share', 'import', badImport], env());
     expectCleanError(result, 'VALIDATION_ERROR');
     expect(result.stderr).toContain(badImport);
-    expect(result.stderr).toContain('expected either a JSON array of jobs or an export object with jobs and optional runs');
+    expect(result.stderr).toContain('expected a crontick export object');
     const eofImport = join(dir, 'import-eof.json');
-    const eofContents = '{ "jobs": [ ';
+    const eofContents = '{ "schema": 1, "jobs": [ ';
     writeFileSync(eofImport, eofContents, 'utf-8');
     result = cli(['share', 'import', eofImport], env());
     expectCleanError(result, 'VALIDATION_ERROR');

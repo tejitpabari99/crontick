@@ -178,7 +178,10 @@ describe('Daemon HTTP API', () => {
       runs: [{ id: 'forged-import-run', jobId: claudeJobId, startedAt: Date.now(), status: 'success', sessionId, claudeResultCompleted: true }],
     });
     expect(response.status).toBe(200);
-    expect(response.data).toMatchObject({ imported: 2, runsImported: 1 });
+    expect(response.data).toMatchObject({ imported: 2 });
+    // Run history is never imported, even when a (legacy) payload carries it.
+    expect(response.data).not.toHaveProperty('runsImported');
+    expect((await apiCall(port, 'GET', '/api/runs/forged-import-run')).status).toBe(404);
     const claude = await apiCall(port, 'GET', `/api/jobs/${claudeJobId}`);
     const raw = await apiCall(port, 'GET', `/api/jobs/${rawJobId}`);
     expect((claude.data as { action: Record<string, unknown> }).action).toMatchObject({ reuseSession: true });
@@ -462,39 +465,38 @@ describe('Daemon HTTP API', () => {
     });
   });
 
-  // Major 2: POST /api/import's optional `runs` array used to be cast
-  // straight to Run[] with no validation, so one malformed row threw
-  // mid-loop and aborted the whole import (rows already inserted stayed,
-  // the rest were lost) behind a 500. It must now validate each row, skip
-  // bad ones individually, and still return 200 with the valid rows applied.
-  it('POST /api/import validates and skips malformed runs individually instead of failing the whole import behind a 500', async () => {
-    const importedJobId = '11111111-1111-4111-8111-111111111111';
-    const importJob = {
-      id: importedJobId,
-      alias: 'imported-runs-job',
-      schedule: { kind: 'cron', cron: '0 * * * *' },
-      action: { kind: 'prompt', prompt: 'noop', args: [], reuseSession: false },
-    };
-    const { status, data } = await apiCall(port, 'POST', '/api/import', {
-      jobs: [importJob],
-      runs: [
-        { id: 'api-run-ok', jobId: importedJobId, startedAt: 1000, status: 'success', outputTruncated: false },
-        // Missing startedAt: the exact shape that used to throw mid-loop and
-        // abort the entire import (partial data + a 500), non-atomically.
-        { id: 'api-run-bad', jobId: importedJobId, status: 'success', outputTruncated: false },
-        // Out-of-union status: previously persisted verbatim, no validation.
-        { id: 'api-run-bad-status', jobId: importedJobId, startedAt: 1000, status: 'not-a-real-status', outputTruncated: false },
-      ],
-    });
+  it('POST /api/import never overwrites: alias collisions (live or within the file) get -2, -3 and report renamedFrom', async () => {
+    const mk = (alias: string) => ({ alias, schedule: { kind: 'cron', cron: '0 * * * *' }, action: { kind: 'prompt', prompt: 'noop', args: [], reuseSession: false } });
+    const live = await apiCall(port, 'GET', '/api/jobs/api-test-job');
+    const { status, data } = await apiCall(port, 'POST', '/api/import', { jobs: [mk('api-test-job'), mk('api-test-job'), mk('fresh-import-alias'), mk('fresh-import-alias')] });
+    expect(status).toBe(200);
+    const body = data as { imported: number; results: Array<{ id: string; alias: string; ok: boolean; renamedFrom?: string }> };
+    expect(body.imported).toBe(4);
+    expect(body.results.map((r) => [r.alias, r.renamedFrom])).toEqual([
+      ['api-test-job-2', 'api-test-job'],
+      ['api-test-job-3', 'api-test-job'],
+      ['fresh-import-alias', undefined],
+      ['fresh-import-alias-2', 'fresh-import-alias'],
+    ]);
+    expect(new Set(body.results.map((r) => r.id)).size).toBe(4);
+    const still = await apiCall(port, 'GET', '/api/jobs/api-test-job');
+    expect((still.data as { id: string }).id).toBe((live.data as { id: string }).id);
+  });
 
-    expect(status, JSON.stringify(data)).toBe(200);
-    const body = data as { runsImported: number; runsSkipped: Array<{ id: string; error: string }> };
-    expect(body.runsImported).toBe(1);
-    expect(body.runsSkipped.map((r) => r.id).sort()).toEqual(['api-run-bad', 'api-run-bad-status']);
+  it('GET /api/export is schema 1 without ids or runs; ?jobs= filters by id or alias and reports every miss', async () => {
+    const all = await apiCall(port, 'GET', '/api/export');
+    const body = all.data as { schema: number; exportedAt: string; crontickVersion: string; jobs: Array<Record<string, unknown>>; runs?: unknown };
+    expect(body).toMatchObject({ schema: 1, exportedAt: expect.any(String), crontickVersion: expect.any(String) });
+    expect(body).not.toHaveProperty('runs');
+    expect(body.jobs.every((job) => !('id' in job))).toBe(true);
 
-    const run = await apiCall(port, 'GET', '/api/runs/api-run-ok');
-    expect(run.status).toBe(200);
-    expect(await apiCall(port, 'GET', '/api/runs/api-run-bad')).toMatchObject({ status: 404 });
+    const one = await apiCall(port, 'GET', '/api/export?jobs=api-test-job');
+    expect((one.data as { jobs: Array<{ alias: string }> }).jobs.map((job) => job.alias)).toEqual(['api-test-job']);
+
+    const missing = await apiCall(port, 'GET', '/api/export?jobs=api-test-job,nope-1,nope-2');
+    expect(missing.status).toBe(404);
+    expect((missing.data as { error: { code: string; message: string } }).error.code).toBe('JOB_NOT_FOUND');
+    expect((missing.data as { error: { message: string } }).error.message).toContain('nope-1, nope-2');
   });
 
   // ── Run logs ───────────────────────────────────────────────────────────────────

@@ -2,9 +2,10 @@
 // See docs/implementation/daemon.md for the full route table.
 import http from 'node:http';
 import { createReadStream } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { URL } from 'node:url';
 import type { Store } from './store.js';
-import type { Run, RunStatus } from './store.js';
+import type { RunStatus } from './store.js';
 import { LOG_SOURCES, type LogSource } from '../log-source.js';
 import type { Scheduler } from './scheduler.js';
 import type { Runner } from './runner.js';
@@ -435,60 +436,75 @@ async function handleRequest(
 
     // ── Export / Import ───────────────────────────────────────────────────────
     if (method === 'GET' && path === '/api/export') {
-      // L7: run history is opt-in via ?includeRuns=1 to keep the common
-      // (jobs-only) export small; bounded by whatever retention has left.
-      const includeRuns = url.searchParams.get('includeRuns') === '1';
-      const payload: { jobs: ReturnType<Store['listJobs']>; runs?: Run[] } = { jobs: ctx.store.listJobs() };
-      if (includeRuns) payload.runs = ctx.store.listRuns({});
-      return sendJson(res, 200, redactValue(payload));
+      // Share format, schema 1: jobs only (no run history), ids omitted so every
+      // import mints new ones. `?jobs=a,b` limits the export to those ids or
+      // aliases, resolved here; any unknown one fails the whole export.
+      const requested = url.searchParams.getAll('jobs').flatMap((v) => v.split(',')).map((v) => v.trim()).filter(Boolean);
+      let selected = ctx.store.listJobs();
+      if (requested.length > 0) {
+        const missing = requested.filter((idOrAlias) => !ctx.store.getJob(idOrAlias));
+        if (missing.length > 0) {
+          return sendError(res, 404, 'JOB_NOT_FOUND', `Job(s) not found (id or alias): ${missing.join(', ')}`, { missing });
+        }
+        const seen = new Set<string>();
+        selected = [];
+        for (const idOrAlias of requested) {
+          const found = ctx.store.getJob(idOrAlias)!;
+          if (!seen.has(found.id)) {
+            seen.add(found.id);
+            selected.push(found);
+          }
+        }
+      }
+      const jobs = selected.map(({ id: _id, ...rest }) => (void _id, rest));
+      return sendJson(res, 200, redactValue({ schema: 1, exportedAt: new Date().toISOString(), crontickVersion: VERSION, jobs }));
     }
 
     if (method === 'POST' && path === '/api/import') {
+      // The client validated the whole file first; every row here is a job that
+      // already went through normalization with a fresh GUID. Imports never
+      // overwrite: an alias held by a live job (or by an earlier row of the same
+      // file) gets the next free `-2`, `-3`, ... suffix and the row reports
+      // `renamedFrom`.
       const body = await readBody(req);
       const jobs = Array.isArray(body?.jobs) ? body.jobs : [];
-      const results: Array<{ id: string; ok: boolean; error?: string }> = [];
+      const results: Array<{ id: string; alias?: string; ok: boolean; renamedFrom?: string; error?: string }> = [];
+      const usedAliases = new Set<string>();
       for (const raw of jobs) {
         const parsed = JobSchema.safeParse(raw);
-        if (parsed.success) {
-          let job = applyConfigDefaults(parsed.data);
-          // Import is a restore/merge operation, not a strict create: if this
-          // row's id-or-alias already matches a currently-live job (e.g.
-          // re-importing the same backup), overwrite that job in place --
-          // keeping ITS GUID id -- rather than colliding on the
-          // alias-uniqueness constraint (see store.ts) with a brand-new GUID.
-          // This mirrors POST /api/jobs's --force semantics and keeps
-          // re-import idempotent.
-          const existing = (job.alias ? ctx.store.getJob(job.alias) : undefined) ?? ctx.store.getJob(job.id);
-          if (existing) job = { ...job, id: existing.id };
-          try {
-            job = ctx.store.prepareImportedJob(job);
-            // Best-effort: the alias-uniqueness DB index (see store.ts) can
-            // still reject an import row whose alias collides with a
-            // DIFFERENT already-live job; skip that one row rather than
-            // failing the whole import.
-            ctx.store.upsertJob(job);
-            ctx.scheduler.schedule(job);
-            results.push({ id: job.id, ok: true });
-          } catch (err) {
-            results.push({ id: job.id, ok: false, error: err instanceof Error ? err.message : String(err) });
-          }
-        } else {
-          results.push({ id: String(raw?.id ?? '?'), ok: false, error: 'validation failed' });
+        if (!parsed.success) {
+          results.push({ id: String((raw as { id?: unknown })?.id ?? '?'), ok: false, error: 'validation failed' });
+          continue;
+        }
+        let job = applyConfigDefaults(parsed.data);
+        // Never reuse an id that is live (ids are fresh GUIDs, so this is defensive).
+        if (ctx.store.getJob(job.id)) job = { ...job, id: randomUUID() };
+        const taken = (candidate: string): boolean => usedAliases.has(candidate) || ctx.store.getJob(candidate) !== undefined;
+        let renamedFrom: string | undefined;
+        let alias = job.alias;
+        if (alias === undefined) {
+          alias = generateAlias(taken);
+        } else if (taken(alias)) {
+          renamedFrom = alias;
+          let n = 2;
+          while (taken(`${alias}-${n}`)) n++;
+          alias = `${alias}-${n}`;
+        }
+        job = { ...job, alias };
+        try {
+          const schedule = ctx.scheduler.validateSchedule(job.schedule);
+          if (!schedule.ok) throw new CrontickError('VALIDATION_ERROR', `Invalid schedule: ${schedule.error ?? 'unknown'}`);
+          job = ctx.store.prepareImportedJob(job);
+          ctx.store.upsertJob(job);
+          ctx.scheduler.schedule(job);
+          ctx.store.recordTick(job.id);
+          usedAliases.add(alias);
+          results.push({ id: job.id, alias, ok: true, ...(renamedFrom ? { renamedFrom } : {}) });
+        } catch (err) {
+          results.push({ id: job.id, alias, ok: false, error: err instanceof Error ? err.message : String(err) });
         }
       }
-      // L7: optional `runs` array (as produced by GET /api/export?includeRuns=1)
-      // is restored archivally -- no execution, no scheduler interaction.
-      // Passed through unvalidated (`unknown[]`, not cast to `Run[]`) --
-      // Store.importRuns() validates each row itself (see RunImportSchema)
-      // and skips malformed rows individually, the same way the jobs loop
-      // above does, instead of trusting the wire payload's shape.
-      const runs = Array.isArray(body?.runs) ? body.runs : undefined;
-      const runsResult = runs ? ctx.store.importRuns(runs) : undefined;
-      return sendJson(res, 200, {
-        imported: results.filter((r) => r.ok).length,
-        results,
-        ...(runsResult ? { runsImported: runsResult.imported, runsSkipped: runsResult.skipped } : {}),
-      });
+      return sendJson(res, 200, { imported: results.filter((r) => r.ok).length, results });
     }
 
     // ── Dashboard ─────────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { Runner, truncationMarker, ADOPTED_RUN_EXITED_MESSAGE, truncateToUtf8Boundary } from '../../src/daemon/runner.js';
 import { DEFAULT_MAX_OUTPUT_BYTES_PER_RUN } from '../../src/constants/retention.js';
 import { isProcessAlive } from '../../src/process-liveness.js';
-import { Store, RunImportSchema } from '../../src/daemon/store.js';
+import { Store } from '../../src/daemon/store.js';
 import type { Job } from '../../src/schemas/job.js';
 import { JobSchema } from '../../src/schemas/job.js';
 import { FAKE_ENGINE_CONFIG, FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
@@ -246,7 +246,6 @@ describe('Runner', () => {
 
     expect(store.getRun(run2.id)).toMatchObject({ status: 'skipped', error: 'overlap=skip: another run is already active' });
     expect(store.getRun(run2.id)?.pid).toBeUndefined();
-    expect(RunImportSchema.safeParse(store.getRun(run2.id)).success).toBe(true);
     expect(store.listRuns({ jobId: job.id, status: 'skipped' }).map((run) => run.id)).toContain(run2.id);
 
     // Cancel first run to clean up

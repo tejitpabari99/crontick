@@ -25,8 +25,10 @@ import { restartDaemon, startDaemon, stopDaemon, type DaemonRestartResult, type 
 import { ScheduleSchema, type Job, type Schedule } from './schemas/job.js';
 import {
   buildJobFromCreateOptions,
+  ExportFileSchema,
   normalizeJobInput,
   normalizeJobPatch,
+  type ExportFile,
   type JobCreateCliOptions,
   type JobCreateInput,
   type JobPatchInput,
@@ -100,7 +102,13 @@ function defaultMcpScript(): string {
   return resolvePath(distDir, 'mcp', 'index.js');
 }
 
-export type { RunOutput };
+export type { RunOutput, ExportFile };
+
+/** Result of `importJobs`: one row per job; `renamedFrom` is set when the alias was suffixed to avoid a collision. */
+export interface ImportResult {
+  imported: number;
+  results: Array<{ id: string; alias?: string; ok: boolean; renamedFrom?: string; error?: string }>;
+}
 
 export interface StatsSummary {
   totalJobs: number;
@@ -361,13 +369,53 @@ export class CrontickClient {
     return this.request<RunOutput>('GET', `/api/runs/${encodeURIComponent(runId)}/output`);
   }
 
-  async exportJobs(options: { includeRuns?: boolean } = {}): Promise<{ jobs: Job[]; runs?: unknown[] }> {
-    return this.request('GET', `/api/export${options.includeRuns ? '?includeRuns=1' : ''}`);
+  /**
+   * Export jobs as a share file (`schema: 1`, jobs only, ids omitted). `onlyJobs`
+   * (ids or aliases) limits the export; any unknown entry fails with
+   * JOB_NOT_FOUND listing every miss.
+   */
+  async exportJobs(options: { onlyJobs?: string[] } = {}): Promise<ExportFile> {
+    const params = new URLSearchParams();
+    if (options.onlyJobs && options.onlyJobs.length > 0) params.set('jobs', options.onlyJobs.join(','));
+    const qs = params.toString();
+    return this.request<ExportFile>('GET', `/api/export${qs ? `?${qs}` : ''}`);
   }
 
-  async importJobs(jobs: unknown[], options: NormalizeJobInputOptions & { runs?: unknown[] } = {}): Promise<unknown> {
-    const normalized = jobs.map((job) => normalizeJobInput(job as JobCreateInput, this.normalizeOptions(options)));
-    return this.request('POST', '/api/import', { jobs: normalized, runs: options.runs });
+  /**
+   * Import jobs from a share file (`schema: 1`). The whole file is validated
+   * first (a bad file imports nothing); every job gets a new GUID and an alias
+   * collision gets a `-2`, `-3`, ... suffix (`renamedFrom` in the result row).
+   * A job whose working directory does not exist fails on its own row; Claude
+   * folder trust is checked once per distinct folder (see `trustFolder`).
+   */
+  async importJobs(file: unknown, options: NormalizeJobInputOptions & { trustFolder?: boolean } = {}): Promise<ImportResult> {
+    const { trustFolder, ...normalizeInputOptions } = options;
+    const parsed = ExportFileSchema.safeParse(file);
+    if (!parsed.success) throw importFileError(file, parsed.error);
+    const normalizeOptions = this.normalizeOptions(normalizeInputOptions);
+    const failures: ImportResult['results'] = [];
+    const jobs: Job[] = [];
+    parsed.data.jobs.forEach((entry, index) => {
+      const { id: _ignoredId, ...input } = entry;
+      void _ignoredId;
+      try {
+        jobs.push(normalizeJobInput(input as JobCreateInput, normalizeOptions));
+      } catch (err) {
+        if (err instanceof CrontickError && err.code === 'INVALID_CWD') {
+          failures.push({ id: '?', alias: entry.alias, ok: false, error: `${err.code}: jobs.${index}: ${err.message}` });
+          return;
+        }
+        if (err instanceof CrontickError) {
+          throw new CrontickError(err.code, `Invalid import file: jobs.${index}: ${err.message}`, err.details);
+        }
+        throw err;
+      }
+    });
+    this.ensureFoldersTrusted(jobs, trustFolder === true);
+    const applied = jobs.length > 0
+      ? await this.request<ImportResult>('POST', '/api/import', { jobs })
+      : { imported: 0, results: [] };
+    return { imported: applied.imported, results: [...applied.results, ...failures] };
   }
 
   async validateSchedule(schedule: Schedule): Promise<unknown> {
@@ -772,6 +820,17 @@ export function createClient(options?: CrontickClientOptions): CrontickClient {
 /** Fixed 100 ms backoff between demand-start and first retry — enough for port file flush. */
 async function boundedBackoff(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 100));
+}
+
+/** Maps a failed export-file parse to a VALIDATION_ERROR naming the offending path (nothing is imported). */
+function importFileError(file: unknown, error: { issues: Array<{ path: PropertyKey[]; message: string }> }): CrontickError {
+  const problems = error.issues.slice(0, 10).map((issue) => `${issue.path.length > 0 ? issue.path.map(String).join('.') : '<root>'}: ${issue.message}`);
+  const hint = Array.isArray(file)
+    ? ' A bare array is not supported; use a file written by `crontick share export` (an object with "schema": 1 and "jobs").'
+    : typeof file === 'object' && file !== null && !('schema' in file)
+      ? ' The file has no "schema" field; use a file written by `crontick share export` (schema 1).'
+      : '';
+  return new CrontickError('VALIDATION_ERROR', `Invalid import file: ${problems.join('; ')}.${hint} Nothing was imported.`, { issues: problems });
 }
 
 function errorMessage(err: unknown): string {
