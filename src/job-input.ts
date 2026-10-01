@@ -7,6 +7,7 @@
  * - `reuseSession` is cleared when an explicit `sessionId` is already set
  * - Prompt runtime validation (Windows cmd-line length, reserved args) is applied
  */
+import { randomUUID } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { dirname, extname, isAbsolute, resolve } from 'node:path';
 import { TextDecoder } from 'node:util';
@@ -78,7 +79,7 @@ export const JobCreateInputSchema = JobBaseSchema.omit({ action: true }).extend(
 
 export const JobPatchInputSchema = z.object({
   /** Alias is user-editable after creation; `id` (the GUID) is never patchable. */
-  alias: z.string().regex(JOB_ALIAS_PATTERN, 'Job name (alias) must be kebab-case (e.g. "my-job")').optional().describe('Unique kebab-case job name (the CLI --name flag)'),
+  alias: z.string().regex(JOB_ALIAS_PATTERN, 'Job alias must be kebab-case (e.g. "my-job")').optional().describe('Unique kebab-case job alias (set via CLI --name)'),
   description: z.string().optional(),
   enabled: z.boolean().optional(),
   schedule: ScheduleSchema.optional(),
@@ -101,7 +102,7 @@ export interface NormalizeJobInputOptions {
 }
 
 export interface JobCreateCliOptions {
-  /** Explicit job name (stored as `alias`) on create; the only way to name a job. When omitted, one is auto-generated (see generateAlias). Also the only way to rename a job's alias on update. */
+  /** Explicit job alias (CLI `--name`/`-n`) on create; the only way to name a job. When omitted, one is auto-generated (see generateAlias). Also the only way to rename a job's alias on update. */
   alias?: string;
   engineArgs?: string[];
   rawArgs?: string[];
@@ -180,6 +181,7 @@ export const DEFAULT_ALIAS_WORDS: readonly string[] = [
 ];
 
 const MAX_ALIAS_GENERATION_ATTEMPTS = 50;
+const ALIAS_FALLBACK_ATTEMPTS = 5;
 
 export interface GenerateAliasOptions {
   /** Word list to draw the alias prefix from. Defaults to DEFAULT_ALIAS_WORDS. Injectable so tests can control output deterministically. */
@@ -202,9 +204,17 @@ export function generateAlias(isTaken: (candidate: string) => boolean, options: 
     const candidate = `${word}-${suffix}`;
     if (!isTaken(candidate)) return candidate;
   }
+  // Numeric suffixes exhausted: fall back to a short random base36 suffix, which
+  // has a vastly larger space (36^6), before giving up.
+  for (let attempt = 0; attempt < ALIAS_FALLBACK_ATTEMPTS; attempt++) {
+    const word = words[Math.floor(random() * words.length)];
+    const suffix = Number.parseInt(randomUUID().replace(/-/g, '').slice(0, 8), 16).toString(36).padStart(6, '0').slice(-6);
+    const candidate = `${word}-${suffix}`;
+    if (!isTaken(candidate)) return candidate;
+  }
   throw new CrontickError(
     'ALIAS_GENERATION_FAILED',
-    `Could not generate a unique job alias after ${MAX_ALIAS_GENERATION_ATTEMPTS} attempts. Provide an explicit alias.`,
+    `Could not generate a unique job alias after ${MAX_ALIAS_GENERATION_ATTEMPTS + ALIAS_FALLBACK_ATTEMPTS} attempts. Provide an explicit alias.`,
   );
 }
 

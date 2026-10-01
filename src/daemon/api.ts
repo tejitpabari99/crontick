@@ -113,6 +113,7 @@ async function handleRequest(
       // Auto-generate a unique alias when the caller didn't supply one (see
       // generateAlias in job-input.ts): word + random 1-1000, retried on
       // collision against every currently-live job's id AND alias.
+      const autoAlias = job.alias === undefined;
       const alias = job.alias ?? generateAlias((candidate) => ctx.store.getJob(candidate) !== undefined);
       job = { ...job, alias };
       // A job identifier collides if either the (fresh, so this normally only
@@ -129,7 +130,23 @@ async function handleRequest(
       }
       if (!validateJobSchedule(res, ctx.scheduler, job.schedule)) return;
       readEnvFileForAction(job.action);
-      ctx.store.upsertJob(job);
+      // A concurrent create can claim the same auto-generated alias between the
+      // collision check above and this insert; the alias UNIQUE index then
+      // rejects the write. Regenerate and retry (max 3). Explicit aliases never
+      // retry: they surface as JOB_ALREADY_EXISTS.
+      for (let attempt = 0; ; attempt++) {
+        try {
+          ctx.store.upsertJob(job);
+          break;
+        } catch (err) {
+          if (autoAlias && attempt < MAX_ALIAS_RACE_RETRIES && isUniqueConstraintError(err)) {
+            job = { ...job, alias: generateAlias((candidate) => ctx.store.getJob(candidate) !== undefined) };
+            continue;
+          }
+          if (isUniqueConstraintError(err)) return sendDuplicateCreateError(res, job.alias ?? job.id);
+          throw err;
+        }
+      }
       const stored = ctx.store.getJob(job.id) ?? job;
       ctx.scheduler.schedule(stored);
       // L2: seed the missed-fire watermark so a restart computes forward from
@@ -529,13 +546,19 @@ function runFilterParams(url: URL, ctx: ApiContext): { jobIds?: string[]; status
   };
 }
 
+const MAX_ALIAS_RACE_RETRIES = 3;
+
+function isUniqueConstraintError(err: unknown): boolean {
+  return err instanceof Error && /UNIQUE constraint failed/i.test(err.message);
+}
+
 function forceParam(url: URL): boolean {
   const raw = (url.searchParams.get('force') ?? '').toLowerCase();
   return raw === '1' || raw === 'true';
 }
 
 function sendJobNotFoundError(res: http.ServerResponse, idOrAlias: string): void {
-  sendError(res, 404, 'JOB_NOT_FOUND', `Job ${idOrAlias} not found`);
+  sendError(res, 404, 'JOB_NOT_FOUND', `Job ${idOrAlias} not found (id or alias)`);
 }
 
 function sendDuplicateCreateError(res: http.ServerResponse, jobId: string): void {

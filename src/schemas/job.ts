@@ -112,7 +112,7 @@ export const JobBaseSchema = z.object({
    * tried first, falling back to `alias`. When omitted on create, one is
    * auto-generated (see generateAlias in job-input.ts).
    */
-  alias: z.string().regex(JOB_ALIAS_PATTERN, 'Job name (alias) must be kebab-case (e.g. "my-job")').optional().describe('Unique kebab-case job name (the CLI --name flag); auto-generated when omitted'),
+  alias: z.string().regex(JOB_ALIAS_PATTERN, 'Job alias must be kebab-case (e.g. "my-job")').optional().describe('Unique kebab-case job alias (set via CLI --name); auto-generated when omitted'),
   description: z.string().optional(),
   enabled: z.boolean().default(true),
   schedule: ScheduleSchema,

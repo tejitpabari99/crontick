@@ -33,7 +33,7 @@ describe('jobs new help and schedule errors', () => {
     expect(help).toContain('give exactly one of --cron, --every, or --at');
     expect(help).toContain('local timezone unless an offset');
     expect(help).toContain('instead of starting a fresh session each run');
-    expect(help).not.toMatch(/same alias/i);
+    expect(help).toMatch(/same alias/i);
   }));
 
   it('explains all three schedule flags when none is given', () => withHome((home) => {

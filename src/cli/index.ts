@@ -208,7 +208,7 @@ function groupHelp(command: Command): Command {
 
 function commonJobOptions(command: Command): Command {
   return command
-    .option('--name <name>', 'Unique kebab-case job name (auto-generated on create when omitted)')
+    .option('--name <name>', 'Unique kebab-case job alias (auto-generated when omitted)')
     .option('--prompt <text>', 'Prompt text for a prompt action')
     .option('--prompt-file <path>', 'UTF-8 .txt file to read into the prompt')
     .option('--cron <expr>', 'Schedule (one of --cron/--every/--at): cron expression, e.g. "0 9 * * *"')
@@ -404,9 +404,9 @@ program
 // ── jobs ─────────────────────────────────────────────────────────────────────
 const jobs = groupHelp(program.command('jobs').description('Create, inspect, and manage scheduled jobs'));
 
-commonJobOptions(jobs.command('new [engineArgs...]').description('Create a new job (name auto-generated when --name is omitted)'))
+commonJobOptions(jobs.command('new [engineArgs...]').description('Create a new job (alias auto-generated when --name is omitted)'))
   .allowUnknownOption()
-  .option('--force', 'Replace an existing job when the same name already exists')
+  .option('--force', 'Replace an existing job when the same alias already exists')
   .addHelpText('after', `
 Schedule: give exactly one of --cron, --every, or --at (combining them is an error).
   --cron "0 9 * * *"         recurring, cron expression (optionally with --tz)
@@ -425,7 +425,7 @@ Schedule: give exactly one of --cron, --every, or --at (combining them is an err
     }
   });
 
-commonJobOptions(jobs.command('update <id> [engineArgs...]').description('Update an existing job (id or name)'))
+commonJobOptions(jobs.command('update <id|alias> [engineArgs...]').description('Update an existing job (id or alias)'))
   .allowUnknownOption()
   .option('--enable', 'Enable the job')
   .option('--disable', 'Disable the job')
@@ -451,19 +451,19 @@ jobs.command('list').description('List all jobs').action(async () => {
   try { print(await client().listJobs()); } catch (err) { handleError(err); }
 });
 
-jobs.command('get <id>').description('Get a job by id or name').action(async (id: string) => {
+jobs.command('get <id|alias>').description('Get a job by id or alias').action(async (id: string) => {
   try { print(await client().getJob(id)); } catch (err) { handleError(err); }
 });
 
-jobs.command('schedule <id>')
-  .description('Show upcoming fire times for a job (id or name)')
+jobs.command('schedule <id|alias>')
+  .description('Show upcoming fire times for a job (id or alias)')
   .option('-n, --count <n>', 'Number of upcoming fire times to show (default: 5)', parseInteger, 5)
   .action(async (id: string, opts) => {
     try { print(await client().jobSchedule(id, { n: opts.count as number | undefined })); } catch (err) { handleError(err); }
   });
 
-jobs.command('delete <idOrAlias>')
-  .description('Delete a job (id or name), or delete all jobs with the reserved `all` keyword and --force')
+jobs.command('delete <id|alias>')
+  .description('Delete a job (id or alias), or delete all jobs with the reserved `all` keyword and --force')
   .option('--force', 'Confirm a destructive delete when deleting all jobs')
   .action(async (idOrAlias: string, opts) => {
     try {
@@ -477,7 +477,7 @@ jobs.command('delete <idOrAlias>')
     } catch (err) { handleError(err); }
   });
 
-jobs.command('run-now <id>').description('Run a job once right now, even if it is disabled (does not enable it or change its schedule)').action(async (id: string) => {
+jobs.command('run-now <id|alias>').description('Run a job once right now, even if it is disabled (does not enable it or change its schedule)').action(async (id: string) => {
   try { print(await client().runNow(id)); } catch (err) { handleError(err); }
 });
 
@@ -487,7 +487,7 @@ const RUN_STATUSES = ['queued', 'running', 'success', 'failed', 'canceled', 'ski
 const runs = groupHelp(program.command('runs').description('Inspect and manage run history'));
 runs.command('list')
   .description('List recent runs, optionally filtered by job')
-  .option('--job <id>', 'Filter by job id or name')
+  .option('--job <id|alias>', 'Filter by job id or alias')
   .option('--limit <n>', 'Maximum runs to return', parseInteger)
   .option('--since <ms>', 'Only runs since epoch milliseconds', parseInteger)
   .option('--status <status>', `Filter by run status (${RUN_STATUSES.join('|')})`)
@@ -559,7 +559,7 @@ const stats = groupHelp(program.command('stats').description('Show job/run stati
 stats.command('summary').description('Show aggregate statistics').action(async () => {
   try { print(await client().statsSummary()); } catch (err) { handleError(err); }
 });
-stats.command('job <id>').description('Show statistics for one job (id or name)').action(async (id: string) => {
+stats.command('job <id|alias>').description('Show statistics for one job (id or alias)').action(async (id: string) => {
   try { print(await client().statsJob(id)); } catch (err) { handleError(err); }
 });
 

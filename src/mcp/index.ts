@@ -146,7 +146,7 @@ export function createMcpServer(): McpServer {
     'crontick_job_create',
     {
       description:
-        'Create and schedule a new cron job. This executes an AI prompt on the user\'s machine on a recurring or future schedule that persists and outlives this session -- confirm the job definition (schedule and action) with the user before calling. Provide the job definition: schedule (kind: cron|interval|one-shot) and action (kind: prompt) are required; id (GUID) is generated automatically and should be omitted; alias is the job\'s optional, unique, human-friendly name (the CLI --name flag) -- when omitted, one is auto-generated. Exactly one schedule is allowed per job: cron (expression), interval (everySec, in seconds), or one-shot (runAt, ISO-8601, interpreted in the machine local timezone unless an offset such as Z or +02:00 is given). Prompt actions use prompt, optional configured engine name, args, sessionId, or reuseSession. After creating, use crontick_job_schedule to preview the job\'s upcoming fire times.',
+        'Create and schedule a new cron job. This executes an AI prompt on the user\'s machine on a recurring or future schedule that persists and outlives this session -- confirm the job definition (schedule and action) with the user before calling. Provide the job definition: schedule (kind: cron|interval|one-shot) and action (kind: prompt) are required; id (GUID) is generated automatically and should be omitted; alias is the job\'s optional, unique, kebab-case identifier (set via CLI `--name`) -- when omitted, one is auto-generated. Exactly one schedule is allowed per job: cron (expression), interval (everySec, in seconds), or one-shot (runAt, ISO-8601, interpreted in the machine local timezone unless an offset such as Z or +02:00 is given). Prompt actions use prompt, optional configured engine name, args, sessionId, or reuseSession. After creating, use crontick_job_schedule to preview the job\'s upcoming fire times.',
       inputSchema: withVerbose({
         ...JobCreateInputSchema.shape,
         force: z.boolean().optional(),
@@ -173,8 +173,8 @@ export function createMcpServer(): McpServer {
   server.registerTool(
     'crontick_job_get',
     {
-      description: 'Get the full definition and status of a specific job by id or name.',
-      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or name') }),
+      description: 'Get the full definition and status of a specific job by id or alias.',
+      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (args) => toolWrap(args, (client) => client.getJob(args.id)),
@@ -184,9 +184,9 @@ export function createMcpServer(): McpServer {
     'crontick_job_update',
     {
       description:
-        'Update an existing job (id or name). Provide the job identifier and any fields to change (partial update is merged with existing definition); the alias (name) can be changed here (must remain unique). Action is always a prompt action.',
+        'Update an existing job (id or alias). Provide the job identifier and any fields to change (partial update is merged with existing definition); the alias can be changed here (must remain unique). Action is always a prompt action.',
       inputSchema: withVerbose({
-        id: z.string().describe('Job id (GUID) or name'),
+        id: z.string().describe('Job id (GUID) or alias'),
         ...JobPatchInputSchema.shape,
       }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
@@ -201,9 +201,9 @@ export function createMcpServer(): McpServer {
     'crontick_job_delete',
     {
       description:
-        'Permanently delete one job definition by id/name, or delete every job with all:true plus force:true. Archived runs and logs remain directly queryable by run ID, but live aggregates exclude deleted jobs. This may cancel an in-flight run and cannot be undone -- confirm with the user first.',
+        'Permanently delete one job definition by id/alias, or delete every job with all:true plus force:true. Archived runs and logs remain directly queryable by run ID, but live aggregates exclude deleted jobs. This may cancel an in-flight run and cannot be undone -- confirm with the user first.',
       inputSchema: withVerbose({
-        id: z.string().describe('Job id (GUID) or name to delete individually').optional(),
+        id: z.string().describe('Job id (GUID) or alias to delete individually').optional(),
         all: z.boolean().optional().describe('Delete every job. Requires force:true.'),
         force: z.boolean().optional().describe('Confirm a bulk delete when all:true.'),
       }),
@@ -222,8 +222,8 @@ export function createMcpServer(): McpServer {
   server.registerTool(
     'crontick_job_enable',
     {
-      description: 'Enable a disabled job (id or name) so it will run on its next scheduled time.',
-      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or name') }),
+      description: 'Enable a disabled job (id or alias) so it will run on its next scheduled time.',
+      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => toolWrap(args, (client) => client.enableJob(args.id)),
@@ -232,8 +232,8 @@ export function createMcpServer(): McpServer {
   server.registerTool(
     'crontick_job_disable',
     {
-      description: 'Disable a job (id or name) so it will not run until re-enabled.',
-      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or name') }),
+      description: 'Disable a job (id or alias) so it will not run until re-enabled.',
+      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => toolWrap(args, (client) => client.disableJob(args.id)),
@@ -243,8 +243,8 @@ export function createMcpServer(): McpServer {
     'crontick_job_run_now',
     {
       description:
-        'Run a job (id or name) once, right now, even if it is disabled -- it is NOT enabled and its schedule is not changed (an enabled job keeps running on its normal schedule). The overlap policy still applies (with overlap=skip and a run already active, the run is recorded as skipped). This executes the job\'s prompt on the user\'s machine right now -- confirm with the user before calling. Returns a runId to track progress with crontick_run_get.',
-      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or name') }),
+        'Run a job (id or alias) once, right now, even if it is disabled -- it is NOT enabled and its schedule is not changed (an enabled job keeps running on its normal schedule). The overlap policy still applies (with overlap=skip and a run already active, the run is recorded as skipped). This executes the job\'s prompt on the user\'s machine right now -- confirm with the user before calling. Returns a runId to track progress with crontick_run_get.',
+      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async (args) => toolWrap(args, (client) => client.runNow(args.id)),
@@ -265,9 +265,9 @@ export function createMcpServer(): McpServer {
   server.registerTool(
     'crontick_run_list',
     {
-      description: 'List recent runs, optionally filtered by job (id or name) and/or status. Status includes the terminal "missed" state for schedule fires that were recorded but never executed because the daemon was down.',
+      description: 'List recent runs, optionally filtered by job (id or alias) and/or status. Status includes the terminal "missed" state for schedule fires that were recorded but never executed because the daemon was down.',
       inputSchema: withVerbose({
-        jobId: z.string().describe('Job id (GUID) or name').optional(),
+        jobId: z.string().describe('Job id (GUID) or alias').optional(),
         limit: z.number().int().positive().optional(),
         since: z.number().int().optional(),
         status: z.enum(['queued', 'running', 'success', 'failed', 'canceled', 'skipped', 'timeout', 'missed']).optional(),
@@ -318,9 +318,9 @@ export function createMcpServer(): McpServer {
     'crontick_job_schedule',
     {
       description:
-        'Show the next N upcoming fire times for an existing job (id or name). Useful to confirm a job\'s schedule is what the user expects.',
+        'Show the next N upcoming fire times for an existing job (id or alias). Useful to confirm a job\'s schedule is what the user expects.',
       inputSchema: withVerbose({
-        id: z.string().describe('Job id (GUID) or name'),
+        id: z.string().describe('Job id (GUID) or alias'),
         n: z.number().int().positive().max(20).default(5),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
@@ -344,8 +344,8 @@ export function createMcpServer(): McpServer {
   server.registerTool(
     'crontick_stats_job',
     {
-      description: 'Get run counts, last status, total engine cost in USD, and total turns for one job (id or name).',
-      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or name') }),
+      description: 'Get run counts, last status, total engine cost in USD, and total turns for one job (id or alias).',
+      inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (args) => toolWrap(args, (client) => client.statsJob(args.id)),
