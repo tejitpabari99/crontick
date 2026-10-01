@@ -166,8 +166,8 @@ Key `TestEntry` fields:
 | `runStatusEquals` | `runs list --job <jobId>` → `[runIndex].status === expectedStatus` |
 | `runExitCodeEquals` | `runs list --job <jobId>` → `[runIndex].exitCode === expectedExitCode` |
 | `runErrorMatches` | `runs list --job <jobId>` → `[runIndex].error` matches regex `pattern` |
-| `runLogContains` | `logs <runId>` stdout+stderr contains `substring` |
-| `runLogNotContains` | `logs <runId>` stdout+stderr does NOT contain `forbidden` (resolves most-recent run from `jobId` if `runId` is null) |
+| `runLogContains` | `runs get <runId>` output (stdout+stderr) contains `substring` |
+| `runLogNotContains` | `runs get <runId>` output (stdout+stderr) does NOT contain `forbidden` (resolves most-recent run from `jobId` if `runId` is null) |
 | `crossSurfaceFieldEquals` | Same `jsonPath` value across multiple named invocation `refs` |
 | `daemonHealthOk` | `GET http://127.0.0.1:<port>/health` returns `{ ok: true }` |
 
@@ -199,9 +199,9 @@ Key `TestEntry` fields:
    ```
 
 4. **Write invocations and checks** using the check types listed above.
-   - CLI invocations: `"surface": "cli", "command": ["daemon", "status", "--json"]`
-   - API invocations: `"surface": "api", "script": "const c = crontick.createClient(); return await c.daemonStatus();"`
-   - MCP invocations: `"surface": "mcp", "tool": "crontick_daemon_status", "args": {}`
+   - CLI invocations: `"surface": "cli", "command": ["jobs", "list"]`
+   - API invocations: `"surface": "api", "script": "const c = crontick.createClient(); return await c.info();"`
+   - MCP invocations: `"surface": "mcp", "tool": "crontick_info", "args": {}`
 
 5. **Mark `skipOn`** if the test is platform-specific (e.g. `["linux","darwin"]` for PowerShell tests).
 

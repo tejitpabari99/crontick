@@ -328,7 +328,7 @@ export async function runCheck(check, invocationResults, ctx) {
         resolvedRunId = runs[0].id;
       }
       if (!resolvedRunId) throw new Error('runLogContains: no runId and no jobId provided');
-      const logResult = await ctx.cliRunner(['logs', resolvedRunId]);
+      const logResult = await ctx.cliRunner(['runs', 'get', resolvedRunId]);
       const combined = logResult.stdout + logResult.stderr;
       if (!combined.includes(substring)) {
         throw new Error(`runLogContains: logs for run ${resolvedRunId} do not contain "${substring}"`);
@@ -353,7 +353,7 @@ export async function runCheck(check, invocationResults, ctx) {
         resolvedRunId = runs[0].id;
       }
       if (!resolvedRunId) throw new Error('runLogNotContains: no runId and no jobId provided');
-      const logResult = await ctx.cliRunner(['logs', resolvedRunId]);
+      const logResult = await ctx.cliRunner(['runs', 'get', resolvedRunId]);
       const combined = logResult.stdout + logResult.stderr;
       if (combined.includes(forbidden)) {
         throw new Error(
