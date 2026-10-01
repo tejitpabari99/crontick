@@ -192,14 +192,6 @@ if (needsSqliteShim) {
       logger.info(`Pruned ${pruned} run(s) exceeding the retention cap of ${retentionCap} during startup`);
     }
     store.loadJobsFromDisk();
-    // Older versions archived runs when a job was deleted. Deleting a job now
-    // removes its history, so clear anything still pointing at a missing job
-    // (best-effort: must never block startup).
-    try {
-      store.purgeOrphans();
-    } catch (err) {
-      logger.error('Orphan purge failed on startup; continuing without it', { error: String(err) });
-    }
     const jobs = store.listJobs();
     logger.info(`Loaded ${jobs.length} job(s) from disk`);
 

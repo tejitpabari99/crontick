@@ -119,7 +119,6 @@ const server = http.createServer(async (req, res) => {
       runs.set(runId, { ...run, status: 'canceled' });
       return json(res, 200, { ok: true, canceled: true });
     }
-    if (runMatch[2] === '/logs') return json(res, 200, [{ runId, stream: 'stdout', ts: Date.now(), data: 'ok\\n' }]);
     return json(res, 200, runs.get(runId) ?? { id: runId, status: 'queued' });
   }
   if (req.method === 'GET' && url.pathname === '/api/stats/summary') return json(res, 200, { totalJobs: jobs.size, enabledJobs: [...jobs.values()].filter(j => j.enabled !== false).length, totalRuns: runs.size, succeeded: 0, failed: 0, avgDurationMs: null });

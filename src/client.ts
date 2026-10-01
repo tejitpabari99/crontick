@@ -145,7 +145,7 @@ export interface RunRecord {
   usageJson?: string;
   transcriptPath?: string;
   engineStatus?: string;
-  /** Absolute path of the per-job log file (all runs of the job, appended); null when file logging is off. Only set by getRun(). */
+  /** Absolute path of the per-job log file (crontick-side events only, all runs of the job); null when file logging is off. Only set by getRun(). */
   logFile?: string | null;
 }
 
@@ -367,7 +367,7 @@ export class CrontickClient {
   /**
    * Cleaned output of a run: the engine's final answer, the error (if any), and the
    * assistant's text only (segments split by tool calls are joined with `---`; no tool
-   * lines, thinking or hook noise). The raw per-job log file path is `getRun().logFile`.
+   * lines, thinking or hook noise). The per-job crontick log file path is `getRun().logFile`.
    */
   async getOutput(runId: string): Promise<RunOutput> {
     return this.request<RunOutput>('GET', `/api/runs/${encodeURIComponent(runId)}/output`);

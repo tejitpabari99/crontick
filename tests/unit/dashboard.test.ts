@@ -132,14 +132,14 @@ describe('core dashboard data model', () => {
     store.updateRun(rb.id, { status: 'failed', durationMs: 20, error: '100% broken_thing' });
     const rc = store.insertRun(c.id, Date.now() - 1000);
     store.updateRun(rc.id, { status: 'success', durationMs: 30 });
-    store.appendLog(rc.id, 'stdout', Buffer.from('needle-in-the-haystack'));
+    store.setRunOutput(rc.id, { format: 'text', result: 'needle-in-the-haystack', engineError: null, output: 'needle-in-the-haystack', stderr: '', truncated: false });
     const ctx = { store, scheduler, startedAt: new Date(), port: 1 };
     const ids = (opts: Parameters<typeof buildDashboardData>[1]) => buildDashboardData(ctx, opts).runs.map((r) => r.id).sort();
 
     expect(ids({ jobIds: [a.id, b.id] })).toEqual([ra.id, rb.id].sort());
     expect(ids({ statuses: ['failed'] })).toEqual([rb.id]);
     expect(ids({ jobIds: [a.id, b.id], statuses: ['success'] })).toEqual([ra.id]);
-    expect(ids({ q: 'needle' })).toEqual([rc.id]); // log search
+    expect(ids({ q: 'needle' })).toEqual([rc.id]); // run output search
     expect(ids({ q: 'NEEDLE-in' })).toEqual([rc.id]); // case-insensitive
     expect(ids({ q: 'sample' })).toEqual([rb.id]); // job alias
     expect(ids({ q: 'failed' })).toEqual([rb.id]); // status

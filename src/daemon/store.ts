@@ -1,4 +1,4 @@
-// Dual-persistence layer: JSON files (source of truth for jobs) + SQLite WAL (runs, logs, job cache).
+// Dual-persistence layer: JSON files (source of truth for jobs) + SQLite WAL (runs, run outputs, job cache).
 // Only the daemon opens this store (single-writer invariant).
 // See docs/implementation/storage.md
 import { DatabaseSync } from 'node:sqlite';
@@ -10,7 +10,7 @@ import { JobSchema, type Job, type PromptAction } from '../schemas/job.js';
 import { CrontickError, ORPHAN_RUN_ERROR_MESSAGE } from '../errors.js';
 import { jobJsonSchemaText } from '../schema-json.js';
 import { nullLogger, type Logger } from '../logger.js';
-import type { LogSource } from '../log-source.js';
+import type { EngineOutput } from '../run-output.js';
 import { readClaudeCompletionMarker } from '../claude-completion-marker.js';
 import { loadConfig } from '../config.js';
 import { resolveJobLogPath } from './job-log-file.js';
@@ -44,29 +44,6 @@ export interface Run {
   transcriptPath?: string;
   engineStatus?: string;
 }
-
-export interface RunLog {
-  runId: string;
-  stream: LogStream;
-  ts: number; // epoch ms
-  chunk: Buffer;
-}
-
-/**
- * Log streams captured per run. `stdout`/`stderr` are the engine's process
- * output; `crontick` is crontick's own scheduling/execution lifecycle events
- * (job fired, resolved command, exit code, duration, cancellation, captured
- * session id, errors). See LogSource for the retrieval-side filter.
- */
-export type LogStream = 'stdout' | 'stderr' | 'crontick';
-
-/**
- * Retrieval-side filter for Store.getLogs(): `all` (default) returns every stream,
- * `engine` returns only stdout+stderr, `crontick` returns only crontick-side
- * lifecycle events. Canonically defined in `src/log-source.ts` and re-exported
- * here for daemon consumers (api.ts).
- */
-export type { LogSource };
 
 export interface ListRunsOptions {
   jobId?: string;
@@ -206,12 +183,17 @@ export class Store {
         engine_status TEXT
       );
 
-      CREATE TABLE IF NOT EXISTS run_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        run_id TEXT NOT NULL,
-        stream TEXT NOT NULL,
-        ts INTEGER NOT NULL,
-        chunk BLOB NOT NULL
+      -- Parsed engine output (final answer, assistant text, stderr tail) for a
+      -- run. The engine's raw stdout/stderr is never stored: the runner keeps
+      -- its own transcript, and crontick-side events go to a log file.
+      CREATE TABLE IF NOT EXISTS run_outputs (
+        run_id TEXT PRIMARY KEY,
+        format TEXT NOT NULL,
+        result TEXT,
+        engine_error TEXT,
+        output TEXT NOT NULL,
+        stderr TEXT NOT NULL,
+        truncated INTEGER NOT NULL DEFAULT 0
       );
 
       CREATE TABLE IF NOT EXISTS job_schedule_state (
@@ -227,7 +209,6 @@ export class Store {
       -- walk to avoid a scan-then-sort per pruneRunsForJob() call.
       CREATE INDEX IF NOT EXISTS idx_runs_job_id_started_at ON runs(job_id, started_at);
       CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs(started_at);
-      CREATE INDEX IF NOT EXISTS idx_run_logs_run_id ON run_logs(run_id);
 
       -- Alias uniqueness enforced at the DB layer as a defense-in-depth
       -- backstop against a race between two concurrent create/update requests
@@ -349,14 +330,14 @@ export class Store {
     return rows.map((r) => JSON.parse(r.json) as Job);
   }
 
-  /** Accepts either the GUID `id` or the `alias` (see getJob) and deletes the resolved job together with its runs, logs and schedule state. */
+  /** Accepts either the GUID `id` or the `alias` (see getJob) and deletes the resolved job together with its runs, run outputs and schedule state. */
   deleteJob(idOrAlias: string): boolean {
     return this.deleteJobAndRuns(idOrAlias) !== undefined;
   }
 
   /**
    * Deletes a job and everything that belongs to it in ONE transaction: its
-   * run logs, runs, schedule state, then the job row. Deleting a job removes
+   * run outputs, runs, schedule state, then the job row. Deleting a job removes
    * its history on every surface (nothing is archived). After the commit the
    * job JSON files and the per-job log file are unlinked best-effort (the
    * SQLite rows are the transactional source of truth; files are mirrors).
@@ -370,7 +351,7 @@ export class Store {
     let deleted = 0;
     this.db.exec('BEGIN;');
     try {
-      this.db.prepare('DELETE FROM run_logs WHERE run_id IN (SELECT id FROM runs WHERE job_id = ?)').run(job.id);
+      this.db.prepare('DELETE FROM run_outputs WHERE run_id IN (SELECT id FROM runs WHERE job_id = ?)').run(job.id);
       deletedRuns = (this.db.prepare('DELETE FROM runs WHERE job_id = ?').run(job.id) as { changes: number }).changes;
       this.db.prepare('DELETE FROM job_schedule_state WHERE job_id = ?').run(job.id);
       deleted = (this.db.prepare('DELETE FROM jobs WHERE id = ?').run(job.id) as { changes: number }).changes;
@@ -385,28 +366,6 @@ export class Store {
     return deleted > 0 ? { jobId: job.id, deletedRuns } : undefined;
   }
 
-  /**
-   * Removes rows whose job no longer exists: runs (and their logs) and schedule
-   * state. Run at daemon start to clean up data left by older versions, which
-   * archived runs when a job was deleted. Returns the counts removed.
-   */
-  purgeOrphans(): { runs: number; logs: number; scheduleState: number } {
-    this.db.exec('BEGIN;');
-    try {
-      const runs = (this.db.prepare('DELETE FROM runs WHERE job_id NOT IN (SELECT id FROM jobs)').run() as { changes: number }).changes;
-      const logs = (this.db.prepare('DELETE FROM run_logs WHERE run_id NOT IN (SELECT id FROM runs)').run() as { changes: number }).changes;
-      const scheduleState = (this.db.prepare('DELETE FROM job_schedule_state WHERE job_id NOT IN (SELECT id FROM jobs)').run() as { changes: number }).changes;
-      this.db.exec('COMMIT;');
-      if (runs + logs + scheduleState > 0) {
-        this.logger.info('Purged orphaned data left by deleted jobs', { runs, logs, scheduleState });
-      }
-      return { runs, logs, scheduleState };
-    } catch (err) {
-      this.db.exec('ROLLBACK;');
-      throw err;
-    }
-  }
-
   /** Best-effort removal of a job's per-job log file (see resolveJobLogPath). */
   private removeJobLogFile(jobId: string): void {
     try {
@@ -419,8 +378,8 @@ export class Store {
 
   /**
    * Atomically delete every job and all data associated with jobs: run history,
-   * run logs, and per-job schedule state, in a single transaction. Returns the
-   * number of job rows removed. Like single-job delete, runs and logs are
+   * run outputs, and per-job schedule state, in a single transaction. Returns the
+   * number of job rows removed. Like single-job delete, runs and their outputs are
    * removed too. Job JSON files and per-job log files are unlinked best-effort
    * after the DB commit (the SQLite rows are the transactional source of truth;
    * files are a mirror).
@@ -430,7 +389,7 @@ export class Store {
     this.db.exec('BEGIN;');
     let deleted: number;
     try {
-      this.db.exec('DELETE FROM run_logs;');
+      this.db.exec('DELETE FROM run_outputs;');
       this.db.exec('DELETE FROM runs;');
       this.db.exec('DELETE FROM job_schedule_state;');
       deleted = (this.db.prepare('DELETE FROM jobs').run() as { changes: number }).changes;
@@ -713,9 +672,9 @@ export class Store {
         OR runs.session_id LIKE ? ESCAPE '\\'
         OR runs.job_id LIKE ? ESCAPE '\\'
         OR runs.job_id IN (SELECT jobs.id FROM jobs WHERE jobs.alias LIKE ? ESCAPE '\\')
-        OR EXISTS (SELECT 1 FROM run_logs WHERE run_logs.run_id = runs.id AND CAST(run_logs.chunk AS TEXT) LIKE ? ESCAPE '\\')
+        OR EXISTS (SELECT 1 FROM run_outputs WHERE run_outputs.run_id = runs.id AND (run_outputs.result LIKE ? ESCAPE '\\' OR run_outputs.output LIKE ? ESCAPE '\\'))
       )`);
-      params.push(like, like, like, like, like, like, like);
+      params.push(like, like, like, like, like, like, like, like);
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -751,38 +710,32 @@ export class Store {
     return this.queryRuns(opts);
   }
 
-  // ── Log CRUD ────────────────────────────────────────────────────────────────
+  // ── Run output CRUD ──────────────────────────────────────────────────────────
 
-  appendLog(runId: string, stream: LogStream, chunk: Buffer): void {
-    // Only log for runs that still exist: a run whose job was deleted while it
-    // was in flight must not leave orphaned log rows behind.
+  /** Persist (replace) a run's parsed engine output. No-op when the run no longer exists (e.g. its job was deleted mid-run). */
+  setRunOutput(runId: string, out: EngineOutput): void {
     this.db
-      .prepare('INSERT INTO run_logs (run_id, stream, ts, chunk) SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM runs WHERE id = ?)')
-      .run(runId, stream, Date.now(), chunk, runId);
+      .prepare(
+        `INSERT INTO run_outputs (run_id, format, result, engine_error, output, stderr, truncated)
+         SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM runs WHERE id = ?)
+         ON CONFLICT(run_id) DO UPDATE SET format=excluded.format, result=excluded.result, engine_error=excluded.engine_error,
+           output=excluded.output, stderr=excluded.stderr, truncated=excluded.truncated`,
+      )
+      .run(runId, out.format, out.result, out.engineError, out.output, out.stderr, out.truncated ? 1 : 0, runId);
   }
 
-  /**
-   * Returns a run's logs, optionally filtered by source: `all` (default)
-   * returns every stream, `engine` returns only stdout+stderr, `crontick`
-   * returns only crontick-side lifecycle events.
-   */
-  getLogs(runId: string, source: LogSource = 'all'): RunLog[] {
-    const streams = logStreamsForSource(source);
-    const rows = streams
-      ? (this.db
-          .prepare(`SELECT * FROM run_logs WHERE run_id = ? AND stream IN (${streams.map(() => '?').join(', ')}) ORDER BY id`)
-          .all(runId, ...streams) as unknown as DbLogRow[])
-      : (this.db
-          .prepare('SELECT * FROM run_logs WHERE run_id = ? ORDER BY id')
-          .all(runId) as unknown as DbLogRow[]);
-    return rows.map(rowToLog);
-  }
-
-  tailLogs(runId: string, sinceTs: number): RunLog[] {
-    const rows = this.db
-      .prepare('SELECT * FROM run_logs WHERE run_id = ? AND ts > ? ORDER BY id')
-      .all(runId, sinceTs) as unknown as DbLogRow[];
-    return rows.map(rowToLog);
+  /** The parsed engine output stored for a run; undefined when the run never produced any (skipped, missed, still running). */
+  getRunOutput(runId: string): EngineOutput | undefined {
+    const row = this.db.prepare('SELECT * FROM run_outputs WHERE run_id = ?').get(runId) as unknown as DbOutputRow | undefined;
+    if (!row) return undefined;
+    return {
+      format: row.format === 'claude-stream-json' ? 'claude-stream-json' : 'text',
+      result: row.result,
+      engineError: row.engine_error,
+      output: row.output,
+      stderr: row.stderr,
+      truncated: row.truncated === 1,
+    };
   }
 
   // ── Schedule state (missed-fire watermark) ───────────────────────────────────
@@ -895,9 +848,9 @@ export class Store {
 
   /**
    * Evict the oldest terminal (non-running/non-queued) runs for a job so that at
-   * most `cap` rows remain for it, deleting matching run_logs first (run_logs
+   * most `cap` rows remain for it, deleting matching run_outputs first (run_outputs
    * has no FK/cascade — see docs/implementation/storage.md) so a crash between the
-   * two deletes can only ever leave a run with no logs, never an orphaned log
+   * two deletes can only ever leave a run with no output, never an orphaned output
    * row with no parent run. In-flight runs are excluded from the candidate set
    * so an active run is never evicted no matter how old it is; this can let a
    * job's total row count temporarily exceed `cap` by the number of active runs.
@@ -905,7 +858,7 @@ export class Store {
    * Eviction happens in bounded batches (see EVICTION_BATCH_SIZE) rather than
    * one unbounded statement: each batch is its own transaction, so a crash or
    * thrown error mid-run can only roll back the batch in progress — every
-   * previously committed batch stays evicted, and no batch's run_logs delete
+   * previously committed batch stays evicted, and no batch's run_outputs delete
    * can ever be separated from its runs delete. The loop recomputes the
    * remaining-to-evict count from the DB every iteration (rather than just
    * looping until a fixed pre-computed total), so it converges to `cap` and
@@ -937,7 +890,7 @@ export class Store {
 
       this.db.exec('BEGIN;');
       try {
-        this.db.prepare(`DELETE FROM run_logs WHERE run_id IN (${placeholders})`).run(...ids);
+        this.db.prepare(`DELETE FROM run_outputs WHERE run_id IN (${placeholders})`).run(...ids);
         this.db.prepare(`DELETE FROM runs WHERE id IN (${placeholders})`).run(...ids);
         this.db.exec('COMMIT;');
       } catch (err) {
@@ -1010,12 +963,14 @@ interface DbRunRow {
   engine_status: string | null;
 }
 
-interface DbLogRow {
-  id: number;
+interface DbOutputRow {
   run_id: string;
-  stream: LogStream;
-  ts: number;
-  chunk: Buffer;
+  format: string;
+  result: string | null;
+  engine_error: string | null;
+  output: string;
+  stderr: string;
+  truncated: number;
 }
 
 interface DbScheduleStateRow {
@@ -1045,22 +1000,6 @@ function rowToRun(row: DbRunRow): Run {
   if (row.transcript_path !== null) r.transcriptPath = row.transcript_path;
   if (row.engine_status !== null) r.engineStatus = row.engine_status;
   return r;
-}
-
-/** Maps a LogSource filter to the concrete stream list, or null for "all". */
-function logStreamsForSource(source: LogSource): LogStream[] | null {
-  if (source === 'engine') return ['stdout', 'stderr'];
-  if (source === 'crontick') return ['crontick'];
-  return null;
-}
-
-function rowToLog(row: DbLogRow): RunLog {
-  return {
-    runId: row.run_id,
-    stream: row.stream,
-    ts: row.ts,
-    chunk: Buffer.from(row.chunk),
-  };
 }
 
 function isSamePromptCaptureTarget(current: PromptAction, expected: PromptAction): boolean {

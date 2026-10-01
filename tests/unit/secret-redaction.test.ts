@@ -350,16 +350,18 @@ function fakeSpawnWithOutput(text: string) {
   return fakeSpawnWithWrites([{ stream: 'stdout', chunk: text }]);
 }
 
+/** The persisted parsed engine output of a run (assistant text plus stderr tail). */
 function logText(store: Store, runId: string): string {
-  return Buffer.concat(store.getLogs(runId, 'engine').map((entry) => entry.chunk)).toString('utf-8');
+  const out = store.getRunOutput(runId);
+  return out ? `${out.output}${out.stderr}` : '';
 }
 
 function persistedLogBytes(dir: string, runId: string): Buffer {
   const db = new DatabaseSync(join(dir, 'runs.db'));
   try {
-    const rows = db.prepare("SELECT chunk FROM run_logs WHERE run_id = ? AND stream IN ('stdout','stderr') ORDER BY id")
-      .all(runId) as Array<{ chunk: Uint8Array }>;
-    return Buffer.concat(rows.map((row) => Buffer.from(row.chunk)));
+    const rows = db.prepare('SELECT output, stderr FROM run_outputs WHERE run_id = ?')
+      .all(runId) as Array<{ output: string; stderr: string }>;
+    return Buffer.concat(rows.map((row) => Buffer.from(`${row.output}${row.stderr}`, 'utf-8')));
   } finally {
     db.close();
   }
@@ -414,11 +416,11 @@ async function createFixture(prefix: string) {
     store,
     client,
     scheduler,
-    /** Raw run logs via the daemon's kept GET /api/runs/:id/logs route (the client method was removed). */
-    async getLogs(runId: string, options: { source?: string } = {}): Promise<{ lines: Array<{ data: string }> }> {
-      const query = options.source ? `?source=${options.source}` : '';
-      const res = await fetch(`http://127.0.0.1:${ctx.port}/api/runs/${runId}/logs${query}`);
-      return { lines: (await res.json()) as Array<{ data: string }> };
+    /** Engine output (assistant text, then stderr) via the daemon's GET /api/runs/:id/output route. */
+    async getLogs(runId: string, _options: { source?: string } = {}): Promise<{ lines: Array<{ data: string }> }> {
+      const res = await fetch(`http://127.0.0.1:${ctx.port}/api/runs/${runId}/output`);
+      const view = (await res.json()) as { output: string; stderr: string };
+      return { lines: [{ data: view.output }, { data: view.stderr }] };
     },
     async close(): Promise<void> {
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
@@ -474,7 +476,7 @@ describe('shared secret redaction', () => {
           exitCode: 1,
           error: `failure ${entry.runtimeText}`,
         });
-        fixture.store.appendLog(readRun.id, 'stderr', Buffer.from(entry.runtimeText, 'utf-8'));
+        fixture.store.setRunOutput(readRun.id, { format: 'text', result: null, engineError: null, output: '', stderr: entry.runtimeText, truncated: false });
         dashboardRunIds.set(entry.name, readRun.id);
 
         const run = await fixture.client.getRun(readRun.id) as { error?: string };
@@ -558,8 +560,8 @@ describe('shared secret redaction', () => {
 
       const logBytes = persistedLogBytes(fixture.dir, captureRun.id);
       expectRawSecretBytesAbsent(logBytes, [...PRIVATE_KEY_LINES, PRIVATE_KEY], 'split pem persisted log bytes');
-      expect(logBytes.toString('utf-8')).toBe('alpha beta\n[REDACTED]\nomega delta\n');
-      expect(logText(fixture.store, captureRun.id)).toBe('alpha beta\n[REDACTED]\nomega delta\n');
+      expect(logBytes.toString('utf-8')).toBe('alpha beta\n[REDACTED]\nomega delta');
+      expect(logText(fixture.store, captureRun.id)).toBe('alpha beta\n[REDACTED]\nomega delta');
     } finally {
       await fixture.close();
     }
@@ -580,8 +582,8 @@ describe('shared secret redaction', () => {
 
       const logBytes = persistedLogBytes(fixture.dir, captureRun.id);
       expectRawSecretBytesAbsent(logBytes, [AWS_SECRET_ACCESS_KEY], 'split aws assignment persisted log bytes');
-      expect(logBytes.toString('utf-8')).toBe('alpha AWS_SECRET_ACCESS_KEY=[REDACTED] omega\n');
-      expect(logText(fixture.store, captureRun.id)).toBe('alpha AWS_SECRET_ACCESS_KEY=[REDACTED] omega\n');
+      expect(logBytes.toString('utf-8')).toBe('alpha AWS_SECRET_ACCESS_KEY=[REDACTED] omega');
+      expect(logText(fixture.store, captureRun.id)).toBe('alpha AWS_SECRET_ACCESS_KEY=[REDACTED] omega');
     } finally {
       await fixture.close();
     }
@@ -829,7 +831,7 @@ describe('shared secret redaction', () => {
         exitCode: 1,
         error: `failure ${BENIGN_RUNTIME_TEXT}`,
       });
-      fixture.store.appendLog(readRun.id, 'stderr', Buffer.from(BENIGN_RUNTIME_TEXT, 'utf-8'));
+      fixture.store.setRunOutput(readRun.id, { format: 'text', result: null, engineError: null, output: '', stderr: BENIGN_RUNTIME_TEXT, truncated: false });
 
       const run = await fixture.client.getRun(readRun.id) as { error?: string };
       expect(run.error).toBe(`failure ${BENIGN_RUNTIME_TEXT}`);
@@ -903,7 +905,7 @@ describe('shared secret redaction', () => {
       expect(persisted, 'CTD-025 guard: basic token leaked').not.toContain(nonBearerSecret);
 
       // Verify on the logs-tail (getLogs) surface too.
-      fixture.store.appendLog(captureRun.id, 'stdout', Buffer.from(`${bearerLine}\n${nonBearerLine}\n`));
+      fixture.store.setRunOutput(captureRun.id, { format: 'text', result: null, engineError: null, output: `${bearerLine}\n${nonBearerLine}\n`, stderr: '', truncated: false });
       const logs = await fixture.getLogs(captureRun.id);
       const tailed = logs.lines.map((line) => line.data).join('');
       expect(tailed, 'CTD-025: Bearer token leaked on logs-tail path').not.toContain(bearerToken);

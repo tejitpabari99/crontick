@@ -107,7 +107,7 @@ describe('verbose propagation', () => {
     }
   }, 20_000);
 
-  it('runner verbose diagnostics are written to run logs without dumping env values', async () => {
+  it('runner verbose diagnostics are written to the job log file without dumping env values', async () => {
     const dir = home('runner');
     writeFakeEngineConfig(dir);
     const previousHome = process.env['CRONTICK_HOME'];
@@ -133,9 +133,11 @@ describe('verbose propagation', () => {
       };
       store.upsertJob(job);
       const run = store.insertRun(job.id);
-      await new Runner(undefined, logger).run(job, run.id, store);
-      const text = store.getLogs(run.id).map((entry) => entry.chunk.toString('utf-8')).join('');
-      expect(text).toContain('[crontick:debug] spawn');
+      const writes: string[] = [];
+      const files = { open: () => ({ write: (text: string) => { writes.push(text); } }) };
+      await new Runner(undefined, logger, undefined, undefined, files).run(job, run.id, store);
+      const text = writes.join('');
+      expect(text).toContain('[debug] spawn');
       expect(text).not.toContain('******');
     } finally {
       store.close();

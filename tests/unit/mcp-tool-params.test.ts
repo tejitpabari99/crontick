@@ -7,10 +7,6 @@ import { MCP_TOOLS } from '../../src/surface.js';
 
 const MCP = resolve('dist', 'mcp', 'index.js');
 const RUN_ID = 'ctd-015-run';
-const LOG_LINES = [
-  { runId: RUN_ID, stream: 'stdout', ts: 1, data: 'line-1\n' },
-  { runId: RUN_ID, stream: 'stdout', ts: 2, data: 'line-2\n' },
-] as const;
 const EXPECTED_TOOL_PARAMS = {
   crontick_job_create: ['id', 'alias', 'description', 'enabled', 'schedule', 'action', 'overlap', 'retry', 'force', 'trustFolder'],
   crontick_job_list: [],
@@ -101,9 +97,6 @@ beforeAll(async () => {
     }
     if (req.method === 'GET' && url.pathname === `/api/runs/${RUN_ID}`) {
       return json(res, 200, { id: RUN_ID, status: 'success', outputTruncated: false });
-    }
-    if (req.method === 'GET' && url.pathname === `/api/runs/${RUN_ID}/logs`) {
-      return json(res, 200, LOG_LINES);
     }
     if (req.method === 'GET' && url.pathname === `/api/runs/${RUN_ID}/output`) {
       return json(res, 200, { runId: RUN_ID, status: 'success', format: 'text', result: null, error: null, output: '', stderr: '' });

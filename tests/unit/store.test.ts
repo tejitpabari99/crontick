@@ -156,14 +156,14 @@ describe('Store', () => {
     expect(store.deleteJob('ghost')).toBe(false);
   });
 
-  it('deleteAllJobs atomically removes every job plus its runs, logs, schedule state, and files, returning the count', () => {
+  it('deleteAllJobs atomically removes every job plus its runs, run outputs, schedule state, and files, returning the count', () => {
     store.upsertJob(execJob('bulk-a'));
     store.upsertJob(execJob('bulk-b'));
     const runA = store.insertRun('bulk-a');
-    store.appendLog(runA.id, 'stdout', Buffer.from('hi\n'));
+    store.setRunOutput(runA.id, { format: 'text', result: 'x', engineError: null, output: 'x', stderr: '', truncated: false });
     store.recordTick('bulk-a', 1000);
     const runB = store.insertRun('bulk-b');
-    store.appendLog(runB.id, 'stderr', Buffer.from('err\n'));
+    store.setRunOutput(runB.id, { format: 'text', result: 'x', engineError: null, output: 'x', stderr: '', truncated: false });
 
     expect(store.listJobs()).toHaveLength(2);
 
@@ -171,8 +171,8 @@ describe('Store', () => {
     expect(deleted).toBe(2);
     expect(store.listJobs()).toEqual([]);
     expect(store.listRuns({})).toEqual([]);
-    expect(store.getLogs(runA.id)).toEqual([]);
-    expect(store.getLogs(runB.id)).toEqual([]);
+    expect(store.getRunOutput(runA.id)).toBeUndefined();
+    expect(store.getRunOutput(runB.id)).toBeUndefined();
     expect(store.getScheduleState('bulk-a')).toBeUndefined();
     expect(existsSync(join(dir, 'jobs', 'bulk-a.json'))).toBe(false);
     expect(existsSync(join(dir, 'jobs', 'bulk-b.json'))).toBe(false);
@@ -191,7 +191,7 @@ describe('Store', () => {
     store.upsertJob(execJob('unlink-fail-a'));
     store.upsertJob(execJob('unlink-fail-b'));
     const runA = store.insertRun('unlink-fail-a');
-    store.appendLog(runA.id, 'stdout', Buffer.from('hi\n'));
+    store.setRunOutput(runA.id, { format: 'text', result: 'x', engineError: null, output: 'x', stderr: '', truncated: false });
 
     const jobFile = join(dir, 'jobs', 'unlink-fail-a.json');
     rmSync(jobFile, { force: true });
@@ -201,7 +201,7 @@ describe('Store', () => {
     expect(deleted).toBe(2);
     expect(store.listJobs()).toEqual([]);
     expect(store.listRuns({})).toEqual([]);
-    expect(store.getLogs(runA.id)).toEqual([]);
+    expect(store.getRunOutput(runA.id)).toBeUndefined();
     // The un-unlinkable path is left behind (best-effort), but the wipe still succeeded.
     expect(existsSync(jobFile)).toBe(true);
   });
@@ -425,28 +425,26 @@ describe('Store', () => {
 
   // ── Logs ────────────────────────────────────────────────────────────────────
 
-  it('appendLog and getLogs round-trips', () => {
-    const run = store.insertRun('log-job');
-    store.appendLog(run.id, 'stdout', Buffer.from('hello\n'));
-    store.appendLog(run.id, 'stderr', Buffer.from('err\n'));
-    const logs = store.getLogs(run.id);
-    expect(logs).toHaveLength(2);
-    expect(logs[0].chunk.toString('utf-8')).toBe('hello\n');
-    expect(logs[0].stream).toBe('stdout');
-    expect(logs[1].stream).toBe('stderr');
+  it('setRunOutput/getRunOutput round-trips the parsed engine output and replaces on rewrite', () => {
+    const run = store.insertRun('output-job');
+    expect(store.getRunOutput(run.id)).toBeUndefined();
+    store.setRunOutput(run.id, { format: 'claude-stream-json', result: 'done', engineError: null, output: 'hello', stderr: 'warn', truncated: true });
+    expect(store.getRunOutput(run.id)).toEqual({ format: 'claude-stream-json', result: 'done', engineError: null, output: 'hello', stderr: 'warn', truncated: true });
+    store.setRunOutput(run.id, { format: 'text', result: null, engineError: 'bad', output: '', stderr: '', truncated: false });
+    expect(store.getRunOutput(run.id)).toEqual({ format: 'text', result: null, engineError: 'bad', output: '', stderr: '', truncated: false });
   });
 
-  it('getLogs source filter: all/engine/crontick select the right streams', () => {
-    const run = store.insertRun('log-source-job');
-    store.appendLog(run.id, 'stdout', Buffer.from('out\n'));
-    store.appendLog(run.id, 'stderr', Buffer.from('err\n'));
-    store.appendLog(run.id, 'crontick', Buffer.from('[crontick] run started\n'));
-
-    expect(store.getLogs(run.id).map((l) => l.stream)).toEqual(['stdout', 'stderr', 'crontick']);
-    expect(store.getLogs(run.id, 'all').map((l) => l.stream)).toEqual(['stdout', 'stderr', 'crontick']);
-    expect(store.getLogs(run.id, 'engine').map((l) => l.stream)).toEqual(['stdout', 'stderr']);
-    expect(store.getLogs(run.id, 'crontick').map((l) => l.stream)).toEqual(['crontick']);
-    expect(store.getLogs(run.id, 'crontick')[0].chunk.toString('utf-8')).toBe('[crontick] run started\n');
+  it('has no table or API that stores raw engine logs', () => {
+    const db = new DatabaseSync(join(dir, 'runs.db'));
+    try {
+      const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((t) => t.name);
+      expect(tables).not.toContain('run_logs');
+      expect(tables).toContain('run_outputs');
+    } finally {
+      db.close();
+    }
+    expect((store as unknown as Record<string, unknown>)['appendLog']).toBeUndefined();
+    expect((store as unknown as Record<string, unknown>)['getLogs']).toBeUndefined();
   });
 
   it('updateRun persists sessionId and getRun/listRuns surface it', () => {
@@ -483,18 +481,6 @@ describe('Store', () => {
     } finally {
       db.close();
     }
-  });
-
-  it('tailLogs returns only logs after sinceTs', async () => {
-    const run = store.insertRun('tail-job');
-    store.appendLog(run.id, 'stdout', Buffer.from('before\n'));
-    await new Promise((r) => setTimeout(r, 15));
-    const sinceTs = Date.now();
-    await new Promise((r) => setTimeout(r, 15));
-    store.appendLog(run.id, 'stdout', Buffer.from('after\n'));
-    const tailed = store.tailLogs(run.id, sinceTs);
-    expect(tailed).toHaveLength(1);
-    expect(tailed[0].chunk.toString('utf-8')).toBe('after\n');
   });
 
   // ── Idempotent schema creation ──────────────────────────────────────────────
@@ -643,10 +629,9 @@ describe('Store', () => {
     expect(store.listRuns({ jobId: 'job-b2' })).toHaveLength(100);
   });
 
-  it('removes run_logs for evicted runs (no orphaned log rows)', () => {
+  it('removes run_outputs for evicted runs (no orphaned output rows)', () => {
     const run = store.insertRun('job-c', 0);
-    store.appendLog(run.id, 'stdout', Buffer.from('hi\n'));
-    store.appendLog(run.id, 'stderr', Buffer.from('err\n'));
+    store.setRunOutput(run.id, { format: 'text', result: 'x', engineError: null, output: 'x', stderr: '', truncated: false });
     store.updateRun(run.id, { status: 'success' });
 
     for (let i = 0; i < 100; i++) {
@@ -655,7 +640,7 @@ describe('Store', () => {
     }
 
     expect(store.getRun(run.id)).toBeUndefined();
-    expect(store.getLogs(run.id)).toEqual([]);
+    expect(store.getRunOutput(run.id)).toBeUndefined();
   });
 
   it('respects a custom retention cap passed to the constructor', () => {
@@ -744,15 +729,15 @@ describe('Store', () => {
       smallCapStore.updateRun(first.id, { status: 'success' });
 
       // Corrupt the schema via a second raw connection so the next prune's
-      // "DELETE FROM run_logs" throws, without touching the runs table (so
+      // "DELETE FROM run_outputs" throws, without touching the runs table (so
       // the run INSERT performed by insertRun itself still succeeds).
       const raw = new DatabaseSync(join(dir, 'runs.db'));
-      raw.exec('DROP TABLE run_logs;');
+      raw.exec('DROP TABLE run_outputs;');
       raw.close();
 
       // This insert pushes job-prune-fail's terminal-run count to 2, over
       // cap=1, triggering an eviction attempt that throws on the now-missing
-      // run_logs table. insertRun must swallow that and still return the run.
+      // run_outputs table. insertRun must swallow that and still return the run.
       const second = smallCapStore.insertRun('job-prune-fail');
       expect(second.id).toBeTruthy();
       expect(smallCapStore.getRun(second.id)?.status).toBe('queued');
@@ -777,13 +762,13 @@ describe('deleting a job removes its history (SP03 task 4)', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('deleteJob removes the job runs, run logs and schedule state in one go and leaves other jobs alone', () => {
+  it('deleteJob removes the job runs, run outputs and schedule state in one go and leaves other jobs alone', () => {
     store.upsertJob(execJob('gone'));
     store.upsertJob(execJob('kept'));
     const goneRun = store.insertRun('gone');
     const keptRun = store.insertRun('kept');
-    store.appendLog(goneRun.id, 'stdout', Buffer.from('bye\n'));
-    store.appendLog(keptRun.id, 'stdout', Buffer.from('hi\n'));
+    store.setRunOutput(goneRun.id, { format: 'text', result: 'x', engineError: null, output: 'x', stderr: '', truncated: false });
+    store.setRunOutput(keptRun.id, { format: 'text', result: 'x', engineError: null, output: 'x', stderr: '', truncated: false });
     store.recordTick('gone', 1000);
     store.recordTick('kept', 1000);
 
@@ -791,38 +776,20 @@ describe('deleting a job removes its history (SP03 task 4)', () => {
 
     expect(store.getRun(goneRun.id)).toBeUndefined();
     expect(store.listRuns({ jobId: 'gone' })).toEqual([]);
-    expect(store.getLogs(goneRun.id)).toEqual([]);
+    expect(store.getRunOutput(goneRun.id)).toBeUndefined();
     expect(store.getScheduleState('gone')).toBeUndefined();
     expect(store.getRun(keptRun.id)).toBeDefined();
-    expect(store.getLogs(keptRun.id)).toHaveLength(1);
+    expect(store.getRunOutput(keptRun.id)).toBeDefined();
     expect(store.getScheduleState('kept')).toBeDefined();
     expect(store.deleteJobAndRuns('gone')).toBeUndefined();
   });
 
-  it('does not leave orphan log rows when a run keeps logging after its job was deleted (in-flight delete)', () => {
+  it('does not leave an orphan output row when a run finishes after its job was deleted (in-flight delete)', () => {
     store.upsertJob(execJob('inflight'));
     const run = store.insertRun('inflight');
     store.deleteJob('inflight');
-    store.appendLog(run.id, 'stdout', Buffer.from('late output\n'));
-    expect(store.getLogs(run.id)).toEqual([]);
-    expect(store.purgeOrphans()).toEqual({ runs: 0, logs: 0, scheduleState: 0 });
-  });
-
-  it('purgeOrphans removes runs, logs and schedule state of jobs that no longer exist (left by older versions)', () => {
-    store.upsertJob(execJob('live'));
-    const liveRun = store.insertRun('live');
-    store.appendLog(liveRun.id, 'stdout', Buffer.from('ok\n'));
-    const orphanRun = store.insertRun('deleted-long-ago');
-    store.appendLog(orphanRun.id, 'stdout', Buffer.from('a\n'));
-    store.appendLog(orphanRun.id, 'stderr', Buffer.from('b\n'));
-    store.recordTick('deleted-long-ago', 5);
-
-    expect(store.purgeOrphans()).toEqual({ runs: 1, logs: 2, scheduleState: 1 });
-    expect(store.getRun(orphanRun.id)).toBeUndefined();
-    expect(store.getLogs(orphanRun.id)).toEqual([]);
-    expect(store.getScheduleState('deleted-long-ago')).toBeUndefined();
-    expect(store.getRun(liveRun.id)).toBeDefined();
-    expect(store.getLogs(liveRun.id)).toHaveLength(1);
+    store.setRunOutput(run.id, { format: 'text', result: 'x', engineError: null, output: 'x', stderr: '', truncated: false });
+    expect(store.getRunOutput(run.id)).toBeUndefined();
   });
 
   it('unlinks the per-job log file of a deleted job', () => {

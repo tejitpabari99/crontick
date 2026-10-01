@@ -6,7 +6,8 @@ import { statSync } from 'node:fs';
 import { platform } from 'node:os';
 import { basename } from 'node:path';
 import type { Job, PromptAction } from '../schemas/job.js';
-import type { Store, RunStatus, LogStream } from './store.js';
+import type { Store, RunStatus } from './store.js';
+import { parseEngineOutput, type EngineOutput } from '../run-output.js';
 import { CrontickError } from '../errors.js';
 import { resolvePromptRunCommand, loadConfig } from '../config.js';
 import { dataDir } from '../paths.js';
@@ -193,34 +194,40 @@ function transcriptFileExists(path: string): boolean {
 // ── Per-run log writer ──────────────────────────────────────────────────────
 
 /**
- * Fans a run's log output out to two sinks: the SQLite run-log store (queried
- * by `crontick logs` and the dashboard) and the per-job log file (best-effort
- * mirror on disk). Engine output uses the `stdout`/`stderr` streams; crontick's
- * own scheduling/execution lifecycle events use the `crontick` stream so a
- * caller can filter engine-only vs crontick-only logs (see store.LogSource).
+ * Per-run output handling. crontick never persists the engine's raw output:
+ * engine stdout/stderr chunks are held in memory (already redacted and capped
+ * by `retention.maxOutputBytesPerRun`) only so the parsed result can be stored
+ * when the run finishes (see `finish()`), and crontick's own scheduling and
+ * execution events go to the per-job log file (one line per event, tagged with
+ * the run id). File writes are best-effort and never block or fail a run.
  */
 class RunLogWriter {
+  private readonly captured: Record<'stdout' | 'stderr', string[]> = { stdout: [], stderr: [] };
+
   constructor(
-    private readonly store: Store,
     private readonly file: JobLogFile,
     private readonly runId: string,
   ) {}
 
-  /** Persist an engine (or already-formatted) chunk to the store and mirror to the file. */
-  append(stream: LogStream, chunk: Buffer): void {
-    this.store.appendLog(this.runId, stream, chunk);
-    // Best-effort mirror: a misbehaving sink must never block or crash a run.
-    try {
-      this.file.write(chunk.toString('utf-8'));
-    } catch {
-      // swallowed — the store copy is the source of truth; file logging is a mirror.
-    }
+  /** Hold an engine output chunk in memory (never written to disk or the database). */
+  capture(stream: 'stdout' | 'stderr', chunk: Buffer): void {
+    this.captured[stream].push(chunk.toString('utf-8'));
   }
 
-  /** Record a crontick-side lifecycle event (redacted) on the `crontick` stream. */
+  /** Parse the captured engine output into the view persisted for the run; undefined when the engine produced none. */
+  parseCaptured(): EngineOutput | undefined {
+    if (this.captured.stdout.length === 0 && this.captured.stderr.length === 0) return undefined;
+    return parseEngineOutput(this.captured.stdout.join(''), this.captured.stderr.join(''));
+  }
+
+  /** Record a crontick-side event (redacted) in the per-job log file. */
   crontick(message: string, data?: unknown): void {
     const suffix = data === undefined ? '' : ` ${redactText(JSON.stringify(data))}`;
-    this.append('crontick', Buffer.from(`[crontick] ${message}${suffix}\n`, 'utf-8'));
+    try {
+      this.file.write(`${new Date().toISOString()} [run ${this.runId}] ${message}${suffix}\n`);
+    } catch {
+      // swallowed — file logging is best-effort.
+    }
   }
 }
 
@@ -333,7 +340,7 @@ export class Runner {
    */
   async run(job: Job, runId: string, store: Store): Promise<void> {
     const overlap = job.overlap ?? 'skip';
-    const log = new RunLogWriter(store, this.jobLogFiles.open(job.id), runId);
+    const log = new RunLogWriter(this.jobLogFiles.open(job.id), runId);
     this.logger.debug('Starting run orchestration', { jobId: job.id, runId, overlap, retryMax: job.retry?.max ?? 0 });
     this.appendDiagnosticLog(log, 'run orchestration', { jobId: job.id, overlap, retryMax: job.retry?.max ?? 0 });
 
@@ -486,10 +493,7 @@ export class Runner {
     const capturePromptSession = latestAction.reuseSession && !sessionId;
     const promptCaptureAction: PromptAction | undefined = capturePromptSession ? latestAction : undefined;
     if (sessionId && latestAction.reuseSession) {
-      log.append(
-        'crontick',
-        Buffer.from('[crontick] notice: reuseSession was ignored because an explicit sessionId was provided.\n', 'utf-8'),
-      );
+      log.crontick('notice: reuseSession was ignored because an explicit sessionId was provided');
     }
     // Persist an explicitly-provided session id onto the run record now
     // (an extracted one is persisted from the close handler below).
@@ -649,7 +653,7 @@ export class Runner {
     };
     const flushRedactor = (stream: 'stdout' | 'stderr'): void => {
       const flushed = flushSafeRedactor(streamRedactors[stream]);
-      if (flushed.length > 0) log.append(stream, flushed);
+      if (flushed.length > 0) log.capture(stream, flushed);
     };
     const captureChunk = (stream: 'stdout' | 'stderr', chunk: Buffer): void => {
       if (outputTruncated) return; // marker already emitted; drop silently, child keeps running
@@ -662,10 +666,10 @@ export class Runner {
         if (room > 0) {
           const redacted = safeRedact(truncateToUtf8Boundary(chunk.subarray(0, room)), redactor);
           if (!redacted.textLike) flushRedactor(stream);
-          if (redacted.chunk.length > 0) log.append(stream, redacted.chunk);
+          if (redacted.chunk.length > 0) log.capture(stream, redacted.chunk);
         }
         flushRedactor(stream);
-        log.append(stream, Buffer.from(truncationMarker(maxOutputBytes), 'utf-8'));
+        log.capture(stream, Buffer.from(truncationMarker(maxOutputBytes), 'utf-8'));
         try {
           store.updateRun(runId, { outputTruncated: true });
         } catch (err) {
@@ -677,7 +681,7 @@ export class Runner {
       capturedBytes += chunk.length;
       const redacted = safeRedact(chunk, redactor);
       if (!redacted.textLike) flushRedactor(stream);
-      if (redacted.chunk.length > 0) log.append(stream, redacted.chunk);
+      if (redacted.chunk.length > 0) log.capture(stream, redacted.chunk);
     };
     const result = await new Promise<RunResult>((resolve) => {
       const timeoutMs = action.timeoutSec ? action.timeoutSec * 1000 : undefined;
@@ -858,7 +862,7 @@ export class Runner {
             if (persisted) {
               this.logger.debug('Session id captured and persisted', { jobId: job.id, runId });
               try {
-                log.append('crontick', Buffer.from(`[crontick] captured session id: ${resolvedSessionId}\n`, 'utf-8'));
+                log.crontick('captured session id', { sessionId: resolvedSessionId });
               } catch (err) {
                 finish({
                   ...result,
@@ -992,14 +996,21 @@ export class Runner {
       transcriptPath: result.transcriptPath,
       engineStatus: result.engineStatus,
     });
+    const engineOutput = log?.parseCaptured();
+    if (engineOutput) {
+      try {
+        store.setRunOutput(runId, engineOutput);
+      } catch (err) {
+        this.logger.error('Failed to persist run output', { runId, error: String(err) });
+      }
+    }
     log?.crontick('run finished', { status: result.status, exitCode: result.exitCode, durationMs, error: result.error });
     this.logger.debug('Finalized run', { runId, status: result.status, exitCode: result.exitCode, durationMs });
   }
 
   private appendDiagnosticLog(log: RunLogWriter, message: string, data?: unknown): void {
     if (!this.logger.isDebugEnabled()) return;
-    const suffix = data === undefined ? '' : ` ${redactText(JSON.stringify(data))}`;
-    log.append('stderr', Buffer.from(`[crontick:debug] ${message}${suffix}\n`, 'utf-8'));
+    log.crontick(`[debug] ${message}`, data);
   }
 
   /** Cancel any active run for a job. */

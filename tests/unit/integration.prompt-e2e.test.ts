@@ -127,20 +127,13 @@ describe('Integration: prompt job session capture through a live daemon', () => 
     expect(runs).toHaveLength(1);
     expect(runs[0].status).toBe('success');
 
-    const { data: logs } = await apiCall(port, 'GET', `/api/runs/${runs[0].id}/logs`);
-    const typedLogs = logs as Array<{ stream: string; data: string }>;
-    const stdoutText = typedLogs
-      .filter((l) => l.stream === 'stdout')
-      .map((l) => l.data)
-      .join('');
-    const crontickText = typedLogs
-      .filter((l) => l.stream === 'crontick')
-      .map((l) => l.data)
-      .join('');
+    const { data: view } = await apiCall(port, 'GET', `/api/runs/${runs[0].id}/output`);
+    const { output: stdoutText, logFile } = view as { output: string; logFile: string };
+    const crontickText = readFileSync(logFile, 'utf-8');
     expect(stdoutText).toContain('stub engine ran');
-    // The captured-session-id lifecycle line is a crontick-side event and must
-    // land on the crontick stream, not stdout/stderr (see runner.ts).
-    expect(crontickText).toContain(`[crontick] captured session id: ${STUB_SESSION_ID}`);
+    // The captured-session-id lifecycle line is a crontick-side event: it lands
+    // in the crontick log file, never in the stored engine output (see runner.ts).
+    expect(crontickText).toContain(`captured session id {"sessionId":"${STUB_SESSION_ID}"}`);
     expect(stdoutText).not.toContain('captured session id');
 
     // Session id captured from the stub's transcript is persisted onto the

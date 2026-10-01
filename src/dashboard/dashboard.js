@@ -497,7 +497,7 @@ async function openRunModal(runId) {
   document.getElementById('modal-meta').textContent = '';
   document.getElementById('modal-error-section').hidden = true;
   document.getElementById('modal-output').textContent = 'Loading…';
-  document.getElementById('modal-rawlog').innerHTML = '';
+  document.getElementById('modal-logfile').innerHTML = '';
   document.getElementById('modal-output-section').hidden = false;
   modal.hidden = false;
   modal.querySelector('.modal').focus();
@@ -525,25 +525,22 @@ async function openRunModal(runId) {
     if (out.result && !text.includes(out.result)) text = `${out.result}${text ? `\n\n${text}` : ''}`;
     document.getElementById('modal-output-section').hidden = text.length === 0;
     document.getElementById('modal-output').textContent = text;
-    renderRawLogRow(runId, out.rawLogPath);
+    renderLogFileRow(runId, out.logFile);
   } catch (err) {
     document.getElementById('modal-output-section').hidden = true;
     document.getElementById('modal-output').textContent = '';
-    renderRawLogRow(runId, null);
+    renderLogFileRow(runId, null);
     document.getElementById('modal-error-section').hidden = false;
     document.getElementById('modal-error').textContent = `Failed to load run output: ${err.message}`;
   }
 }
 
-/** Raw log row: absolute path (copyable) plus an Open link served by the daemon (browsers block file: links from http pages). */
-function renderRawLogRow(runId, rawLogPath) {
+/** Log file row: the absolute path, linked to the daemon-served file (browsers block file: links from http pages). Contents are never rendered inline. */
+function renderLogFileRow(runId, logFile) {
   const href = `/api/runs/${encodeURIComponent(runId)}/log/raw`;
-  const path = rawLogPath ? `<code>${escHtml(rawLogPath)}</code>${copyIcon(rawLogPath)}` : '<span class="muted">per-job log file disabled</span>';
-  document.getElementById('modal-rawlog').innerHTML = `
-    ${path}
-    <a class="btn" href="${escHtml(href)}" target="_blank" rel="noopener">Open</a>
-    <span class="muted">The file holds all runs of this job; the link serves this run only.</span>
-  `;
+  document.getElementById('modal-logfile').innerHTML = logFile
+    ? `<a href="${escHtml(href)}" target="_blank" rel="noopener"><code>${escHtml(logFile)}</code></a>${copyIcon(logFile)}`
+    : '<span class="muted">per-job log file disabled</span>';
 }
 
 function closeRunModal() {
@@ -763,7 +760,7 @@ document.getElementById('log-modal').addEventListener('click', (e) => {
   if (e.target.id === 'log-modal') closeRunModal();
 });
 document.getElementById('log-modal').addEventListener('keydown', (e) => trapTab(e, document.querySelector('#log-modal .modal')));
-document.getElementById('modal-rawlog').addEventListener('click', handleCopyClick);
+document.getElementById('modal-logfile').addEventListener('click', handleCopyClick);
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;

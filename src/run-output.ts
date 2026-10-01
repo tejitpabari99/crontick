@@ -1,15 +1,16 @@
 /**
- * Cleaned, human-readable "output" view of a run, built from the raw engine log.
+ * Cleaned, human-readable "output" view of a run, built from the engine's stdout/stderr.
  *
- * Where the raw log comes from: the runner captures the engine child process's
- * stdout/stderr chunk by chunk into the SQLite `run_logs` table (and mirrors it
- * to `<logsDir>/<jobId>.log`). For a Claude engine, stdout is `stream-json`: one
- * JSON event per line (system/hook events, assistant messages with `thinking`
- * blocks carrying opaque `signature` blobs, tool calls/results, and a final
- * `result`). That is faithful but unreadable, so this module parses it into the
- * final answer plus the assistant's text (segments separated by `---`),
- * dropping thinking blocks, tool calls/results, hook plumbing and base64 payloads. The raw log stays available unchanged through
- * `getLogs`. Pure and dependency-light so every layer (daemon route, tests) can use it.
+ * crontick does not store the engine's raw logs: the runner (e.g. Claude) keeps its own
+ * transcript. While a run executes, the daemon holds the engine's redacted stdout/stderr in
+ * memory only, parses it with {@link parseEngineOutput} when the run finishes, and persists
+ * just the parsed result (final answer, assistant text, stderr tail) in the `run_outputs`
+ * table. For a Claude engine, stdout is `stream-json`: one JSON event per line (system/hook
+ * events, assistant messages with `thinking` blocks carrying opaque `signature` blobs, tool
+ * calls/results, and a final `result`). That is faithful but unreadable, so this module parses
+ * it into the final answer plus the assistant's text (segments separated by `---`), dropping
+ * thinking blocks, tool calls/results, hook plumbing and base64 payloads. Pure and
+ * dependency-light so every layer (daemon, tests) can use it.
  */
 import { redactText } from './logger.js';
 
@@ -70,9 +71,20 @@ export function normalizeUsageJson(usageJson: string | undefined): NormalizedUsa
   }
 }
 
-export interface RunOutputLogChunk {
-  stream: string;
-  data: string;
+/** The parsed engine output persisted per run (see `Store.setRunOutput`). */
+export interface EngineOutput {
+  /** `claude-stream-json` when engine stdout was parsed as Claude stream-json events; `text` for plain engine output. */
+  format: 'claude-stream-json' | 'text';
+  /** The engine's final answer (Claude `result` text, else the last assistant text, else plain stdout); `null` when there is none. */
+  result: string | null;
+  /** Error reported inside the engine output (if any); `null` otherwise. */
+  engineError: string | null;
+  /** Assistant text only (see {@link RunOutput.output}). */
+  output: string;
+  /** Engine stderr (redacted, last {@link STDERR_MAX} characters). */
+  stderr: string;
+  /** True when the output view was itself capped at {@link OUTPUT_MAX}. */
+  truncated: boolean;
 }
 
 /** Parsed output view returned by `getOutput` / `GET /api/runs/:id/output`. */
@@ -87,7 +99,7 @@ export interface RunOutput {
   error: string | null;
   /**
    * Assistant text only: consecutive text blocks form one segment, a tool call between texts ends a segment, and
-   * segments are joined by a `---` line. No tool markers, thinking, hooks or tool results (the raw log has those).
+   * segments are joined by a `---` line. No tool markers, thinking, hooks or tool results.
    * Plain-text engines keep their stdout lines as-is. `''` when there is no text.
    */
   output: string;
@@ -99,8 +111,8 @@ export interface RunOutput {
   durationMs: number | null;
   /** Display-only normalized token counts from the stored usage block; `null` when the run has none. */
   usage: NormalizedUsage | null;
-  /** Absolute path of the per-job raw log mirror (holds all runs of the job); `null` when file logging is disabled. Added by the daemon route, not by `buildRunOutput`. */
-  rawLogPath?: string | null;
+  /** Absolute path of the per-job crontick log file (crontick-side events only); `null` when file logging is disabled. Added by the daemon route, not by `buildRunOutput`. */
+  logFile?: string | null;
   /** True when the run's captured output hit `retention.maxOutputBytesPerRun` (the transcript may be incomplete) or this view was itself capped. */
   truncated: boolean;
 }
@@ -193,13 +205,10 @@ export function joinSegments(segments: readonly string[]): string {
   return segments.map((seg) => cleanOutputText(seg.trim())).filter((seg) => seg !== '').join(SEGMENT_SEPARATOR);
 }
 
-/** Build the cleaned output view for a run from its raw engine log chunks (stdout/stderr; other streams are ignored). */
-export function buildRunOutput(run: RunOutputSource, logs: readonly RunOutputLogChunk[]): RunOutput {
-  const stdout = logs.filter((l) => l.stream === 'stdout').map((l) => l.data).join('');
-  const stderr = logs.filter((l) => l.stream === 'stderr').map((l) => l.data).join('');
+/** Parse captured engine stdout/stderr (already redacted) into the persisted {@link EngineOutput}. */
+export function parseEngineOutput(stdout: string, stderr: string): EngineOutput {
   const p = parseStdout(stdout);
-
-  const format: RunOutput['format'] = p.sawEvents ? 'claude-stream-json' : 'text';
+  const format: EngineOutput['format'] = p.sawEvents ? 'claude-stream-json' : 'text';
   const plainText = p.plain.join('\n').trim();
   let result: string | undefined;
   if (format === 'claude-stream-json') {
@@ -208,10 +217,9 @@ export function buildRunOutput(run: RunOutputSource, logs: readonly RunOutputLog
     result = plainText === '' ? undefined : plainText;
   }
   const engineError = p.resultIsError ? p.resultText : p.assistantError;
-  const error = run.error ?? engineError ?? null;
 
   let output = format === 'claude-stream-json' ? joinSegments(p.segments) : cleanOutputText(p.plain.join('\n').trim());
-  let truncated = run.outputTruncated === true;
+  let truncated = false;
   if (output.length > OUTPUT_MAX) {
     output = `${output.slice(0, OUTPUT_MAX)}\n[output view truncated]`;
     truncated = true;
@@ -222,20 +230,34 @@ export function buildRunOutput(run: RunOutputSource, logs: readonly RunOutputLog
     truncated = true;
   }
   const cleanStderr = cleanOutputText(stderr.trim());
+  return {
+    format,
+    result: cleanResult,
+    engineError: engineError === undefined ? null : cleanOutputText(engineError),
+    output,
+    stderr: cleanStderr.length > STDERR_MAX ? cleanStderr.slice(-STDERR_MAX) : cleanStderr,
+    truncated,
+  };
+}
 
+const EMPTY_ENGINE_OUTPUT: EngineOutput = { format: 'text', result: null, engineError: null, output: '', stderr: '', truncated: false };
+
+/** Build the output view for a run from its record and its persisted engine output (absent for runs that never spawned an engine). */
+export function buildRunOutput(run: RunOutputSource, engine: EngineOutput = EMPTY_ENGINE_OUTPUT): RunOutput {
+  const error = run.error ?? engine.engineError;
   return {
     runId: run.id,
     status: run.status,
-    format,
-    result: cleanResult,
-    error: error === null ? null : cleanOutputText(error),
-    output,
-    stderr: cleanStderr.length > STDERR_MAX ? cleanStderr.slice(-STDERR_MAX) : cleanStderr,
+    format: engine.format,
+    result: engine.result,
+    error: error === null || error === undefined ? null : cleanOutputText(error),
+    output: engine.output,
+    stderr: engine.stderr,
     sessionId: run.sessionId ?? null,
     costUsd: run.costUsd ?? null,
     turns: run.turns ?? null,
     durationMs: run.durationMs ?? null,
     usage: normalizeUsageJson(run.usageJson),
-    truncated,
+    truncated: run.outputTruncated === true || engine.truncated,
   };
 }

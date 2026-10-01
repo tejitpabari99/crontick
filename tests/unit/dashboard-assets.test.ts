@@ -1,4 +1,4 @@
-/** Static dashboard assets: theme icons, Runner Session ID label, raw-log link, no inline raw log, no truncated ids. */
+/** Static dashboard assets: theme icons, Runner Session ID label, log-file link, no inline log, no truncated ids. */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -32,9 +32,11 @@ describe('dashboard labels and run modal', () => {
     expect(js.replace(/Runner Session ID/g, '')).not.toMatch(/Session(:| ID)/);
   });
 
-  it('shows the raw log as a path plus an Open link instead of inlining it', () => {
+  it('shows the crontick log file as a linked absolute path instead of inlining it', () => {
     expect(html).not.toContain('<details');
-    expect(html).toContain('id="modal-rawlog"');
+    expect(html).toContain('id="modal-logfile"');
+    expect(html).not.toContain('Raw log');
+    expect(js).not.toContain('rawLogPath');
     expect(js).not.toContain('loadRawLog');
     expect(js).not.toContain('source=all');
     expect(js).toMatch(/\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/log\/raw/);

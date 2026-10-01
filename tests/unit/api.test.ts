@@ -290,7 +290,7 @@ describe('Daemon HTTP API', () => {
     if (summary.avgDurationMs !== null) expect(summary.avgDurationSec).toBeCloseTo(summary.avgDurationMs / 1000, 1);
   });
 
-  it('GET /api/runs/:id/output returns the cleaned output view while /logs keeps the raw log', async () => {
+  it('GET /api/runs/:id/output returns the cleaned output view; the raw engine log is not stored', async () => {
     const code = [
       "const emit = (e) => process.stdout.write(JSON.stringify(e) + '\\n');",
       "emit({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'hm', signature: 'SIGNATURE-BLOB' }] } });",
@@ -314,8 +314,7 @@ describe('Daemon HTTP API', () => {
     expect(output.status).toBe(200);
     expect(output.data).toMatchObject({ runId, status: 'success', format: 'claude-stream-json', result: 'All done.', error: null, output: 'All done.' });
     expect(JSON.stringify(output.data)).not.toContain('SIGNATURE-BLOB');
-    const raw = await apiCall(port, 'GET', `/api/runs/${runId}/logs?source=engine`);
-    expect(JSON.stringify(raw.data)).toContain('SIGNATURE-BLOB');
+    expect((await apiCall(port, 'GET', `/api/runs/${runId}/logs?source=engine`)).status).toBe(404);
     expect((await apiCall(port, 'GET', '/api/runs/nope/output')).status).toBe(404);
     const detail = (await apiCall(port, 'GET', `/api/runs/${runId}`)).data as { jobId: string; logFile: string | null };
     expect(detail.logFile).toBe(resolve(join(dir, 'logs', `${detail.jobId}.log`)));
@@ -498,18 +497,6 @@ describe('Daemon HTTP API', () => {
     expect((missing.data as { error: { code: string; message: string } }).error.code).toBe('JOB_NOT_FOUND');
     expect((missing.data as { error: { message: string } }).error.message).toContain('nope-1, nope-2');
   });
-
-  // ── Run logs ───────────────────────────────────────────────────────────────────
-
-  it('GET /api/runs/:id/logs returns log array', async () => {
-    // First trigger a quick run
-    const { data: runData } = await apiCall(port, 'POST', '/api/jobs/api-test-job/run');
-    const runId = (runData as { runId: string }).runId;
-    // Give it a moment to complete
-    await new Promise((r) => setTimeout(r, 2000));
-    const { status } = await apiCall(port, 'GET', `/api/runs/${runId}/logs`);
-    expect(status).toBe(200);
-  }, 8000);
 
   // ── Daemon reload ─────────────────────────────────────────────────────────────
 

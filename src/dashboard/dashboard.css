@@ -425,9 +425,9 @@ th.sorted .sort-ind, th.sorted .sort-btn { opacity: 1; color: var(--accent); }
 .modal-header h3 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .run-meta { color: var(--muted); font-size: 12px; margin-bottom: 4px; word-break: break-word; }
 .error-pane { border-color: var(--error); color: var(--error); }
-.raw-log-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
-.raw-log-row code { overflow-wrap: anywhere; }
-.raw-log-row .muted { flex-basis: 100%; }
+.log-file-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+.log-file-row code { overflow-wrap: anywhere; }
+.log-file-row .muted { flex-basis: 100%; }
 .modal-backdrop { z-index: 200; }
 
 /* ── Job details drawer ───────────────────────────────────────────────────── */

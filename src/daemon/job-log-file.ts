@@ -1,6 +1,7 @@
-// Per-job log file sink: mirrors a run's engine output AND crontick-side
-// lifecycle events to <logDir>/<jobGuid>.log, in addition to the SQLite
-// run-log storage. All writes are best-effort and never block or fail a run
+// Per-job log file sink: records crontick's own scheduling/execution events
+// (run started, resolved command, exit, errors) to <logDir>/<jobGuid>.log. The
+// engine's raw stdout/stderr is never written here or to the database; the
+// runner (e.g. Claude) keeps its own transcript. All writes are best-effort and never block or fail a run
 // (a missing directory or a failed write is swallowed, at most one debug log
 // is emitted). The factory is injectable so the runner and tests can supply a
 // fake sink without touching real disk. See docs/implementation/prompt-execution.md.
@@ -33,9 +34,9 @@ function safeLogFileName(jobId: string): string {
 }
 
 /**
- * Absolute path of the per-job log file mirror, or null when file logging is
- * disabled (`logging.fileEnabled=false`). The file is per job (appended across
- * runs, no run delimiter); the SQLite `run_logs` table is the per-run source of truth.
+ * Absolute path of the per-job crontick log file, or null when file logging is
+ * disabled (`logging.fileEnabled=false`). The file is per job: every run of the
+ * job appends to it, each line tagged with its run id.
  */
 export function resolveJobLogPath(jobId: string, env: NodeJS.ProcessEnv = process.env): string | null {
   let fileEnabled = true;

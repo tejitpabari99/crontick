@@ -20,6 +20,16 @@ function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), 'crontick-runner-'));
 }
 
+/** A per-job log-file sink that records every line the runner writes (crontick-side events only). */
+function recordingLogFiles(): { writes: Array<{ jobId: string; text: string }>; factory: { open(jobId: string): { write(text: string): void } }; text(): string } {
+  const writes: Array<{ jobId: string; text: string }> = [];
+  return {
+    writes,
+    factory: { open: (jobId: string) => ({ write: (text: string) => { writes.push({ jobId, text }); } }) },
+    text: () => writes.map((w) => w.text).join(''),
+  };
+}
+
 function makeStore(dir: string): Store {
   const s = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
   s.open();
@@ -168,18 +178,14 @@ describe('Runner', () => {
     const job = execJob('log', node, ['-e', 'process.stdout.write("hello world\\n")']);
     const run = store.insertRun(job.id);
     await runner.run(job, run.id, store);
-    const logs = store.getLogs(run.id);
-    const text = logs.map((l) => l.chunk.toString('utf-8')).join('');
-    expect(text).toContain('hello world');
+    expect(store.getRunOutput(run.id)?.output).toContain('hello world');
   });
 
   it('exec: stderr logs are captured', async () => {
     const job = execJob('err-log', node, ['-e', 'process.stderr.write("error line\\n"); process.exit(1)']);
     const run = store.insertRun(job.id);
     await runner.run(job, run.id, store);
-    const logs = store.getLogs(run.id);
-    const stderrLogs = logs.filter((l) => l.stream === 'stderr');
-    expect(stderrLogs.length).toBeGreaterThan(0);
+    expect(store.getRunOutput(run.id)?.stderr).toContain('error line');
   });
 
   it('exec: durationMs is set after completion', async () => {
@@ -316,21 +322,6 @@ describe('Runner', () => {
     runner.cancelJob(job.id);
     await Promise.all([pB, pC]);
   }, 25000);
-
-  // ── Binary output (redaction must not corrupt) ───────────────────────────────
-
-  it('exec: binary stdout bytes are preserved without redaction corruption', async () => {
-    const job = execJob('binary', node, [
-      '-e',
-      'process.stdout.write(Buffer.from([0, 1, 2, 255, 65]))', // 65 = 'A'
-    ]);
-    const run = store.insertRun(job.id);
-    await runner.run(job, run.id, store);
-    const logs = store.getLogs(run.id);
-    const stdoutLogs = logs.filter((l) => l.stream === 'stdout');
-    const bytes = Buffer.concat(stdoutLogs.map((l) => l.chunk));
-    expect(bytes).toEqual(Buffer.from([0, 1, 2, 255, 65]));
-  });
 
   // ── Prompt schema: shell injection rejected ──────────────────────────────────
 
@@ -473,7 +464,8 @@ describe('Runner', () => {
 
   it('prompt: explicit session id wins over reuseSession and logs a notice', async () => {
     const fake = fakeSpawn([{ stdout: 'ok\n' }]);
-    runner = new Runner(fake.spawnFn as never);
+    const files = recordingLogFiles();
+    runner = new Runner(fake.spawnFn as never, undefined, undefined, undefined, files.factory);
     const job = promptJob('prompt-session-precedence', {
       sessionId: 'sess-12345678',
       reuseSession: true,
@@ -489,12 +481,13 @@ describe('Runner', () => {
       sessionId: 'sess-12345678',
       reuseSession: false,
     });
-    expect(store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('')).not.toContain('captured session id');
+    expect(files.text()).not.toContain('captured session id');
   });
 
-  it('prompt: reuseSession-ignored notice is written to the crontick stream, never the engine stream', async () => {
+  it('prompt: reuseSession-ignored notice goes to the crontick log file, never the stored engine output', async () => {
     const fake = fakeSpawn([{ stdout: 'ok\n' }]);
-    runner = new Runner(fake.spawnFn as never);
+    const files = recordingLogFiles();
+    runner = new Runner(fake.spawnFn as never, undefined, undefined, undefined, files.factory);
     // A job carrying both an explicit sessionId and reuseSession reaches the
     // runner (e.g. via the getJob-miss fallback where the in-memory job is
     // used directly). The runner emits a lifecycle notice that reuseSession was
@@ -508,17 +501,15 @@ describe('Runner', () => {
 
     await runner.run(job, run.id, store);
 
-    expect(store.getLogs(run.id, 'crontick').map((log) => log.chunk.toString('utf-8')).join('')).toContain(
-      'reuseSession was ignored',
-    );
-    expect(store.getLogs(run.id, 'engine').map((log) => log.chunk.toString('utf-8')).join('')).not.toContain(
-      'reuseSession was ignored',
-    );
+    expect(files.text()).toContain('reuseSession was ignored');
+    expect(files.text()).toContain(`[run ${run.id}]`);
+    expect(store.getRunOutput(run.id)?.output ?? '').not.toContain('reuseSession was ignored');
   });
 
   it('prompt: captures and persists a reusable session id after first successful run', async () => {
     const fake = fakeSpawn([{ stdout: 'session id: sess-abcdefgh\n' }]);
-    runner = new Runner(fake.spawnFn as never);
+    const files = recordingLogFiles();
+    runner = new Runner(fake.spawnFn as never, undefined, undefined, undefined, files.factory);
     const job = promptJob('prompt-reuse', { reuseSession: true });
     store.upsertJob(job);
     const run = store.insertRun(job.id);
@@ -532,11 +523,10 @@ describe('Runner', () => {
       sessionId: 'sess-abcdefgh',
       reuseSession: false,
     });
-    expect(store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('')).toContain('captured session id');
-    // The captured-session-id line is a crontick-side lifecycle event: it must
-    // live on the `crontick` stream, never on the engine (stdout/stderr) streams.
-    expect(store.getLogs(run.id, 'crontick').map((log) => log.chunk.toString('utf-8')).join('')).toContain('captured session id');
-    expect(store.getLogs(run.id, 'engine').map((log) => log.chunk.toString('utf-8')).join('')).not.toContain('captured session id');
+    // The captured-session-id line is a crontick-side event: it lives in the
+    // crontick log file, never in the stored engine output.
+    expect(files.text()).toContain('captured session id');
+    expect(store.getRunOutput(run.id)?.output ?? '').not.toContain('captured session id');
   });
 
   it('prompt: captures a session id from the rolling transcript tail after long output', async () => {
@@ -573,9 +563,9 @@ describe('Runner', () => {
     await runner.run(job, run.id, store);
 
     // Deleting a job removes its runs; the late write-back must not resurrect
-    // the job, the run row or orphan logs.
+    // the job, the run row or orphan output.
     expect(store.getRun(run.id)).toBeUndefined();
-    expect(store.getLogs(run.id)).toEqual([]);
+    expect(store.getRunOutput(run.id)).toBeUndefined();
     expect(store.getJob(job.id)).toBeUndefined();
   });
 
@@ -708,11 +698,10 @@ describe('Runner', () => {
       const updated = store.getRun(run.id)!;
       expect(updated.outputTruncated).toBe(true);
 
-      const logs = store.getLogs(run.id, 'engine');
-      const text = logs.map((l) => l.chunk.toString('utf-8')).join('');
+      const text = store.getRunOutput(run.id)?.output ?? '';
       expect(text).toContain(truncationMarker(cap).trim());
       // Captured payload before the marker must not exceed the cap.
-      const beforeMarker = text.split(truncationMarker(cap))[0];
+      const beforeMarker = text.split(truncationMarker(cap).trim())[0]!.trimEnd();
       expect(Buffer.byteLength(beforeMarker, 'utf-8')).toBeLessThanOrEqual(cap);
     });
 
@@ -762,8 +751,8 @@ describe('Runner', () => {
       await runner.run(job, run.id, store);
       expect(store.getRun(run.id)!.outputTruncated).toBe(true);
 
-      const text = store.getLogs(run.id, 'engine').map((l) => l.chunk.toString('utf-8')).join('');
-      const beforeMarker = text.split(truncationMarker(cap))[0];
+      const text = store.getRunOutput(run.id)?.output ?? '';
+      const beforeMarker = text.split(truncationMarker(cap).trim())[0]!.trimEnd();
       expect(beforeMarker).not.toContain('\uFFFD');
       expect(beforeMarker).toBe('ab');
     });
@@ -798,43 +787,21 @@ describe('Runner', () => {
       expect(store.getRun(run.id)?.sessionId).toBe('sess-explicit1');
     });
 
-    it('records crontick lifecycle events on the `crontick` stream, absent from the engine streams', async () => {
-      const job = execJob('crontick-stream', node, ['-e', 'process.stdout.write("engine-output")']);
+    it('writes only crontick-side events to the per-job log file; engine output is stored parsed, never raw', async () => {
+      const files = recordingLogFiles();
+      const job = execJob('file-sink', node, ['-e', 'process.stdout.write(["engine", "output"].join("-"))']);
+      runner = new Runner(undefined, undefined, undefined, undefined, files.factory);
       const run = store.insertRun(job.id);
       await runner.run(job, run.id, store);
 
-      const crontickText = store.getLogs(run.id, 'crontick').map((l) => l.chunk.toString('utf-8')).join('');
-      expect(crontickText).toContain('[crontick] run started');
-      expect(crontickText).toContain('[crontick] executing');
-      expect(crontickText).toContain('[crontick] run finished');
-
-      const engineText = store.getLogs(run.id, 'engine').map((l) => l.chunk.toString('utf-8')).join('');
-      expect(engineText).toBe('engine-output');
-      expect(engineText).not.toContain('[crontick]');
-
-      // 'all' returns both streams.
-      const allStreams = new Set(store.getLogs(run.id, 'all').map((l) => l.stream));
-      expect(allStreams.has('crontick')).toBe(true);
-      expect(allStreams.has('stdout')).toBe(true);
-    });
-
-    it('mirrors run output to the injectable per-job log-file sink (best-effort seam)', async () => {
-      const writes: Array<{ jobId: string; text: string }> = [];
-      const fakeFactory = {
-        open(jobId: string) {
-          return { write: (text: string) => { writes.push({ jobId, text }); } };
-        },
-      };
-      const job = execJob('file-sink', node, ['-e', 'process.stdout.write("hello-file")']);
-      runner = new Runner(undefined, undefined, undefined, undefined, fakeFactory);
-      const run = store.insertRun(job.id);
-      await runner.run(job, run.id, store);
-
-      const joined = writes.map((w) => w.text).join('');
-      expect(writes.every((w) => w.jobId === job.id)).toBe(true);
-      expect(joined).toContain('hello-file');
-      expect(joined).toContain('[crontick] run started');
-      expect(joined).toContain('[crontick] run finished');
+      const joined = files.text();
+      expect(files.writes.every((w) => w.jobId === job.id)).toBe(true);
+      expect(joined).toContain(`[run ${run.id}] run started`);
+      expect(joined).toContain('executing');
+      expect(joined).toContain('run finished');
+      expect(joined).not.toContain('engine-output');
+      expect(joined).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(store.getRunOutput(run.id)).toMatchObject({ format: 'text', result: 'engine-output', output: 'engine-output' });
     });
 
     it('never fails a run when the per-job file sink throws (non-blocking)', async () => {
@@ -849,7 +816,7 @@ describe('Runner', () => {
       await runner.run(job, run.id, store);
 
       expect(store.getRun(run.id)?.status).toBe('success');
-      expect(store.getLogs(run.id, 'engine').map((l) => l.chunk.toString('utf-8')).join('')).toBe('still-ok');
+      expect(store.getRunOutput(run.id)?.output).toBe('still-ok');
     });
   });
 

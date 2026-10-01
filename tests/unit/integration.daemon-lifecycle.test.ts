@@ -639,7 +639,7 @@ describe('Integration: daemon lifecycle', () => {
     await new Promise((r) => setTimeout(r, 4500));
     expect(existsSync(doneFile)).toBe(false);
     expect((await apiCall(port, 'GET', `/api/runs/${runId}`)).status).toBe(404);
-    expect((await apiCall(port, 'GET', `/api/runs/${runId}/logs`)).status).toBe(404);
+    expect((await apiCall(port, 'GET', `/api/runs/${runId}/output`)).status).toBe(404);
     expect((await apiCall(port, 'GET', '/api/runs')).data).toEqual([]);
   }, 30_000);
 

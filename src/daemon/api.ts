@@ -1,12 +1,11 @@
 // Loopback-only HTTP API for the daemon. All routes enforce localhost access.
 // See docs/implementation/daemon.md for the full route table.
 import http from 'node:http';
-import { createReadStream } from 'node:fs';
+import { createReadStream, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { URL } from 'node:url';
 import type { Store } from './store.js';
 import type { RunStatus } from './store.js';
-import { LOG_SOURCES, type LogSource } from '../log-source.js';
 import type { Scheduler } from './scheduler.js';
 import type { Runner } from './runner.js';
 import { JobSchema } from '../schemas/job.js';
@@ -24,7 +23,6 @@ import {
 import { buildRunOutput } from '../run-output.js';
 import { nullLogger, redactText, redactValue, type Logger } from '../logger.js';
 import { readEnvFileForAction } from './env-file.js';
-import { SSE_POLL_MS } from '../constants/daemon.js';
 import { resolveJobLogPath } from './job-log-file.js';
 import { describeDaemonPort } from './bind-port.js';
 
@@ -32,11 +30,6 @@ import { describeDaemonPort } from './bind-port.js';
 
 // Invariant: only loopback addresses may connect. Non-loopback → 403.
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
-
-/** Coerce an untrusted `source` query value to a valid LogSource, defaulting to 'all'. */
-function normalizeLogSource(value: string | null): LogSource {
-  return value !== null && (LOG_SOURCES as readonly string[]).includes(value) ? (value as LogSource) : 'all';
-}
 
 /** Run ids are generated identifiers; anything else cannot name a run. */
 const RUN_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -309,35 +302,30 @@ async function handleRequest(
         return sendJson(res, 200, { ok: true, canceled });
       }
 
-      if (method === 'GET' && sub === '/logs') {
-        const run = ctx.store.getRun(id);
-        if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
-        const source = normalizeLogSource(url.searchParams.get('source'));
-        const logs = ctx.store.getLogs(id, source);
-        return sendJson(res, 200, redactValue(logs.map((l) => ({
-          runId: l.runId,
-          stream: l.stream,
-          ts: l.ts,
-          data: l.chunk.toString('utf-8'),
-        }))));
-      }
-
       // Cleaned, human-readable view of the run's engine output (final answer, error,
-      // readable transcript) -- see src/run-output.ts. The raw log stays at /logs.
+      // assistant text) -- see src/run-output.ts. crontick does not store the engine's
+      // raw logs; `logFile` is the per-job file of crontick-side events.
       if (method === 'GET' && sub === '/output') {
         const run = ctx.store.getRun(id);
         if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
-        const logs = ctx.store.getLogs(id, 'engine').map((l) => ({ stream: l.stream, data: l.chunk.toString('utf-8') }));
-        return sendJson(res, 200, redactValue({ ...buildRunOutput(run, logs), rawLogPath: resolveJobLogPath(run.jobId) }));
+        return sendJson(res, 200, redactValue({ ...buildRunOutput(run, ctx.store.getRunOutput(run.id)), logFile: resolveJobLogPath(run.jobId) }));
       }
 
-      // The run's raw engine + crontick log (all sources, from run_logs) as redacted plain text.
-      // The dashboard links here: browsers refuse file: links from http pages. The id is only
-      // ever looked up in the store; no filesystem path is derived from the URL.
+      // The run's job log file (crontick-side events only) served as plain text so the
+      // dashboard can link to it: browsers refuse file: links from http pages. The id is
+      // only ever looked up in the store; no filesystem path is derived from the URL.
       if (method === 'GET' && sub === '/log/raw') {
         const run = RUN_ID_PATTERN.test(id) ? ctx.store.getRun(id) : undefined;
         if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
-        const text = ctx.store.getLogs(run.id, 'all').map((l) => l.chunk.toString('utf-8')).join('');
+        const logPath = resolveJobLogPath(run.jobId);
+        let text = '';
+        if (logPath) {
+          try {
+            text = readFileSync(logPath, 'utf-8');
+          } catch {
+            // no log file yet
+          }
+        }
         res.writeHead(200, {
           'Content-Type': 'text/plain; charset=utf-8',
           'Content-Disposition': `inline; filename="${run.id}.log"`,
@@ -346,12 +334,6 @@ async function handleRequest(
         });
         res.end(redactText(text));
         return;
-      }
-
-      if (method === 'GET' && sub === '/logs/stream') {
-        const run = ctx.store.getRun(id);
-        if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
-        return streamLogs(req, res, id, ctx);
       }
     }
 
@@ -570,7 +552,7 @@ async function handleRequest(
 
 /**
  * Shared run-list filters: `jobId` (id or alias; comma-separated for several), `status`
- * (comma-separated for several) and `q` (free-text search incl. run logs).
+ * (comma-separated for several) and `q` (free-text search incl. run output).
  */
 function runFilterParams(url: URL, ctx: ApiContext): { jobIds?: string[]; statuses?: RunStatus[]; q?: string } {
   const split = (name: string): string[] => url.searchParams.getAll(name).flatMap((v) => v.split(',')).map((v) => v.trim()).filter(Boolean);
@@ -621,53 +603,6 @@ function validateJobSchedule(
   return true;
 }
 
-// ── SSE log streaming ─────────────────────────────────────────────────────────
-// Sends existing log entries immediately, then polls for new entries every
-// SSE_POLL_MS until the run reaches a terminal status or the client disconnects.
-
-function streamLogs(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-  runId: string,
-  ctx: ApiContext,
-): void {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-  });
-
-  let lastTs = 0;
-
-  // Send existing logs first
-  const existing = ctx.store.getLogs(runId);
-  for (const log of existing) {
-    sseEvent(res, redactValue({ stream: log.stream, ts: log.ts, data: log.chunk.toString('utf-8') }));
-    if (log.ts > lastTs) lastTs = log.ts;
-  }
-
-  // Poll for new logs until run is terminal
-  const poll = setInterval(() => {
-    const run = ctx.store.getRun(runId);
-    const newLogs = ctx.store.tailLogs(runId, lastTs);
-    for (const log of newLogs) {
-      sseEvent(res, redactValue({ stream: log.stream, ts: log.ts, data: log.chunk.toString('utf-8') }));
-      if (log.ts > lastTs) lastTs = log.ts;
-    }
-
-    const terminal = new Set(['success', 'failed', 'canceled', 'skipped', 'timeout', 'missed']);
-    if (!run || terminal.has(run.status)) {
-      sseEvent(res, { done: true, status: run?.status });
-      clearInterval(poll);
-      res.end();
-    }
-  }, SSE_POLL_MS);
-
-  req.on('close', () => {
-    clearInterval(poll);
-  });
-}
-
 function serveDashboard(
   res: http.ServerResponse,
   reqPath: string,
@@ -680,10 +615,6 @@ function serveDashboard(
     'Cache-Control': 'no-cache',
   });
   createReadStream(asset.filePath).pipe(res);
-}
-
-function sseEvent(res: http.ServerResponse, data: unknown): void {
-  res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

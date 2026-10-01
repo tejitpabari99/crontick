@@ -160,7 +160,7 @@ afterAll(async () => {
 });
 
 describe('deleted-job aggregates', () => {
-  it('removes deleted-job runs/logs from every surface (stats, dashboard, runs list/get, logs)', async () => {
+  it('removes deleted-job runs/output from every surface (stats, dashboard, runs list/get, output)', async () => {
     const liveJobId = 'ctd-014-live-job';
     const deletedJobId = 'ctd-014-deleted-job';
 
@@ -223,8 +223,8 @@ describe('deleted-job aggregates', () => {
     expect(cli(['runs', 'get', deletedRunId]).status).toBe(1);
     const { isError: mcpGetError } = await callTool('crontick_run_get', { id: deletedRunId });
     expect(mcpGetError).toBe(true);
-    const logsResponse = await fetch(`${baseUrl}/api/runs/${deletedRunId}/logs`);
-    expect(logsResponse.status).toBe(404);
+    const outputResponse = await fetch(`${baseUrl}/api/runs/${deletedRunId}/output`);
+    expect(outputResponse.status).toBe(404);
     const mcpRuns = await callTool('crontick_run_list', {});
     expect((mcpRuns.json as unknown as RunRecord[]).map((run) => run.id)).toEqual([liveRunId]);
     expect(existsSync(join(HOME, 'logs', `${deletedJob.id}.log`))).toBe(false);
