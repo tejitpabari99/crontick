@@ -327,7 +327,7 @@ async function copyToClipboard(value) {
       return true;
     }
   } catch {
-    // fall through to legacy path
+    // fall through to the execCommand path
   }
   try {
     const ta = document.createElement('textarea');

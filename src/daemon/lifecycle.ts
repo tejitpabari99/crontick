@@ -122,10 +122,8 @@ export async function stopDaemon(options: { env?: NodeJS.ProcessEnv; timeoutMs?:
     }
 
     // Major 3: the route accepted the request (200 — `stopping: true`) but
-    // the process never actually exited within timeoutMs. Previously this
-    // was reported as `{ stopped: false, mode: 'graceful' }` with no further
-    // action, leaving a stalled/wedged daemon running forever with no
-    // automatic recovery. Escalate the same way the "route unreachable"
+    // the process never actually exited within timeoutMs. A stalled/wedged
+    // daemon must not be left running forever, so escalate the same way the "route unreachable"
     // fallback below already does, rather than only escalating when the
     // HTTP request itself failed.
     logger.debug('Graceful shutdown accepted but daemon did not exit in time; escalating to SIGTERM', { pid, timeoutMs });

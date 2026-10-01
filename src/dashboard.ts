@@ -53,8 +53,6 @@ export interface DashboardStats {
   failed: number;
   canceled: number;
   skipped: number;
-  /** Average execution time in milliseconds (kept for backwards compatibility; prefer `avgDurationSec`). */
-  avgDurationMs: number | null;
   /** Average execution time in seconds (2 decimals), over runs that finished executing; null when none. */
   avgDurationSec: number | null;
   totalCostUsd: number;
@@ -201,7 +199,6 @@ export function msToSec(ms: number | null): number | null {
 export function buildDashboardStats(jobs: Job[], runs: Run[]): DashboardStats {
   const failed = runs.filter((run) => run.status === 'failed').length;
   const succeeded = runs.filter((run) => run.status === 'success').length;
-  const avgDurationMs = averageDurationMs(runs);
   return {
     totalJobs: jobs.length,
     enabledJobs: jobs.filter((job) => job.enabled).length,
@@ -211,8 +208,7 @@ export function buildDashboardStats(jobs: Job[], runs: Run[]): DashboardStats {
     skipped: runs.filter((run) => run.status === 'skipped').length,
     totalCostUsd: runs.reduce((sum, run) => sum + (run.costUsd ?? 0), 0),
     totalTurns: runs.reduce((sum, run) => sum + (run.turns ?? 0), 0),
-    avgDurationMs,
-    avgDurationSec: msToSec(avgDurationMs),
+    avgDurationSec: msToSec(averageDurationMs(runs)),
   };
 }
 

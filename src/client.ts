@@ -117,8 +117,6 @@ export interface StatsSummary {
   failed: number;
   canceled: number;
   skipped: number;
-  /** Kept for backwards compatibility; prefer `avgDurationSec`. */
-  avgDurationMs: number | null;
   /** Average execution time in seconds (2 decimals) over runs that finished executing; null when none. */
   avgDurationSec: number | null;
   totalCostUsd: number;
@@ -314,9 +312,7 @@ export class CrontickClient {
     if (options.all) {
       if (!options.force) throw new CrontickError('VALIDATION_ERROR', 'Deleting all jobs requires force:true');
       // Single atomic daemon call: DELETE /api/jobs wipes every job (and its
-      // runs/logs/schedule-state) in one store transaction. Avoids the old
-      // per-job loop, which had no atomicity and could report success after a
-      // partial failure.
+      // runs/outputs/schedule-state) in one store transaction.
       return this.request<{ ok: true; deleted: number }>('DELETE', '/api/jobs?force=1');
     }
     if (!id) throw new CrontickError('VALIDATION_ERROR', 'Provide a job id or alias, or set all:true (with force:true) to delete every job');

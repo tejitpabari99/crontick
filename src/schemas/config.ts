@@ -42,9 +42,8 @@ export const EngineConfigSchema = z.object({
  *
  * `maxLogFiles` (Minor 6): caps how many daily `daemon-YYYY-MM-DD.log` files
  * are kept under logsDir before the oldest are deleted (see
- * pruneOldDaemonLogs() in src/daemon/index.ts) — run history has always been
- * bounded by maxRunsPerJob; daemon logs previously had no cap or cleanup at
- * all and could accumulate indefinitely on a long-lived install.
+ * pruneOldDaemonLogs() in src/daemon/index.ts) so daemon logs cannot
+ * accumulate indefinitely on a long-lived install.
  * `min(1)`: always keep at least today's log file. `max(3650)`: a sanity
  * ceiling (roughly 10 years of daily files), same rationale as the other
  * retention fields.

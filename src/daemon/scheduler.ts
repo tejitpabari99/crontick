@@ -227,8 +227,8 @@ export class Scheduler extends EventEmitter {
 
     // Stable disposer: the SAME closure identity is stored in `entries` for the
     // entire lifetime of this job's schedule, across both the pre-fire (timeout)
-    // and post-fire (interval) phases — unlike the old code, which replaced the
-    // map entry object when the timer transitioned. `disposed` guards against
+    // and post-fire (interval) phases (the map entry object is never replaced
+    // when the timer transitions). `disposed` guards against
     // unschedule() being called synchronously from within this job's own first
     // tick listener: without the guard, the code below would unconditionally
     // re-arm a setInterval even though the job was just unscheduled from inside

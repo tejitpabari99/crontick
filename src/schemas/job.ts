@@ -63,13 +63,10 @@ export const PromptActionBaseSchema = z.object({
 export const PromptActionSchema = PromptActionBaseSchema.superRefine(addPromptRuntimeIssues);
 
 /**
- * Action discriminated union keyed on `kind`. Prompt is the only member since
- * the `script`/`exec` action kinds were removed (crontick is prompt-only --
- * see docs/decisions/0002-prompt-only-jobs-and-engine-adapters.md). `kind: 'prompt'` is kept
- * explicit (rather than dropping the discriminant and flattening the action
- * shape) so job JSON stays self-describing and forward-compatible with a
- * future action kind, and so existing job files/tooling that read
- * `action.kind` keep working unchanged. Uses PromptActionBaseSchema (not
+ * Action discriminated union keyed on `kind`. Prompt is the only member
+ * (crontick is prompt-only -- see docs/decisions/0002-prompt-only-jobs-and-engine-adapters.md).
+ * `kind: 'prompt'` is kept explicit so job JSON stays self-describing and a
+ * future action kind can be added. Uses PromptActionBaseSchema (not
  * PromptActionSchema) as the union member because Zod discriminatedUnion
  * requires plain objects; the prompt refinement is re-applied via superRefine.
  */

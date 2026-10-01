@@ -750,10 +750,10 @@ describe('CLI e2e with daemon', () => {
     expect(daemonBare.status, daemonBare.stderr).toBe(0);
     expect(daemonBare.stdout).toContain('Usage: crontick daemon');
 
-    // The legacy hidden `info daemon` / `info doctor` commands are removed.
-    for (const legacy of [['info', 'daemon'], ['info', 'daemon', 'stop'], ['info', 'doctor']]) {
-      const result = cli(legacy, env());
-      expect(result.status, legacy.join(' ')).toBe(1);
+    // `info daemon` / `info doctor` are not commands.
+    for (const unknownCommand of [['info', 'daemon'], ['info', 'daemon', 'stop'], ['info', 'doctor']]) {
+      const result = cli(unknownCommand, env());
+      expect(result.status, unknownCommand.join(' ')).toBe(1);
       expect(result.stderr).toContain('unknown command');
     }
   }, 8000);

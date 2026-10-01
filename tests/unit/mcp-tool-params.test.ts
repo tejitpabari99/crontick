@@ -151,8 +151,7 @@ describe('MCP parameter naming', () => {
       const tool = byName.get(name)!;
       const params = topLevelParams(tool);
       expect(params, `${name} should expose id`).toContain('id');
-      expect(params, `${name} should not expose the removed runId alias`).not.toContain('runId');
-      expect(tool.description ?? '', `${name} should not mention a deprecated alias`).not.toMatch(/deprecated alias/i);
+      expect(params, `${name} should not expose a runId alias`).not.toContain('runId');
       expect(requiredParams(tool), `${name} should require id`).toContain('id');
     }
   });
@@ -169,12 +168,12 @@ describe('MCP parameter naming', () => {
     }
   });
 
-  it('rejects missing id and no longer accepts legacy runId', async () => {
+  it('rejects a missing id and does not accept runId', async () => {
     const cases = [
       { name: 'crontick_run_get', args: {}, label: 'missing id' },
-      { name: 'crontick_run_get', args: { runId: RUN_ID }, label: 'legacy runId only' },
+      { name: 'crontick_run_get', args: { runId: RUN_ID }, label: 'runId only' },
       { name: 'crontick_job_cancel_run', args: {}, label: 'missing id' },
-      { name: 'crontick_job_cancel_run', args: { runId: RUN_ID }, label: 'legacy runId only' },
+      { name: 'crontick_job_cancel_run', args: { runId: RUN_ID }, label: 'runId only' },
     ] as const;
 
     for (const testCase of cases) {

@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { join, resolve, win32 } from 'node:path';
 
 // JobSchema's sessionId is a bare `z.string().min(1)` (no format restriction,
-// kept that way deliberately for import/back-compat -- see docs/specs). A
+// kept that way deliberately -- see docs/specs). A
 // sessionId containing a path separator, a `..` traversal segment, or a NUL
 // byte must never be allowed to influence the filesystem path this builds.
 // Not currently reachable end-to-end (the resume preflight in runner.ts only

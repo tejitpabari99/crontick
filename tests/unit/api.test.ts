@@ -179,7 +179,7 @@ describe('Daemon HTTP API', () => {
     });
     expect(response.status).toBe(200);
     expect(response.data).toMatchObject({ imported: 2 });
-    // Run history is never imported, even when a (legacy) payload carries it.
+    // Run history is never imported, even when a payload carries it.
     expect(response.data).not.toHaveProperty('runsImported');
     expect((await apiCall(port, 'GET', '/api/runs/forged-import-run')).status).toBe(404);
     const claude = await apiCall(port, 'GET', `/api/jobs/${claudeJobId}`);
@@ -284,10 +284,9 @@ describe('Daemon HTTP API', () => {
     const jobStats = job.data as { avgDurationSec: number | null };
     expect(jobStats).toHaveProperty('avgDurationSec');
     expect(typeof jobStats.avgDurationSec).toBe('number');
-    const summary = (await apiCall(port, 'GET', '/api/stats/summary')).data as { avgDurationMs: number | null; avgDurationSec: number | null };
-    expect(summary).toHaveProperty('avgDurationMs');
+    const summary = (await apiCall(port, 'GET', '/api/stats/summary')).data as { avgDurationSec: number | null };
+    expect(summary).not.toHaveProperty('avgDurationMs');
     expect(summary).toHaveProperty('avgDurationSec');
-    if (summary.avgDurationMs !== null) expect(summary.avgDurationSec).toBeCloseTo(summary.avgDurationMs / 1000, 1);
   });
 
   it('GET /api/runs/:id/output returns the cleaned output view; the raw engine log is not stored', async () => {
