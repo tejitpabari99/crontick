@@ -127,7 +127,7 @@ function flushSafeRedactor(redactor: StreamingTextRedactor): Buffer {
  * can be an incomplete UTF-8 sequence, corrupting whatever reads the log
  * back as text. Only ever removes bytes from the very end of `buf` (never
  * adds/reorders), so callers can safely pass the result straight to
- * safeRedact()/store.appendLog().
+ * safeRedact().
  */
 export function truncateToUtf8Boundary(buf: Buffer): Buffer {
   const len = buf.length;
