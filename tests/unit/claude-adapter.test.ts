@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { spawn as nodeSpawn, spawnSync } from 'node:child_process';
 import { ClaudeAdapter } from '../../src/engines/claude-adapter.js';
 import {
@@ -142,26 +142,30 @@ describe('SessionEnd hook helper', () => {
   });
 });
 
+// Platform-native expectations: on Windows resolve() prefixes the drive (D:\ -> D--) and joins with backslashes.
+const encodeCwd = (cwd: string) => resolve(cwd).replace(/[\\/.:]/g, '-');
+
 it('resolves Claude transcripts with slash and dot cwd encoding', () => {
-  expect(resolveTranscriptPath('/root/projects/crontick/.worktrees/claude-engine', 'session-1', { env: {}, homedir: () => '/home/tester' }))
-    .toBe('/home/tester/.claude/projects/-root-projects-crontick--worktrees-claude-engine/session-1.jsonl');
+  const cwd = '/root/projects/crontick/.worktrees/claude-engine';
+  expect(resolveTranscriptPath(cwd, 'session-1', { env: {}, homedir: () => '/home/tester' }))
+    .toBe(join('/home/tester', '.claude', 'projects', encodeCwd(cwd), 'session-1.jsonl'));
 });
 
 it('resolves Claude transcripts under CLAUDE_CONFIG_DIR when set, ignoring the home directory', () => {
   expect(resolveTranscriptPath('/work/my.proj', 'sid-1', { env: { CLAUDE_CONFIG_DIR: '/custom/cfg' }, homedir: () => '/home/tester' }))
-    .toBe('/custom/cfg/projects/-work-my-proj/sid-1.jsonl');
+    .toBe(join('/custom/cfg', 'projects', encodeCwd('/work/my.proj'), 'sid-1.jsonl'));
 });
 
 it('falls back to ~/.claude when CLAUDE_CONFIG_DIR is unset or empty', () => {
   for (const env of [{}, { CLAUDE_CONFIG_DIR: '' }]) {
     expect(resolveTranscriptPath('/work/p', 'sid-1', { env, homedir: () => '/home/tester' }))
-      .toBe('/home/tester/.claude/projects/-work-p/sid-1.jsonl');
+      .toBe(join('/home/tester', '.claude', 'projects', encodeCwd('/work/p'), 'sid-1.jsonl'));
   }
 });
 
 it('adapter.resumeTranscriptPath honors the supplied environment', () => {
   expect(new ClaudeAdapter().resumeTranscriptPath('/work/p', 'sid-1', { CLAUDE_CONFIG_DIR: '/custom/cfg' }))
-    .toBe('/custom/cfg/projects/-work-p/sid-1.jsonl');
+    .toBe(join('/custom/cfg', 'projects', encodeCwd('/work/p'), 'sid-1.jsonl'));
 });
 
 it('resolves Windows Claude transcripts using the drive and separators', () => {

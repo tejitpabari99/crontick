@@ -1,3 +1,4 @@
+import { join, resolve } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { ClaudeAdapter } from '../../src/engines/claude-adapter.js';
@@ -41,56 +42,59 @@ function fakeFs(initial: Record<string, string>) {
   return { fs, files, writes };
 }
 
-const HOME = '/home/tester';
-const CONFIG = `${HOME}/.claude.json`;
+// Absolute, platform-native paths: on Windows resolve() adds a drive letter and backslashes.
+const abs = (path: string) => resolve(path);
+const HOME = abs('/home/tester');
+const CONFIG = join(HOME, '.claude.json');
+const CFG_CONFIG = join(abs('/cfg'), '.claude.json');
 const deps = (fs: TrustFs, env: NodeJS.ProcessEnv = {}) => ({ fs, env, homedir: () => HOME });
 
 describe('claudeConfigPath', () => {
   it('uses CLAUDE_CONFIG_DIR when set, else ~/.claude.json', () => {
     expect(claudeConfigPath({ env: {}, homedir: () => HOME })).toBe(CONFIG);
-    expect(claudeConfigPath({ env: { CLAUDE_CONFIG_DIR: '/cfg' }, homedir: () => HOME })).toBe('/cfg/.claude.json');
+    expect(claudeConfigPath({ env: { CLAUDE_CONFIG_DIR: abs('/cfg') }, homedir: () => HOME })).toBe(CFG_CONFIG);
   });
 });
 
 describe('isFolderTrusted', () => {
   const config = JSON.stringify({
     projects: {
-      '/work/trusted': { hasTrustDialogAccepted: true },
-      '/work/declined': { hasTrustDialogAccepted: false },
-      '/home/tester': { hasTrustDialogAccepted: true },
+      [abs('/work/trusted')]: { hasTrustDialogAccepted: true },
+      [abs('/work/declined')]: { hasTrustDialogAccepted: false },
+      [abs('/home/tester')]: { hasTrustDialogAccepted: true },
     },
   });
 
   it('trusts the exact folder and any descendant of a trusted ancestor (home included)', () => {
     const { fs } = fakeFs({ [CONFIG]: config });
-    expect(isFolderTrusted('/work/trusted', deps(fs))).toBe(true);
-    expect(isFolderTrusted('/work/trusted/sub/dir', deps(fs))).toBe(true);
-    expect(isFolderTrusted('/home/tester/projects/x', deps(fs))).toBe(true);
+    expect(isFolderTrusted(abs('/work/trusted'), deps(fs))).toBe(true);
+    expect(isFolderTrusted(abs('/work/trusted/sub/dir'), deps(fs))).toBe(true);
+    expect(isFolderTrusted(abs('/home/tester/projects/x'), deps(fs))).toBe(true);
   });
 
   it('does not trust declined, unknown, or unrelated folders', () => {
     const { fs } = fakeFs({ [CONFIG]: config });
-    expect(isFolderTrusted('/work/declined', deps(fs))).toBe(false);
-    expect(isFolderTrusted('/work/other', deps(fs))).toBe(false);
-    expect(isFolderTrusted('/work', deps(fs))).toBe(false);
+    expect(isFolderTrusted(abs('/work/declined'), deps(fs))).toBe(false);
+    expect(isFolderTrusted(abs('/work/other'), deps(fs))).toBe(false);
+    expect(isFolderTrusted(abs('/work'), deps(fs))).toBe(false);
   });
 
   it('also checks the symlink-resolved path', () => {
     const { fs } = fakeFs({ [CONFIG]: config });
-    fs.realpathSync = (path) => (path === '/link/to/trusted' ? '/work/trusted' : path);
-    expect(isFolderTrusted('/link/to/trusted', deps(fs))).toBe(true);
+    fs.realpathSync = (path) => (path === abs('/link/to/trusted') ? abs('/work/trusted') : path);
+    expect(isFolderTrusted(abs('/link/to/trusted'), deps(fs))).toBe(true);
   });
 
   it('treats a missing, unreadable or non-JSON config as untrusted', () => {
-    expect(isFolderTrusted('/work/trusted', deps(fakeFs({}).fs))).toBe(false);
-    expect(isFolderTrusted('/work/trusted', deps(fakeFs({ [CONFIG]: '{ nope' }).fs))).toBe(false);
-    expect(isFolderTrusted('/work/trusted', deps(fakeFs({ [CONFIG]: '[]' }).fs))).toBe(false);
+    expect(isFolderTrusted(abs('/work/trusted'), deps(fakeFs({}).fs))).toBe(false);
+    expect(isFolderTrusted(abs('/work/trusted'), deps(fakeFs({ [CONFIG]: '{ nope' }).fs))).toBe(false);
+    expect(isFolderTrusted(abs('/work/trusted'), deps(fakeFs({ [CONFIG]: '[]' }).fs))).toBe(false);
   });
 
   it('reads from CLAUDE_CONFIG_DIR when set', () => {
-    const { fs } = fakeFs({ '/cfg/.claude.json': config });
-    expect(isFolderTrusted('/work/trusted', deps(fs, { CLAUDE_CONFIG_DIR: '/cfg' }))).toBe(true);
-    expect(isFolderTrusted('/work/trusted', deps(fs))).toBe(false);
+    const { fs } = fakeFs({ [CFG_CONFIG]: config });
+    expect(isFolderTrusted(abs('/work/trusted'), deps(fs, { CLAUDE_CONFIG_DIR: abs('/cfg') }))).toBe(true);
+    expect(isFolderTrusted(abs('/work/trusted'), deps(fs))).toBe(false);
   });
 });
 
@@ -101,13 +105,13 @@ describe('trustFolder', () => {
       theme: 'dark',
       mcpServers: { a: { command: 'x' } },
       projects: {
-        '/work/other': { hasTrustDialogAccepted: true, allowedTools: ['Bash'], extra: { k: [1, 2] } },
-        '/work/declined': { hasTrustDialogAccepted: false, allowedTools: ['Read'], history: ['h'] },
+        [abs('/work/other')]: { hasTrustDialogAccepted: true, allowedTools: ['Bash'], extra: { k: [1, 2] } },
+        [abs('/work/declined')]: { hasTrustDialogAccepted: false, allowedTools: ['Read'], history: ['h'] },
       },
     };
     const { fs, files } = fakeFs({ [CONFIG]: JSON.stringify(original, null, 4) });
-    trustFolder('/work/declined', deps(fs));
-    trustFolder('/work/new-folder', deps(fs));
+    trustFolder(abs('/work/declined'), deps(fs));
+    trustFolder(abs('/work/new-folder'), deps(fs));
     const text = files.get(CONFIG)!.text;
     expect(text.endsWith('\n')).toBe(true);
     expect(text).toBe(`${JSON.stringify(JSON.parse(text), null, 2)}\n`);
@@ -115,9 +119,9 @@ describe('trustFolder', () => {
     expect(result).toEqual({
       ...original,
       projects: {
-        '/work/other': original.projects['/work/other'],
-        '/work/declined': { hasTrustDialogAccepted: true, allowedTools: ['Read'], history: ['h'] },
-        '/work/new-folder': { allowedTools: [], hasTrustDialogAccepted: true },
+        [abs('/work/other')]: original.projects[abs('/work/other')],
+        [abs('/work/declined')]: { hasTrustDialogAccepted: true, allowedTools: ['Read'], history: ['h'] },
+        [abs('/work/new-folder')]: { allowedTools: [], hasTrustDialogAccepted: true },
       },
     });
     expect([...files.keys()]).toEqual([CONFIG]); // temp file renamed away
@@ -125,15 +129,15 @@ describe('trustFolder', () => {
 
   it('creates the file (mode 0600) when it does not exist', () => {
     const { fs, files } = fakeFs({});
-    trustFolder('/work/fresh', deps(fs));
-    expect(JSON.parse(files.get(CONFIG)!.text)).toEqual({ projects: { '/work/fresh': { allowedTools: [], hasTrustDialogAccepted: true } } });
+    trustFolder(abs('/work/fresh'), deps(fs));
+    expect(JSON.parse(files.get(CONFIG)!.text)).toEqual({ projects: { [abs('/work/fresh')]: { allowedTools: [], hasTrustDialogAccepted: true } } });
     expect(files.get(CONFIG)!.mode & 0o777).toBe(0o600);
   });
 
   it('aborts with CLAUDE_CONFIG_UNREADABLE and leaves a non-JSON file untouched', () => {
     const { fs, files, writes } = fakeFs({ [CONFIG]: '{ not json' });
     try {
-      trustFolder('/work/x', deps(fs));
+      trustFolder(abs('/work/x'), deps(fs));
       expect.unreachable();
     } catch (err) {
       expect((err as CrontickError).code).toBe('CLAUDE_CONFIG_UNREADABLE');
@@ -153,10 +157,10 @@ describe('trustFolder', () => {
       }
       return realStat(path);
     };
-    trustFolder('/work/x', deps(fs));
+    trustFolder(abs('/work/x'), deps(fs));
     const result = JSON.parse(files.get(CONFIG)!.text);
     expect(result.claudeWroteThis).toBe(true);
-    expect(result.projects['/work/x'].hasTrustDialogAccepted).toBe(true);
+    expect(result.projects[abs('/work/x')].hasTrustDialogAccepted).toBe(true);
   });
 
   it('gives up with CLAUDE_CONFIG_BUSY (changing nothing) when the file never settles', () => {
@@ -167,7 +171,7 @@ describe('trustFolder', () => {
       const stat = realStat(path);
       return path === CONFIG ? { ...stat, mtimeMs: mtime++ } : stat;
     };
-    expect(() => trustFolder('/work/x', deps(fs))).toThrow(/CLAUDE_CONFIG_BUSY|kept changing/);
+    expect(() => trustFolder(abs('/work/x'), deps(fs))).toThrow(/CLAUDE_CONFIG_BUSY|kept changing/);
     expect(JSON.parse(files.get(CONFIG)!.text)).toEqual({ projects: {} });
     expect([...files.keys()]).toEqual([CONFIG]);
   });
@@ -175,10 +179,10 @@ describe('trustFolder', () => {
 
 describe('engine adapter hooks', () => {
   it('Claude implements the trust hooks, honoring CLAUDE_CONFIG_DIR via ctx.env; raw does not', () => {
-    const { fs } = fakeFs({ '/cfg/.claude.json': JSON.stringify({ projects: { '/ok': { hasTrustDialogAccepted: true } } }) });
+    const { fs } = fakeFs({ [CFG_CONFIG]: JSON.stringify({ projects: { [abs('/ok')]: { hasTrustDialogAccepted: true } } }) });
     const adapter = new ClaudeAdapter({ fs, homedir: () => HOME });
-    expect(adapter.isFolderTrusted('/ok/sub', { env: { CLAUDE_CONFIG_DIR: '/cfg' } })).toBe(true);
-    expect(adapter.isFolderTrusted('/nope', { env: { CLAUDE_CONFIG_DIR: '/cfg' } })).toBe(false);
+    expect(adapter.isFolderTrusted(abs('/ok/sub'), { env: { CLAUDE_CONFIG_DIR: abs('/cfg') } })).toBe(true);
+    expect(adapter.isFolderTrusted(abs('/nope'), { env: { CLAUDE_CONFIG_DIR: abs('/cfg') } })).toBe(false);
     const raw = getEngineAdapter('raw');
     expect(raw.isFolderTrusted).toBeUndefined();
     expect(raw.trustFolder).toBeUndefined();
