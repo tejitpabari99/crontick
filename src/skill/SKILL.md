@@ -58,10 +58,7 @@ crontick jobs run-now <id|alias>   # trigger an immediate run
 crontick runs list                 # recent runs across all jobs
 crontick runs list --job <id|alias>   # runs for one job (also --status, --limit, --since)
 crontick runs list --status skipped   # statuses: queued|running|success|failed|canceled|skipped|timeout|missed
-crontick runs get <runId>          # resolved command, status, timing, engine session id; Claude runs add costUsd, turns, usage
-crontick runs logs <runId>         # both log streams
-crontick runs logs <runId> engine  # only the AI engine stdout/stderr
-crontick runs logs <runId> crontick  # only crontick lifecycle events (start, timeout, retry, exit)
+crontick runs get <runId>          # status, timing, Runner Session ID, transcript + log file path, then the cleaned output (use --json for { run, output })
 ```
 
 ### Step 4 — Manage
@@ -119,9 +116,7 @@ crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident qu
 | | `jobs delete <id\|alias>` | Delete one job |
 | | `jobs delete all --force` | Delete every job (CLI reserves the literal `all` keyword) |
 | **runs** | `runs list [--job <id\|alias>] [--status …] [--limit …] [--since <ms>]` | List runs |
-| | `runs get <runId>` | Run details + session id |
-| | `runs logs <runId> [engine\|crontick] [--tail <n>]` | Run logs |
-| | `runs output <runId> [--json]` | Cleaned run output (final answer, error, transcript) |
+| | `runs get <runId> [--json]` | Run details, Runner Session ID, log file path and cleaned output |
 | | `runs cancel <runId>` | Cancel an in-progress run |
 | **share** | `share export` / `share import <file>` | Export / import jobs |
 | **stats** | `stats summary` / `stats job <id\|alias>` | Aggregate / per-job stats |
@@ -137,7 +132,7 @@ crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident qu
 - Exactly one schedule source per job: `--cron`, `--every <interval>` (seconds or `s|m|h|d` suffix), or `--at <iso>`.
 - The daemon auto-starts on first use — do not run setup, install services, or register OS login; the only remaining CLI admin helpers are `daemon stop` and `daemon reload`.
 - Run statuses: `queued`, `running`, `success`, `failed`, `canceled`, `skipped` (overlap `skip` found another run active; never started), `timeout`, `missed`.
-- Each run captures engine stdout/stderr, a separate `crontick` lifecycle log stream, and the engine session id (visible in `runs get`).
+- Each run captures engine stdout/stderr and crontick lifecycle events in one per-job log file (its path is shown by `runs get`), plus the Runner Session ID (also in `runs get`).
 - Confirm before `jobs delete`, `jobs update --disable`, or any `jobs delete all --force` clear.
 - `info` prints the config path — there are no `config get/set/engines` subcommands; edit `config.json` by hand.
 - crontick is prompt-only: every job's action is `kind: "prompt"`. There is no shell-script or raw-executable action kind.
@@ -197,8 +192,7 @@ crontick also ships an MCP server that mirrors these commands one-to-one (tool p
 | `crontick_job_schedule` | `jobs schedule` |
 | `crontick_job_run_now` | `jobs run-now` |
 | `crontick_run_list` | `runs list` |
-| `crontick_run_logs_tail` | `runs logs` |
-| `crontick_run_output` | `runs output` |
+| `crontick_run_get` | `runs get` |
 | `crontick_info` | `info` |
 | `crontick_daemon_stop` | `daemon stop` |
 | `crontick_daemon_reload` | `daemon reload` |

@@ -188,7 +188,6 @@ describe('MCP server — full contract', () => {
       'crontick_job_schedule',
       'crontick_run_list',
       'crontick_run_get',
-      'crontick_run_logs_tail',
       'crontick_stats_summary',
       'crontick_doctor',
       'crontick_info',
@@ -721,7 +720,7 @@ describe('MCP server — full contract', () => {
     expect(runs.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('crontick_run_get and crontick_run_logs_tail work end-to-end', async () => {
+  it('crontick_run_get returns the record, logFile and cleaned output end-to-end', async () => {
     const { json: listJson } = await callTool(client, 'crontick_run_list', { jobId: testJobId, limit: 1 });
     const runs = listJson as Array<{ id: string }>;
     expect(runs.length).toBeGreaterThanOrEqual(1);
@@ -735,11 +734,12 @@ describe('MCP server — full contract', () => {
     expect(run.pid === undefined || typeof run.pid === 'number').toBe(true);
     expect(typeof run.outputTruncated).toBe('boolean');
 
-    const { json: logsJson, isError: logsErr } = await callTool(client, 'crontick_run_logs_tail', { id: runId, lines: 10 });
-    expect(logsErr).toBe(false);
-    const logsData = logsJson as { runId: string; lines: unknown[] };
-    expect(logsData.runId).toBe(runId);
-    expect(Array.isArray(logsData.lines)).toBe(true);
+    const detailed = runJson as { logFile: string | null; output: { runId: string; status: string } };
+    expect(detailed.logFile === null || typeof detailed.logFile === 'string').toBe(true);
+    expect(detailed.output.runId).toBe(runId);
+    const names = (await client.listTools()).tools.map((tool) => tool.name);
+    expect(names).not.toContain('crontick_run_logs_tail');
+    expect(names).not.toContain('crontick_run_output');
   }, 10_000);
 
 

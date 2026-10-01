@@ -36,7 +36,8 @@ describe('src/skill/SKILL.md content', () => {
     expect(content).toContain('crontick_job_create');
     expect(content).toContain('crontick_job_list');
     expect(content).toContain('crontick_job_schedule');
-    expect(content).toContain('crontick_run_logs_tail');
+    expect(content).not.toContain('crontick_run_logs_tail');
+    expect(content).not.toContain('crontick_run_output');
     expect(content).not.toContain('crontick_' + 'auto' + 'start');
   });
 

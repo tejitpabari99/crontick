@@ -24,8 +24,6 @@ const EXPECTED_TOOL_PARAMS = {
   crontick_job_cancel_run: ['id'],
   crontick_run_list: ['jobId', 'limit', 'since', 'status'],
   crontick_run_get: ['id'],
-  crontick_run_output: ['id'],
-  crontick_run_logs_tail: ['id', 'lines', 'source'],
   crontick_stats_summary: [],
   crontick_stats_job: ['id'],
   crontick_daemon_stop: [],
@@ -107,6 +105,9 @@ beforeAll(async () => {
     if (req.method === 'GET' && url.pathname === `/api/runs/${RUN_ID}/logs`) {
       return json(res, 200, LOG_LINES);
     }
+    if (req.method === 'GET' && url.pathname === `/api/runs/${RUN_ID}/output`) {
+      return json(res, 200, { runId: RUN_ID, status: 'success', format: 'text', result: null, error: null, output: '', stderr: '' });
+    }
     if (req.method === 'POST' && url.pathname === `/api/runs/${RUN_ID}/cancel`) {
       return json(res, 200, { ok: true, canceled: true });
     }
@@ -145,7 +146,7 @@ describe('MCP parameter naming', () => {
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
 
     expect(tools.map((tool) => tool.name).sort()).toEqual([...MCP_TOOLS].sort());
-    expect(tools).toHaveLength(22);
+    expect(tools).toHaveLength(20);
 
     for (const [name, expectedParams] of Object.entries(EXPECTED_TOOL_PARAMS)) {
       const tool = byName.get(name);
@@ -153,7 +154,7 @@ describe('MCP parameter naming', () => {
       expect(topLevelParams(tool!).sort(), `${name} params drifted`).toEqual([...expectedParams].sort());
     }
 
-    for (const name of ['crontick_job_cancel_run', 'crontick_run_get', 'crontick_run_output', 'crontick_run_logs_tail']) {
+    for (const name of ['crontick_job_cancel_run', 'crontick_run_get']) {
       const tool = byName.get(name)!;
       const params = topLevelParams(tool);
       expect(params, `${name} should expose id`).toContain('id');
@@ -166,7 +167,6 @@ describe('MCP parameter naming', () => {
   it('accepts id as the only single-run identifier', async () => {
     const cases = [
       { name: 'crontick_run_get', args: { id: RUN_ID } },
-      { name: 'crontick_run_logs_tail', args: { id: RUN_ID, lines: 2 } },
       { name: 'crontick_job_cancel_run', args: { id: RUN_ID } },
     ] as const;
 
@@ -180,8 +180,6 @@ describe('MCP parameter naming', () => {
     const cases = [
       { name: 'crontick_run_get', args: {}, label: 'missing id' },
       { name: 'crontick_run_get', args: { runId: RUN_ID }, label: 'legacy runId only' },
-      { name: 'crontick_run_logs_tail', args: { lines: 1 }, label: 'missing id' },
-      { name: 'crontick_run_logs_tail', args: { runId: RUN_ID, lines: 1 }, label: 'legacy runId only' },
       { name: 'crontick_job_cancel_run', args: {}, label: 'missing id' },
       { name: 'crontick_job_cancel_run', args: { runId: RUN_ID }, label: 'legacy runId only' },
     ] as const;

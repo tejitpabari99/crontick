@@ -12,7 +12,6 @@ import { dirname, resolve as pathResolve } from 'node:path';
 import { VERSION } from '../version.js';
 import { JobCreateInputSchema, JobPatchInputSchema } from '../job-input.js';
 import { createClient, type CrontickClient } from '../client.js';
-import { LOG_SOURCES } from '../log-source.js';
 import { isVerboseEnv, type LogEvent } from '../logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -286,39 +285,16 @@ export function createMcpServer(): McpServer {
   server.registerTool(
     'crontick_run_get',
     {
-      description: 'Get run details and status, including Claude cost, turns, redacted usage, transcript path, and engine status when available.',
-      inputSchema: withVerbose({ id: z.string() }),
-      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => client.getRun(args.id)),
-  );
-
-  server.registerTool(
-    'crontick_run_output',
-    {
       description:
-        'Get the cleaned, human-readable output of a run: the engine\'s final answer (result), any error, and a readable transcript with internal noise (thinking blocks, hook payloads, base64) removed. Prefer this over crontick_run_logs_tail to read what a run produced; use the logs tool for the raw engine log.',
+        'Get run details and status, including Claude cost, turns, redacted usage, transcript path, engine status, the Runner Session ID (sessionId), logFile (absolute path of the per-job log file; read it for raw engine and crontick events), and the cleaned output: the engine\'s final answer (result), any error, and a readable transcript with internal noise (thinking blocks, hook payloads, base64) removed.',
       inputSchema: withVerbose({ id: z.string().describe('Run id') }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.getOutput(args.id)),
+    async (args) => toolWrap(args, async (client) => {
+      const run = await client.getRun(args.id);
+      return { ...run, output: await client.getOutput(args.id) };
+    }),
   );
-
-  server.registerTool(
-    'crontick_run_logs_tail',
-    {
-      description:
-        'Get the last N lines of output for a run. Useful for diagnosing failures. Use the source filter to select engine output (stdout+stderr), crontick scheduling/execution events, or all (default).',
-      inputSchema: withVerbose({
-        id: z.string(),
-        lines: z.number().int().positive().default(50),
-        source: z.enum(LOG_SOURCES).optional(),
-      }),
-      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => client.getLogs(args.id, { lines: args.lines, source: args.source })),
-  );
-
 
   server.registerTool(
     'crontick_job_schedule',

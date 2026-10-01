@@ -16,7 +16,7 @@ import { createClient, type CrontickClient } from '../client.js';
 import { buildJobPatchFromUpdateOptions, type JobCreateCliOptions, type JobPatchCliOptions } from '../job-input.js';
 import { isVerboseEnv, type LogEvent } from '../logger.js';
 import { readJsonFile } from '../json-file.js';
-import { formatRunsTable } from '../run-format.js';
+import { formatJobStats, formatRunDetail, formatRunsTable } from '../run-format.js';
 import { terminalTrustPromptIo, withTrustPrompt } from './trust-prompt.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -459,14 +459,22 @@ jobs.command('list').description('List all jobs').action(async () => {
 });
 
 jobs.command('get <id|alias>').description('Get a job by id or alias').action(async (id: string) => {
-  try { print(await client().getJob(id)); } catch (err) { handleError(err); }
+  try {
+    const job = await client().getJob(id);
+    print(job);
+    if (job.action.cwd) stdout(`cwd: ${job.action.cwd}`);
+    if (job.action.sessionId) stdout(`Runner Session ID: ${job.action.sessionId}`);
+  } catch (err) { handleError(err); }
 });
 
 jobs.command('schedule <id|alias>')
   .description('Show upcoming fire times for a job (id or alias)')
   .option('-n, --count <n>', 'Number of upcoming fire times to show (default: 5)', parseInteger, 5)
   .action(async (id: string, opts) => {
-    try { print(await client().jobSchedule(id, { n: opts.count as number | undefined })); } catch (err) { handleError(err); }
+    try {
+      const { enabled, next, ...rest } = await client().jobSchedule(id, { n: opts.count as number | undefined }) as { enabled: boolean; next: unknown } & Record<string, unknown>;
+      print({ ...rest, status: enabled ? 'enabled' : 'disabled', next });
+    } catch (err) { handleError(err); }
   });
 
 jobs.command('delete <id|alias>')
@@ -513,46 +521,14 @@ runs.command('list')
   });
 
 runs.command('get <runId>')
-  .description('Show what was run for a run: resolved command, status, timing, and session id')
-  .action(async (runId: string) => {
-    try { print(await client().getRun(runId)); } catch (err) { handleError(err); }
-  });
-
-runs.command('logs <runId> [source]')
-  .description('Show logs for a run. Optional source: engine (stdout+stderr) or crontick (scheduling/execution events); default shows both')
-  .option('--tail <n>', 'Show last N lines', parseInteger)
-  .action(async (runId: string, source: string | undefined, opts) => {
-    try {
-      // Source validation lives in the core client (single source of truth):
-      // the shim forwards the positional untouched.
-      const result = await client().getLogs(runId, { lines: opts.tail as number | undefined, source });
-      for (const entry of result.lines) process.stdout.write(`[${entry.stream}] ${entry.data}`);
-    } catch (err) { handleError(err); }
-  });
-
-runs.command('output <runId>')
-  .description('Show the cleaned output of a run: final answer, error, and readable transcript (raw engine log: `runs logs`)')
-  .option('--json', 'Print the full output view as JSON')
+  .description('Show a run: status, timing, Runner Session ID, transcript and log file paths, then its cleaned output')
+  .option('--json', 'Print { run, output } as JSON (epoch-millisecond timestamps)')
   .action(async (runId: string, opts) => {
     try {
-      const out = await client().getOutput(runId);
-      if (opts.json) {
-        stdout(JSON.stringify(out, null, 2));
-        return;
-      }
-      stdout(`status: ${out.status}`);
-      if (out.error) stdout(`error: ${out.error}`);
-      if (out.result) {
-        stdout('');
-        stdout(out.result);
-      } else if (out.output) {
-        stdout('');
-        stdout(out.output);
-      }
-      if (out.stderr && out.error === null) {
-        stdout('');
-        stdout(`[stderr] ${out.stderr}`);
-      }
+      const c = client();
+      const run = await c.getRun(runId);
+      const output = await c.getOutput(runId);
+      stdout(opts.json ? JSON.stringify({ run, output }, null, 2) : formatRunDetail(run, output));
     } catch (err) { handleError(err); }
   });
 
@@ -566,8 +542,8 @@ const stats = groupHelp(program.command('stats').description('Show job/run stati
 stats.command('summary').description('Show aggregate statistics').action(async () => {
   try { print(await client().statsSummary()); } catch (err) { handleError(err); }
 });
-stats.command('job <id|alias>').description('Show statistics for one job (id or alias)').action(async (id: string) => {
-  try { print(await client().statsJob(id)); } catch (err) { handleError(err); }
+stats.command('job <id|alias>').description('Show statistics for one job (id or alias); totalTurns sums the agent turns of all its runs').action(async (id: string) => {
+  try { print(formatJobStats(await client().statsJob(id))); } catch (err) { handleError(err); }
 });
 
 // ── share ────────────────────────────────────────────────────────────────────

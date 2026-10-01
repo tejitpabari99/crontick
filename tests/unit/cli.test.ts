@@ -157,11 +157,9 @@ describe('CLI binary (dist/cli/index.js)', () => {
 
   it('help reflects new CLI surfaces and removed flags/commands', () => {
     expect(cli(['auto' + 'start', 'status']).status).not.toBe(0);
-    const logsHelp = cli(['runs', 'logs', '--help']);
-    expect(logsHelp.stdout).toContain('[source]');
-    expect(logsHelp.stdout).toContain('--tail <n>');
-    expect(logsHelp.stdout).not.toContain('--lines');
-    expect(logsHelp.stdout).not.toContain('--follow');
+    // `runs logs` / `runs output` were folded into `runs get`.
+    expect(cli(['runs', 'logs']).stderr).toContain("unknown command 'logs'");
+    expect(cli(['runs', 'output']).stderr).toContain("unknown command 'output'");
     expect(cli(['runs', 'delete']).stderr).toContain("unknown command 'delete'");
     expect(cli(['config']).stderr).toContain("unknown command 'config'");
     const topHelp = cli(['--help']);
@@ -548,9 +546,15 @@ describe('CLI e2e with daemon', () => {
     const getRun = cli(['runs', 'get', runId], env());
     expect(getRun.status, getRun.stderr).toBe(0);
     const run = parseCliObject(getRun.stdout);
-    expect(run.id).toBe(runId);
-    expect(run).toHaveProperty('command');
-    expect(typeof run.outputTruncated).toBe('boolean');
+    expect(run['Run ID']).toBe(runId);
+    expect(run).toHaveProperty('Command');
+    expect(getRun.stdout.match(/^Status:/gm)).toHaveLength(1);
+    expect(getRun.stdout).toMatch(/^Log file: .*\.log$/m);
+    expect(getRun.stdout).toMatch(/^Started: \d{4}-\d\d-\d\dT/m);
+    const rawRun = JSON.parse(cli(['runs', 'get', runId, '--json'], env()).stdout) as { run: { id: string; logFile: string | null; startedAt: number }; output: { runId: string } };
+    expect(rawRun.run.id).toBe(runId);
+    expect(typeof rawRun.run.startedAt).toBe('number');
+    expect(rawRun.output.runId).toBe(runId);
     const listRuns = cli(['runs', 'list', '--job', 'e2e-job', '--limit', '5', '--status', 'success', '--json'], env());
     expect(listRuns.status, listRuns.stderr).toBe(0);
     const runs = JSON.parse(listRuns.stdout) as Array<{ id: string; status: string; startedAt: number }>;
@@ -562,18 +566,6 @@ describe('CLI e2e with daemon', () => {
     expect(humanRuns.stdout).not.toMatch(/\b1[6-9]\d{11}\b/);
     expect(runs.every((listed) => listed.status === 'success')).toBe(true);
     expect(runs.some((listed) => listed.id === runId)).toBe(true);
-    const logs = cli(['runs', 'logs', runId, '--tail', '5'], env());
-    expect(logs.status, logs.stderr).toBe(0);
-    expect(logs.stdout === '' || logs.stdout).toMatch(/^(|\[(stdout|stderr|crontick)\] )/);
-    const engineLogs = cli(['runs', 'logs', runId, 'engine', '--tail', '5'], env());
-    expect(engineLogs.status, engineLogs.stderr).toBe(0);
-    expect(engineLogs.stdout).not.toContain('[crontick]');
-    // Invalid source is rejected by core validation (surfaced via the shim).
-    const badSource = cli(['runs', 'logs', runId, 'bogus', '--tail', '5'], env());
-    expectCleanError(badSource, 'VALIDATION_ERROR');
-    expect(badSource.stderr).toContain('Invalid source');
-    // The rejection lists every accepted source (derived from LOG_SOURCES), including `all`.
-    expect(badSource.stderr).toContain('all, engine, crontick');
     // Invalid --limit (non-positive) is rejected as a clean validation error, not a crash.
     const badLimit = cli(['runs', 'list', '--limit', '0'], env());
     expectCleanError(badLimit, 'VALIDATION_ERROR');

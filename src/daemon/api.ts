@@ -369,7 +369,7 @@ async function handleRequest(
       const requestedId = decodeURIComponent(statsJobMatch[1]);
       const job = ctx.store.getJob(requestedId);
       if (!job) return sendJobNotFoundError(res, requestedId);
-      const runs = ctx.store.listRuns({ jobId: job.id, limit: 100 });
+      const runs = ctx.store.listRuns({ jobId: job.id });
       return sendJson(res, 200, {
         jobId: job.id,
         totalRuns: runs.length,

@@ -50,3 +50,60 @@ export function formatRunsTable(runs: readonly RunRecord[]): string {
   const line = (cells: string[]): string => cells.map((cell, i) => (i === cells.length - 1 ? cell : cell.padEnd(widths[i]!))).join('  ').trimEnd();
   return [line(header), ...rows.map(line)].join('\n');
 }
+
+/** Run output view as returned by `getOutput` (only the fields the detail view prints). */
+export interface RunDetailOutput {
+  error: string | null;
+  result: string | null;
+  output: string;
+  stderr: string;
+}
+
+/**
+ * `crontick runs get`: one `Label: value` line per run field (local-ISO
+ * timestamps), the transcript path with the per-job log file directly below it,
+ * a blank line, then the cleaned output (error, the final answer or readable
+ * transcript, and stderr only when there is no error). The status appears once,
+ * in the field block. Pure; the CLI shim only prints the returned text.
+ */
+export function formatRunDetail(run: RunRecord, out: RunDetailOutput): string {
+  const lines: string[] = [];
+  const field = (label: string, value: string | number | undefined | null): void => {
+    if (value !== undefined && value !== null && value !== '') lines.push(`${label}: ${String(value)}`);
+  };
+  field('Run ID', run.id);
+  field('Job ID', run.jobId);
+  field('Status', run.status);
+  field('Started', formatLocalIso(run.startedAt));
+  if (run.endedAt !== undefined) field('Ended', formatLocalIso(run.endedAt));
+  if (run.durationMs !== undefined) field('Duration', formatDurationSec(run.durationMs));
+  field('Exit code', run.exitCode);
+  field('PID', run.pid);
+  field('Engine status', run.engineStatus);
+  field('Command', run.command);
+  field('Runner Session ID', run.sessionId);
+  field('Cost (USD)', run.costUsd);
+  field('Turns', run.turns);
+  if (run.outputTruncated) field('Output truncated', 'yes');
+  field('Transcript', run.transcriptPath);
+  field('Log file', run.logFile === undefined ? undefined : (run.logFile ?? '(file logging is disabled)'));
+  const body: string[] = [];
+  if (out.error) body.push(`Error: ${out.error}`);
+  const text = out.result || out.output;
+  if (text) body.push('', text);
+  if (out.stderr && out.error === null) body.push('', `[stderr] ${out.stderr}`);
+  return [...lines, ...(body.length > 0 ? ['', ...body.filter((line, i) => !(i === 0 && line === ''))] : [])].join('\n');
+}
+
+/** `crontick stats job` presentation: local-ISO `lastRunAt` and a self-explanatory turns label. Pure. */
+export function formatJobStats(stats: {
+  jobId: string; totalRuns: number; succeeded: number; failed: number; canceled: number; skipped: number;
+  lastStatus: string | null; lastRunAt: number | null; avgDurationSec: number | null; totalCostUsd: number; totalTurns: number;
+}): Record<string, unknown> {
+  const { totalTurns, lastRunAt, ...rest } = stats;
+  return {
+    ...rest,
+    lastRunAt: lastRunAt === null ? null : formatLocalIso(lastRunAt),
+    'totalTurns (agent turns, summed over runs)': totalTurns,
+  };
+}

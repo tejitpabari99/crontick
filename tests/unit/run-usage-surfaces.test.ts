@@ -86,13 +86,15 @@ describe('Claude run metadata across surfaces', () => {
     expect(libraryRun).toMatchObject({ costUsd: 0.01, turns: 1, engineStatus: 'success' });
     expect(libraryRun.transcriptPath).toContain(libraryRun.sessionId);
     expect(JSON.parse(libraryRun.usageJson!)).toEqual({ input_tokens: 10, output_tokens: 5, api_key: '[REDACTED]' });
-    expect(cli(['runs', 'get', claudeId])).toMatchObject({
+    const cliJson = spawnSync(process.execPath, [CLI, 'runs', 'get', claudeId, '--json'], { encoding: 'utf8', env: { ...env, CRONTICK_DAEMON_URL: baseUrl } });
+    expect(cliJson.status, cliJson.stderr).toBe(0);
+    expect((JSON.parse(cliJson.stdout) as { run: unknown }).run).toMatchObject({
       id: claudeId,
       costUsd: 0.01,
       turns: 1,
       engineStatus: 'success',
       transcriptPath: libraryRun.transcriptPath,
-      usageJson: JSON.parse(libraryRun.usageJson!),
+      usageJson: libraryRun.usageJson,
     });
     expect(await tool('crontick_run_get', { id: claudeId })).toMatchObject(libraryRun);
 
@@ -110,7 +112,13 @@ describe('Claude run metadata across surfaces', () => {
     expect(await tool('crontick_stats_summary')).toMatchObject(summary);
     const jobStats = await client.statsJob(claudeJob.id);
     expect(jobStats).toMatchObject({ totalCostUsd: 0.01, totalTurns: 1 });
-    expect(cli(['stats', 'job', claudeJob.id])).toMatchObject(jobStats);
+    const { lastRunAt, totalTurns, ...stable } = jobStats;
+    const cliStats = cli(['stats', 'job', claudeJob.id]);
+    expect(cliStats).toMatchObject(stable);
+    // CLI presents lastRunAt as local ISO-8601 and labels totalTurns; JSON/MCP keep raw values.
+    expect(cliStats['lastRunAt']).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$/);
+    expect(typeof lastRunAt).toBe('number');
+    expect(cliStats['totalTurns (agent turns, summed over runs)']).toBe(totalTurns);
     expect(await tool('crontick_stats_job', { id: claudeJob.id })).toMatchObject(jobStats);
   }, 25_000);
 });

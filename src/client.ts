@@ -11,7 +11,6 @@
 import http from 'node:http';
 import { existsSync } from 'node:fs';
 import { CrontickError } from './errors.js';
-import { LOG_SOURCES, type LogSource } from './log-source.js';
 import type { RunOutput } from './run-output.js';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -101,21 +100,7 @@ function defaultMcpScript(): string {
   return resolvePath(distDir, 'mcp', 'index.js');
 }
 
-export interface LogEntry {
-  runId?: string;
-  stream: string;
-  ts: number;
-  data: string;
-}
-
-export interface LogsResult {
-  runId: string;
-  lines: LogEntry[];
-}
-
 export type { RunOutput };
-export { LOG_SOURCES };
-export type { LogSource };
 
 export interface StatsSummary {
   totalJobs: number;
@@ -367,28 +352,10 @@ export class CrontickClient {
     return this.request<RunRecord[]>('GET', `/api/runs${qs ? `?${qs}` : ''}`);
   }
 
-  async getLogs(runId: string, options: { lines?: number; source?: LogSource | (string & {}) } = {}): Promise<LogsResult> {
-    const source = options.source;
-    // Core is the single source of truth for `source` validation: the CLI/MCP
-    // shims forward the value unchecked and the daemon defensively normalizes
-    // unknowns, so the user-facing rejection must originate here.
-    if (source !== undefined && !LOG_SOURCES.includes(source as LogSource)) {
-      throw new CrontickError(
-        'VALIDATION_ERROR',
-        `Invalid source '${source}'. Expected one of: ${LOG_SOURCES.join(', ')}.`,
-      );
-    }
-    const query = source && source !== 'all' ? `?source=${source}` : '';
-    const logs = await this.request<LogEntry[]>('GET', `/api/runs/${encodeURIComponent(runId)}/logs${query}`);
-    const logicalLines = reconstructLogicalLogLines(logs);
-    const lines = options.lines !== undefined ? logicalLines.slice(-options.lines) : logicalLines;
-    return { runId, lines };
-  }
-
   /**
    * Cleaned, human-readable output of a run: the engine's final answer, the
    * error (if any), and a readable transcript with thinking blocks, hook
-   * payloads and signatures removed. The raw log remains available via getLogs.
+   * payloads and signatures removed. The raw per-job log file path is `getRun().logFile`.
    */
   async getOutput(runId: string): Promise<RunOutput> {
     return this.request<RunOutput>('GET', `/api/runs/${encodeURIComponent(runId)}/output`);
@@ -423,7 +390,7 @@ export class CrontickClient {
   async jobSchedule(id: string, options: { n?: number } = {}): Promise<unknown> {
     const job = await this.getJob(id);
     const preview = await this.previewSchedule({ schedule: job.schedule, n: options.n });
-    return { jobId: job.id, alias: job.alias ?? null, cwd: job.action.cwd ?? null, schedule: job.schedule, ...(preview as Record<string, unknown>) };
+    return { jobId: job.id, alias: job.alias ?? null, enabled: job.enabled, cwd: job.action.cwd ?? null, schedule: job.schedule, ...(preview as Record<string, unknown>) };
   }
 
   async statsSummary(): Promise<StatsSummary> {
@@ -805,57 +772,6 @@ export function createClient(options?: CrontickClientOptions): CrontickClient {
 /** Fixed 100 ms backoff between demand-start and first retry — enough for port file flush. */
 async function boundedBackoff(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 100));
-}
-
-function reconstructLogicalLogLines(entries: LogEntry[]): LogEntry[] {
-  const linesByEntry: LogEntry[][] = entries.map(() => []);
-  const remainders = new Map<string, {
-    data: string;
-    runId?: string;
-    lastTs: number;
-    lastIndex: number;
-  }>();
-
-  entries.forEach((entry, index) => {
-    const previous = remainders.get(entry.stream);
-    const buffer = `${previous?.data ?? ''}${entry.data}`;
-    let cursor = 0;
-
-    while (cursor < buffer.length) {
-      const newlineIndex = buffer.indexOf('\n', cursor);
-      if (newlineIndex === -1) break;
-      linesByEntry[index]!.push({
-        runId: entry.runId ?? previous?.runId,
-        stream: entry.stream,
-        ts: entry.ts,
-        data: buffer.slice(cursor, newlineIndex + 1),
-      });
-      cursor = newlineIndex + 1;
-    }
-
-    const remainder = buffer.slice(cursor);
-    if (remainder) {
-      remainders.set(entry.stream, {
-        data: remainder,
-        runId: entry.runId ?? previous?.runId,
-        lastTs: entry.ts,
-        lastIndex: index,
-      });
-    } else {
-      remainders.delete(entry.stream);
-    }
-  });
-
-  for (const [stream, remainder] of remainders) {
-    linesByEntry[remainder.lastIndex]!.push({
-      runId: remainder.runId,
-      stream,
-      ts: remainder.lastTs,
-      data: remainder.data,
-    });
-  }
-
-  return linesByEntry.flat();
 }
 
 function errorMessage(err: unknown): string {

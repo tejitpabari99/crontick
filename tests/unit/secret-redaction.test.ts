@@ -413,6 +413,12 @@ async function createFixture(prefix: string) {
     store,
     client,
     scheduler,
+    /** Raw run logs via the daemon's kept GET /api/runs/:id/logs route (the client method was removed). */
+    async getLogs(runId: string, options: { source?: string } = {}): Promise<{ lines: Array<{ data: string }> }> {
+      const query = options.source ? `?source=${options.source}` : '';
+      const res = await fetch(`http://127.0.0.1:${ctx.port}/api/runs/${runId}/logs${query}`);
+      return { lines: (await res.json()) as Array<{ data: string }> };
+    },
     async close(): Promise<void> {
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
       scheduler.unscheduleAll();
@@ -474,7 +480,7 @@ describe('shared secret redaction', () => {
         expectRedacted(JSON.stringify(run), entry.rawSecrets, `failure ${entry.expectedRuntime}`, `${entry.name} run get`);
         expect(run.error).toBe(`failure ${entry.expectedRuntime}`);
 
-        const logs = await fixture.client.getLogs(readRun.id);
+        const logs = await fixture.getLogs(readRun.id);
         const tailed = logs.lines.map((line) => line.data).join('');
         expectRedacted(tailed, entry.rawSecrets, entry.expectedRuntime, `${entry.name} logs tail`);
 
@@ -598,7 +604,7 @@ describe('shared secret redaction', () => {
       expect(logBytes.toString('utf-8')).toBe('[REDACTED] [REDACTED]');
       expect(logText(fixture.store, captureRun.id)).toBe('[REDACTED] [REDACTED]');
 
-      const logs = await fixture.client.getLogs(captureRun.id, { source: 'engine' });
+      const logs = await fixture.getLogs(captureRun.id, { source: 'engine' });
       const tailed = logs.lines.map((line) => line.data).join('');
       expect(tailed).toBe('[REDACTED] [REDACTED]');
       expect(tailed).not.toContain(AWS_ACCESS_KEY_ID);
@@ -830,7 +836,7 @@ describe('shared secret redaction', () => {
       expect(run.error).toBe(`failure ${BENIGN_RUNTIME_TEXT}`);
       expectNoRedactionMarker(JSON.stringify(run), 'benign run get');
 
-      const logs = await fixture.client.getLogs(readRun.id);
+      const logs = await fixture.getLogs(readRun.id);
       expect(logs.lines.map((line) => line.data).join('')).toBe(BENIGN_RUNTIME_TEXT);
       expectNoRedactionMarker(JSON.stringify(logs), 'benign logs tail');
 
@@ -901,7 +907,7 @@ describe('shared secret redaction', () => {
 
       // Verify on the logs-tail (getLogs) surface too.
       fixture.store.appendLog(captureRun.id, 'stdout', Buffer.from(`${bearerLine}\n${nonBearerLine}\n`));
-      const logs = await fixture.client.getLogs(captureRun.id);
+      const logs = await fixture.getLogs(captureRun.id);
       const tailed = logs.lines.map((line) => line.data).join('');
       expect(tailed, 'CTD-025: Bearer token leaked on logs-tail path').not.toContain(bearerToken);
       expect(tailed, 'CTD-025 guard: basic token leaked on logs-tail path').not.toContain(nonBearerSecret);
