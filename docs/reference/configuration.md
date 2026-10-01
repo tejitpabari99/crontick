@@ -113,14 +113,13 @@ Most config is read fresh for each run and applies automatically on the **next r
 `defaults.retry` are read when a job is created. Existing jobs keep the
 engine and default values saved in their job files after a config edit.
 
-The exception is `retention.maxRunsPerJob`. The daemon's Store reads and caches that value at daemon startup. Changing `retention.maxRunsPerJob` requires:
+The exception is `retention.maxRunsPerJob`. The daemon's Store caches that value, reading it at daemon startup and again on `crontick daemon reload`. After changing it, run:
 
 ```bash
-crontick daemon stop
-# then run any daemon-backed command (for example `crontick jobs list`) to start it again
+crontick daemon reload
 ```
 
-`crontick daemon reload` is for reloading job definitions from disk; it is not required for normal config edits and does not replace the restart requirement for `retention.maxRunsPerJob`.
+(or restart the daemon). A reload also re-applies `retention.maxLogFiles` immediately. A reload is otherwise for reloading job definitions from disk and is not required for other config edits. A malformed or out-of-range config makes the reload fail and leaves the previous schedule intact.
 
 ---
 
@@ -128,7 +127,7 @@ crontick daemon stop
 
 | Field | Type | Required | Default | Constraints | Runtime behavior |
 |-------|------|----------|---------|-------------|------------------|
-| `maxRunsPerJob` | `integer` | no | `100` | `min(1)`, `max(100_000)` | Cached by Store at daemon startup; changing requires a restart (CLI: `crontick daemon stop`, then the next daemon-backed command) |
+| `maxRunsPerJob` | `integer` | no | `100` | `min(1)`, `max(100_000)` | Cached by Store at daemon startup and re-read on `crontick daemon reload`; changing it needs a reload or restart |
 | `maxOutputBytesPerRun` | `integer` | no | `2_000_000` | `min(1024)`, `max(1_000_000_000)` | Re-read per run; applies on the next run |
 | `maxLogFiles` | `integer` | no | `30` | `min(1)`, `max(3650)` | Applies the next time daemon log retention runs |
 
@@ -220,8 +219,7 @@ into a permission mode or to set `--max-budget-usd`.
 | `CRONTICK_DAEMON_BINARY` | string (path) | Resolved from built files | Override path to daemon script |
 | `CRONTICK_MCP_START_DAEMON` | `"0"` to disable | Enabled (any other value) | When `"0"`, MCP server does not demand-start the daemon |
 | `CRONTICK_VERBOSE` | string | Disabled | `1\|true\|yes\|on\|debug` enables verbose logging |
-| `CRONTICK_PLUGIN_NONINTERACTIVE` | any | — | Skips interactive prompts in plugin installer |
-| `CRONTICK_PLUGIN_SKIP_NPM` | any | — | Skips npm install in plugin installer |
+| `CLAUDE_CONFIG_DIR` | string (path) | `~` | Read by the Claude trust check: crontick looks for `.claude.json` here (else `~/.claude.json`) |
 
 ### Precedence
 

@@ -35,7 +35,7 @@ Agent CLIs are great at *one conversation*. They have no answer for "run this pr
 
 - Not a distributed scheduler — single machine, single user, no clustering or leader election.
 - Not a job queue — no external broker, no cross-machine work distribution.
-- Not a general command runner — prompt-only; `script`/`exec` job kinds are being removed as part of the pivot to prompt jobs.
+- Not a general command runner — prompt-only; the `script`/`exec` job kinds were removed in the pivot to prompt jobs (ADR 0002).
 - Not an OS service manager — crontick does not install a systemd unit, launchd agent, or Windows Service.
 - Not a replacement for system cron — it does not run privileged or root-level system tasks.
 

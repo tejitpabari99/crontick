@@ -37,8 +37,8 @@ shim.
 
 Helper functions:
 - `client(startDaemon = true)`: factory returning `createClient({...})`.
-- Unknown long flags on `jobs new`/`jobs update` are collected as passthrough args into `action.args`; removed switches (`--alias`, `--engine`, `--job-env-file`) are rejected as unknown options rather than forwarded.
-- `useJson()`, `useVerbose()`: read program-level options.
+- Unknown long flags on `jobs new`/`jobs update` are collected as passthrough args into `action.args`; removed switches (`--engine`, `--job-env-file`, `--tz`) are rejected as unknown options rather than forwarded.
+- `useVerbose()`: reads the program-level `--verbose` option (there is no global `--json`).
 - `renderLogEvent(event)`: formats `LogEvent` to stderr for verbose mode.
 
 ---

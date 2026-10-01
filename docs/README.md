@@ -17,8 +17,8 @@ where new content belongs.
 | [docs/reference/](reference/) | "What exactly is supported?" -- precise, lookup-oriented facts | Users |
 | [docs/decisions/](decisions/) | "Why is it like this?" -- architecture decision records | Contributors |
 | [docs/testing/](testing/) | How to test and what to verify before a release | Contributors |
-| [specs/](specs/) | Normative behavior contracts with acceptance criteria | Contributors and coding agents |
-| [examples/](examples/) | Runnable public-API usage examples | Users |
+| [docs/specs/](specs/) | Normative behavior contracts with acceptance criteria | Contributors and coding agents |
+| [docs/examples/](examples/) | Runnable public-API usage examples | Users |
 
 ---
 

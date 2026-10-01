@@ -13,7 +13,9 @@ crontick is a standalone daemon, CLI, and MCP server. Its job kind is a **prompt
 | Concepts | [docs/concepts/](docs/concepts/) |
 | Reference (API, CLI, MCP, schemas) | [docs/reference/](docs/reference/) |
 | Runnable examples | [docs/examples/](docs/examples/) |
+| Behavior specs | [docs/specs/](docs/specs/) |
 | Design decisions (ADRs) | [docs/decisions/](docs/decisions/) |
+| Troubleshooting | [docs/troubleshooting.md](docs/troubleshooting.md) |
 
 ---
 
@@ -58,7 +60,7 @@ Schedule an AI agent to summarize your open PRs every morning at 9:00. The promp
 crontick jobs new --desc "daily standup" --cron "0 9 * * *" --prompt "Summarize my open GitHub PRs"
 ```
 
-crontick prints the new job, including its auto-assigned `alias` (e.g. `fern-270`). Use that alias everywhere:
+crontick prints the new job, including its auto-assigned `alias` (e.g. `fern-270`). Use that alias (or the job's GUID `id`) everywhere:
 
 ```sh
 crontick jobs list                 # see all jobs
@@ -89,7 +91,7 @@ crontick jobs new --cron "0 9 * * *" --prompt "Summarize my open PRs" --alias st
 crontick jobs new --every 1h --prompt "Check the build and report failures" --alias hourly
 
 # one-shot at a specific ISO-8601 time
-crontick jobs new --at "2026-08-01T09:00:00" --prompt "Remind me to cut the release" --alias release-reminder
+crontick jobs new --at "2026-12-01T09:00:00" --prompt "Remind me to cut the release" --alias release-reminder
 ```
 
 Preview the next fire times for any job:
@@ -114,7 +116,7 @@ The Claude adapter invokes `claude -p "<your prompt>" --output-format stream-jso
 
 ### The config file
 
-`crontick info` prints the path to `config.json` (under the data dir). **Edit that file directly.** Engine, logging, and per-run retention changes apply on the next run; `retention.maxRunsPerJob` is read at daemon start, so changing it needs a daemon restart — from the CLI, run `crontick daemon stop` and then any daemon-backed command to start it again.
+`crontick info` prints the path to `config.json` (under the data dir). **Edit that file directly.** Engine, logging, and per-run retention changes apply on the next run; `retention.maxRunsPerJob` is cached by the daemon, so after changing it run `crontick daemon reload`.
 
 ```jsonc
 {
@@ -147,6 +149,10 @@ Prompt jobs can carry an AI session across runs so the agent remembers prior con
 ```sh
 crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident queue" --reuse-session --alias triage
 ```
+
+### Working directory and Claude trust
+
+A job runs in its working directory: `--cwd <dir>` / `-C <dir>` (default: the directory you run `jobs new` from; MCP and library callers should pass the project folder). For Claude jobs the folder must be trusted in Claude's config. If it is not, `jobs new`/`jobs update`/`share import` ask `Folder X is not trusted by Claude. Trust it? (y/N)` on a terminal; without one, they fail with `TRUST_REQUIRED` unless you pass `--trust-folder`. Changing `--cwd` of a job that has a session (`--session-id` or `--reuse-session`) is rejected (`CWD_CHANGE_BREAKS_SESSION`) unless you also set a new session.
 
 See [docs/reference/configuration.md](docs/reference/configuration.md) for the full schema, environment variables (`CRONTICK_HOME`, `CRONTICK_DAEMON_URL`, `CRONTICK_VERBOSE`), and precedence.
 
@@ -215,11 +221,11 @@ Full API in [docs/reference/library-api.md](docs/reference/library-api.md); runn
 |-------|----------|
 | **jobs** | `new` · `list` · `get` · `update` · `schedule` · `run-now` · `delete` |
 | **runs** | `list` · `get` · `cancel` |
-| **share** | `export` · `import` |
+| **share** | `export` · `import` (job definitions only, schema 1; imports get new ids) |
 | **stats** | `summary` · `job` |
 | **info** | `info` (version, paths, daemon status, dashboard URL) |
 | **doctor** | `doctor` (system health check) |
-| **daemon** | `daemon stop` · `daemon reload` |
+| **daemon** | `daemon start` · `daemon stop` · `daemon restart` · `daemon status` · `daemon reload` (the daemon also starts on demand) |
 | **mcp** | `mcp` (start the MCP server on stdio) |
 
 Full CLI reference: [docs/reference/cli.md](docs/reference/cli.md).

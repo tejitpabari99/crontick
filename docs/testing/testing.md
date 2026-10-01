@@ -84,6 +84,10 @@ Ctrl-C left daemons, their detached job children, and `/tmp/crontick-*` dirs beh
 
 ```sh
 npm run clean:test   # kills leaked test daemons, removes <os tmpdir>/crontick-* dirs
+
+```sh
+npm run check:changesets   # fails if a pending changeset has a disallowed (major) bump while pre-1.0 (scripts/check-changeset-bumps.mjs)
+```
 ```
 
 Verify with `ps aux | grep -E 'crontick|vitest'` and `ls /tmp | grep crontick-`.

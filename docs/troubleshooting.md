@@ -145,9 +145,9 @@ crontick jobs schedule <job-id> -n 5
 
 Means the job definition fails Zod schema validation. Check that:
 
-- `id` is kebab-case (`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+- `alias`, if given, is kebab-case (`^[a-z0-9]+(?:-[a-z0-9]+)*$`); `id` is an optional GUID
 - `schedule` has a valid `kind` (`cron`, `interval`, or `one-shot`)
-- `action` has exactly one of `script`, `exec`, or `prompt`
+- `action` has `kind: "prompt"` (the only supported kind)
 - Prompt actions have `prompt` text (not empty) or use `--prompt-file`
 
 Run with `--verbose` to see the full Zod error details.

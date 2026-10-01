@@ -38,7 +38,7 @@ adapters: each parses its own transport's input, calls one client method, and fo
 the response. None contains its own validation, orchestration, or error construction.
 Parity is enforced mechanically, not by review discipline alone: `SURFACE_CAPABILITIES`
 (`src/surface.ts`) maps every capability to its client method, CLI command, and MCP tool
-name, and `tests/surface-drift.test.ts` fails CI if the client prototype, the built
+name, and `tests/unit/surface-drift.test.ts` fails CI if the client prototype, the built
 CLI's `--help` output, or the live MCP tool listing disagree with that table. The CLI
 itself is organized by noun (`jobs`, `runs`, `stats`, `share`, plus `daemon`/`info`/`mcp`)
 rather than as a flat command list; job creation assigns a server-side GUID automatically

@@ -91,7 +91,7 @@ files, is the historical record.
 | 0028 | crontick becomes prompt-only; remove `script`/`exec` action kinds and the Copilot plugin | [0002](0002-prompt-only-jobs-and-engine-adapters.md) |
 | 0029 | Distinguish overlap skips and protect reused sessions | [0002](0002-prompt-only-jobs-and-engine-adapters.md) |
 | 0030 | Forward unknown long options to prompt engines | [0002](0002-prompt-only-jobs-and-engine-adapters.md) |
-| 0031 | Rename job CLI flags to name and runner | [0002](0002-prompt-only-jobs-and-engine-adapters.md) |
+| 0031 | Rename job CLI flags to alias and runner | [0002](0002-prompt-only-jobs-and-engine-adapters.md) |
 | 0032 | Use Claude completion markers only for restart recovery | [0002](0002-prompt-only-jobs-and-engine-adapters.md) |
 | 0033 | Select prompt behavior through engine adapters | [0002](0002-prompt-only-jobs-and-engine-adapters.md) |
 

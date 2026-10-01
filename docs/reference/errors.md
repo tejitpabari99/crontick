@@ -230,6 +230,20 @@ See [troubleshooting.md](../troubleshooting.md#trust_required-when-creating-a-cl
 | **When** | Recording folder trust needs Claude's `.claude.json`, which is not parsable JSON |
 | **Details** | — |
 
+### TRUST_DECLINED
+
+| | |
+|---|---|
+| **When** | CLI only: an interactive `Trust it? (y/N)` prompt after `TRUST_REQUIRED` was answered with anything but `y`/`yes`; nothing is created or changed |
+| **Details** | Same as `TRUST_REQUIRED` |
+
+### CLAUDE_CONFIG_BUSY
+
+| | |
+|---|---|
+| **When** | Recording folder trust: Claude's `.claude.json` kept changing during the atomic write, so crontick gave up after its retries and changed nothing. Try again |
+| **Details** | `{ path }` |
+
 ### CWD_CHANGE_BREAKS_SESSION
 
 | | |

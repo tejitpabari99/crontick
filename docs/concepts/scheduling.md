@@ -51,7 +51,7 @@ JavaScript `setTimeout` clamps delays greater than 2^31-1 ms (~24.8 days) to 1 m
 
 The `Scheduler.previewNext()` method returns up to `n` future fire times for any schedule without actually registering a timer. `Scheduler.validateSchedule()` checks structural validity (parseable cron, positive interval, valid ISO date).
 
-Both are exposed through the CLI (`schedule preview`, `schedule validate`) and MCP tools.
+Previews are exposed for an existing job as `crontick jobs schedule <id|alias>` and the `crontick_job_schedule` MCP tool. Raw schedule validation/preview (`validateSchedule`/`previewSchedule`) is library-only.
 
 ## Missed runs when the daemon is down
 
@@ -73,4 +73,4 @@ See [Execution](./execution.md) for how the Runner enforces these policies.
 
 - [Jobs](./jobs.md) - job model and action kinds
 - [Daemon lifecycle](./daemon-lifecycle.md) - when the scheduler is active
-- [CLI reference](../reference/cli.md) - `schedule validate` and `schedule preview` commands
+- [CLI reference](../reference/cli.md) - `jobs schedule` command

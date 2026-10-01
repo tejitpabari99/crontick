@@ -51,7 +51,7 @@ All constants — especially anything used in more than one file, including test
 
 ### 4. Single core, thin shims
 
-CLI, MCP, and library are adapters over one `CrontickClient` core (ADR 0001); they parse their transport's input, call one client method, and format the result. They contain zero business logic, and every capability change updates all of client, CLI, MCP, and `SURFACE_CAPABILITIES` in lockstep (enforced by `tests/surface-drift.test.ts`).
+CLI, MCP, and library are adapters over one `CrontickClient` core (ADR 0001); they parse their transport's input, call one client method, and format the result. They contain zero business logic, and every capability change updates all of client, CLI, MCP, and `SURFACE_CAPABILITIES` in lockstep (enforced by `tests/unit/surface-drift.test.ts`).
 
 - **Do** put validation, error construction, and orchestration in the core client.
 - **Don't** add a CLI-only or MCP-only branch of logic that the other surfaces don't get.

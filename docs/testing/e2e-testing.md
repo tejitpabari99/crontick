@@ -66,7 +66,7 @@ with appropriate flags pre-set.
 | `--end M` | Run tests with `seq <= M`; combine with `--start` for a range |
 | `--id CT-X-NNN` | Run exactly one test by id (overrides range/tier filters) |
 | `--tier smoke\|tier1\|tier2\|tier3` | Run tests at this tier and all lower tiers (smoke ⊂ tier1 ⊂ tier2 ⊂ tier3) |
-| `--area <area>` | Filter by area (e.g. `install`, `daemon`, `script`, `exec`, `prompt`, `parity`) |
+| `--area <area>` | Filter by area (e.g. `install`, `daemon`, `prompt`, `parity`, `cfg`, `security`) |
 | `--surface cli\|api\|mcp` | Filter to tests whose `surface` array includes the given value |
 | `--list` | Print test IDs, titles, tiers, and platform-skip status; exit 0 without running |
 | `--dry-run` | Print what would run; exit 0 without running |

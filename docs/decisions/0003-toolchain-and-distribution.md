@@ -84,7 +84,7 @@ Vite does not natively externalize it either). It was chosen over Jest (heavier 
 setup, slower watch mode), `node:test` (no watch mode or plugin system for the
 `node:sqlite` resolution needed here), and Mocha (more manual TypeScript/assertion
 wiring). The architecturally significant test that happens to run under vitest --
-`tests/surface-drift.test.ts`, which mechanically enforces CLI/MCP/library parity -- is
+`tests/unit/surface-drift.test.ts`, which mechanically enforces CLI/MCP/library parity -- is
 covered as part of the architecture itself in
 [ADR 0001](0001-architecture-and-runtime-model.md); vitest is only the vehicle that runs
 it.

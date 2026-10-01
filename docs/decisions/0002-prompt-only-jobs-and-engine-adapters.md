@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-09-28
 - Supersedes: former ADRs 0008, 0018, 0019 (its exec-specific guidance is obsolete;
-  its `--arg`-is-primary guidance for prompt args carries forward), 0021, 0025, 0028,
+  its argument-passing guidance carries forward as unknown-option passthrough), 0021, 0025, 0028,
   0029, 0030, 0031, 0032, 0033.
 
 ## Context
@@ -53,25 +53,22 @@ mode (accidental re-run of a setup script, a copy/pasted id). Schedule validatio
 runs before persistence even with `force` set, so an invalid replacement cannot destroy
 the existing job and then fail.
 
-### Argument passing: `--arg` primary, plus unknown-option passthrough
+### Argument passing: unknown-option passthrough, `--` for positionals
 
-`--arg <value>` (repeatable) is the primary, always-correct way to pass arguments to a
-prompt job from the CLI -- verified to round-trip spaces, embedded quotes, leading
-dashes, and flag-like values across every real entry point (`crontick.ps1`,
-`crontick.cmd`, `npx crontick`), unlike the `--` convention, which two independently
-verified Windows shim defects (PowerShell drops a literal `--`; `cmd.exe` strips embedded
-quotes) make unsafe as *the* primary mechanism. `--` still works as a convenience where
-its known caveats don't apply, but the two sources cannot be combined in one command.
-Beyond that, `jobs new`/`jobs update` also accept any long option crontick does not
-itself recognize (with or without a preceding `--`) and forward it, and its next token
-when not flag-shaped, verbatim and in original order into `action.args` -- because
-prompt engines add flags independently of crontick releases, and a fixed CLI mapping
-would need a crontick release for every engine flag. All three argument sources (`--arg`,
-`--`, unknown-option passthrough) run through the same reserved-argument validation,
-which rejects crontick-managed flags a job must never override, including
-`--output-format` and `--settings` (which the Claude adapter itself controls) and the
-retired `--job-env-file`. crontick adds no engine permission flag by default; a job opts
-into elevated engine permissions only through explicit passthrough arguments.
+`jobs new`/`jobs update` accept any long option crontick does not itself recognize (with
+or without a preceding `--`) and forward it, and its next token when not flag-shaped,
+verbatim and in original argv order into `action.args`; positional engine arguments may
+follow `--`. Prompt engines add flags independently of crontick releases, and a fixed CLI
+mapping would need a crontick release for every engine flag. (An earlier repeatable
+`--arg <value>` flag was dropped from the CLI in favor of this passthrough; library and
+MCP callers set `action.args` directly.) Short flags before `--` belong to crontick
+(`-a`, `-p`, `-C`); after `--` they pass to the engine. Every source runs through the same
+reserved-argument validation, which rejects crontick-managed flags a job must never
+override, including `--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`,
+`--output-format` and `--settings` (which the Claude adapter itself controls), also in
+`--flag=value` form, and the retired `--job-env-file`. crontick adds no engine permission
+flag by default; a job opts into elevated engine permissions only through explicit
+passthrough arguments.
 
 ### CLI naming: `--alias` and `--runner`
 
@@ -111,11 +108,34 @@ different things (discarded vs. terminated-after-starting) and are reported sepa
 run filters and stats. Finally, because the daemon can lose a child's exit code if it
 stops before the child finishes, each Claude invocation registers a `SessionEnd` command
 hook (via inline `--settings`, never touching the user's own Claude settings) that writes
-`{exitStatus, sessionId}` to the crontick data directory; restart reconciliation accepts
+`{exitStatus, sessionId, transcriptPath}` to the crontick data directory; restart reconciliation accepts
 that marker only when its session id matches the persisted run and its exit status is a
 valid integer 0-255. This is a best-effort restart-recovery signal only -- a normal run's
 outcome always comes from `parseResult` and the real process exit, never the marker, and
 explicit cancellation always overrides it.
+
+### Run output: crontick stores only its own logs and the cleaned result
+
+crontick no longer persists an engine's raw stdout/stderr (no `run_logs` table, no log
+streaming routes). The engine already keeps its own transcript, so duplicating it was
+cost without value. Per run, crontick keeps the cleaned output only (the engine's final
+answer, the error, and the redacted stderr; tool calls, interim assistant text, thinking
+blocks and hook payloads are discarded as the stream arrives, bounded by
+`retention.maxOutputBytesPerRun`), plus structured Claude usage (`costUsd`, `turns`,
+redacted `usageJson`, `engineStatus`, `transcriptPath`). crontick's own lifecycle events
+(start, timeout, retry, exit) go to one log file per job (`<logsDir>/<jobGuid>.log`,
+deleted with the job), and `runs get`, the dashboard and `crontick_run_get` expose that
+file's absolute path (`logFile`) and the transcript path rather than file contents.
+
+### Claude folder trust is a guardrail checked before a job is saved
+
+A Claude job's `action.cwd` must be trusted in Claude's config (`hasTrustDialogAccepted`
+on the folder or an ancestor) or creation/update/import fails with `TRUST_REQUIRED` and
+nothing is saved. The CLI asks interactively (or accepts `--trust-folder`); MCP and the
+library pass `trustFolder: true` after the caller confirms. Only that flag is written to
+`.claude.json`. `claude -p` itself skips Claude's trust dialog, so this protects user
+intent for project-scoped settings and hooks rather than satisfying a Claude requirement;
+engines without a trust concept (raw) skip it.
 
 ## Alternatives considered
 
@@ -132,9 +152,11 @@ explicit cancellation always overrides it.
   isolation.
 - **Permit `queue`/`cancel-previous` with session reuse.** Rejected for the reasons above
   -- both can leave a reused session in an unsafe or inconsistent state.
-- **Keep `--` as the only/primary argument mechanism.** Rejected: two independently
-  verified Windows shim defects make it unsafe as the sole recommended path; `--arg` is
-  correct everywhere at the cost of being more verbose for a short argument list.
+- **Keep storing raw engine stdout/stderr in SQLite.** Rejected: it duplicated the
+  engine's own transcript, grew the database, and forced a streaming API surface.
+- **A fixed CLI flag per engine option.** Rejected: every new engine flag would need a
+  crontick release; unknown-option passthrough with reserved-flag validation keeps
+  crontick engine-agnostic.
 
 ## Consequences
 
@@ -146,8 +168,7 @@ a Claude run that finished while the daemon was down.
 
 **Harder:** a user who wants crontick to run an arbitrary shell command directly must
 front it with a prompt engine, with no automatic migration for old `script`/`exec` job
-JSON; two argument-passing flags (`--arg`, unknown-option passthrough) exist alongside
-`--`, each with its own precedence rule; existing scripts using the old `--name`/
+JSON; passthrough relies on the reserved-argument list to keep crontick-managed flags out of `action.args`; existing scripts using the old `--name`/
 `--engine`/`--script`/`--exec` flags must be updated with no compatibility shim.
 
 **Impossible (by design):** reintroducing `script`/`exec` without fresh, explicit
