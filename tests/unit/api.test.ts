@@ -8,7 +8,8 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { teardownDaemon } from '../helpers/cleanup.js';
-import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
+import { FAKE_ENGINE_CONFIG, FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
+import { fakeClaudeEngineConfig } from '../helpers/fake-claude.js';
 
 const DAEMON_SCRIPT = resolve('dist/daemon/index.js');
 const TIMEOUT_MS = 30_000;
@@ -66,7 +67,7 @@ describe('Daemon HTTP API', () => {
 
   beforeAll(async () => {
     dir = makeTmpDir();
-    writeFakeEngineConfig(dir);
+    writeFakeEngineConfig(dir, { engines: { [FAKE_ENGINE_NAME]: FAKE_ENGINE_CONFIG, 'api-fake-claude': fakeClaudeEngineConfig({ result: 'All done.', flood: 2 }) } });
     const stderrChunks: string[] = [];
     daemonProc = spawn(process.execPath, [DAEMON_SCRIPT], {
       env: { ...process.env, CRONTICK_HOME: dir },
@@ -290,17 +291,11 @@ describe('Daemon HTTP API', () => {
   });
 
   it('GET /api/runs/:id/output returns the cleaned output view; the raw engine log is not stored', async () => {
-    const code = [
-      "const emit = (e) => process.stdout.write(JSON.stringify(e) + '\\n');",
-      "emit({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'hm', signature: 'SIGNATURE-BLOB' }] } });",
-      "emit({ type: 'assistant', message: { content: [{ type: 'text', text: 'All done.' }] } });",
-      "emit({ type: 'result', subtype: 'success', is_error: false, result: 'All done.' });",
-    ].join(' ');
     await apiCall(port, 'POST', '/api/jobs', {
       alias: 'output-view-job',
       enabled: false,
       schedule: { kind: 'cron', cron: '0 0 1 1 *' },
-      action: { kind: 'prompt', prompt: code, engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
+      action: { kind: 'prompt', prompt: 'hello', engine: 'api-fake-claude', args: [], reuseSession: false, cwd: dir },
     });
     const { data } = await apiCall(port, 'POST', '/api/jobs/output-view-job/run-now');
     const runId = (data as { runId: string }).runId;
