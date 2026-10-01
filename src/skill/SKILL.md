@@ -58,7 +58,8 @@ crontick jobs run-now <id|alias>   # trigger an immediate run
 crontick runs list                 # recent runs across all jobs
 crontick runs list --job <id|alias>   # runs for one job (also --status, --limit, --since)
 crontick runs list --status skipped   # statuses: queued|running|success|failed|canceled|skipped|timeout|missed
-crontick runs get <runId>          # status, timing, Runner Session ID, transcript + log file path, then the cleaned output (use --json for { run, output })
+crontick runs list --json          # raw run records as JSON (epoch-ms timestamps, full error text)
+crontick runs get <runId>          # status, timing, Runner Session ID, cost (USD), turns, transcript + log file path, then the cleaned output (use --json for { run, output }; output.usage has normalized token counts)
 ```
 
 ### Step 4 — Manage
@@ -66,7 +67,9 @@ crontick runs get <runId>          # status, timing, Runner Session ID, transcri
 ```sh
 crontick jobs update <id|alias> --disable   # also --enable, or any create flag to change fields
 crontick jobs update <id|alias> --cron "0 8 * * *"
-crontick jobs delete <id|alias>    # delete one job (confirm with the user first)
+crontick jobs delete <id|alias>    # delete one job + its run history and logs (confirm with the user first)
+crontick share export --out jobs.json --only-jobs <id|alias,...>   # back up jobs (jobs only; omit flags for stdout/all)
+crontick share import jobs.json    # import jobs (new ids; alias clashes get -2, -3 suffixes)
 crontick runs cancel <runId>       # cancel an in-progress run
 ```
 
@@ -75,6 +78,9 @@ crontick runs cancel <runId>       # cancel an in-progress run
 ```sh
 crontick info      # version, runtime, config path, storage paths, daemon status, dashboard URL
 crontick doctor    # health check: Node.js, SQLite, data dir, daemon
+crontick daemon start  # explicit start (--foreground to run in this terminal); it also demand-starts
+crontick daemon status # running or not
+crontick daemon restart
 crontick daemon stop   # stop the daemon when you really need a restart cycle
 crontick daemon reload # reload jobs from disk after manual edits
 ```
@@ -122,7 +128,7 @@ crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident qu
 | **stats** | `stats summary` / `stats job <id\|alias>` | Aggregate / per-job stats |
 | **info** | `info` | Version, config path, paths, daemon status, dashboard URL |
 | | `doctor` | System health check |
-| | `daemon stop\|reload` | Stop or reload the daemon from the info group |
+| | `daemon start\|stop\|restart\|status\|reload` | Manage the daemon |
 | **mcp** | `mcp` | Start the MCP server on stdio |
 
 ## Gotchas for the agent
@@ -189,12 +195,22 @@ crontick also ships an MCP server that mirrors these commands one-to-one (tool p
 |----------|----------------|
 | `crontick_job_create` | `jobs new` |
 | `crontick_job_list` | `jobs list` |
+| `crontick_job_get` | `jobs get` |
+| `crontick_job_update` | `jobs update` |
+| `crontick_job_enable` / `crontick_job_disable` | `jobs update --enable` / `--disable` |
+| `crontick_job_delete` | `jobs delete` (`all: true` + `force: true` = `jobs delete all --force`) |
 | `crontick_job_schedule` | `jobs schedule` |
 | `crontick_job_run_now` | `jobs run-now` |
+| `crontick_job_cancel_run` | `runs cancel` |
 | `crontick_run_list` | `runs list` |
-| `crontick_run_get` | `runs get` |
+| `crontick_run_get` | `runs get` (also returns the cleaned output) |
+| `crontick_stats_summary` / `crontick_stats_job` | `stats summary` / `stats job` |
+| `crontick_export` / `crontick_import` | `share export` / `share import` |
+| `crontick_doctor` | `doctor` |
 | `crontick_info` | `info` |
 | `crontick_daemon_stop` | `daemon stop` |
 | `crontick_daemon_reload` | `daemon reload` |
+
+MCP differences: pass `action.cwd` (absolute project folder) when creating jobs, the engine is `action.engine` (CLI `--runner`), and for Claude jobs in an untrusted folder a `TRUST_REQUIRED` error means ask the user, then retry with `trustFolder: true` (CLI `--trust-folder`). Create/update/import tools take `trustFolder`.
 
 MCP hosts can also read the job JSON schema from the resource `crontick://schemas/job` to validate job definitions before calling `crontick_job_create`.

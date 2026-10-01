@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { redactForLlm, redactedErrorMessage } from '../../src/mcp/index.js';
 import { CrontickError } from '../../src/errors.js';
+import { MCP_TOOLS } from '../../src/surface.js';
 
 const SKILL_MD = resolve('src/skill/SKILL.md');
 const PKG_JSON = resolve('package.json');
@@ -46,6 +47,17 @@ describe('src/skill/SKILL.md content', () => {
     expect(content).toContain('reuseSession');
     expect(content).toContain('sessionId');
     expect(content).not.toContain('put `copilot -p "..."` or `claude -p "..."` inside the script body');
+  });
+
+  it('lists every MCP tool from SURFACE_CAPABILITIES', () => {
+    for (const tool of MCP_TOOLS) expect(content).toContain(tool);
+  });
+
+  it('documents runs --json, share, and trustFolder', () => {
+    expect(content).toContain('runs list --json');
+    expect(content).toContain('share export');
+    expect(content).toContain('share import');
+    expect(content).toContain('trustFolder');
   });
 
   it('does not list removed daemon startup-registration tools', () => {
