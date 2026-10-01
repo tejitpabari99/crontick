@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -160,7 +160,7 @@ afterAll(async () => {
 });
 
 describe('deleted-job aggregates', () => {
-  it('excludes deleted-job history from live stats/dashboard views while preserving direct run access', async () => {
+  it('removes deleted-job runs/logs from every surface (stats, dashboard, runs list/get, logs)', async () => {
     const liveJobId = 'ctd-014-live-job';
     const deletedJobId = 'ctd-014-deleted-job';
 
@@ -177,7 +177,8 @@ describe('deleted-job aggregates', () => {
     const beforeDelete = await client.statsSummary();
     expect(beforeDelete).toMatchObject({ totalJobs: 2, enabledJobs: 2, totalRuns: 2, succeeded: 2, failed: 0 });
 
-    await client.deleteJob(deletedJobId);
+    const deletion = await client.deleteJob(deletedJobId);
+    expect(deletion).toMatchObject({ ok: true, deletedRuns: 1 });
 
     const summary = await client.statsSummary();
     expect(summary).toEqual({
@@ -211,12 +212,23 @@ describe('deleted-job aggregates', () => {
       { id: liveRunId, jobId: liveJob.id, jobAlias: liveJob.alias ?? null },
     ]);
 
-    const archivedRun = await client.getRun(deletedRunId) as RunRecord;
-    expect(archivedRun).toMatchObject({ id: deletedRunId, jobId: deletedJob.id, status: 'success', exitCode: 0 });
-
-    const archivedLogs = await client.getLogs(deletedRunId);
-    expect(archivedLogs.runId).toBe(deletedRunId);
-    expect(archivedLogs.lines.some((line) => line.data.includes('deleted-history'))).toBe(true);
+    // Nothing of the deleted job is left on any surface.
+    await expect(client.getRun(deletedRunId)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect((await client.listRuns()).map((run) => run.id)).toEqual([liveRunId]);
+    expect(await client.listRuns({ jobId: deletedJob.id })).toEqual([]);
+    expect(await client.listRuns({ jobId: deletedJobId })).toEqual([]);
+    const cliRuns = cli(['runs', 'list', '--json']);
+    expect(cliRuns.status, cliRuns.stderr).toBe(0);
+    expect((JSON.parse(cliRuns.stdout) as RunRecord[]).map((run) => run.id)).toEqual([liveRunId]);
+    expect(cli(['runs', 'get', deletedRunId]).status).toBe(1);
+    const { isError: mcpGetError } = await callTool('crontick_run_get', { id: deletedRunId });
+    expect(mcpGetError).toBe(true);
+    const logsResponse = await fetch(`${baseUrl}/api/runs/${deletedRunId}/logs`);
+    expect(logsResponse.status).toBe(404);
+    const mcpRuns = await callTool('crontick_run_list', {});
+    expect((mcpRuns.json as unknown as RunRecord[]).map((run) => run.id)).toEqual([liveRunId]);
+    expect(existsSync(join(HOME, 'logs', `${deletedJob.id}.log`))).toBe(false);
+    expect(existsSync(join(HOME, 'logs', `${liveJob.id}.log`))).toBe(true);
 
     expect(ORPHAN_RUN_ERROR_CODE).toBe('DAEMON_RESTART');
     expect(ORPHAN_RUN_ERROR_MESSAGE).toBe(

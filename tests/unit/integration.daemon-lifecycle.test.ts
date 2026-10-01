@@ -632,21 +632,15 @@ describe('Integration: daemon lifecycle', () => {
     expect(deleteRes.status).toBe(200);
     expect(deleteRes.data).toMatchObject({ ok: true, canceledRun: true });
 
-    // The run row must reflect the cancellation, and — crucially — the real
+    // Deleting the job removes its runs and logs, and — crucially — the real
     // child process must not be left running to completion after its job
-    // definition is gone.
-    const runDeadline = Date.now() + 10_000;
-    let finalStatus: string | undefined;
-    while (Date.now() < runDeadline) {
-      const runCheck = await apiCall(port, 'GET', `/api/runs/${runId}`);
-      finalStatus = (runCheck.data as { status?: string }).status;
-      if (finalStatus === 'canceled') break;
-      await new Promise((r) => setTimeout(r, 100));
-    }
-    expect(finalStatus).toBe('canceled');
-
+    // definition is gone. Late output of the canceled child must not leave
+    // orphan run/log rows behind either.
     await new Promise((r) => setTimeout(r, 4500));
     expect(existsSync(doneFile)).toBe(false);
+    expect((await apiCall(port, 'GET', `/api/runs/${runId}`)).status).toBe(404);
+    expect((await apiCall(port, 'GET', `/api/runs/${runId}/logs`)).status).toBe(404);
+    expect((await apiCall(port, 'GET', '/api/runs')).data).toEqual([]);
   }, 30_000);
 
   // ── T-STALL-ESCALATE (Major 3) ───────────────────────────────────────────

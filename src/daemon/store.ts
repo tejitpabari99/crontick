@@ -14,6 +14,7 @@ import { nullLogger, type Logger } from '../logger.js';
 import type { LogSource } from '../log-source.js';
 import { readClaudeCompletionMarker } from '../claude-completion-marker.js';
 import { loadConfig } from '../config.js';
+import { resolveJobLogPath } from './job-log-file.js';
 import { getEngineAdapter } from '../engines/registry.js';
 import { DEFAULT_RUN_RETENTION_CAP } from '../constants/retention.js';
 
@@ -384,23 +385,81 @@ export class Store {
     return rows.map((r) => JSON.parse(r.json) as Job);
   }
 
-  /** Accepts either the GUID `id` or the `alias` (see getJob) and deletes the resolved job's row + files. */
+  /** Accepts either the GUID `id` or the `alias` (see getJob) and deletes the resolved job together with its runs, logs and schedule state. */
   deleteJob(idOrAlias: string): boolean {
+    return this.deleteJobAndRuns(idOrAlias) !== undefined;
+  }
+
+  /**
+   * Deletes a job and everything that belongs to it in ONE transaction: its
+   * run logs, runs, schedule state, then the job row. Deleting a job removes
+   * its history on every surface (nothing is archived). After the commit the
+   * job JSON files and the per-job log file are unlinked best-effort (the
+   * SQLite rows are the transactional source of truth; files are mirrors).
+   * Claude's own transcripts are never touched. Returns undefined when the job
+   * does not exist, else the number of runs removed.
+   */
+  deleteJobAndRuns(idOrAlias: string): { jobId: string; deletedRuns: number } | undefined {
     const job = this.getJob(idOrAlias);
-    if (!job) return false;
-    const changes = (this.db.prepare('DELETE FROM jobs WHERE id = ?').run(job.id) as { changes: number }).changes;
+    if (!job) return undefined;
+    let deletedRuns = 0;
+    let deleted = 0;
+    this.db.exec('BEGIN;');
+    try {
+      this.db.prepare('DELETE FROM run_logs WHERE run_id IN (SELECT id FROM runs WHERE job_id = ?)').run(job.id);
+      deletedRuns = (this.db.prepare('DELETE FROM runs WHERE job_id = ?').run(job.id) as { changes: number }).changes;
+      this.db.prepare('DELETE FROM job_schedule_state WHERE job_id = ?').run(job.id);
+      deleted = (this.db.prepare('DELETE FROM jobs WHERE id = ?').run(job.id) as { changes: number }).changes;
+      this.db.exec('COMMIT;');
+    } catch (err) {
+      this.db.exec('ROLLBACK;');
+      throw err;
+    }
     this.removeJobFiles(job.id);
-    this.logger.debug('Deleted job', { jobId: job.id, alias: job.alias, deleted: changes > 0 });
-    return changes > 0;
+    this.removeJobLogFile(job.id);
+    this.logger.debug('Deleted job', { jobId: job.id, alias: job.alias, deleted: deleted > 0, deletedRuns });
+    return deleted > 0 ? { jobId: job.id, deletedRuns } : undefined;
+  }
+
+  /**
+   * Removes rows whose job no longer exists: runs (and their logs) and schedule
+   * state. Run at daemon start to clean up data left by older versions, which
+   * archived runs when a job was deleted. Returns the counts removed.
+   */
+  purgeOrphans(): { runs: number; logs: number; scheduleState: number } {
+    this.db.exec('BEGIN;');
+    try {
+      const runs = (this.db.prepare('DELETE FROM runs WHERE job_id NOT IN (SELECT id FROM jobs)').run() as { changes: number }).changes;
+      const logs = (this.db.prepare('DELETE FROM run_logs WHERE run_id NOT IN (SELECT id FROM runs)').run() as { changes: number }).changes;
+      const scheduleState = (this.db.prepare('DELETE FROM job_schedule_state WHERE job_id NOT IN (SELECT id FROM jobs)').run() as { changes: number }).changes;
+      this.db.exec('COMMIT;');
+      if (runs + logs + scheduleState > 0) {
+        this.logger.info('Purged orphaned data left by deleted jobs', { runs, logs, scheduleState });
+      }
+      return { runs, logs, scheduleState };
+    } catch (err) {
+      this.db.exec('ROLLBACK;');
+      throw err;
+    }
+  }
+
+  /** Best-effort removal of a job's per-job log file (see resolveJobLogPath). */
+  private removeJobLogFile(jobId: string): void {
+    try {
+      const logPath = resolveJobLogPath(jobId);
+      if (logPath && existsSync(logPath)) unlinkSync(logPath);
+    } catch {
+      // best-effort
+    }
   }
 
   /**
    * Atomically delete every job and all data associated with jobs: run history,
    * run logs, and per-job schedule state, in a single transaction. Returns the
-   * number of job rows removed. Unlike single-job delete (which archives run
-   * history), a bulk wipe leaves nothing to archive against, so runs/logs are
-   * removed too. Job JSON files are unlinked best-effort after the DB commit
-   * (the SQLite rows are the transactional source of truth; files are a mirror).
+   * number of job rows removed. Like single-job delete, runs and logs are
+   * removed too. Job JSON files and per-job log files are unlinked best-effort
+   * after the DB commit (the SQLite rows are the transactional source of truth;
+   * files are a mirror).
    */
   deleteAllJobs(): number {
     const jobs = this.listJobs();
@@ -416,7 +475,10 @@ export class Store {
       this.db.exec('ROLLBACK;');
       throw err;
     }
-    for (const job of jobs) this.removeJobFiles(job.id);
+    for (const job of jobs) {
+      this.removeJobFiles(job.id);
+      this.removeJobLogFile(job.id);
+    }
     this.logger.info('Deleted all jobs', { deleted });
     return deleted;
   }
@@ -537,7 +599,12 @@ export class Store {
     update: Partial<Pick<Run, 'status' | 'exitCode' | 'error' | 'endedAt' | 'durationMs' | 'pid' | 'outputTruncated' | 'sessionId' | 'command' | 'costUsd' | 'turns' | 'usageJson' | 'transcriptPath' | 'engineStatus'>>,
   ): void {
     const run = this.getRun(id);
-    if (!run) throw new CrontickError('NOT_FOUND', `Run ${id} not found`);
+    if (!run) {
+      // The run's job may have been deleted while the run was still in flight
+      // (deleting a job removes its runs); late updates are simply dropped.
+      this.logger.debug('Ignoring update for a run that no longer exists', { runId: id });
+      return;
+    }
 
     const fields: string[] = [];
     const values: (string | number | null)[] = [];
@@ -648,7 +715,7 @@ export class Store {
   }
 
 
-  private queryRuns(opts: ListRunsOptions = {}, existingJobsOnly = false): Run[] {
+  private queryRuns(opts: ListRunsOptions = {}): Run[] {
     const conditions: string[] = [];
     const params: (string | number)[] = [];
 
@@ -687,7 +754,6 @@ export class Store {
       params.push(like, like, like, like, like, like, like);
     }
 
-    const join = existingJobsOnly ? 'INNER JOIN jobs ON jobs.id = runs.job_id' : '';
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     // Defense-in-depth: bind LIMIT as a parameter (never string-interpolated)
     // and reject any non-finite / non-positive value so a bad limit can never
@@ -705,7 +771,7 @@ export class Store {
       limitClause = 'LIMIT ?';
       params.push(n);
     }
-    const rows = this.db.prepare(`SELECT runs.* FROM runs ${join} ${where} ORDER BY runs.started_at DESC ${limitClause}`)
+    const rows = this.db.prepare(`SELECT runs.* FROM runs ${where} ORDER BY runs.started_at DESC ${limitClause}`)
       .all(...params) as unknown as DbRunRow[];
     this.logger.debug('Listed runs', {
       count: rows.length,
@@ -713,21 +779,12 @@ export class Store {
       limit: opts.limit,
       since: opts.since,
       status: opts.status,
-      existingJobsOnly,
     });
     return rows.map(rowToRun);
   }
 
   listRuns(opts: ListRunsOptions = {}): Run[] {
-    return this.queryRuns(opts, false);
-  }
-
-  /**
-   * Current-job aggregate views exclude archived runs whose parent job row was
-   * deleted, but direct run/log lookups by run id still use listRuns()/getRun().
-   */
-  listRunsForExistingJobs(opts: ListRunsOptions = {}): Run[] {
-    return this.queryRuns(opts, true);
+    return this.queryRuns(opts);
   }
 
   /**
@@ -821,9 +878,11 @@ export class Store {
   // ── Log CRUD ────────────────────────────────────────────────────────────────
 
   appendLog(runId: string, stream: LogStream, chunk: Buffer): void {
+    // Only log for runs that still exist: a run whose job was deleted while it
+    // was in flight must not leave orphaned log rows behind.
     this.db
-      .prepare('INSERT INTO run_logs (run_id, stream, ts, chunk) VALUES (?, ?, ?, ?)')
-      .run(runId, stream, Date.now(), chunk);
+      .prepare('INSERT INTO run_logs (run_id, stream, ts, chunk) SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM runs WHERE id = ?)')
+      .run(runId, stream, Date.now(), chunk, runId);
   }
 
   /**

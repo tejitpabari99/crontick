@@ -573,7 +573,10 @@ describe('Runner', () => {
 
     await runner.run(job, run.id, store);
 
-    expect(store.getRun(run.id)?.status).toBe('success');
+    // Deleting a job removes its runs; the late write-back must not resurrect
+    // the job, the run row or orphan logs.
+    expect(store.getRun(run.id)).toBeUndefined();
+    expect(store.getLogs(run.id)).toEqual([]);
     expect(store.getJob(job.id)).toBeUndefined();
   });
 

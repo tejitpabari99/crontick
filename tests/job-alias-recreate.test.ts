@@ -147,10 +147,8 @@ describe('recreating a job with the same alias gets a fresh GUID id and empty ru
       expect((statsResponse.data as { totalRuns: number; lastStatus: string | null }).totalRuns).toBe(0);
       expect((statsResponse.data as { totalRuns: number; lastStatus: string | null }).lastStatus).toBeNull();
 
-      // The old run row is still archivally queryable by its own run id
-      // (deleting a job doesn't erase run history), it's just no longer
-      // associated with any live job.
-      expect(store.getRun(run.id)).toMatchObject({ jobId: original.id, status: 'success' });
+      // Deleting a job removes its run history entirely (nothing is archived).
+      expect(store.getRun(run.id)).toBeUndefined();
     } finally {
       await stopServer(server);
       store.close();

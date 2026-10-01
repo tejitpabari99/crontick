@@ -221,17 +221,17 @@ async function handleRequest(
 
       if (method === 'DELETE' && sub === '') {
         if (!job) return sendJobNotFoundError(res, requestedId);
-        const deleted = ctx.store.deleteJob(job.id);
-        if (!deleted) return sendJobNotFoundError(res, requestedId);
+        // Stop everything that could still touch the job first: the schedule,
+        // then any in-flight run (unlike a daemon stop, where a detached child
+        // surviving is deliberate, L8, deleting a job removes the definition
+        // entirely, so nothing is left for a run to belong to). Visible via
+        // `canceledRun` instead of silently orphaning it. Only then delete the
+        // job together with its runs/logs/schedule state.
         ctx.scheduler.unschedule(job.id);
-        // Major 4: unlike a daemon stop (where a detached child surviving is
-        // deliberate, L8), deleting a job removes the definition entirely, so
-        // there is nothing left for an in-flight run to belong to. Cancel any
-        // active run for this job rather than leaving its process running
-        // against a job that no longer exists. Visible via `canceledRun` in
-        // the response instead of silently orphaning it.
         const canceledRun = ctx.runner.cancelJob(job.id);
-        return sendJson(res, 200, { ok: true, canceledRun });
+        const deleted = ctx.store.deleteJobAndRuns(job.id);
+        if (!deleted) return sendJobNotFoundError(res, requestedId);
+        return sendJson(res, 200, { ok: true, canceledRun, deletedRuns: deleted.deletedRuns });
       }
 
       if (method === 'POST' && sub === '/enable') {
@@ -360,7 +360,7 @@ async function handleRequest(
     // ── Stats ─────────────────────────────────────────────────────────────────
     if (method === 'GET' && path === '/api/stats/summary') {
       const jobs = ctx.store.listJobs();
-      const runs = ctx.store.listRunsForExistingJobs({ limit: 1000 });
+      const runs = ctx.store.listRuns({ limit: 1000 });
       return sendJson(res, 200, buildDashboardStats(jobs, runs));
     }
 

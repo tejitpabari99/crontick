@@ -303,7 +303,7 @@ export class CrontickClient {
   }
 
   /** `id` accepts either the job's GUID id or its alias. */
-  async deleteJob(id?: string, options: { all?: boolean; force?: boolean } = {}): Promise<{ ok: true } | { ok: true; deleted: number }> {
+  async deleteJob(id?: string, options: { all?: boolean; force?: boolean } = {}): Promise<{ ok: true; canceledRun: boolean; deletedRuns: number } | { ok: true; deleted: number }> {
     if (options.all) {
       if (!options.force) throw new CrontickError('VALIDATION_ERROR', 'Deleting all jobs requires force:true');
       // Single atomic daemon call: DELETE /api/jobs wipes every job (and its
@@ -313,7 +313,7 @@ export class CrontickClient {
       return this.request<{ ok: true; deleted: number }>('DELETE', '/api/jobs?force=1');
     }
     if (!id) throw new CrontickError('VALIDATION_ERROR', 'Provide a job id or alias, or set all:true (with force:true) to delete every job');
-    return this.request<{ ok: true }>('DELETE', `/api/jobs/${encodeURIComponent(id)}`);
+    return this.request<{ ok: true; canceledRun: boolean; deletedRuns: number }>('DELETE', `/api/jobs/${encodeURIComponent(id)}`);
   }
 
   /** `id` accepts either the job's GUID id or its alias. */

@@ -71,3 +71,27 @@ describe('alias in the daemon API', () => {
     expect(dup.data.error.code).toBe('JOB_ALREADY_EXISTS');
   });
 });
+
+describe('DELETE /api/jobs/:id removes the job history (SP03 task 4)', () => {
+  let h: ApiHarness | undefined;
+  afterEach(async () => {
+    await h?.close();
+    h = undefined;
+  });
+
+  it('returns deletedRuns and cancels the job in-flight run before deleting', async () => {
+    const calls: string[] = [];
+    h = await startApiHarness('delete-runs', { cancelJob: () => { calls.push('cancel'); return true; } });
+    const created = await h.call('POST', '/api/jobs', sampleJob({ alias: 'del-me' }));
+    const id = created.data.id as string;
+    h.store.insertRun(id);
+    h.store.insertRun(id);
+    const res = await h.call('DELETE', '/api/jobs/del-me');
+    expect(res.status).toBe(200);
+    expect(res.data).toEqual({ ok: true, canceledRun: true, deletedRuns: 2 });
+    expect(calls).toEqual(['cancel']);
+    expect((await h.call('GET', '/api/runs')).data).toEqual([]);
+    expect((await h.call('GET', `/api/runs?jobId=${id}`)).data).toEqual([]);
+    expect((await h.call('GET', '/api/stats/summary')).data.totalRuns).toBe(0);
+  });
+});

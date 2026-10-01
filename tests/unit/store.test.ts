@@ -884,3 +884,82 @@ it('does not carry Claude completion evidence onto a different retry session', (
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+describe('deleting a job removes its history (SP03 task 4)', () => {
+  let dir: string;
+  let store: Store;
+  beforeEach(() => {
+    dir = makeTmpDir();
+    mkdirSync(join(dir, 'jobs'), { recursive: true });
+    store = makeStore(dir);
+    store.open();
+  });
+  afterEach(() => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('deleteJob removes the job runs, run logs and schedule state in one go and leaves other jobs alone', () => {
+    store.upsertJob(execJob('gone'));
+    store.upsertJob(execJob('kept'));
+    const goneRun = store.insertRun('gone');
+    const keptRun = store.insertRun('kept');
+    store.appendLog(goneRun.id, 'stdout', Buffer.from('bye\n'));
+    store.appendLog(keptRun.id, 'stdout', Buffer.from('hi\n'));
+    store.recordTick('gone', 1000);
+    store.recordTick('kept', 1000);
+
+    expect(store.deleteJobAndRuns('gone')).toEqual({ jobId: 'gone', deletedRuns: 1 });
+
+    expect(store.getRun(goneRun.id)).toBeUndefined();
+    expect(store.listRuns({ jobId: 'gone' })).toEqual([]);
+    expect(store.getLogs(goneRun.id)).toEqual([]);
+    expect(store.getScheduleState('gone')).toBeUndefined();
+    expect(store.getRun(keptRun.id)).toBeDefined();
+    expect(store.getLogs(keptRun.id)).toHaveLength(1);
+    expect(store.getScheduleState('kept')).toBeDefined();
+    expect(store.deleteJobAndRuns('gone')).toBeUndefined();
+  });
+
+  it('does not leave orphan log rows when a run keeps logging after its job was deleted (in-flight delete)', () => {
+    store.upsertJob(execJob('inflight'));
+    const run = store.insertRun('inflight');
+    store.deleteJob('inflight');
+    store.appendLog(run.id, 'stdout', Buffer.from('late output\n'));
+    expect(store.getLogs(run.id)).toEqual([]);
+    expect(store.purgeOrphans()).toEqual({ runs: 0, logs: 0, scheduleState: 0 });
+  });
+
+  it('purgeOrphans removes runs, logs and schedule state of jobs that no longer exist (left by older versions)', () => {
+    store.upsertJob(execJob('live'));
+    const liveRun = store.insertRun('live');
+    store.appendLog(liveRun.id, 'stdout', Buffer.from('ok\n'));
+    const orphanRun = store.insertRun('deleted-long-ago');
+    store.appendLog(orphanRun.id, 'stdout', Buffer.from('a\n'));
+    store.appendLog(orphanRun.id, 'stderr', Buffer.from('b\n'));
+    store.recordTick('deleted-long-ago', 5);
+
+    expect(store.purgeOrphans()).toEqual({ runs: 1, logs: 2, scheduleState: 1 });
+    expect(store.getRun(orphanRun.id)).toBeUndefined();
+    expect(store.getLogs(orphanRun.id)).toEqual([]);
+    expect(store.getScheduleState('deleted-long-ago')).toBeUndefined();
+    expect(store.getRun(liveRun.id)).toBeDefined();
+    expect(store.getLogs(liveRun.id)).toHaveLength(1);
+  });
+
+  it('unlinks the per-job log file of a deleted job', () => {
+    const logs = join(dir, 'logs');
+    mkdirSync(logs, { recursive: true });
+    const previous = process.env['CRONTICK_HOME'];
+    process.env['CRONTICK_HOME'] = dir;
+    try {
+      store.upsertJob(execJob('with-log'));
+      writeFileSync(join(logs, 'with-log.log'), 'x', 'utf-8');
+      store.deleteJob('with-log');
+      expect(existsSync(join(logs, 'with-log.log'))).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env['CRONTICK_HOME'];
+      else process.env['CRONTICK_HOME'] = previous;
+    }
+  });
+});

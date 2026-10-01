@@ -201,7 +201,7 @@ export function createMcpServer(): McpServer {
     'crontick_job_delete',
     {
       description:
-        'Permanently delete one job definition by id/alias, or delete every job with all:true plus force:true. Archived runs and logs remain directly queryable by run ID, but live aggregates exclude deleted jobs. This may cancel an in-flight run and cannot be undone -- confirm with the user first.',
+        'Permanently delete one job definition by id/alias, or delete every job with all:true plus force:true. The job\'s run history and logs are deleted with it (Claude\'s own session transcripts are not touched). This may cancel an in-flight run and cannot be undone -- confirm with the user first.',
       inputSchema: withVerbose({
         id: z.string().describe('Job id (GUID) or alias to delete individually').optional(),
         all: z.boolean().optional().describe('Delete every job. Requires force:true.'),
