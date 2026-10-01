@@ -35,8 +35,9 @@ on time even when no interactive session is open, without requiring OS service r
 
 ### Functional requirements
 
-- **R-004-1**: The daemon MUST listen on `127.0.0.1` on a random available port (port 0).
-- **R-004-2**: The daemon MUST write its port to the port file (`<dataDir>/daemon.port`) immediately after binding.
+- **R-004-1**: The daemon MUST listen on `127.0.0.1` only. It MUST prefer port `47615` (env `CRONTICK_DAEMON_PORT` overrides the preferred port; `0` means OS-assigned). If the preferred port is in use it MUST probe `/health` on it, report to stderr and the daemon log either `Port <p> is in use by another crontick daemon (pid N, data dir D); starting on a free port` or `Port <p> is in use by another process (not crontick); starting on a free port`, and bind an OS-assigned free port.
+- **R-004-1a**: `daemon start`/`restart` MUST print `started on fallback port N; default 47615 is in use` when the daemon is not on the preferred port; `GET /api/daemon/status` MUST include `dashboardUrl` and `portNote`; `crontick info` MUST show the port and dashboard URL; `crontick doctor` MUST include a `daemon port` check.
+- **R-004-2**: The daemon MUST write its port to the port file (`<dataDir>/daemon.port`) immediately after binding (the actual bound port, which may be a fallback).
 - **R-004-3**: The daemon MUST write its PID to the PID file (`<dataDir>/daemon.pid`) before binding.
 - **R-004-4**: The daemon MUST enforce single-instance: if a PID file exists and the process is alive, it MUST exit with code 1.
 - **R-004-5**: If the PID file references a dead process, the daemon MUST remove the stale PID file and continue startup.

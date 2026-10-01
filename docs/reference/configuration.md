@@ -215,6 +215,7 @@ into a permission mode or to set `--max-budget-usd`.
 | Variable | Type | Default | Effect |
 |----------|------|---------|--------|
 | `CRONTICK_HOME` | string (path) | Platform via `env-paths` | Overrides the data directory root |
+| `CRONTICK_DAEMON_PORT` | integer 0-65535 | `47615` | Preferred daemon port. When taken, the daemon falls back to a free port and records it in `daemon.port`. `0` always picks a free port (used by tests so parallel daemons never collide) |
 | `CRONTICK_DAEMON_URL` | string (URL) | Port file discovery | Explicit daemon base URL (for example, `http://127.0.0.1:9876`) |
 | `CRONTICK_DAEMON_BINARY` | string (path) | Resolved from built files | Override path to daemon script |
 | `CRONTICK_MCP_START_DAEMON` | `"0"` to disable | Enabled (any other value) | When `"0"`, MCP server does not demand-start the daemon |

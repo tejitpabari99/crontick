@@ -361,7 +361,7 @@ interface DaemonStatus {
 }
 ```
 
-Returned by the library-only `daemonStatus()` helper. `crontick info` / `crontick_info` expose the lighter `{ running, pid?, port? }` daemon summary instead. `baseUrl` is always the daemon's loopback listener URL
+Returned by the library-only `daemonStatus()` helper; it also carries `dashboardUrl` and `portNote` (`started on fallback port N; default 47615 is in use`, else `null`). `crontick info` / `crontick_info` expose the lighter `{ running, pid?, port? }` daemon summary instead. `baseUrl` is always the daemon's loopback listener URL
 (`http://127.0.0.1:<port>`), so scripts can discover the daemon endpoint without reading internal
 state files.
 
@@ -421,6 +421,7 @@ interface RunOutput {
   result: string | null;   // the engine's final answer (Claude `result` text, else last assistant text, else plain stdout)
   error: string | null;    // run.error, else an error reported in the engine output
   output: string;          // assistant text only; segments split by tool calls are joined with "---"
+  rawLogPath?: string | null; // per-job raw log file (all runs of the job), null when file logging is off; set by the daemon route
   stderr: string;          // engine stderr, redacted, last 4000 chars
   sessionId: string | null;
   costUsd: number | null;

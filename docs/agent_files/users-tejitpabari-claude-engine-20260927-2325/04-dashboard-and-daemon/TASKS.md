@@ -14,7 +14,7 @@ Source of truth: docs/agent_files/users-tejitpabari-claude-engine-20260927-2325/
 | 4 | Raw-log daemon route and `rawLogPath` | SP05 T1 | done |
 | 5 | Dashboard UI: theme icons, action alignment, run modal | 3, 4 | done |
 | 6 | Dashboard data display: full ids, Alias, working directory | 5 | done |
-| 7 | Tests, docs, reference, specs, changeset | 1-6 | todo |
+| 7 | Tests, docs, reference, specs, changeset | 1-6 | done |
 
 ## Task 1 — Fixed default daemon port with fallback
 What it is / what it means: The daemon today binds an ephemeral port every start, so URLs break on restart. It should prefer a stable port, and always still work when that port is taken (Decisions 1, 2, 3).

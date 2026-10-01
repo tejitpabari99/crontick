@@ -64,8 +64,9 @@ if nothing invokes crontick, scheduled jobs simply do not fire until something d
 
 ### Loopback HTTP as the only IPC transport
 
-The daemon exposes a plain HTTP/1.1 API bound to `127.0.0.1:0` (OS-assigned port,
-recorded in a `daemon.port` file for client discovery). The server rejects any
+The daemon exposes a plain HTTP/1.1 API bound to `127.0.0.1` on the default port `47615`, falling back to an OS-assigned
+free port when it is taken (amended by SP04: originally always OS-assigned). The actual port is
+recorded in a `daemon.port` file for client discovery. The server rejects any
 connection whose `remoteAddress` is not a loopback address; there is no TLS and no auth
 token, because the loopback restriction is the entire trust boundary. Shutdown is
 graceful and cross-platform through this same channel: `POST /api/daemon/stop` responds

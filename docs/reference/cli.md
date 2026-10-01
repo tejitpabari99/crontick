@@ -335,7 +335,7 @@ Check system health.
 crontick doctor
 ```
 
-Exits with code `1` if any check fails. Checks include Node.js version, SQLite availability, data directory (path shown), config file (path shown; reports when it has not been created yet and defaults are in use), daemon connectivity, dashboard reachability, and MCP server availability.
+Exits with code `1` if any check fails. Checks include Node.js version, SQLite availability, data directory (path shown), config file (path shown; reports when it has not been created yet and defaults are in use), daemon connectivity, daemon port (default vs fallback; flags a foreign process on the default port while no daemon runs), dashboard reachability, and MCP server availability.
 
 ### crontick daemon start
 
@@ -345,11 +345,11 @@ Start the daemon explicitly. The daemon also starts automatically on first use, 
 crontick daemon start [--foreground]
 ```
 
-By default the daemon is started in the background and the command prints its PID and URL (or reports it is already running). `--foreground` runs the daemon in the current terminal until it exits. This is an explicit, one-off start; it does not register the daemon to start at login or boot.
+By default the daemon is started in the background and the command prints its PID and URL (plus `Note: started on fallback port N; default 47615 is in use` when port 47615 was taken) (or reports it is already running). `--foreground` runs the daemon in the current terminal until it exits. This is an explicit, one-off start; it does not register the daemon to start at login or boot.
 
 ### crontick daemon status
 
-Show whether the daemon is running (PID, port, uptime, job count). Exits `1` with a hint when it is not running. Never starts the daemon.
+Show whether the daemon is running (PID, port, dashboard URL, uptime, job count; `portNote` when it is on a fallback port). Exits `1` with a hint when it is not running. Never starts the daemon.
 
 ### crontick daemon restart
 
@@ -382,7 +382,7 @@ daemon on its loopback origin whenever the daemon is running — there is nothin
 or stop separately. To open it:
 
 1. Run `crontick info` and copy the `dashboardUrl` line (for example
-   `http://127.0.0.1:<port>/dashboard`).
+   `http://127.0.0.1:47615/dashboard`; the daemon prefers port `47615` and falls back to a free port, shown by `crontick info`, `crontick daemon status` and `crontick doctor`).
 2. Open that URL in a browser.
 
 If the daemon is not running yet, run any daemon-backed command (for example `crontick jobs list`) and it will start automatically; then `crontick info` will report the URL.
@@ -398,7 +398,7 @@ job/run actions through the existing `/api/*` routes.
 
 - **Header** — shows the real daemon `version`, pid, node version and job count, plus an
   uptime badge (hover for a "daemon uptime" tooltip).
-- **Theme** — a System / Light / Dark toggle in the header. Colors are CSS custom properties
+- **Theme** — an icon-only System (monitor) / Light (sun) / Dark (moon) radio group in the header (each button has an `aria-label` and `title`). Colors are CSS custom properties
   on `:root`; by default the dashboard follows `prefers-color-scheme`. Choosing Light or Dark
   sets `data-theme` on `<html>` and is persisted in `localStorage` (`crontick.theme`); choosing
   System clears it. An inline script in `<head>` applies the saved theme before first paint to
@@ -406,16 +406,16 @@ job/run actions through the existing `/api/*` routes.
 - **Top bar** — Refresh button, the runs limit, and an **Auto-refresh** segmented control
   (`Off`, `10s`, `15s`, `30s`, `60s`). The default is `Off`; the choice is persisted in
   `localStorage` and the refresh timer honors it.
-- **Jobs table** — columns are `Alias` (falls back to `—`), `ID` (shortened GUID with a
-  copy icon for the full id), `Description`, `Schedule`, `Action`, `Last status`,
+- **Jobs table** — columns are `Alias` (falls back to `—`), `ID` (the full GUID, wrapping if needed, with a
+  copy icon), `Description`, `Schedule`, `Action`, `Last status`,
   `Next run`, and an `Actions` cell. Actions are icon buttons: **Run once now** (bolt icon,
   `POST /api/jobs/:id/run-now`; works for disabled jobs and does not enable the job; shows a
   toast), enable (`▶`) / disable (`⏹`, prompts for confirmation) and delete (`🗑`, prompts
   for confirmation). A search icon at the top right expands into a text box that filters jobs
-  client-side over name, description, and the whole job config (schedule, prompt, runner, ...).
+  client-side over alias, id, working directory, description, and the whole job config (schedule, prompt, runner, ...).
 - **Job details** — clicking a job row (outside the action buttons) opens a right-hand
-  drawer with the job config (name, id, description, enabled, schedule, runner, overlap,
-  timeout, retry, working dir, next/last run), the prompt, quick stats from
+  drawer with the job config (alias, id, description, enabled, schedule, runner, overlap,
+  timeout, retry, working directory, next/last run), the prompt, quick stats from
   `GET /api/stats/jobs/:id` (runs, success rate, average duration in seconds), the ten most
   recent runs (click one to open its run detail), and actions (Run now, Enable/Disable,
   Filter runs). `Esc`, the ✕ button or a backdrop click closes it; focus is trapped inside
@@ -426,18 +426,19 @@ job/run actions through the existing `/api/*` routes.
   the menu stays open while toggling. Filtering is server-side: `GET /api/dashboard` (and
   `GET /api/runs`) accept `jobId` and `status` as comma-separated lists and `q` for the
   text search (a bounded, parameterised `LIKE`; `%`/`_` are literal). Search input is
-  debounced. Every active filter also appears as a removable chip (`job:trial`,
-  `status:failed`, ...) under the toolbar; the chip's ✕ shows on hover, on keyboard focus and
+  debounced. Every active filter also appears as a removable chip (`alias:trial`,
+  `status:failed`, ...; job chips read `alias:<alias>`) under the toolbar; the chip's ✕ shows on hover, on keyboard focus and
   always on touch devices, and removing it also unchecks the option.
-- **Runs table** — shows the full run id and session id, each with a copy icon, plus Job
+- **Runs table** — shows the full run id and **Runner Session ID**, each with a copy icon, plus Job
   (`jobAlias || jobId`), Status, Started and Duration (in seconds, e.g. `12.4 s`). The Job,
   Status, Started and Duration headers are sort buttons (`aria-sort`, ▲/▼ indicator): default
   Started descending; a first click on another column sorts ascending, clicking again toggles.
   Clicking a run row opens the run detail.
 - **Run detail modal** — titled `Run log – <id> – <Status badge>`. It fetches the cleaned
   `GET /api/runs/:id/output` view and shows the **Error** (when present) above the **Output**
-  (final result / readable transcript). The noisy raw log (`GET /api/runs/:id/logs?source=all`)
-  is only loaded when the collapsed **Raw log** section is expanded. Close with the ✕ button,
+  (assistant text only: segments split by tool calls are separated by `---`; no tool lines). The **Raw log**
+  row shows the absolute path of the per-job log file (copy icon; the file holds all runs of the job) and an **Open** link to
+  `GET /api/runs/:id/log/raw`, which serves this run's raw log as `text/plain` (nothing is inlined in the modal). Close with the ✕ button,
   a backdrop click, or `Esc`.
 - **Durations** — average and per-run durations are shown in seconds (`avgDurationSec`);
   `—` when unknown.

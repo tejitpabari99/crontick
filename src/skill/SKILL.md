@@ -79,7 +79,7 @@ crontick daemon stop   # stop the daemon when you really need a restart cycle
 crontick daemon reload # reload jobs from disk after manual edits
 ```
 
-The dashboard (job/run browser) is served by the daemon; open the `dashboardUrl` from `crontick info` (`http://127.0.0.1:<port>/dashboard`).
+The dashboard (job/run browser) is served by the daemon; open the `dashboardUrl` from `crontick info` (default `http://127.0.0.1:47615/dashboard`; a free fallback port is used when 47615 is taken).
 
 ## Engines
 

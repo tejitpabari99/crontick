@@ -30,15 +30,26 @@ exposes a loopback-only HTTP API and is demand-started by clients when needed.
 13. **Orphan reconciliation**: liveness-check every leftover `queued`/`running` run and adopt or cancel it -- see [storage.md](./storage.md#orphan-reconciliation).
 14. Schedule every enabled job.
 15. Wire `scheduler.on('tick', ...)` to insert a run and fire `runner.run()`.
-16. Create the HTTP server, listen on `127.0.0.1:0`.
-17. Write the port file.
+16. Create the HTTP server and bind loopback via `bindPort` (`src/daemon/bind-port.ts`): the preferred port, else an OS-assigned free port.
+17. Write the actual bound port to the port file.
 18. Wire graceful shutdown into `POST /api/daemon/stop` and register `SIGINT`/`SIGTERM` as a POSIX fallback (see [Shutdown](#shutdown)).
 
 ## Port selection and discovery
 
-The daemon listens on `127.0.0.1:0`; the actual port is written as plain text to
-`<dataDir>/daemon.port`. `GET /health` returns `{ ok: true, product: "crontick", pid, port }`;
-clients verify both `product` and `port` before trusting an existing daemon.
+The daemon prefers `DEFAULT_DAEMON_PORT` = `47615` (`src/constants/daemon.ts`; override with env
+`CRONTICK_DAEMON_PORT`, used by tests, `0` = always OS-assigned). `bindPort(preferred, { listen, probe, notify })`
+is pure and injectable: it tries `listen(preferred)`; on `EADDRINUSE` it probes `GET /health` on that port
+with the crontick signature check and emits one notice (stderr and the daemon log), then binds `listen(0)`:
+
+- `Port 47615 is in use by another crontick daemon (pid N, data dir <dir>); starting on a free port`
+- `Port 47615 is in use by another process (not crontick); starting on a free port`
+
+The process owner of a foreign listener is not detected. The actual bound port is written as plain text
+to `<dataDir>/daemon.port`, so clients always discover the real port from that file and never assume the default.
+`GET /health` returns `{ ok: true, product: "crontick", pid, port, dataDir, ... }`; clients verify `product`
+and `port` before trusting an existing daemon. `describeDaemonPort(port)` yields the note
+`started on fallback port N; default 47615 is in use` shown by `daemon start|restart`, `daemon status` (`portNote`),
+`info`, and `doctor` ("daemon port" check).
 
 ## HTTP API routes
 
@@ -51,13 +62,14 @@ non-loopback gets 403 `FORBIDDEN`.
 | GET/POST | `/api/jobs[/:id]` | List/create/get job | 200/201/404 |
 | PUT/DELETE | `/api/jobs/:id` | Update/delete job (delete cancels an in-flight run: `canceledRun`) | 200/404 |
 | POST | `/api/jobs/:id/enable\|disable` | Enable/disable a job | 200/404 |
-| GET | `/api/runs/:id/output` | Cleaned output view (`RunOutput`): final result, error, readable transcript | 200/404 |
+| GET | `/api/runs/:id/output` | Cleaned output view (`RunOutput`): final result, error, assistant text only (segments split by tool calls joined with `---`), plus `rawLogPath` | 200/404 |
+| GET | `/api/runs/:id/log/raw` | The run's raw engine + crontick log (all `run_logs` sources) as redacted `text/plain; charset=utf-8`, `Content-Disposition: inline`, `X-Content-Type-Options: nosniff`. The id must match `[A-Za-z0-9_-]{1,128}` and exist in the store (404 otherwise); no path is built from the URL. Used by the dashboard's Raw log **Open** link (browsers block `file:` links from `http:` pages) | 200/404 |
 | POST | `/api/jobs/:id/run-now` (alias `/run`) | Run a job once now, even if disabled, without changing `enabled` or the schedule; overlap policy applies. `202 { runId }` | 202/404 |
 | GET/POST | `/api/runs[/:id][/cancel]` | List/get/cancel runs. The list accepts `jobId`/`status` (comma-separated for several), `limit`, `since`, and `q` (substring search over run fields, job alias and run logs) | 200/404 |
 | GET | `/api/runs/:id/logs[/stream]` | Log entries, or an SSE stream (`SSE_POLL_MS` = 200 ms; closes on terminal status) | 200/404 |
 | POST | `/api/schedules/validate\|preview` | Validate a schedule / preview next N fires | 200 |
 | GET | `/api/stats/summary\|jobs/:id` | Aggregate / per-job stats | 200/404 |
-| GET | `/api/daemon/status` | PID, `port`/`baseUrl`, version, uptime, job count, `missedFires` | 200 |
+| GET | `/api/daemon/status` | PID, `port`/`baseUrl`/`dashboardUrl`, `portNote` (set when on a fallback port), version, uptime, job count, `missedFires` | 200 |
 | POST | `/api/daemon/reload` | Reload jobs from disk (see [Reload](#reload)) | 200 |
 | POST | `/api/daemon/stop` | Graceful in-process shutdown (see [Shutdown](#shutdown)) | 200/501 |
 | GET/POST | `/api/export`, `/api/import` | Export/import jobs (optionally run history) | 200 |

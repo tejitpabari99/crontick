@@ -22,7 +22,9 @@ binary detached, and poll the port file until `/health` responds or `startupTime
 
 ## The loopback HTTP contract
 
-The daemon listens on an OS-assigned port bound to `127.0.0.1`; non-loopback gets HTTP 403.
+The daemon listens on `127.0.0.1` port `47615` by default; when that port is taken it prints which kind of
+process holds it (another crontick daemon or a foreign process) and binds an OS-assigned free port instead.
+The real port is always in `daemon.port`. Non-loopback gets HTTP 403.
 `GET /health` returns `{ ok, product: "crontick", pid, port }`; the client validates all four
 fields, to avoid accidentally connecting to a different service on the same port.
 

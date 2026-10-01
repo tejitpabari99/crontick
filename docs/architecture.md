@@ -136,7 +136,7 @@ limit and cap per-transaction lock time.
 ## Security considerations
 
 **Trust boundary**: the local machine's user account -- any process able to connect to
-`127.0.0.1` on the daemon's ephemeral port is trusted; there is no auth token, API key, or TLS.
+`127.0.0.1` on the daemon's port (default `47615`, or a free fallback port) is trusted; there is no auth token, API key, or TLS.
 **Loopback enforcement**: the daemon binds only `127.0.0.1` and rejects non-loopback sockets with
 403. **Arbitrary command execution**: job actions run engine binaries as the same OS user running
 the daemon, with no sandboxing or allowlist -- prompt-engine `command`/`args` are trusted as
