@@ -22,7 +22,7 @@ import {
   resolveDashboardAsset,
 } from '../dashboard.js';
 import { buildRunOutput } from '../run-output.js';
-import { nullLogger, redactValue, type Logger } from '../logger.js';
+import { nullLogger, redactText, redactValue, type Logger } from '../logger.js';
 import { readEnvFileForAction } from './env-file.js';
 import { SSE_POLL_MS } from '../constants/daemon.js';
 import { resolveJobLogPath } from './job-log-file.js';
@@ -37,6 +37,9 @@ const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 function normalizeLogSource(value: string | null): LogSource {
   return value !== null && (LOG_SOURCES as readonly string[]).includes(value) ? (value as LogSource) : 'all';
 }
+
+/** Run ids are generated identifiers; anything else cannot name a run. */
+const RUN_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 // ── Context shared with handlers ──────────────────────────────────────────────
 
@@ -325,7 +328,24 @@ async function handleRequest(
         const run = ctx.store.getRun(id);
         if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
         const logs = ctx.store.getLogs(id, 'engine').map((l) => ({ stream: l.stream, data: l.chunk.toString('utf-8') }));
-        return sendJson(res, 200, redactValue(buildRunOutput(run, logs)));
+        return sendJson(res, 200, redactValue({ ...buildRunOutput(run, logs), rawLogPath: resolveJobLogPath(run.jobId) }));
+      }
+
+      // The run's raw engine + crontick log (all sources, from run_logs) as redacted plain text.
+      // The dashboard links here: browsers refuse file: links from http pages. The id is only
+      // ever looked up in the store; no filesystem path is derived from the URL.
+      if (method === 'GET' && sub === '/log/raw') {
+        const run = RUN_ID_PATTERN.test(id) ? ctx.store.getRun(id) : undefined;
+        if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
+        const text = ctx.store.getLogs(run.id, 'all').map((l) => l.chunk.toString('utf-8')).join('');
+        res.writeHead(200, {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Content-Disposition': `inline; filename="${run.id}.log"`,
+          'X-Content-Type-Options': 'nosniff',
+          'Cache-Control': 'no-store',
+        });
+        res.end(redactText(text));
+        return;
       }
 
       if (method === 'GET' && sub === '/logs/stream') {

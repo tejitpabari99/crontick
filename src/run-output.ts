@@ -99,6 +99,8 @@ export interface RunOutput {
   durationMs: number | null;
   /** Display-only normalized token counts from the stored usage block; `null` when the run has none. */
   usage: NormalizedUsage | null;
+  /** Absolute path of the per-job raw log mirror (holds all runs of the job); `null` when file logging is disabled. Added by the daemon route, not by `buildRunOutput`. */
+  rawLogPath?: string | null;
   /** True when the run's captured output hit `retention.maxOutputBytesPerRun` (the transcript may be incomplete) or this view was itself capped. */
   truncated: boolean;
 }
