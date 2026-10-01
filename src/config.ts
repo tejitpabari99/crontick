@@ -6,7 +6,7 @@
  * Precedence for engine resolution: file config > BUILT_IN_CONFIG.
  * Writes use atomic rename (write-to-tmp, rename) for crash safety.
  */
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
 import { CrontickError } from './errors.js';
@@ -136,10 +136,48 @@ export function initConfig(options: InitConfigOptions = {}): { path: string; con
       { path: filePath },
     );
   }
-  const config = cloneConfig(BUILT_IN_CONFIG);
+  const config = defaultConfigTemplate();
   writeJsonAtomic(filePath, config, options.env);
   (options.logger ?? nullLogger).child('config').debug('Initialized config file', { path: filePath, force: options.force === true });
   return { path: filePath, config, created: true };
+}
+
+/** The full, explicit built-in config as written to a fresh config.json (`timeoutSec` is omitted: unset). */
+export function defaultConfigTemplate(): CrontickConfig {
+  return cloneConfig(BUILT_IN_CONFIG);
+}
+
+/**
+ * Creates `<dataDir>/config.json` with the full default config when it does not
+ * exist yet; an existing file (hand-edited or not) is never read, merged or
+ * touched. The content is written to a temp file and published with a hard link,
+ * which is both atomic (readers never see a partial file) and exclusive (EEXIST
+ * when another process won the race). Filesystems without hard links fall back
+ * to an exclusive `wx` write.
+ */
+export function ensureConfigFile(options: ConfigOptions = {}): { path: string; created: boolean } {
+  const filePath = configFilePath(options);
+  if (existsSync(filePath)) return { path: filePath, created: false };
+  ensureDirs(options.env);
+  mkdirSync(dirname(filePath), { recursive: true });
+  const content = `${JSON.stringify(defaultConfigTemplate(), null, 2)}\n`;
+  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmpPath, content, { encoding: 'utf-8', mode: 0o600 });
+  try {
+    linkSync(tmpPath, filePath);
+    return { path: filePath, created: true };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return { path: filePath, created: false };
+    try {
+      writeFileSync(filePath, content, { encoding: 'utf-8', mode: 0o600, flag: 'wx' });
+      return { path: filePath, created: true };
+    } catch (fallbackErr) {
+      if ((fallbackErr as NodeJS.ErrnoException).code === 'EEXIST') return { path: filePath, created: false };
+      throw fallbackErr;
+    }
+  } finally {
+    try { unlinkSync(tmpPath); } catch { /* best-effort temp cleanup */ }
+  }
 }
 
 export function validateConfigFile(options: ConfigOptions = {}): ConfigValidationResult {

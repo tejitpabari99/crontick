@@ -14,7 +14,7 @@ describe('crontick doctor', () => {
     const dir = mkdtempSync(join(tmpdir(), 'crontick-doctor-'));
     mkdirSync(join(dir, 'jobs'), { recursive: true });
 
-    const result = spawnSync(process.execPath, [CLI_SCRIPT, 'info', 'doctor'], {
+    const result = spawnSync(process.execPath, [CLI_SCRIPT, 'doctor'], {
       encoding: 'utf-8',
       timeout: 15_000,
       env: { ...process.env, CRONTICK_HOME: dir },

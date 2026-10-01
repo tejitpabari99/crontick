@@ -93,7 +93,7 @@ function waitForPidExit(pid: number, maxMs = 5_000): void {
 }
 
 function stopDaemon(): void {
-  try { cli(['info', 'daemon', 'stop'], baseUrl ? { CRONTICK_DAEMON_URL: baseUrl } : {}); } catch { /* ignore */ }
+  try { cli(['daemon', 'stop'], baseUrl ? { CRONTICK_DAEMON_URL: baseUrl } : {}); } catch { /* ignore */ }
   const pid = readNumber(pidFile());
   if (pid === undefined) return;
   try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }

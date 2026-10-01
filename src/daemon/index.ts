@@ -20,7 +20,7 @@ import { Runner } from './runner.js';
 import { createApiServer } from './api.js';
 import type { ApiContext } from './api.js';
 import { createLogger, isVerboseEnv, type LogEvent, type Logger } from '../logger.js';
-import { loadConfig } from '../config.js';
+import { ensureConfigFile, loadConfig } from '../config.js';
 import { createProcessLivenessCheck } from '../process-liveness.js';
 
 /** Cap on missed fires recorded per job at startup (see enumerateFiresBetween()). */
@@ -147,6 +147,11 @@ if (needsSqliteShim) {
 
   async function main(): Promise<void> {
     ensureDirs();
+    try {
+      ensureConfigFile();
+    } catch (err) {
+      logger.debug('Default config file could not be created', { error: String(err) });
+    }
     // Best-effort: Claude SessionEnd hook helper (rewritten idempotently each start).
     ensureClaudeHookHelper(dataDir());
     const today = new Date().toISOString().slice(0, 10);

@@ -598,32 +598,13 @@ share.command('import <file>').description('Import jobs (and run history, if pre
 
 // ── info ─────────────────────────────────────────────────────────────────────
 
-/** Flatten the live Commander tree into `[fullName, description]` rows (visible commands only). */
-function listCommands(parent: Command = program, prefix: string[] = []): Array<[string, string]> {
-  const rows: Array<[string, string]> = [];
-  for (const cmd of parent.commands) {
-    if ((cmd as Command & { _hidden?: boolean })._hidden) continue;
-    const path = [...prefix, cmd.name()];
-    const children = cmd.commands.filter((child) => !(child as Command & { _hidden?: boolean })._hidden);
-    if (children.length === 0 || cmd.name() === 'info') rows.push([path.join(' '), cmd.description()]);
-    if (children.length > 0) rows.push(...listCommands(cmd, path));
-  }
-  return rows;
-}
-
-/** Top-level command groups that belong to `info` (status/health commands). */
-const INFO_GROUP_COMMANDS = new Set(['daemon', 'doctor']);
-
-function printCommandList(): void {
-  const rows = listCommands().filter(([name]) => INFO_GROUP_COMMANDS.has(name.split(' ')[0]!));
-  const width = Math.max(...rows.map(([name]) => name.length));
-  stdout('commands  (run `crontick <command> --help` for options)');
-  for (const [name, description] of rows) stdout(`  ${name.padEnd(width)}  ${description}`);
-}
-
 const info = program.command('info')
-  .description('Show version, runtime, config path, storage locations, daemon status, and the daemon/doctor commands')
+  .description('Show version, runtime, config path, storage locations, and daemon status')
+  .usage('[options]')
+  .argument('[extra...]')
   .action(async () => {
+    // `info` has no subcommands: a stray word (e.g. the removed `info daemon`) is an error.
+    if (info.args.length > 0) info.error(`unknown command '${info.args[0]}'`);
     try {
       const result = await client(false).info();
       stdout(`crontick   ${result.version}`);
@@ -642,8 +623,6 @@ const info = program.command('info')
       for (const key of ['dataDir', 'jobsDir', 'logsDir', 'runsDb', 'portFile', 'pidFile'] as const) {
         stdout(`  ${key.padEnd(11)}${result.paths[key]}`);
       }
-      stdout('');
-      printCommandList();
     } catch (err) { handleError(err); }
   });
 
@@ -658,21 +637,11 @@ async function runDoctor(): Promise<void> {
 }
 
 program.command('doctor').description('Check system health').action(runDoctor);
-info.command('doctor', { hidden: true }).description('Check system health (alias of `crontick doctor`)').action(runDoctor);
 
 // ── daemon ───────────────────────────────────────────────────────────────────
 // The daemon still demand-starts on first use; `daemon start` is the explicit,
 // manual way to start it (or run it in the foreground). It is NOT login/boot
 // registration (that removed feature is guarded by a regression test).
-async function daemonStop(): Promise<void> {
-  try {
-    const result = await client(false).daemonStop();
-    stdout(`${result.message} (mode: ${result.mode})`);
-  } catch (err) { handleError(err); }
-}
-async function daemonReload(): Promise<void> {
-  try { print(await client().daemonReload()); } catch (err) { handleError(err); }
-}
 
 const daemon = groupHelp(program.command('daemon').description('Start, stop, and inspect the background daemon'));
 daemon.command('start')
@@ -690,7 +659,12 @@ daemon.command('start')
         : `Daemon already running (pid ${String(result.pid ?? '?')}, ${result.baseUrl})`);
     } catch (err) { handleError(err); }
   });
-daemon.command('stop').description('Stop the daemon').action(daemonStop);
+daemon.command('stop').description('Stop the daemon').action(async () => {
+  try {
+    const result = await client(false).daemonStop();
+    stdout(`${result.message} (mode: ${result.mode})`);
+  } catch (err) { handleError(err); }
+});
 daemon.command('restart').description('Stop the daemon and start it again').action(async () => {
   try {
     const result = await client().daemonRestart();
@@ -709,12 +683,9 @@ daemon.command('status').description('Show whether the daemon is running').actio
     handleError(err);
   }
 });
-daemon.command('reload').description('Reload jobs from disk').action(daemonReload);
-
-// Legacy location kept working for existing scripts; hidden from help.
-const infoDaemon = groupHelp(info.command('daemon', { hidden: true }).description('Deprecated: use `crontick daemon`'));
-infoDaemon.command('stop').description('Stop the daemon').action(daemonStop);
-infoDaemon.command('reload').description('Reload jobs from disk').action(daemonReload);
+daemon.command('reload').description('Reload jobs from disk').action(async () => {
+  try { print(await client().daemonReload()); } catch (err) { handleError(err); }
+});
 
 // ── dashboard ────────────────────────────────────────────────────────────────
 // The dashboard has no dedicated command group: it is always served by the

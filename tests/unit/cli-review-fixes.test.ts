@@ -53,15 +53,12 @@ describe('jobs new help and schedule errors', () => {
 });
 
 describe('info, doctor and daemon commands', () => {
-  it('info lists commands and reports a missing config file truthfully', () => withHome((home) => {
+  it('info lists no commands and reports a missing config file truthfully', () => withHome((home) => {
     const result = cli(['info'], home);
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain('not created yet');
-    expect(result.stdout).toContain('commands');
-    // Only the info-group commands (daemon + doctor) are listed, not every command.
-    expect(result.stdout).not.toMatch(/^ {2}jobs new\b/m);
-    expect(result.stdout).toMatch(/^ {2}daemon start\b/m);
-    expect(result.stdout).toMatch(/^ {2}doctor\b/m);
+    expect(result.stdout).not.toMatch(/^commands\b/m);
+    expect(result.stdout).not.toMatch(/^ {2}daemon start\b/m);
     expect(result.stdout).not.toContain('info daemon');
   }));
 

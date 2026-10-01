@@ -56,7 +56,7 @@ function waitForPidExit(pid: number, maxMs = 5_000): void {
 }
 
 function stopDaemon(): void {
-  try { cli(['info', 'daemon', 'stop']); } catch { /* ignore */ }
+  try { cli(['daemon', 'stop']); } catch { /* ignore */ }
   const pid = readPid();
   if (pid === undefined) return;
   try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
@@ -98,13 +98,13 @@ describe('daemon lifecycle CLI human output', () => {
     expect(readPort()).toBeGreaterThan(0);
   }, 15_000);
 
-  it('info daemon stop emits the stop message and mode', () => {
+  it('daemon stop emits the stop message and mode', () => {
     const started = cli(['jobs', 'list']);
     expect(started.status, started.stderr).toBe(0);
     const previousPid = readPid();
     expect(previousPid).toBeGreaterThan(0);
 
-    const result = cli(['info', 'daemon', 'stop']);
+    const result = cli(['daemon', 'stop']);
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe('');
@@ -113,13 +113,13 @@ describe('daemon lifecycle CLI human output', () => {
     if (previousPid !== undefined) waitForPidExit(previousPid);
   }, 15_000);
 
-  it('info daemon reload emits one human-readable result for the running daemon', () => {
+  it('daemon reload emits one human-readable result for the running daemon', () => {
     const started = cli(['jobs', 'list']);
     expect(started.status, started.stderr).toBe(0);
     expect(readPid()).toBeGreaterThan(0);
     const previousPort = readPort();
 
-    const result = cli(['info', 'daemon', 'reload']);
+    const result = cli(['daemon', 'reload']);
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe('');

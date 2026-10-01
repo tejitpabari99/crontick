@@ -136,7 +136,7 @@ describe('CLI binary (dist/cli/index.js)', () => {
     expect(help.stdout).toContain('runs');
     expect(help.stdout).toContain('share');
     expect(help.stdout.toLowerCase()).not.toContain('auto' + 'start');
-    for (const args of [[], ['jobs'], ['runs'], ['share'], ['stats'], ['info', 'daemon']]) {
+    for (const args of [[], ['jobs'], ['runs'], ['share'], ['stats'], ['daemon']]) {
       const result = cli(args);
       expect(result.status, `${args.join(' ')} stderr: ${result.stderr}`).toBe(0);
       expect(result.stdout).toContain('Usage: crontick');
@@ -230,16 +230,16 @@ describe('CLI binary (dist/cli/index.js)', () => {
     }
   }, 15_000);
 
-  it('info daemon stop and info output render human output only', async () => {
+  it('daemon stop and info output render human output only', async () => {
     const tmp = makeTmpDir();
     try {
       expect(cli(['jobs', 'list'], { CRONTICK_HOME: tmp }).status).toBe(0);
       const pid = readPidFile(tmp);
-      const stop = cli(['info', 'daemon', 'stop'], { CRONTICK_HOME: tmp });
+      const stop = cli(['daemon', 'stop'], { CRONTICK_HOME: tmp });
       expect(stop.status, stop.stderr).toBe(0);
       expect(stop.stdout).toContain('mode: graceful');
       expect(stop.stdout).toContain(String(pid));
-      const again = cli(['info', 'daemon', 'stop'], { CRONTICK_HOME: tmp });
+      const again = cli(['daemon', 'stop'], { CRONTICK_HOME: tmp });
       expect(again.stdout).toContain('mode: already-stopped');
 
       const info = cli(['info'], { CRONTICK_HOME: tmp });
@@ -682,8 +682,8 @@ describe('CLI e2e with daemon', () => {
     expectCleanError(cli(['schedule', 'validate', '{"kind":"cron","cron":"0 9 * * *"}'], env()));
   });
 
-  it('info default output and info subcommands reflect the simplified command tree', async () => {
-    const doctor = cli(['info', 'doctor'], env());
+  it('info default output has no command list and info subcommands are gone', async () => {
+    const doctor = cli(['doctor'], env());
     expect([0, 1]).toContain(doctor.status);
     expect(doctor.stdout).toContain('daemon reachable');
 
@@ -694,14 +694,10 @@ describe('CLI e2e with daemon', () => {
     expect(info.stdout).toContain('paths');
     expect(info.stdout).toMatch(/dashboard\s+http:\/\/127\.0\.0\.1:\d+\/dashboard/);
 
-    // `info` lists only the info-group commands (daemon + doctor), derived from the live command tree.
-    expect(info.stdout).toContain('commands');
-    for (const name of ['daemon start', 'daemon stop', 'daemon status', 'doctor']) {
-      expect(info.stdout, `info should list '${name}'`).toContain(name);
-    }
-    for (const name of ['jobs new', 'jobs run-now', 'runs list', 'runs output', 'stats', 'share']) {
-      expect(info.stdout, `info should not list '${name}'`).not.toMatch(new RegExp(`^  ${name}\\b`, 'm'));
-    }
+    // `info` no longer prints a commands list.
+    expect(info.stdout).not.toMatch(/^commands\b/m);
+    expect(info.stdout).not.toContain('daemon start');
+    expect(cli(['info', '--help'], env()).stdout).not.toMatch(/daemon\/doctor commands/);
 
     const daemonHelp = cli(['daemon', '--help'], env());
     expect(daemonHelp.status, daemonHelp.stderr).toBe(0);
@@ -711,10 +707,12 @@ describe('CLI e2e with daemon', () => {
     expect(daemonBare.status, daemonBare.stderr).toBe(0);
     expect(daemonBare.stdout).toContain('Usage: crontick daemon');
 
-    // Legacy hidden alias keeps working.
-    const legacyBare = cli(['info', 'daemon'], env());
-    expect(legacyBare.status, legacyBare.stderr).toBe(0);
-    expect(legacyBare.stdout).toContain('Usage: crontick info daemon');
+    // The legacy hidden `info daemon` / `info doctor` commands are removed.
+    for (const legacy of [['info', 'daemon'], ['info', 'daemon', 'stop'], ['info', 'doctor']]) {
+      const result = cli(legacy, env());
+      expect(result.status, legacy.join(' ')).toBe(1);
+      expect(result.stderr).toContain('unknown command');
+    }
   }, 8000);
 
   it('jobs delete all requires --force and deletes all when confirmed', async () => {

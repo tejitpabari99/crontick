@@ -53,6 +53,7 @@ import {
   updateEngine,
   validateConfigFile,
   configFilePath,
+  ensureConfigFile,
   type ConfigValidationResult,
   type CrontickConfig,
   type EngineConfig,
@@ -248,6 +249,13 @@ export class CrontickClient {
   /** Resolves daemon URL, probes health, and demand-starts if needed. Library-only (not in surface parity). */
   async ensure(): Promise<DaemonInfo> {
     this.logger.debug('Ensuring daemon', { startDaemon: this.shouldStartDaemon() });
+    try {
+      // First use writes the full default config.json so it can be discovered
+      // and edited; an existing file is never touched. Best-effort only.
+      ensureConfigFile({ env: this.effectiveEnv(), logger: this.logger.child('config') });
+    } catch (err) {
+      this.logger.debug('Default config file could not be created', { error: errorMessage(err) });
+    }
     const info = await ensureDaemon({
       ...this.options,
       env: this.effectiveEnv(),
