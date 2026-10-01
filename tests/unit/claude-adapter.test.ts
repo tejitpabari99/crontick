@@ -197,6 +197,17 @@ describe('Claude stream-json result parsing', () => {
     expect(adapter.parseResult(0, `${withoutMessage}\n`, '').error).toBe('error_max_turns');
   });
 
+  it('keeps a line boundary between stdout and stderr when the result line has no trailing newline', () => {
+    const line = JSON.stringify({
+      type: 'result', session_id: 'sid', is_error: true, subtype: 'error_during_execution',
+      usage: { input_tokens: 3, output_tokens: 1 }, result: 'tool failed',
+    });
+    expect(adapter.parseResult(0, line, 'warning: something')).toMatchObject({
+      status: 'failed', exitCode: 0, sessionId: 'sid', error: 'tool failed', usage: { input_tokens: 3, output_tokens: 1 },
+    });
+    expect(adapter.parseResult(0, `${line}\n`, 'warning: something')).toMatchObject({ status: 'failed', sessionId: 'sid' });
+  });
+
   it('falls back to the exit-code table when the result is absent or truncated', () => {
     const tail = '{"type":"assistant"}\n{"type":"result","is_error":true';
     expect(adapter.parseResult(0, tail, '')).toEqual({ status: 'success', exitCode: 0 });

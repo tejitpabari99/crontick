@@ -125,7 +125,11 @@ export class ClaudeAdapter extends EngineAdapter {
 
     // The runner passes its bounded output tail. Its first or last line may
     // be incomplete after truncation, so only parse complete JSON objects.
-    for (const line of (stdout + stderr).split('\n').reverse()) {
+    // Keep a line boundary between the streams: the retained result line has no
+    // trailing newline, so plain concatenation would glue stderr onto it.
+    const combined = stdout.length > 0 && stderr.length > 0 && !stdout.endsWith('\n')
+      ? `${stdout}\n${stderr}` : stdout + stderr;
+    for (const line of combined.split('\n').reverse()) {
       let value: unknown;
       try {
         value = JSON.parse(line);

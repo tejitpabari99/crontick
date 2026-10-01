@@ -8,7 +8,7 @@ written to the database (the `run_logs` table, the `/api/runs/:id/logs` and
 answer, error, capped stderr) is kept with each run. crontick-side lifecycle
 events go to one per-job log file, and `runs get`, the dashboard run detail and
 `GET /api/runs/:id/output` show only that file's absolute path (`logFile`;
-the dashboard links it and never inlines contents).
+the dashboard shows it as plain text with a Copy button, not a link, and never inlines contents).
 
 Total run counts are removed from `stats summary`, `stats job` and the dashboard
 (`totalRuns`).
