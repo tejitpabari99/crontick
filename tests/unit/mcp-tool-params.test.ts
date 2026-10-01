@@ -12,10 +12,10 @@ const LOG_LINES = [
   { runId: RUN_ID, stream: 'stdout', ts: 2, data: 'line-2\n' },
 ] as const;
 const EXPECTED_TOOL_PARAMS = {
-  crontick_job_create: ['id', 'alias', 'description', 'enabled', 'schedule', 'action', 'overlap', 'retry', 'force'],
+  crontick_job_create: ['id', 'alias', 'description', 'enabled', 'schedule', 'action', 'overlap', 'retry', 'force', 'trustFolder'],
   crontick_job_list: [],
   crontick_job_get: ['id'],
-  crontick_job_update: ['id', 'alias', 'description', 'enabled', 'schedule', 'action', 'overlap', 'retry'],
+  crontick_job_update: ['id', 'alias', 'description', 'enabled', 'schedule', 'action', 'overlap', 'retry', 'trustFolder'],
   crontick_job_delete: ['id', 'all', 'force'],
   crontick_job_enable: ['id'],
   crontick_job_disable: ['id'],

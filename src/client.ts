@@ -21,6 +21,7 @@ import {
   type DaemonInfo,
   type EnsureDaemonOptions,
 } from './daemon/ensure.js';
+import { getEngineAdapter } from './engines/registry.js';
 import { restartDaemon, startDaemon, stopDaemon, type DaemonRestartResult, type DaemonStartResult, type DaemonStopResult } from './daemon/lifecycle.js';
 import { ScheduleSchema, type Job, type Schedule } from './schemas/job.js';
 import {
@@ -74,6 +75,13 @@ export interface CrontickClientOptions extends Omit<EnsureDaemonOptions, 'startD
 
 export interface CreateJobOptions extends NormalizeJobInputOptions {
   force?: boolean;
+  /** Mark the job's working directory as trusted in Claude when it is not yet (otherwise TRUST_REQUIRED is thrown). */
+  trustFolder?: boolean;
+}
+
+export interface UpdateJobOptions extends NormalizeJobInputOptions {
+  /** Mark the job's working directory as trusted in Claude when it is not yet (otherwise TRUST_REQUIRED is thrown). */
+  trustFolder?: boolean;
 }
 
 // Bundled layout: client.ts's compiled chunk and index.js both live directly
@@ -273,8 +281,9 @@ export class CrontickClient {
   }
 
   async createJob(input: Job | JobCreateInput, options: CreateJobOptions = {}): Promise<Job> {
-    const { force, ...normalizeInputOptions } = options;
+    const { force, trustFolder, ...normalizeInputOptions } = options;
     const job = normalizeJobInput(input as JobCreateInput, this.normalizeOptions(normalizeInputOptions));
+    this.ensureFoldersTrusted([job], trustFolder === true);
     return this.request<Job>('POST', force ? '/api/jobs?force=1' : '/api/jobs', job);
   }
 
@@ -282,7 +291,7 @@ export class CrontickClient {
   async createJobFromCliOptions(input: JobCreateCliOptions): Promise<Job> {
     return this.createJob(
       buildJobFromCreateOptions(input, this.normalizeOptions({ cwd: this.options.cwd ?? process.cwd() })),
-      { force: input.force },
+      { force: input.force, trustFolder: input.trustFolder },
     );
   }
 
@@ -296,9 +305,12 @@ export class CrontickClient {
   }
 
   /** Fetches the existing job first so the patch is applied over the current state. `id` accepts either the job's GUID id or its alias -- the daemon resolves it (see docs/concepts/jobs.md#identity). */
-  async updateJob(id: string, patch: JobPatchInput, options: NormalizeJobInputOptions = {}): Promise<Job> {
+  async updateJob(id: string, patch: JobPatchInput, options: UpdateJobOptions = {}): Promise<Job> {
+    const { trustFolder, ...normalizeInputOptions } = options;
     const existing = await this.getJob(id);
-    const normalized = normalizeJobPatch(id, existing, patch, this.normalizeOptions(options));
+    const normalized = normalizeJobPatch(id, existing, patch, this.normalizeOptions(normalizeInputOptions));
+    // Only a new folder or a different engine can change the trust answer.
+    if (this.trustTarget(existing)?.key !== this.trustTarget(normalized)?.key) this.ensureFoldersTrusted([normalized], trustFolder === true);
     return this.request<Job>('PUT', `/api/jobs/${encodeURIComponent(id)}`, normalized);
   }
 
@@ -656,6 +668,47 @@ export class CrontickClient {
     });
     this.cachedBaseUrl = baseUrl;
     return baseUrl;
+  }
+
+  /** `engine|cwd` identity of what the trust check applies to, or undefined when the job's engine has no trust concept. */
+  private trustTarget(job: Job): { key: string; cwd: string; engine: string; adapter: ReturnType<typeof getEngineAdapter> } | undefined {
+    if (job.action.kind !== 'prompt') return undefined;
+    const config = loadConfig({ env: this.effectiveEnv() });
+    const engine = job.action.engine ?? config.defaultEngine;
+    const engineConfig = config.engines[engine];
+    if (!engineConfig) return undefined;
+    const adapter = getEngineAdapter(engineConfig.type);
+    if (!adapter.isFolderTrusted || !adapter.trustFolder) return undefined;
+    const cwd = job.action.cwd ?? this.options.cwd ?? process.cwd();
+    return { key: `${engine}|${cwd}`, cwd, engine, adapter };
+  }
+
+  /**
+   * Claude folder trust guardrail (engines without trust hooks are skipped).
+   * Untrusted folders throw TRUST_REQUIRED before anything is persisted, unless
+   * `trustFolder` is true, in which case they are trusted first. Distinct
+   * folders are checked once each; details.folders lists every untrusted one.
+   */
+  private ensureFoldersTrusted(jobs: Job[], trustFolder: boolean): void {
+    const env = this.effectiveEnv() ?? process.env;
+    const untrusted = new Map<string, NonNullable<ReturnType<CrontickClient['trustTarget']>>>();
+    for (const job of jobs) {
+      const target = this.trustTarget(job);
+      if (!target || untrusted.has(target.cwd)) continue;
+      if (!target.adapter.isFolderTrusted!(target.cwd, { env })) untrusted.set(target.cwd, target);
+    }
+    if (untrusted.size === 0) return;
+    const targets = [...untrusted.values()];
+    if (!trustFolder) {
+      const folders = targets.map((target) => target.cwd);
+      const subject = folders.length === 1 ? `Folder ${folders[0]} is not` : `Folders ${folders.join(', ')} are not`;
+      throw new CrontickError(
+        'TRUST_REQUIRED',
+        `${subject} trusted by Claude. Re-run with --trust-folder (CLI) or trustFolder: true (library/MCP) to trust ${folders.length === 1 ? 'it' : 'them'}. Agents: ask the user for permission first, then call again with trustFolder: true.`,
+        { cwd: folders[0], folders, engine: targets[0]!.engine },
+      );
+    }
+    for (const target of targets) target.adapter.trustFolder!(target.cwd, { env });
   }
 
   private normalizeOptions(options: NormalizeJobInputOptions): NormalizeJobInputOptions {

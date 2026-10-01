@@ -17,6 +17,7 @@ import { buildJobPatchFromUpdateOptions, type JobCreateCliOptions, type JobPatch
 import { isVerboseEnv, type LogEvent } from '../logger.js';
 import { readJsonFile } from '../json-file.js';
 import { formatRunsTable } from '../run-format.js';
+import { terminalTrustPromptIo, withTrustPrompt } from './trust-prompt.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -215,6 +216,7 @@ function commonJobOptions(command: Command): Command {
     .option('--every <interval>', 'Schedule (exactly one of --cron/--every/--at): repeat every N seconds, or use an s/m/h/d suffix (e.g. 30m)', parseEveryInterval)
     .option('--at <datetime>', 'Schedule (exactly one of --cron/--every/--at): one-shot run time, ISO-8601 (e.g. 2026-10-01T09:00)')
     .option('-C, --cwd <dir>', 'Working directory the job runs in (default: the current directory)')
+    .option('--trust-folder', 'Trust the working directory in Claude without asking (when it is not trusted yet)')
     .option('--runner <runner>', 'Configured prompt engine name (default: config defaultEngine)')
     .option('--session-id <id>', 'Run it on a given session ID')
     .option('--reuse-session', 'Start session and resume on succeeding runs.')
@@ -243,6 +245,7 @@ function collectJobOptions(engineArgs: string[], passthroughArgs: string[], cliA
     every: numberOption(opts.every),
     at: stringOption(opts.at),
     cwd: stringOption(opts.cwd),
+    trustFolder: booleanOption(opts.trustFolder),
     prompt: stringOption(opts.prompt),
     promptFile: stringOption(opts.promptFile),
     engine: stringOption(opts.runner),
@@ -267,6 +270,7 @@ function collectPatchOptions(engineArgs: string[], passthroughArgs: string[], cl
     every: numberOption(opts.every),
     at: stringOption(opts.at),
     cwd: stringOption(opts.cwd),
+    trustFolder: booleanOption(opts.trustFolder),
     prompt: stringOption(opts.prompt),
     promptFile: stringOption(opts.promptFile),
     engine: stringOption(opts.runner),
@@ -412,7 +416,11 @@ commonJobOptions(jobs.command('new [engineArgs...]').description('Create a new j
     try {
       assertNoCrontickFlagCollision(engineArgs, cmd);
       const { rawArgs, passthroughArgs } = splitPromptEngineArgs(engineArgs);
-      const result = await c.createJobFromCliOptions(collectJobOptions(rawArgs, passthroughArgs, engineArgs, opts));
+      const options = collectJobOptions(rawArgs, passthroughArgs, engineArgs, opts);
+      const result = await withTrustPrompt(
+        (trustFolder) => c.createJobFromCliOptions({ ...options, trustFolder }),
+        { trustFolder: options.trustFolder, io: terminalTrustPromptIo() },
+      );
       printNotices(c);
       print(result);
     } catch (err) {
@@ -430,11 +438,15 @@ commonJobOptions(jobs.command('update <id|alias> [engineArgs...]').description('
     try {
       assertNoCrontickFlagCollision(engineArgs, cmd);
       const { rawArgs, passthroughArgs } = splitPromptEngineArgs(engineArgs);
-      const patch = buildJobPatchFromUpdateOptions(collectPatchOptions(rawArgs, passthroughArgs, engineArgs, opts), {
+      const patchOptions = collectPatchOptions(rawArgs, passthroughArgs, engineArgs, opts);
+      const patch = buildJobPatchFromUpdateOptions(patchOptions, {
         cwd: process.cwd(),
         onNotice: (message) => notices.push(message),
       });
-      const result = await c.updateJob(id, patch);
+      const result = await withTrustPrompt(
+        (trustFolder) => c.updateJob(id, patch, { trustFolder }),
+        { trustFolder: patchOptions.trustFolder, io: terminalTrustPromptIo() },
+      );
       printNotices(c, notices);
       print(result);
     } catch (err) {

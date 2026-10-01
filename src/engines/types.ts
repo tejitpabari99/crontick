@@ -42,6 +42,10 @@ export interface TerminalEngineError {
   retryable: boolean;
 }
 
+export interface FolderTrustContext {
+  env?: NodeJS.ProcessEnv;
+}
+
 export abstract class EngineAdapter {
   abstract reservedArgs(): ReadonlySet<string>;
   abstract buildInvocation(prompt: string, opts: EngineOptions): EngineInvocation;
@@ -71,4 +75,14 @@ export abstract class EngineAdapter {
     void result;
     return undefined;
   }
+
+  /**
+   * Optional folder-trust hooks. Only engines that gate project folders behind
+   * a trust decision (Claude) implement them; engines without them skip the
+   * trust check entirely. `ctx.env` lets callers redirect the engine's config
+   * location (tests, `CLAUDE_CONFIG_DIR`).
+   */
+  isFolderTrusted?(cwd: string, ctx?: FolderTrustContext): boolean;
+  /** Persist the user's consent to trust `cwd`. May throw CrontickError (e.g. CLAUDE_CONFIG_UNREADABLE). */
+  trustFolder?(cwd: string, ctx?: FolderTrustContext): void;
 }

@@ -36,6 +36,18 @@ export async function setup({ build = false, clean = false } = {}) {
     throw new Error(`SAFETY: scratchDir is not under repoRoot (${repoRoot})`);
   }
 
+  // Isolated Claude config with the filesystem root trusted: harness jobs use the
+  // default (claude) engine and must never hit the folder-trust prompt, nor read
+  // or modify the real ~/.claude.json. Inherited by every spawned crontick process.
+  const claudeConfigDir = join(scratchDir, 'claude-config');
+  mkdirSync(claudeConfigDir, { recursive: true });
+  writeFileSync(
+    join(claudeConfigDir, '.claude.json'),
+    JSON.stringify({ projects: { [resolve('/')]: { allowedTools: [], hasTrustDialogAccepted: true } } }, null, 2),
+    'utf-8',
+  );
+  process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
+
   const repoPkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf-8'));
   const packageVersion = repoPkg.version;
 

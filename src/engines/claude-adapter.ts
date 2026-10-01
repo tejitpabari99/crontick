@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { buildClaudeHookCommand, claudeCompletionMarkerPath, claudeHookHelperPath, ensureClaudeHookHelper } from '../claude-completion-marker.js';
-import { EngineAdapter, type EngineInvocation, type EngineOptions, type EngineResult, type TerminalEngineError } from './types.js';
+import { EngineAdapter, type EngineInvocation, type FolderTrustContext, type EngineOptions, type EngineResult, type TerminalEngineError } from './types.js';
 import { resolveTranscriptPath } from './claude-transcript.js';
+import { isFolderTrusted, trustFolder, type TrustDeps } from './claude-trust.js';
 
 /** Bounds the ephemeral SessionEnd hook so it can never hold up shutdown. */
 const HOOK_TIMEOUT_SEC = 10;
@@ -10,6 +11,18 @@ const AUTH_ERROR_PATTERN = /authenticat|unauthori[sz]ed|\b401\b|invalid[^.]{0,30
 
 /** Claude Code's non-interactive stream-json invocation. */
 export class ClaudeAdapter extends EngineAdapter {
+  constructor(private readonly trustDeps: TrustDeps = {}) {
+    super();
+  }
+
+  isFolderTrusted(cwd: string, ctx: FolderTrustContext = {}): boolean {
+    return isFolderTrusted(cwd, { ...this.trustDeps, ...(ctx.env ? { env: ctx.env } : {}) });
+  }
+
+  trustFolder(cwd: string, ctx: FolderTrustContext = {}): void {
+    trustFolder(cwd, { ...this.trustDeps, ...(ctx.env ? { env: ctx.env } : {}) });
+  }
+
   reservedArgs(): ReadonlySet<string> {
     return new Set(['-p', '--prompt', '--session-id', '-r', '--resume', '--continue', '--connect', '--output-format', '--settings']);
   }

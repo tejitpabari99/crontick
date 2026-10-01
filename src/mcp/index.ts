@@ -40,6 +40,10 @@ function withVerbose<T extends Record<string, unknown>>(schema: T): T & typeof V
   return { ...schema, ...VERBOSE_INPUT };
 }
 
+const TRUST_FOLDER_INPUT = z.boolean().optional().describe(
+  'Claude only: trust the job\'s working directory when it is not trusted yet. If the call fails with TRUST_REQUIRED, ask the user whether to trust that folder and only then call again with trustFolder: true.',
+);
+
 function mcpVerbose(args?: VerboseArgs): boolean {
   return args?.verbose === true || isVerboseEnv();
 }
@@ -150,13 +154,14 @@ export function createMcpServer(): McpServer {
       inputSchema: withVerbose({
         ...JobCreateInputSchema.shape,
         force: z.boolean().optional(),
+        trustFolder: TRUST_FOLDER_INPUT,
       }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async (args) => {
-      const { force, verbose: _verbose, ...input } = args;
+      const { force, trustFolder, verbose: _verbose, ...input } = args;
       void _verbose;
-      return toolWrap(args, (client) => client.createJob(input, { force }));
+      return toolWrap(args, (client) => client.createJob(input, { force, trustFolder }));
     },
   );
 
@@ -188,12 +193,13 @@ export function createMcpServer(): McpServer {
       inputSchema: withVerbose({
         id: z.string().describe('Job id (GUID) or alias'),
         ...JobPatchInputSchema.shape,
+        trustFolder: TRUST_FOLDER_INPUT,
       }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
-      const { id, ...patch } = args;
-      return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
+      const { id, trustFolder, ...patch } = args;
+      return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch), { trustFolder }));
     },
   );
 

@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 import type { Plugin } from 'vite';
 
@@ -39,6 +40,9 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    globalSetup: ['tests/helpers/claude-config-setup.ts'],
+    // Isolated Claude config (root trusted) so tests never read ~/.claude.json.
+    env: { CLAUDE_CONFIG_DIR: resolve('.crontick', 'test-claude-config') },
     include: ['tests/**/*.test.ts'],
     exclude: ['tests/integration/**'],
     // Many unit tests spawn a real daemon/child processes and shell out to the

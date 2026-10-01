@@ -23,6 +23,8 @@ const NON_PARITY_CLIENT_METHODS = new Set([
   'normalizeOptions',
   'shouldStartDaemon',
   'effectiveEnv',
+  'trustTarget',
+  'ensureFoldersTrusted',
   'fetchRequest',
   'daemonRequestError',
   // Library-only helpers retained after the CLI/MCP command reorganization

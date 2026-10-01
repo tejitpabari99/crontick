@@ -17,6 +17,7 @@ export type { NormalizedUsage } from './run-output.js';
 export type {
   ConfigPathInfo,
   CreateJobOptions,
+  UpdateJobOptions,
   CrontickClientOptions,
   CrontickInfo,
   CrontickInfoPaths,

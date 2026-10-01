@@ -125,6 +125,8 @@ export interface JobCreateCliOptions {
   at?: string;
   /** Working directory the engine runs in (`--cwd`/`-C`); stored as `action.cwd`. Defaults to the invoking directory on create. */
   cwd?: string;
+  /** Trust the job's working directory in Claude without asking (`--trust-folder`). */
+  trustFolder?: boolean;
   prompt?: string;
   promptFile?: string;
   engine?: string;
