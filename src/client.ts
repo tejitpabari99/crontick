@@ -365,9 +365,9 @@ export class CrontickClient {
   }
 
   /**
-   * Cleaned, human-readable output of a run: the engine's final answer, the
-   * error (if any), and a readable transcript with thinking blocks, hook
-   * payloads and signatures removed. The raw per-job log file path is `getRun().logFile`.
+   * Cleaned output of a run: the engine's final answer, the error (if any), and the
+   * assistant's text only (segments split by tool calls are joined with `---`; no tool
+   * lines, thinking or hook noise). The raw per-job log file path is `getRun().logFile`.
    */
   async getOutput(runId: string): Promise<RunOutput> {
     return this.request<RunOutput>('GET', `/api/runs/${encodeURIComponent(runId)}/output`);

@@ -420,7 +420,7 @@ interface RunOutput {
   format: 'claude-stream-json' | 'text'; // how engine stdout was parsed
   result: string | null;   // the engine's final answer (Claude `result` text, else last assistant text, else plain stdout)
   error: string | null;    // run.error, else an error reported in the engine output
-  output: string;          // readable transcript: assistant text + "[tool] Name" markers
+  output: string;          // assistant text only; segments split by tool calls are joined with "---"
   stderr: string;          // engine stderr, redacted, last 4000 chars
   sessionId: string | null;
   costUsd: number | null;

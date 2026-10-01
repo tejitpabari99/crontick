@@ -7,8 +7,8 @@
  * JSON event per line (system/hook events, assistant messages with `thinking`
  * blocks carrying opaque `signature` blobs, tool calls/results, and a final
  * `result`). That is faithful but unreadable, so this module parses it into the
- * final answer plus a readable transcript, dropping thinking blocks, hook
- * plumbing and base64 payloads. The raw log stays available unchanged through
+ * final answer plus the assistant's text (segments separated by `---`),
+ * dropping thinking blocks, tool calls/results, hook plumbing and base64 payloads. The raw log stays available unchanged through
  * `getLogs`. Pure and dependency-light so every layer (daemon route, tests) can use it.
  */
 import { redactText } from './logger.js';
@@ -85,7 +85,11 @@ export interface RunOutput {
   result: string | null;
   /** Error message, if any: the run's recorded error, else an error reported in the engine output. `null` when there is none. */
   error: string | null;
-  /** Readable transcript: assistant text and one-line tool markers; thinking blocks, hook payloads and signatures removed. */
+  /**
+   * Assistant text only: consecutive text blocks form one segment, a tool call between texts ends a segment, and
+   * segments are joined by a `---` line. No tool markers, thinking, hooks or tool results (the raw log has those).
+   * Plain-text engines keep their stdout lines as-is. `''` when there is no text.
+   */
   output: string;
   /** Engine stderr (redacted, last {@link STDERR_MAX} characters), for diagnosing failures. */
   stderr: string;
@@ -112,7 +116,8 @@ export function cleanOutputText(text: string): string {
 
 interface ParsedStdout {
   sawEvents: boolean;
-  transcript: string[];
+  /** Assistant text segments; a `tool_use` between texts ends a segment. */
+  segments: string[];
   plain: string[];
   lastAssistantText: string | undefined;
   resultText: string | undefined;
@@ -126,8 +131,13 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function parseStdout(stdout: string): ParsedStdout {
   const parsed: ParsedStdout = {
-    sawEvents: false, transcript: [], plain: [], lastAssistantText: undefined,
+    sawEvents: false, segments: [], plain: [], lastAssistantText: undefined,
     resultText: undefined, resultIsError: false, assistantError: undefined,
+  };
+  let current: string[] = [];
+  const flush = (): void => {
+    if (current.length > 0) parsed.segments.push(current.join('\n\n'));
+    current = [];
   };
   for (const line of stdout.split(/\r?\n/)) {
     if (line.trim() === '') continue;
@@ -141,7 +151,6 @@ function parseStdout(stdout: string): ParsedStdout {
     }
     if (!event || typeof event['type'] !== 'string') {
       parsed.plain.push(line);
-      parsed.transcript.push(line);
       continue;
     }
     parsed.sawEvents = true;
@@ -155,9 +164,9 @@ function parseStdout(stdout: string): ParsedStdout {
           if (!block) continue;
           if (block['type'] === 'text' && typeof block['text'] === 'string' && block['text'].trim() !== '') {
             texts.push(block['text']);
-            parsed.transcript.push(block['text']);
-          } else if (block['type'] === 'tool_use' && typeof block['name'] === 'string') {
-            parsed.transcript.push(`[tool] ${block['name']}`);
+            current.push(block['text'].trim());
+          } else if (block['type'] === 'tool_use') {
+            flush();
           }
           // `thinking` / `redacted_thinking` blocks (and their `signature`) are intentionally dropped.
         }
@@ -170,7 +179,16 @@ function parseStdout(stdout: string): ParsedStdout {
     }
     // system (hooks, init), user (tool results), stream_event and unknown types carry no reader-facing output.
   }
+  flush();
   return parsed;
+}
+
+/** Separator between assistant text segments that a tool call interrupted. */
+export const SEGMENT_SEPARATOR = '\n\n---\n\n';
+
+/** Join assistant text segments with {@link SEGMENT_SEPARATOR} (no leading/trailing separator; `''` when empty). Each segment is redacted. */
+export function joinSegments(segments: readonly string[]): string {
+  return segments.map((seg) => cleanOutputText(seg.trim())).filter((seg) => seg !== '').join(SEGMENT_SEPARATOR);
 }
 
 /** Build the cleaned output view for a run from its raw engine log chunks (stdout/stderr; other streams are ignored). */
@@ -190,7 +208,7 @@ export function buildRunOutput(run: RunOutputSource, logs: readonly RunOutputLog
   const engineError = p.resultIsError ? p.resultText : p.assistantError;
   const error = run.error ?? engineError ?? null;
 
-  let output = cleanOutputText(p.transcript.join('\n').trim());
+  let output = format === 'claude-stream-json' ? joinSegments(p.segments) : cleanOutputText(p.plain.join('\n').trim());
   let truncated = run.outputTruncated === true;
   if (output.length > OUTPUT_MAX) {
     output = `${output.slice(0, OUTPUT_MAX)}\n[output view truncated]`;

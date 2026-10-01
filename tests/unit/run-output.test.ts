@@ -14,6 +14,44 @@ const toolResult = { type: 'user', message: { content: [{ type: 'tool_result', c
 
 const baseRun = { id: 'r1', status: 'success', sessionId: 's1', costUsd: 0.01, turns: 2, durationMs: 1500 };
 
+const asst = (...blocks: unknown[]) => line({ type: 'assistant', message: { content: blocks } });
+const text = (t: string) => ({ type: 'text', text: t });
+const tool = (name: string) => ({ type: 'tool_use', name, input: {} });
+
+describe('buildRunOutput assistant-text-only output', () => {
+  it('joins text segments split by tool calls with ---, and never emits [tool] lines', () => {
+    const stdout = asst(text('A')) + asst(tool('Bash')) + asst(tool('Read')) + line(toolResult) + asst(text('B'));
+    const out = buildRunOutput(baseRun, [{ stream: 'stdout', data: stdout }]);
+    expect(out.output).toBe('A\n\n---\n\nB');
+    expect(out.output).not.toContain('[tool]');
+  });
+
+  it('keeps consecutive texts (no tool between) in one segment without a separator', () => {
+    const stdout = asst(text('A')) + asst(text('B')) + asst(text('C'), tool('Bash'), text('D'));
+    expect(buildRunOutput(baseRun, [{ stream: 'stdout', data: stdout }]).output).toBe('A\n\nB\n\nC\n\n---\n\nD');
+  });
+
+  it('never emits leading or trailing separators and returns empty when there is no text', () => {
+    const toolsOnly = asst(tool('Bash')) + line(toolResult) + asst(tool('Read'));
+    expect(buildRunOutput(baseRun, [{ stream: 'stdout', data: toolsOnly }]).output).toBe('');
+    const edge = asst(tool('Bash')) + asst(text('only')) + asst(tool('Read'));
+    expect(buildRunOutput(baseRun, [{ stream: 'stdout', data: edge }]).output).toBe('only');
+  });
+
+  it('excludes thinking blocks, hook events, and tool results', () => {
+    const stdout = line(hookEvent) + line(thinking) + line(toolResult) + asst(text('visible'));
+    const out = buildRunOutput(baseRun, [{ stream: 'stdout', data: stdout }]);
+    expect(out.output).toBe('visible');
+  });
+
+  it('redacts secrets per segment', () => {
+    const stdout = asst(text('key sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789ABCD')) + asst(tool('Bash')) + asst(text('ok'));
+    const out = buildRunOutput(baseRun, [{ stream: 'stdout', data: stdout }]);
+    expect(out.output).not.toContain('abcdefghijklmnop');
+    expect(out.output).toContain('---');
+  });
+});
+
 describe('buildRunOutput', () => {
   it('extracts the final result and a readable transcript from Claude stream-json, dropping noise', () => {
     const stdout = line(hookEvent) + line(thinking) + line(answer) + line(toolResult)
@@ -22,7 +60,8 @@ describe('buildRunOutput', () => {
     expect(out.format).toBe('claude-stream-json');
     expect(out.result).toBe('The answer is 42.');
     expect(out.error).toBeNull();
-    expect(out.output).toBe('The answer is 42.\n[tool] Bash');
+    expect(out.output).toBe('The answer is 42.');
+    expect(out.output).not.toContain('[tool]');
     expect(JSON.stringify(out)).not.toContain('SIGSIG');
     expect(JSON.stringify(out)).not.toContain(b64);
     expect(out).toMatchObject({ sessionId: 's1', costUsd: 0.01, turns: 2, durationMs: 1500, truncated: false });
