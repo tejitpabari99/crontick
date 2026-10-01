@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { claudeCompletionMarkerPath } from '../claude-completion-marker.js';
+import { buildClaudeHookCommand, claudeCompletionMarkerPath, claudeHookHelperPath, ensureClaudeHookHelper } from '../claude-completion-marker.js';
 import { EngineAdapter, type EngineInvocation, type EngineOptions, type EngineResult, type TerminalEngineError } from './types.js';
 import { resolveTranscriptPath } from './claude-transcript.js';
 
@@ -19,27 +19,20 @@ export class ClaudeAdapter extends EngineAdapter {
     // Internal command previews may omit run context; only an actual runner
     // supplies the stable run ID that restart reconciliation can look up.
     const markerPath = claudeCompletionMarkerPath(opts.dataDir || '.', opts.runId || randomUUID());
-    // Claude runs command hooks through the platform shell. Base64 keeps paths
-    // and user-controlled data out of shell syntax; the hook itself uses only
-    // Node platform APIs and writes a private file. It never edits user settings.
-    const script = `try {
-      const fs = require('node:fs');
-      const path = require('node:path');
-      const markerPath = ${JSON.stringify(markerPath)};
-      const input = JSON.parse(fs.readFileSync(0, 'utf8'));
-      const raw = input.exit_status ?? input.exitStatus ?? input.exit_code ?? input.exitCode ?? null;
-      const exitStatus = Number.isInteger(raw) && raw >= 0 && raw <= 255 ? raw : null;
-      const sessionId = typeof input.session_id === 'string' ? input.session_id :
-        (typeof input.sessionId === 'string' ? input.sessionId : null);
-      fs.mkdirSync(path.dirname(markerPath), { recursive: true, mode: 0o700 });
-      fs.writeFileSync(markerPath, JSON.stringify({ exitStatus, sessionId }), { mode: 0o600 });
-    } catch { /* A best-effort hook must not change Claude's outcome. */ }`;
-    const encoded = Buffer.from(script, 'utf8').toString('base64');
-    const nodeCommand = process.platform === 'win32'
-      ? `"${process.execPath}"`
-      : `'${process.execPath.replaceAll("'", "'\\''")}'`;
-    const settings = JSON.stringify({
-      hooks: { SessionEnd: [{ hooks: [{ type: 'command', timeout: HOOK_TIMEOUT_SEC, command: `${nodeCommand} -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"` }] }] },
+    // Claude runs command hooks through the platform shell. The hook is a plain
+    // helper script (no eval, no embedded paths): the marker path is argv. If the
+    // helper cannot be written or a path is unsafe, the hook is omitted: it is
+    // best-effort and must never block a run. User settings are never edited.
+    // Previews (no run context) describe the hook without touching disk.
+    const dataDir = opts.dataDir || '.';
+    const helperPath = opts.runId && opts.dataDir
+      ? ensureClaudeHookHelper(dataDir)
+      : claudeHookHelperPath(dataDir);
+    const hookCommand = helperPath
+      ? buildClaudeHookCommand(process.execPath, helperPath, markerPath)
+      : undefined;
+    const settings = hookCommand === undefined ? undefined : JSON.stringify({
+      hooks: { SessionEnd: [{ hooks: [{ type: 'command', timeout: HOOK_TIMEOUT_SEC, command: hookCommand }] }] },
     });
     return {
       command: opts.command,
@@ -50,7 +43,7 @@ export class ClaudeAdapter extends EngineAdapter {
         '--verbose',
         ...(opts.sessionId ? ['--resume', sessionId] : ['--session-id', sessionId]),
         ...opts.args,
-        '--settings', settings,
+        ...(settings !== undefined ? ['--settings', settings] : []),
       ],
       env: { ...opts.env },
       sessionId,

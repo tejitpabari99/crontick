@@ -1,9 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawn as nodeSpawn, spawnSync } from 'node:child_process';
 import { ClaudeAdapter } from '../../src/engines/claude-adapter.js';
+import {
+  CLAUDE_HOOK_HELPER_SOURCE, buildClaudeHookCommand, claudeHookHelperPath, ensureClaudeHookHelper,
+} from '../../src/claude-completion-marker.js';
+import { redactSettingsArg } from '../../src/daemon/runner.js';
 import { isUnsafeSessionId, resolveTranscriptPath } from '../../src/engines/claude-transcript.js';
 import { Runner } from '../../src/daemon/runner.js';
 import { Store } from '../../src/daemon/store.js';
@@ -15,9 +19,13 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 describe('Claude invocation', () => {
   const adapter = new ClaudeAdapter();
   const options = {
-    command: 'claude', engineArgs: [], runId: 'run-1', jobId: 'job-1', dataDir: '/tmp/crontick',
+    command: 'claude', engineArgs: [], runId: 'run-1', jobId: 'job-1', dataDir: '',
     reuseSession: false, args: ['--max-budget-usd', '1'], env: { SAMPLE: 'yes' },
   };
+
+  let baseDir: string;
+  beforeEach(() => { baseDir = mkdtempSync(join(tmpdir(), 'crontick-inv-')); options.dataDir = baseDir; });
+  afterEach(() => { rmSync(baseDir, { recursive: true, force: true }); });
 
   it('assigns a UUID and builds stream-json argv for a fresh run', () => {
     const invocation = adapter.buildInvocation('do work', options);
@@ -50,6 +58,8 @@ describe('Claude invocation', () => {
       };
       const hook = settings.hooks.SessionEnd[0]?.hooks[0];
       expect(hook?.type).toBe('command');
+      expect(hook!.command).not.toMatch(/eval\(|base64/i);
+      expect(hook!.command).toContain(claudeHookHelperPath(dir));
       const result = spawnSync(hook!.command, {
         shell: true,
         input: JSON.stringify({ exit_status: 0, session_id: invocation.sessionId }),
@@ -61,6 +71,57 @@ describe('Claude invocation', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('SessionEnd hook helper', () => {
+  const dirs: string[] = [];
+  afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+  const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'crontick-helper-')); dirs.push(d); return d; };
+  const opts = { command: 'claude', engineArgs: [], runId: 'run-1', jobId: 'job-1', reuseSession: false, args: [], env: {} };
+
+  it('writes fixed content idempotently and rewrites a tampered helper', () => {
+    const dir = tmp();
+    const path = ensureClaudeHookHelper(dir)!;
+    expect(path).toBe(claudeHookHelperPath(dir));
+    expect(readFileSync(path, 'utf8')).toBe(CLAUDE_HOOK_HELPER_SOURCE);
+    expect(CLAUDE_HOOK_HELPER_SOURCE).not.toContain(dir);
+    writeFileSync(path, 'tampered');
+    ensureClaudeHookHelper(dir);
+    expect(readFileSync(path, 'utf8')).toBe(CLAUDE_HOOK_HELPER_SOURCE);
+    if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
+  it('quotes a Windows-style path with double quotes and POSIX paths with single quotes', () => {
+    expect(buildClaudeHookCommand('C:\\Program Files\\node.exe', 'C:\\data dir\\hooks\\session-end.cjs', 'C:\\data dir\\runs\\r.json', 'win32'))
+      .toBe('"C:\\Program Files\\node.exe" "C:\\data dir\\hooks\\session-end.cjs" "C:\\data dir\\runs\\r.json"');
+    expect(buildClaudeHookCommand("/o'b/node", '/d/h.cjs', '/d/m.json', 'linux')).toBe("'/o'\\''b/node' '/d/h.cjs' '/d/m.json'");
+  });
+
+  it('rejects paths with quote or dollar characters', () => {
+    expect(buildClaudeHookCommand('/n', '/d"x/h.cjs', '/m', 'linux')).toBeUndefined();
+    expect(buildClaudeHookCommand('/n', '/h', '/$HOME/m', 'win32')).toBeUndefined();
+  });
+
+  it('omits --settings when the data dir is unsafe', () => {
+    const dir = join(tmp(), 'bad$dir');
+    const inv = new ClaudeAdapter().buildInvocation('p', { ...opts, dataDir: dir });
+    expect(inv.args).not.toContain('--settings');
+  });
+
+  it('omits --settings when the helper cannot be written, and the invocation is otherwise complete', () => {
+    const dir = tmp();
+    // A file where the hooks directory must go makes the helper unwritable.
+    writeFileSync(join(dir, 'hooks'), 'not a dir');
+    const inv = new ClaudeAdapter().buildInvocation('p', { ...opts, dataDir: dir });
+    expect(inv.args).not.toContain('--settings');
+    expect(inv.args).toContain('stream-json');
+  });
+
+  it('redacts only the --settings value for stored and displayed commands', () => {
+    const args = ['-p', '--settings', '{"hooks":{}}', '--verbose'];
+    expect(redactSettingsArg(args)).toEqual(['-p', '--settings', '<session-end-hook>', '--verbose']);
+    expect(redactSettingsArg(['x'])).toEqual(['x']);
   });
 });
 
@@ -181,6 +242,9 @@ describe('Claude resume safety', () => {
       expect(spawnSpy).toHaveBeenCalledOnce();
       expect(spawnSpy.mock.calls[0]?.[2]).toMatchObject({ stdio: ['ignore', 'pipe', 'pipe'] });
       expect(fixture.store.getRun(fixture.run.id)?.status).toBe('success');
+      const stored = fixture.store.getRun(fixture.run.id)?.command ?? '';
+      expect(stored).toContain('--settings <session-end-hook>');
+      expect(stored).not.toMatch(/hooks|SessionEnd|base64|eval\(/);
     } finally { fixture.cleanup(); }
   });
 

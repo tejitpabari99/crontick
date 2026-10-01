@@ -4,7 +4,9 @@
 import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, unlinkSync, existsSync, appendFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { ensureClaudeHookHelper } from '../claude-completion-marker.js';
 import {
+  dataDir,
   ensureDirs,
   pidFilePath,
   portFilePath,
@@ -145,6 +147,8 @@ if (needsSqliteShim) {
 
   async function main(): Promise<void> {
     ensureDirs();
+    // Best-effort: Claude SessionEnd hook helper (rewritten idempotently each start).
+    ensureClaudeHookHelper(dataDir());
     const today = new Date().toISOString().slice(0, 10);
     logFile = join(logsDir(), `daemon-${today}.log`);
     logger.info('Starting crontick daemon', { pid: process.pid, node: process.version, verbose: logger.isDebugEnabled(), logFile });

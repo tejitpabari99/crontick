@@ -67,6 +67,14 @@ interface RunResult {
 }
 
 /** Claude result usage is per attempt; retries belong to one crontick run. */
+/** Placeholder shown for the (long, generated) `--settings` value in stored/displayed commands. */
+export const SESSION_END_HOOK_PLACEHOLDER = '<session-end-hook>';
+
+/** Replace the value following `--settings` so the hook blob never reaches stored commands or logs. */
+export function redactSettingsArg(args: readonly string[]): string[] {
+  return args.map((arg, i) => (i > 0 && args[i - 1] === '--settings' ? SESSION_END_HOOK_PLACEHOLDER : arg));
+}
+
 function mergeUsageJson(previous: string | undefined, next: string | undefined): string | undefined {
   if (next === undefined) return previous;
   if (previous === undefined) return next;
@@ -502,8 +510,9 @@ export class Runner {
     const promptEngineBinary = runCommand.engine;
     const args = runCommand.args;
     promptEnv = runCommand.env;
-    this.logger.debug('Resolved prompt run command', { jobId: job.id, runId, engine: promptEngineBinary, command: cmd, args, envKeys: Object.keys(promptEnv) });
-    this.appendDiagnosticLog(log, 'resolved prompt command', { engine: promptEngineBinary, command: cmd, args, envKeys: Object.keys(promptEnv) });
+    const displayArgs = redactSettingsArg(args);
+    this.logger.debug('Resolved prompt run command', { jobId: job.id, runId, engine: promptEngineBinary, command: cmd, args: displayArgs, envKeys: Object.keys(promptEnv) });
+    this.appendDiagnosticLog(log, 'resolved prompt command', { engine: promptEngineBinary, command: cmd, args: displayArgs, envKeys: Object.keys(promptEnv) });
 
     if (sessionId) {
       const transcriptPath = adapter.resumeTranscriptPath(action.cwd ?? process.cwd(), sessionId);
@@ -521,13 +530,13 @@ export class Runner {
       }
     }
 
-    log.crontick('executing', { command: cmd, args });
+    log.crontick('executing', { command: cmd, args: displayArgs });
 
     // Persist the redacted resolved command onto the run record so
     // `crontick runs get <id>` can show exactly what was executed for this
     // specific run, independent of any later edits to the job definition.
     try {
-      store.updateRun(runId, { command: redactText([cmd, ...args].join(' ')) });
+      store.updateRun(runId, { command: redactText([cmd, ...displayArgs].join(' ')) });
     } catch (err) {
       this.logger.error('Failed to persist run command', { jobId: job.id, runId, error: String(err) });
     }
@@ -672,8 +681,8 @@ export class Runner {
     };
     const result = await new Promise<RunResult>((resolve) => {
       const timeoutMs = action.timeoutSec ? action.timeoutSec * 1000 : undefined;
-      this.logger.debug('Spawning child process', { jobId: job.id, runId, command: cmd, args, cwd: spawnOpts.cwd, timeoutMs });
-      this.appendDiagnosticLog(log, 'spawn', { command: cmd, args, cwd: spawnOpts.cwd, timeoutMs });
+      this.logger.debug('Spawning child process', { jobId: job.id, runId, command: cmd, args: displayArgs, cwd: spawnOpts.cwd, timeoutMs });
+      this.appendDiagnosticLog(log, 'spawn', { command: cmd, args: displayArgs, cwd: spawnOpts.cwd, timeoutMs });
       const child = this.spawnFn(cmd, args, spawnOpts);
       // Claude assigns an id before spawn. Persist it before attaching output
       // listeners, so even a process that emits immediately has a run id.

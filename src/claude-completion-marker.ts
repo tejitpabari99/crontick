@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 export interface ClaudeCompletionMarker {
@@ -45,4 +45,86 @@ export function removeClaudeCompletionMarker(
   } catch {
     // The marker never affects a normal run's status.
   }
+}
+
+/**
+ * Fixed-content SessionEnd hook helper. It embeds no paths: the marker path is
+ * argv[2]. Reads the hook JSON from stdin and writes `{ exitStatus, sessionId }`.
+ * Best-effort: every error is swallowed so Claude's outcome is never affected.
+ */
+export const CLAUDE_HOOK_HELPER_SOURCE = `'use strict';
+// crontick SessionEnd hook helper (generated; rewritten at daemon start).
+try {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const markerPath = process.argv[2];
+  if (!markerPath) process.exit(0);
+  const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+  const raw = input.exit_status ?? input.exitStatus ?? input.exit_code ?? input.exitCode ?? null;
+  const exitStatus = Number.isInteger(raw) && raw >= 0 && raw <= 255 ? raw : null;
+  const sessionId = typeof input.session_id === 'string' ? input.session_id :
+    (typeof input.sessionId === 'string' ? input.sessionId : null);
+  fs.mkdirSync(path.dirname(markerPath), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(markerPath, JSON.stringify({ exitStatus, sessionId }), { mode: 0o600 });
+} catch { /* A best-effort hook must not change Claude's outcome. */ }
+`;
+
+/** `<dataDir>/hooks/session-end.cjs` */
+export function claudeHookHelperPath(dataDir: string): string {
+  return join(resolve(dataDir), 'hooks', 'session-end.cjs');
+}
+
+/**
+ * Idempotently write the helper (0600 file in a 0700 dir); returns its path, or
+ * undefined when it cannot be written (callers then omit the hook entirely).
+ */
+export function ensureClaudeHookHelper(
+  dataDir: string,
+  io: {
+    read?: (path: string) => string;
+    write?: (path: string, content: string) => void;
+    mkdir?: (path: string) => void;
+  } = {},
+): string | undefined {
+  const helper = claudeHookHelperPath(dataDir);
+  const read = io.read ?? ((p: string) => readFileSync(p, 'utf8'));
+  try {
+    try {
+      if (read(helper) === CLAUDE_HOOK_HELPER_SOURCE) return helper;
+    } catch {
+      // Missing or unreadable: (re)write below.
+    }
+    (io.mkdir ?? ((p: string) => { mkdirSync(p, { recursive: true, mode: 0o700 }); }))(join(resolve(dataDir), 'hooks'));
+    (io.write ?? ((p: string, c: string) => { writeFileSync(p, c, { mode: 0o600 }); chmodSync(p, 0o600); }))(helper, CLAUDE_HOOK_HELPER_SOURCE);
+    return helper;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Characters that could be expanded or break out of quoting in either platform shell. */
+const UNSAFE_HOOK_PATH = /["$`\n\r\0]/;
+
+/** True when a path can be safely embedded in the hook command line. */
+export function isSafeHookPath(value: string): boolean {
+  return !UNSAFE_HOOK_PATH.test(value);
+}
+
+/**
+ * Hook command line: `<node> <helper> <marker>`, each quoted for the platform
+ * shell (double quotes on Windows, single quotes with `'\''` escaping on POSIX).
+ * Returns undefined when any part contains an unsafe character.
+ */
+export function buildClaudeHookCommand(
+  nodePath: string,
+  helperPath: string,
+  markerPath: string,
+  platform: NodeJS.Platform = process.platform,
+): string | undefined {
+  const parts = [nodePath, helperPath, markerPath];
+  if (!parts.every(isSafeHookPath)) return undefined;
+  const quote = platform === 'win32'
+    ? (v: string) => `"${v}"`
+    : (v: string) => `'${v.replaceAll("'", "'\\''")}'`;
+  return parts.map(quote).join(' ');
 }
