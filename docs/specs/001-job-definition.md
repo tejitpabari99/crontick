@@ -41,7 +41,7 @@ or last status.
 A job also has an optional, user-editable `alias`, unique across all currently-defined
 (non-deleted) jobs, auto-generated from a built-in word list plus a random integer 1-1000 when
 omitted (retried on collision; word list and RNG are injectable for deterministic tests). The
-CLI sets this field with `--name`/`-n`; the schema field remains `alias`, and the user-facing term everywhere (help, MCP, errors, docs) is "alias". Auto-generation falls back to `<word>-<6 char base36>` after 50 numeric attempts, and a create race against the alias UNIQUE index regenerates an auto alias (max 3 retries) while an explicit alias reports `JOB_ALREADY_EXISTS`. Every surface accepting a
+CLI sets this field with `--alias`/`-a`; the schema field remains `alias`, and the user-facing term everywhere (help, MCP, errors, docs) is "alias". Auto-generation falls back to `<word>-<6 char base36>` after 50 numeric attempts, and a create race against the alias UNIQUE index regenerates an auto alias (max 3 retries) while an explicit alias reports `JOB_ALREADY_EXISTS`. Every surface accepting a
 job identifier (CLI positional, MCP `id` params, HTTP path segments) accepts either the GUID
 `id` or the `alias`: an exact GUID match wins, otherwise the value is looked up by alias. An
 unresolved identifier fails with `JOB_NOT_FOUND`.

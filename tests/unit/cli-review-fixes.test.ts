@@ -27,7 +27,7 @@ function withHome<T>(fn: (home: string) => T): T {
 describe('jobs new help and schedule errors', () => {
   it('orders options name, prompt, schedule flags, then the rest, with description last', () => withHome((home) => {
     const help = cli(['jobs', 'new', '--help'], home).stdout.replace(/[ ]*\n[ ]*/g, ' ').replace(/ {2,}/g, ' ');
-    const order = ['--name', '--prompt <text>', '--cron', '--every', '--at', '--session-id', '--desc'].map((flag) => help.indexOf(flag));
+    const order = ['--alias', '--prompt <text>', '--cron', '--every', '--at', '--session-id', '--desc'].map((flag) => help.indexOf(flag));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     // Each schedule flag appears exactly once (no duplicate "Schedule:" block) and --tz is gone.
@@ -37,7 +37,7 @@ describe('jobs new help and schedule errors', () => {
     expect(help).not.toContain('--tz');
     expect(help).not.toMatch(/timezone/i);
     expect(help).toContain('Schedule (exactly one of --cron/--every/--at)');
-    expect(help).toContain('-n, --name <name> Unique kebab-case job alias (auto-generated when omitted)');
+    expect(help).toContain('-a, --alias <alias> Unique kebab-case job alias (auto-generated when omitted)');
     expect(help).toContain('-p, --prompt <text>');
     expect(help).toContain('--session-id <id> Run it on a given session ID');
     expect(help).toContain('--reuse-session Start session and resume on succeeding runs.');
@@ -46,7 +46,7 @@ describe('jobs new help and schedule errors', () => {
   }));
 
   it('explains all three schedule flags when none is given', () => withHome((home) => {
-    const result = cli(['jobs', 'new', '--name', 'sample', '--prompt', 'hi'], home);
+    const result = cli(['jobs', 'new', '--alias', 'sample', '--prompt', 'hi'], home);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('MISSING_ARG');
     expect(result.stderr).toContain('--every <interval> (seconds, or a s/m/h/d suffix such as 30m)');

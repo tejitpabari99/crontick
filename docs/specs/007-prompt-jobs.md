@@ -122,10 +122,10 @@ unknown-exit fallback ([ADR 0002](../decisions/0002-prompt-only-jobs-and-engine-
 
 ## CLI and surface behavior
 
-`jobs new` and `jobs update` use `--name`/`-n` for schema `alias`, `-p` for
+`jobs new` and `jobs update` use `--alias`/`-a` for schema `alias`, `-p` for
 `--prompt`, `-C`/`--cwd` for `action.cwd` and `--runner` for `action.engine`; both
 commands are built from one shared option list. There is no `--tz` (cron fires in
-machine local time); `--tz`, `--alias` and `--engine` fail as unknown
+machine local time); `--tz` and `--engine` fail as unknown
 options, including after `--`; short flags after `--` pass through to the engine. `--every` accepts bare seconds or `s`/`m`/`h`/`d` suffixes.
 Unknown long flags, with a following value when that token is not flag-shaped,
 pass through to `action.args` in argv order with or without `--`. Positional
@@ -157,7 +157,7 @@ args. Library and MCP callers pass `action.args` directly. See the
 - [x] Reserved prompt args (`-p`, `-r`, `--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`) are rejected from `action.args` (test file: `tests/unit/job-input.test.ts`)
 - [x] End-to-end prompt run against a fake engine binary records status, session, and usage fields (test file: `tests/unit/integration.prompt-e2e.test.ts`)
 - [x] `stats summary`/`stats job` sum `costUsd`/`turns` and report `canceled`/`skipped` counts separately (test files: `tests/unit/run-usage-fields.test.ts`, `tests/unit/run-usage-surfaces.test.ts`)
-- [x] `jobs new --runner` sets `action.engine`; the removed `--engine`/`--alias` flags fail (test file: `tests/unit/cli.test.ts`)
+- [x] `jobs new --runner` sets `action.engine`; the removed `--engine` flag fail (test file: `tests/unit/cli.test.ts`)
 
 ## Related
 

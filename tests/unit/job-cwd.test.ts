@@ -131,13 +131,13 @@ describe('--cwd / -C on the CLI', () => {
     const chosen = tmp();
     const common = ['--runner', FAKE_ENGINE_NAME, '--every', '1h'];
 
-    expect(cli(['jobs', 'new', '-n', 'cwd-default', '-p', 'console.log(process.cwd())', ...common], home, invoking).status).toBe(0);
+    expect(cli(['jobs', 'new', '-a', 'cwd-default', '-p', 'console.log(process.cwd())', ...common], home, invoking).status).toBe(0);
     expect(cli(['jobs', 'get', 'cwd-default'], home).stdout).toContain(`"cwd":"${invoking}"`);
 
-    expect(cli(['jobs', 'new', '-n', 'cwd-chosen', '-p', 'console.log(process.cwd())', '-C', chosen, ...common], home, invoking).status).toBe(0);
+    expect(cli(['jobs', 'new', '-a', 'cwd-chosen', '-p', 'console.log(process.cwd())', '-C', chosen, ...common], home, invoking).status).toBe(0);
     expect(cli(['jobs', 'get', 'cwd-chosen'], home).stdout).toContain(`"cwd":"${chosen}"`);
 
-    const missing = cli(['jobs', 'new', '-n', 'cwd-missing', '-p', 'x', '--cwd', join(chosen, 'nope'), ...common], home, invoking);
+    const missing = cli(['jobs', 'new', '-a', 'cwd-missing', '-p', 'x', '--cwd', join(chosen, 'nope'), ...common], home, invoking);
     expect(missing.status).toBe(1);
     expect(missing.stderr).toContain('INVALID_CWD');
     expect(cli(['jobs', 'get', 'cwd-missing'], home).status).toBe(1);

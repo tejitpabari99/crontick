@@ -81,7 +81,7 @@ Create and schedule a new job.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `id` | `string` (GUID) | no | generated | Immutable GUID; omit and let one be generated automatically |
-| `alias` | `string` | no | auto-generated | Unique kebab-case job alias (set via CLI `--name`/`-n`) |
+| `alias` | `string` | no | auto-generated | Unique kebab-case job alias (set via CLI `--alias`/`-a`) |
 | `description` | `string` | no | — | Job description |
 | `enabled` | `boolean` | no | `true` | Whether job is active |
 | `schedule` | `Schedule` | yes | — | Schedule object (see [job-schema.md](job-schema.md)) |

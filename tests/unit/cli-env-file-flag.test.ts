@@ -63,7 +63,7 @@ describe('CLI job env-file flag regression (CTD-010)', () => {
     try {
       const missingEnvFile = join(home, 'does-not-exist.env');
       const created = cli([
-        'jobs', 'new', '--name', 'removed-env-file-job', '--cron', '0 9 * * *',
+        'jobs', 'new', '--alias', 'removed-env-file-job', '--cron', '0 9 * * *',
         '--prompt', 'echo hi', '--job-env-file', missingEnvFile,
       ], { CRONTICK_HOME: home });
 

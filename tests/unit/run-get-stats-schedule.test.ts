@@ -89,7 +89,7 @@ describe('jobs schedule status', () => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), 'crontick-sched-')));
     homes.push(home);
     const cli = (args: string[]) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf-8', env: { ...process.env, CRONTICK_HOME: home }, timeout: 30_000 });
-    expect(cli(['jobs', 'new', '-n', 'sched-job', '-p', 'x', '--every', '1h']).status).toBe(0);
+    expect(cli(['jobs', 'new', '-a', 'sched-job', '-p', 'x', '--every', '1h']).status).toBe(0);
     let out = cli(['jobs', 'schedule', 'sched-job', '-n', '2']).stdout;
     expect(out).toContain('status: enabled');
     expect(out.indexOf('status: enabled')).toBeLessThan(out.indexOf('next:'));

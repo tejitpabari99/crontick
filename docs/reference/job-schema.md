@@ -11,7 +11,7 @@ Top-level job object.
 | Field | Type | Required | Default | Constraints | Description |
 |-------|------|----------|---------|-------------|-------------|
 | `id` | `string` (GUID) | no (server-assigned) | `randomUUID()` | UUID format | Immutable identifier assigned automatically at creation; never user-supplied. Primary key used internally by the store, `run.jobId`, and the scheduler. |
-| `alias` | `string` | no | auto-generated (`<word>-<1-1000>`) | Regex: `^[a-z0-9]+(?:-[a-z0-9]+)*$` (kebab-case); unique among currently-defined (live) jobs | Optional, user-editable unique **alias** (the one user-facing name for a job; CLI `--name`/`-n`). Auto-generation regenerates on collision and falls back to a short random suffix. Deleting a job frees its alias for reuse. |
+| `alias` | `string` | no | auto-generated (`<word>-<1-1000>`) | Regex: `^[a-z0-9]+(?:-[a-z0-9]+)*$` (kebab-case); unique among currently-defined (live) jobs | Optional, user-editable unique **alias** (the one user-facing name for a job; CLI `--alias`/`-a`). Auto-generation regenerates on collision and falls back to a short random suffix. Deleting a job frees its alias for reuse. |
 | `description` | `string` | no | — | — | Human-readable description |
 | `enabled` | `boolean` | no | `true` | — | Whether the job runs on schedule |
 | `schedule` | `Schedule` | yes | — | Discriminated union on `kind` | When the job runs |

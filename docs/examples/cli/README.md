@@ -15,7 +15,7 @@ Examples use POSIX single quotes (`'...'`) by default. On **Windows CMD**, repla
 ### Interval prompt job
 
 ```sh
-crontick jobs new --every 60 --prompt 'Say hello from crontick' --name hello-world
+crontick jobs new --every 60 --prompt 'Say hello from crontick' --alias hello-world
 ```
 
 Expected: prints the created job with a generated GUID `id` and alias `hello-world`.
@@ -23,7 +23,7 @@ Expected: prints the created job with a generated GUID `id` and alias `hello-wor
 ### Cron prompt job
 
 ```sh
-crontick jobs new --cron '0 9 * * 1-5' -p 'Write a morning report' --runner claude -n morning-report
+crontick jobs new --cron '0 9 * * 1-5' -p 'Write a morning report' --runner claude -a morning-report
 ```
 
 Expected: job with `schedule.kind: "cron"` (fires in the machine's local timezone), `action.kind: "prompt"`, and `action.cwd` set to the current directory. Use `-C <dir>` to run elsewhere; for Claude jobs an untrusted folder prompts `Trust it? (y/N)` (or pass `--trust-folder`).
@@ -72,15 +72,15 @@ crontick jobs new --file incident-triage-job.json
 Unknown long flags are forwarded to the engine and stored in `action.args`:
 
 ```sh
-crontick jobs new --every 300 --prompt 'Review this repository' --permission-mode acceptEdits --name repo-review
+crontick jobs new --every 300 --prompt 'Review this repository' --permission-mode acceptEdits --alias repo-review
 ```
 
-Flags crontick manages itself (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, `-p`, `-r`) are rejected. The old `--alias` and `--engine` flags are now `--name` and `--runner`.
+Flags crontick manages itself (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, `-p`, `-r`) are rejected. The old `--engine` flag is now `--runner`.
 
 ### One-shot prompt job
 
 ```sh
-crontick jobs new --at '2026-08-01T00:00:00Z' --prompt 'Remind me that the one-shot fired' --name cleanup-once
+crontick jobs new --at '2026-08-01T00:00:00Z' --prompt 'Remind me that the one-shot fired' --alias cleanup-once
 ```
 
 ---
@@ -204,5 +204,5 @@ Exports are `{ "schema": 1, ... }` and jobs only (no run history, no ids). Impor
 Append `-v` or `--verbose` for debug-level logs to stderr:
 
 ```sh
-crontick jobs new --every 10 --prompt 'echo hi' --name test-verbose --verbose
+crontick jobs new --every 10 --prompt 'echo hi' --alias test-verbose --verbose
 ```

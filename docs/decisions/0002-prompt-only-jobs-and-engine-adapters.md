@@ -73,9 +73,9 @@ which rejects crontick-managed flags a job must never override, including
 retired `--job-env-file`. crontick adds no engine permission flag by default; a job opts
 into elevated engine permissions only through explicit passthrough arguments.
 
-### CLI naming: `--name` and `--runner`
+### CLI naming: `--alias` and `--runner`
 
-`jobs new`/`jobs update` use `--name` for the job's `alias` field and `--runner` for the
+`jobs new`/`jobs update` use `--alias` for the job's `alias` field and `--runner` for the
 prompt action's `engine` field (previously `--alias`/`--engine`). There is no
 compatibility alias for the old flags -- they are rejected as unknown options, before
 engine-argument passthrough would otherwise silently absorb them as literal engine

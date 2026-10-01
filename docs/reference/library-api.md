@@ -31,7 +31,7 @@ class CrontickClient {
 
 #### Methods
 
-Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJob`, `enableJob`, `disableJob`, `runNow`, `statsJob`, the `jobId` filter on `listRuns`) accepts EITHER the job's immutable GUID `id` OR its **alias** (the unique kebab-case job name; CLI `--name`/`-n`) — an exact GUID match is tried first, falling back to an alias lookup. An identifier that resolves to neither throws `CrontickError('JOB_NOT_FOUND', 'Job X not found (id or alias)')`. See [job-schema.md](job-schema.md#identity-guid-id--alias) for how `id`/`alias` are assigned.
+Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJob`, `enableJob`, `disableJob`, `runNow`, `statsJob`, the `jobId` filter on `listRuns`) accepts EITHER the job's immutable GUID `id` OR its **alias** (the unique kebab-case job name; CLI `--alias`/`-a`) — an exact GUID match is tried first, falling back to an alias lookup. An identifier that resolves to neither throws `CrontickError('JOB_NOT_FOUND', 'Job X not found (id or alias)')`. See [job-schema.md](job-schema.md#identity-guid-id--alias) for how `id`/`alias` are assigned.
 
 | Method | Signature | Returns | Throws |
 |--------|-----------|---------|--------|

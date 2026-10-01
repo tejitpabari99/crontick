@@ -52,7 +52,7 @@ describe('jobs new / jobs update option parity', () => {
     expect(onlyUpdate).toEqual(['--disable', '--enable']);
     // Guard against the parser silently matching nothing.
     expect(created.size).toBeGreaterThan(10);
-    expect(created.has('-n, --name')).toBe(true);
+    expect(created.has('-a, --alias')).toBe(true);
     expect(created.has('-p, --prompt')).toBe(true);
   });
 
@@ -67,10 +67,10 @@ describe('jobs new / jobs update option parity', () => {
   });
 });
 
-describe('short flags -n and -p', () => {
-  it('create a job via -n/-p, and short flags after -- still pass through to the engine', () => {
+describe('short flags -a and -p', () => {
+  it('create a job via -a/-p, and short flags after -- still pass through to the engine', () => {
     const home = newHome();
-    const created = cli(['jobs', 'new', '-n', 'short-flags', '-p', 'say hi', '--every', '1h', '--', '-v'], home);
+    const created = cli(['jobs', 'new', '-a', 'short-flags', '-p', 'say hi', '--every', '1h', '--', '-v'], home);
     expect(created.status, created.stderr).toBe(0);
     const got = cli(['jobs', 'get', 'short-flags'], home);
     expect(got.stdout).toContain('"prompt":"say hi"');

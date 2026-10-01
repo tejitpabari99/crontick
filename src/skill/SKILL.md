@@ -35,7 +35,7 @@ crontick jobs new --desc "release reminder" --at "2026-08-01T09:00:00" --prompt 
 
 No `id` is needed — crontick assigns the GUID and auto-generates an `alias`. Options:
 
-- `-n, --name <name>` — set a memorable kebab-case alias instead of the generated one.
+- `-a, --alias <alias>` — set a memorable kebab-case alias instead of the generated one.
 - `-C, --cwd <dir>` — folder the job runs in (default: the current directory). For Claude jobs an untrusted folder asks `Trust it? (y/N)`; pass `--trust-folder` to answer yes non-interactively.
 - `--runner <name>` — pick a configured engine (default: `claude`).
 - `--prompt-file <path>` — read the prompt from a UTF-8 `.txt` file instead of `--prompt` (mutually exclusive with `--prompt`; contents are stored, not the path).
@@ -100,7 +100,7 @@ At run time the `claude` adapter builds the full invocation (`claude -p "<prompt
 - `--reuse-session` — capture the session id from the first completed run and reuse it thereafter. Requires `--overlap skip` (the default); other overlap policies are rejected. For Claude, resuming needs the session transcript on disk, otherwise the run fails with `SESSION_NOT_FOUND`.
 
 ```sh
-crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident queue" --reuse-session --name triage
+crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident queue" --reuse-session --alias triage
 ```
 
 ## Command reference
@@ -155,7 +155,7 @@ Under the hood a prompt job stores its behavior as JSON with `action.kind: "prom
 A daily standup summary at 9am local time:
 
 ```sh
-crontick jobs new --desc "daily standup" --cron "0 9 * * *" --name daily-standup \
+crontick jobs new --desc "daily standup" --cron "0 9 * * *" --alias daily-standup \
   --prompt "Summarize my open GitHub PRs and today's calendar" --reuse-session
 ```
 

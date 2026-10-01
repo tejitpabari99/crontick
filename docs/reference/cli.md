@@ -56,7 +56,7 @@ crontick daemon reload
 crontick mcp [--no-start-daemon] [--daemon-url <url>]
 ```
 
-Commands accept a job identifier as either the immutable GUID `id` or the job's **alias** (the unique kebab-case name; `--name`/`-n` sets it). `jobs new` assigns the GUID automatically; pass `--name <alias>` only when you want to control the alias. Every command that takes a job (`jobs update/get/schedule/delete/run-now`, `stats job`, `runs list --job`, `share export --only-jobs`) resolves an id or an alias the same way. A missing job reports `Job X not found (id or alias)`.
+Commands accept a job identifier as either the immutable GUID `id` or the job's **alias** (the unique kebab-case name; `--alias`/`-a` sets it). `jobs new` assigns the GUID automatically; pass `--alias <alias>` only when you want to control the alias. Every command that takes a job (`jobs update/get/schedule/delete/run-now`, `stats job`, `runs list --job`, `share export --only-jobs`) resolves an id or an alias the same way. A missing job reports `Job X not found (id or alias)`.
 
 ---
 
@@ -64,7 +64,7 @@ Commands accept a job identifier as either the immutable GUID `id` or the job's 
 
 ### crontick jobs new
 
-Create a new job. The job's GUID `id` is always assigned by crontick. If `--name` is omitted, crontick auto-generates a unique alias (a word plus a number, regenerated on collision; after many collisions a short random suffix is used).
+Create a new job. The job's GUID `id` is always assigned by crontick. If `--alias` is omitted, crontick auto-generates a unique alias (a word plus a number, regenerated on collision; after many collisions a short random suffix is used).
 
 ```bash
 crontick jobs new [engineArgs...]
@@ -72,7 +72,7 @@ crontick jobs new [engineArgs...]
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `-n`, `--name <name>` | string | auto-generated | Unique kebab-case job alias (saved as the job's `alias` field) |
+| `-a`, `--alias <alias>` | string | auto-generated | Unique kebab-case job alias (saved as the job's `alias` field) |
 | `-p`, `--prompt <text>` | string | — | Prompt text for a prompt action |
 | `--prompt-file <path>` | string | — | UTF-8 text file to read into the prompt |
 | `--cron <expr>` | string | — | Schedule (exactly one of `--cron`/`--every`/`--at`): cron expression (for example, `"0 9 * * *"`). Fires in the machine's local timezone |
@@ -90,12 +90,12 @@ crontick jobs new [engineArgs...]
 | `--desc <description>` | string | — | Job description |
 | `--force` | boolean | `false` | Replace an existing job when the same alias already exists |
 
-Exactly one schedule source (`--cron`, `--every`, `--at`) and one prompt source (`--prompt`, `--prompt-file`) are required unless `--file` is used. Supplying more than one schedule flag is an error (`VALIDATION_ERROR`: they cannot be combined); supplying none is `MISSING_ARG`. Bare `--every` numbers remain seconds; suffixes `s`, `m`, `h`, and `d` mean seconds, minutes, hours, and days. Unrecognized long flags, with a following value when that token is not flag-shaped, are stored verbatim in `action.args`. The same flags work after `--`, which also accepts positional arguments. Their order is preserved. Short flags before `--` belong to crontick (`-n`, `-p`, `-C`); after `--` they pass through to the engine (for example `-v`). Flags that crontick manages for the engine (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, and the short forms `-p` and `-r`) are rejected, including `--flag=value` forms. Removed `--alias`, `--engine` and `--tz` switches are rejected as unknown options, including after `--`. If a token after `--` matches a crontick long flag, the CLI rejects it rather than silently storing it as a literal prompt arg.
+Exactly one schedule source (`--cron`, `--every`, `--at`) and one prompt source (`--prompt`, `--prompt-file`) are required unless `--file` is used. Supplying more than one schedule flag is an error (`VALIDATION_ERROR`: they cannot be combined); supplying none is `MISSING_ARG`. Bare `--every` numbers remain seconds; suffixes `s`, `m`, `h`, and `d` mean seconds, minutes, hours, and days. Unrecognized long flags, with a following value when that token is not flag-shaped, are stored verbatim in `action.args`. The same flags work after `--`, which also accepts positional arguments. Their order is preserved. Short flags before `--` belong to crontick (`-a`, `-p`, `-C`); after `--` they pass through to the engine (for example `-v`). Flags that crontick manages for the engine (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, and the short forms `-p` and `-r`) are rejected, including `--flag=value` forms. Removed `--engine`, `--job-env-file` and `--tz` switches are rejected as unknown options, including after `--`. If a token after `--` matches a crontick long flag, the CLI rejects it rather than silently storing it as a literal prompt arg.
 
 Dedicated `--script`, `--exec`, `--arg`, `--shell`, and `--job-env-file` flags are not exposed on the CLI. The job schema supports prompt actions only; `--file` accepts a complete prompt-job definition.
 
 ```bash
-crontick jobs new --every 30m --prompt "Summarize the current repository status" --name repo-summary --runner claude
+crontick jobs new --every 30m --prompt "Summarize the current repository status" --alias repo-summary --runner claude
 crontick jobs new --every 300 --prompt "Review this repository" --permission-mode acceptEdits
 crontick jobs new --file ./job.json
 ```

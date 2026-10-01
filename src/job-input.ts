@@ -92,7 +92,7 @@ export type ExportFile = { schema: 1; exportedAt?: string; crontickVersion?: str
 
 export const JobPatchInputSchema = z.object({
   /** Alias is user-editable after creation; `id` (the GUID) is never patchable. */
-  alias: z.string().regex(JOB_ALIAS_PATTERN, 'Job alias must be kebab-case (e.g. "my-job")').optional().describe('Unique kebab-case job alias (set via CLI --name)'),
+  alias: z.string().regex(JOB_ALIAS_PATTERN, 'Job alias must be kebab-case (e.g. "my-job")').optional().describe('Unique kebab-case job alias (set via CLI --alias)'),
   description: z.string().optional(),
   enabled: z.boolean().optional(),
   schedule: ScheduleSchema.optional(),
@@ -115,7 +115,7 @@ export interface NormalizeJobInputOptions {
 }
 
 export interface JobCreateCliOptions {
-  /** Explicit job alias (CLI `--name`/`-n`) on create; the only way to name a job. When omitted, one is auto-generated (see generateAlias). Also the only way to rename a job's alias on update. */
+  /** Explicit job alias (CLI `--alias`/`-a`) on create; the only way to name a job. When omitted, one is auto-generated (see generateAlias). Also the only way to rename a job's alias on update. */
   alias?: string;
   engineArgs?: string[];
   rawArgs?: string[];

@@ -210,7 +210,7 @@ function groupHelp(command: Command): Command {
 
 function commonJobOptions(command: Command): Command {
   return command
-    .option('-n, --name <name>', 'Unique kebab-case job alias (auto-generated when omitted)')
+    .option('-a, --alias <alias>', 'Unique kebab-case job alias (auto-generated when omitted)')
     .option('-p, --prompt <text>', 'Prompt text for a prompt action')
     .option('--prompt-file <path>', 'UTF-8 .txt file to read into the prompt')
     .option('--cron <expr>', 'Schedule (exactly one of --cron/--every/--at): cron expression, e.g. "0 9 * * *"')
@@ -237,7 +237,7 @@ function commonJobOptions(command: Command): Command {
 
 function collectJobOptions(engineArgs: string[], passthroughArgs: string[], cliArgvOrder: string[], opts: Record<string, unknown>): JobCreateCliOptions {
   return {
-    alias: stringOption(opts.name),
+    alias: stringOption(opts.alias),
     rawArgs: Array.isArray(engineArgs) ? engineArgs : [],
     passthroughArgs,
     cliArgvOrder,
@@ -262,7 +262,7 @@ function collectJobOptions(engineArgs: string[], passthroughArgs: string[], cliA
 
 function collectPatchOptions(engineArgs: string[], passthroughArgs: string[], cliArgvOrder: string[], opts: Record<string, unknown>): JobPatchCliOptions {
   return {
-    alias: stringOption(opts.name),
+    alias: stringOption(opts.alias),
     rawArgs: Array.isArray(engineArgs) ? engineArgs : [],
     passthroughArgs,
     cliArgvOrder,
@@ -362,7 +362,7 @@ function splitPromptEngineArgs(engineArgs: string[]): { rawArgs: string[]; passt
         // Removed CLI switches must stay unknown instead of being forwarded
         // to the prompt runner through the generic long-flag passthrough.
         const flag = token.split('=', 1)[0]!;
-        if (flag === '--job-env-file' || flag === '--alias' || flag === '--engine' || flag === '--tz') {
+        if (flag === '--job-env-file' || flag === '--engine' || flag === '--tz') {
           throw new Error(`unknown option '${flag}'`);
         }
         passthroughArgs.push(token);
@@ -409,7 +409,7 @@ program
 // ── jobs ─────────────────────────────────────────────────────────────────────
 const jobs = groupHelp(program.command('jobs').description('Create, inspect, and manage scheduled jobs'));
 
-commonJobOptions(jobs.command('new [engineArgs...]').description('Create a new job (alias auto-generated when --name is omitted)'))
+commonJobOptions(jobs.command('new [engineArgs...]').description('Create a new job (alias auto-generated when --alias is omitted)'))
   .allowUnknownOption()
   .option('--force', 'Replace an existing job when the same alias already exists')
   .action(async (engineArgs: string[], opts, cmd: Command) => {

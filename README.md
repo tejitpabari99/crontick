@@ -83,13 +83,13 @@ Every job carries exactly one schedule. Pick the flag that matches:
 
 ```sh
 # cron expression (fires in the machine's local timezone)
-crontick jobs new --cron "0 9 * * *" --prompt "Summarize my open PRs" --name standup
+crontick jobs new --cron "0 9 * * *" --prompt "Summarize my open PRs" --alias standup
 
 # fixed interval, in seconds or with an s/m/h/d suffix
-crontick jobs new --every 1h --prompt "Check the build and report failures" --name hourly
+crontick jobs new --every 1h --prompt "Check the build and report failures" --alias hourly
 
 # one-shot at a specific ISO-8601 time
-crontick jobs new --at "2026-08-01T09:00:00" --prompt "Remind me to cut the release" --name release-reminder
+crontick jobs new --at "2026-08-01T09:00:00" --prompt "Remind me to cut the release" --alias release-reminder
 ```
 
 Preview the next fire times for any job:
@@ -132,7 +132,7 @@ The Claude adapter invokes `claude -p "<your prompt>" --output-format stream-jso
 Select an engine per job with `--runner`:
 
 ```sh
-crontick jobs new --every 3600 --prompt "Review recent commits for risky changes" --runner claude --name review
+crontick jobs new --every 3600 --prompt "Review recent commits for risky changes" --runner claude --alias review
 ```
 
 Pass engine options as unknown long flags on `jobs new` or `jobs update`, for example `--permission-mode acceptEdits`. Crontick stores them in the job's `action.args` and forwards them to the engine. It rejects flags it manages itself, including `--output-format` and `--settings`.
@@ -145,7 +145,7 @@ Prompt jobs can carry an AI session across runs so the agent remembers prior con
 - `--reuse-session` — capture a reusable session after a complete Claude result (including a failed result) or a successful raw-engine run. It requires `--overlap skip`. Claude resumes need the session transcript on disk, otherwise the run fails with `SESSION_NOT_FOUND`.
 
 ```sh
-crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident queue" --reuse-session --name triage
+crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident queue" --reuse-session --alias triage
 ```
 
 See [docs/reference/configuration.md](docs/reference/configuration.md) for the full schema, environment variables (`CRONTICK_HOME`, `CRONTICK_DAEMON_URL`, `CRONTICK_VERBOSE`), and precedence.

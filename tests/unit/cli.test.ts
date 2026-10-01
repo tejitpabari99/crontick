@@ -162,14 +162,12 @@ describe('CLI binary (dist/cli/index.js)', () => {
     const newHelp = cli(['jobs', 'new', '--help']);
     expect(newHelp.stdout).toContain('--prompt <text>');
     expect(newHelp.stdout).toContain('--file <path>');
-    expect(newHelp.stdout).toContain('--name <name>');
+    expect(newHelp.stdout).toContain('--alias <alias>');
     expect(newHelp.stdout).toContain('--runner <runner>');
-    expect(newHelp.stdout).not.toContain('--alias');
     expect(newHelp.stdout).not.toContain('--engine');
     const updateHelp = cli(['jobs', 'update', '--help']);
-    expect(updateHelp.stdout).toContain('--name <name>');
+    expect(updateHelp.stdout).toContain('--alias <alias>');
     expect(updateHelp.stdout).toContain('--runner <runner>');
-    expect(updateHelp.stdout).not.toContain('--alias');
     expect(updateHelp.stdout).not.toContain('--engine');
     expect(newHelp.stdout).not.toContain('--exec');
     expect(newHelp.stdout).not.toContain('--script');
@@ -261,13 +259,13 @@ describe('CLI e2e with daemon', () => {
 
   const env = () => ({ CRONTICK_HOME: dir });
 
-  it('jobs new and update accept --name/--runner and minute intervals', () => {
-    const created = cli(['jobs', 'new', '--name', 'renamed-flags-job', '--prompt', 'hello', '--runner', 'claude', '--every', '30m'], env());
+  it('jobs new and update accept --alias/--runner and minute intervals', () => {
+    const created = cli(['jobs', 'new', '--alias', 'renamed-flags-job', '--prompt', 'hello', '--runner', 'claude', '--every', '30m'], env());
     expect(created.status, created.stderr).toBe(0);
     expect(parseCliObject(created.stdout)).toMatchObject({ alias: 'renamed-flags-job', schedule: { kind: 'interval', everySec: 1800 } });
     expect(parseCliObject(created.stdout).action).toMatchObject({ engine: 'claude' });
 
-    const updated = cli(['jobs', 'update', 'renamed-flags-job', '--name', 'renamed-flags-job-updated', '--prompt', 'hello', '--runner', FAKE_ENGINE_NAME, '--every', '2h'], env());
+    const updated = cli(['jobs', 'update', 'renamed-flags-job', '--alias', 'renamed-flags-job-updated', '--prompt', 'hello', '--runner', FAKE_ENGINE_NAME, '--every', '2h'], env());
     expect(updated.status, updated.stderr).toBe(0);
     expect(parseCliObject(updated.stdout)).toMatchObject({ alias: 'renamed-flags-job-updated', schedule: { kind: 'interval', everySec: 7200 } });
     expect(parseCliObject(updated.stdout).action).toMatchObject({ engine: FAKE_ENGINE_NAME });
@@ -281,12 +279,12 @@ describe('CLI e2e with daemon', () => {
     expect(invalid.stderr).toContain('Invalid interval: 30x');
   });
 
-  it('rejects removed --alias/--engine flags instead of forwarding them to the runner', () => {
+  it('rejects removed --engine flags instead of forwarding them to the runner', () => {
     for (const command of [
-      ['jobs', 'new', '--name', 'old-flags-rejected', '--prompt', 'hello', '--every', '300'],
+      ['jobs', 'new', '--alias', 'old-flags-rejected', '--prompt', 'hello', '--every', '300'],
       ['jobs', 'update', 'nonexistent-job', '--prompt', 'hello'],
     ]) {
-      for (const oldFlag of ['--alias', '--engine', '--alias=old', '--engine=claude']) {
+      for (const oldFlag of ['--engine', '--engine=claude']) {
         for (const separator of [[], ['--']]) {
           const result = cli([...command, ...separator, oldFlag, ...(oldFlag.includes('=') ? [] : ['old'])], env());
           expectCleanError(result);
@@ -323,21 +321,21 @@ describe('CLI e2e with daemon', () => {
   });
 
   it('jobs new creates prompt jobs with aliases, defaults, prompt files, passthrough args, and session notices', () => {
-    let r = cli(['jobs', 'new', '--name', 'prompt-cli-job', '--cron', '0 9 * * *', '--prompt', 'Summarize'], env());
+    let r = cli(['jobs', 'new', '--alias', 'prompt-cli-job', '--cron', '0 9 * * *', '--prompt', 'Summarize'], env());
     expect(r.status, r.stderr).toBe(0);
     expect(parseCliObject(r.stdout).action).toMatchObject({ kind: 'prompt', prompt: 'Summarize', engine: 'claude', args: [], reuseSession: false });
 
-    r = cli(['jobs', 'new', '--name', 'prompt-leading-dash-cli-job', '--cron', '0 9 * * *', '--prompt=- summarize'], env());
+    r = cli(['jobs', 'new', '--alias', 'prompt-leading-dash-cli-job', '--cron', '0 9 * * *', '--prompt=- summarize'], env());
     expect(r.status, r.stderr).toBe(0);
     expect(parseCliObject(r.stdout).action).toMatchObject({ prompt: '- summarize' });
 
     const promptPath = join(dir, 'prompt.txt');
     writeFileSync(promptPath, 'Prompt from file', 'utf-8');
-    r = cli(['jobs', 'new', '--name', 'prompt-file-cli-job', '--cron', '0 10 * * *', '--prompt-file', promptPath, '--runner', 'agency', '--reuse-session', '--', '--silent', '--flag', 'one'], env());
+    r = cli(['jobs', 'new', '--alias', 'prompt-file-cli-job', '--cron', '0 10 * * *', '--prompt-file', promptPath, '--runner', 'agency', '--reuse-session', '--', '--silent', '--flag', 'one'], env());
     expect(r.status, r.stderr).toBe(0);
     expect(parseCliObject(r.stdout).action).toMatchObject({ prompt: 'Prompt from file', engine: 'agency', args: ['--silent', '--flag', 'one'], reuseSession: true });
 
-    r = cli(['jobs', 'new', '--name', 'prompt-session-cli-job', '--cron', '0 11 * * *', '--prompt', 'hello', '--session-id', 'sess-12345678', '--reuse-session'], env());
+    r = cli(['jobs', 'new', '--alias', 'prompt-session-cli-job', '--cron', '0 11 * * *', '--prompt', 'hello', '--session-id', 'sess-12345678', '--reuse-session'], env());
     expect(r.status, r.stderr).toBe(0);
     expect(r.stderr).toContain('reuseSession was ignored');
     expect(parseCliObject(r.stdout).action).toMatchObject({ sessionId: 'sess-12345678', reuseSession: false });
@@ -345,7 +343,7 @@ describe('CLI e2e with daemon', () => {
 
   it('jobs new and update forward unknown long flags and values in argv order', () => {
     const created = cli([
-      'jobs', 'new', '--name', 'unknown-flags-job', '--every', '300', '--prompt', 'hello',
+      'jobs', 'new', '--alias', 'unknown-flags-job', '--every', '300', '--prompt', 'hello',
       '--allow-all', '--permission-mode', 'acceptEdits', '--max-budget-usd=2',
     ], env());
     expect(created.status, created.stderr).toBe(0);
@@ -382,11 +380,11 @@ describe('CLI e2e with daemon', () => {
   });
 
   it('rejects reserved unknown long flags on create and update', () => {
-    const created = cli(['jobs', 'new', '--name', 'reserved-unknown-job', '--every', '300', '--prompt', 'hi', '--settings', '{}'], env());
+    const created = cli(['jobs', 'new', '--alias', 'reserved-unknown-job', '--every', '300', '--prompt', 'hi', '--settings', '{}'], env());
     expectCleanError(created, 'VALIDATION_ERROR');
     expect(created.stderr).toContain('crontick-managed prompt/session flag: --settings');
 
-    const valid = cli(['jobs', 'new', '--name', 'reserved-unknown-job', '--every', '300', '--prompt', 'hi'], env());
+    const valid = cli(['jobs', 'new', '--alias', 'reserved-unknown-job', '--every', '300', '--prompt', 'hi'], env());
     expect(valid.status, valid.stderr).toBe(0);
     const updated = cli(['jobs', 'update', 'reserved-unknown-job', '--prompt', 'hi', '--output-format=json'], env());
     expectCleanError(updated, 'VALIDATION_ERROR');
@@ -394,7 +392,7 @@ describe('CLI e2e with daemon', () => {
   });
 
   it('requires overlap skip for reuse-session and reports overlapping fires as skipped', () => {
-    const base = ['jobs', 'new', '--name', 'cli-skipped-run-job', '--cron', '0 0 * * *', '--prompt', 'setTimeout(() => process.exit(0), 10000)', '--runner', FAKE_ENGINE_NAME, '--reuse-session'];
+    const base = ['jobs', 'new', '--alias', 'cli-skipped-run-job', '--cron', '0 0 * * *', '--prompt', 'setTimeout(() => process.exit(0), 10000)', '--runner', FAKE_ENGINE_NAME, '--reuse-session'];
     for (const policy of ['queue', 'cancel-previous']) {
       const rejected = cli([...base, '--overlap', policy], env());
       expectCleanError(rejected, 'VALIDATION_ERROR');
@@ -427,13 +425,13 @@ describe('CLI e2e with daemon', () => {
   }, 30_000);
 
   it('jobs new reports validation errors for missing action, raw prompt/session collisions, oversize prompt, and --file conflicts', () => {
-    const missing = cli(['jobs', 'new', '--name', 'missing-action-job', '--cron', '0 0 * * *'], env());
+    const missing = cli(['jobs', 'new', '--alias', 'missing-action-job', '--cron', '0 0 * * *'], env());
     expectCleanError(missing, 'MISSING_ARG');
     expect(missing.stderr).toContain('Provide --prompt or --prompt-file');
-    const collision = cli(['jobs', 'new', '--name', 'prompt-reserved-arg-job', '--cron', '0 11 * * *', '--prompt', 'hello', '--', '--session-id=sess-12345678'], env());
+    const collision = cli(['jobs', 'new', '--alias', 'prompt-reserved-arg-job', '--cron', '0 11 * * *', '--prompt', 'hello', '--', '--session-id=sess-12345678'], env());
     expectCleanError(collision, 'VALIDATION_ERROR');
     expect(collision.stderr).toContain('prompt/session flag');
-    const tooLarge = cli(['jobs', 'new', '--name', 'prompt-argv-limit-job', '--cron', '0 11 * * *', `--prompt=${'x'.repeat(31_000)}`], env());
+    const tooLarge = cli(['jobs', 'new', '--alias', 'prompt-argv-limit-job', '--cron', '0 11 * * *', `--prompt=${'x'.repeat(31_000)}`], env());
     expectCleanError(tooLarge, 'VALIDATION_ERROR');
     expect(tooLarge.stderr).toContain('Windows-safe command line limit');
     const jobFile = writeJobFile(dir, 'file-conflict-job', { action: { kind: 'prompt', prompt: 'x' } }).file;
@@ -517,7 +515,7 @@ describe('CLI e2e with daemon', () => {
   });
 
   it('jobs update --file preserves prompt args/reuseSession/engine when only prompt text changes', () => {
-    const created = cli(['jobs', 'new', '--name', 'file-prompt-preserve-job', '--cron', '0 9 * * *', '--prompt', 'old', '--runner', 'agency', '--reuse-session', '--', '--flag'], env());
+    const created = cli(['jobs', 'new', '--alias', 'file-prompt-preserve-job', '--cron', '0 9 * * *', '--prompt', 'old', '--runner', 'agency', '--reuse-session', '--', '--flag'], env());
     expect(created.status, created.stderr).toBe(0);
     const patchFile = writeJsonFile(dir, 'file-prompt-preserve-patch', { action: { kind: 'prompt', prompt: 'new' } });
     const updated = cli(['jobs', 'update', 'file-prompt-preserve-job', '--file', patchFile], env());

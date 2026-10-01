@@ -145,7 +145,7 @@ describe('--trust-folder on the CLI (non-interactive)', () => {
 
   it('errors with TRUST_REQUIRED and a re-run hint, creating nothing; --trust-folder succeeds', () => {
     const sb = sandbox();
-    const denied = cli(sb, ['jobs', 'new', '-n', 'cli-trust', '-p', 'hi', '--every', '1h']);
+    const denied = cli(sb, ['jobs', 'new', '-a', 'cli-trust', '-p', 'hi', '--every', '1h']);
     expect(denied.status).toBe(1);
     expect(denied.stderr).toContain('TRUST_REQUIRED');
     expect(denied.stderr).toContain('--trust-folder');
@@ -153,7 +153,7 @@ describe('--trust-folder on the CLI (non-interactive)', () => {
     expect(cli(sb, ['jobs', 'get', 'cli-trust']).status).toBe(1);
     expect(readClaude(sb).projects[sb.project]).toBeUndefined();
 
-    const ok = cli(sb, ['jobs', 'new', '-n', 'cli-trust', '-p', 'hi', '--every', '1h', '--trust-folder']);
+    const ok = cli(sb, ['jobs', 'new', '-a', 'cli-trust', '-p', 'hi', '--every', '1h', '--trust-folder']);
     expect(ok.status, ok.stderr).toBe(0);
     expect(readClaude(sb).projects[sb.project]?.hasTrustDialogAccepted).toBe(true);
 
@@ -167,7 +167,7 @@ describe('--trust-folder on the CLI (non-interactive)', () => {
 
   it('raw-engine jobs never ask', () => {
     const sb = sandbox();
-    const ok = cli(sb, ['jobs', 'new', '-n', 'raw-job', '-p', 'x', '--runner', FAKE_ENGINE_NAME, '--every', '1h']);
+    const ok = cli(sb, ['jobs', 'new', '-a', 'raw-job', '-p', 'x', '--runner', FAKE_ENGINE_NAME, '--every', '1h']);
     expect(ok.status, ok.stderr).toBe(0);
   }, 60_000);
 });
