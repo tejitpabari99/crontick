@@ -86,9 +86,8 @@ describe('CLI job env-file flag regression (CTD-010)', () => {
         alias: 'file-env-job',
         schedule: { kind: 'cron', cron: '0 9 * * *' },
         action: {
-          kind: 'exec',
-          command: process.execPath,
-          args: ['-e', 'process.exit(0)'],
+          kind: 'prompt',
+          prompt: 'noop',
           env: { VISIBLE_ENV: 'kept' },
         },
       }, null, 2), 'utf-8');
@@ -96,7 +95,7 @@ describe('CLI job env-file flag regression (CTD-010)', () => {
       const created = cli(['jobs', 'new', '--file', jobFile], { CRONTICK_HOME: home });
       expect(created.status, created.stderr).toBe(0);
       expect(parseCliObject(created.stdout).action).toMatchObject({
-        kind: 'exec',
+        kind: 'prompt',
         env: { VISIBLE_ENV: 'kept' },
       });
     } finally {

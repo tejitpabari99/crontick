@@ -20,49 +20,62 @@ crontick jobs new --every 60 --prompt 'Say hello from crontick' --alias hello-wo
 
 Expected: prints the created job with a generated GUID `id` and alias `hello-world`.
 
-### Cron prompt job with timezone
+### Cron prompt job
 
 ```sh
-crontick jobs new --cron '0 9 * * 1-5' --tz America/New_York --prompt 'Write a morning report' --engine copilot --alias morning-report
+crontick jobs new --cron '0 9 * * 1-5' -p 'Write a morning report' --runner claude -a morning-report
 ```
 
-Expected: job with `schedule.kind: "cron"`, `schedule.tz: "America/New_York"`, and `action.kind: "prompt"`.
+Expected: job with `schedule.kind: "cron"` (fires in the machine's local timezone), `action.kind: "prompt"`, and `action.cwd` set to the current directory. Use `-C <dir>` to run elsewhere; for Claude jobs an untrusted folder prompts `Trust it? (y/N)` (or pass `--trust-folder`).
 
-### Script job via JSON file
+### Prompt job via JSON file
 
-Create `script-job.json`:
+Create `release-notes-job.json`:
 
 ```json
 {
-  "alias": "script-demo",
-  "schedule": { "kind": "interval", "everySec": 60 },
-  "action": { "kind": "script", "script": "echo \"hello from crontick\"" }
+  "alias": "release-notes",
+  "schedule": { "kind": "interval", "everySec": 3600 },
+  "action": { "kind": "prompt", "prompt": "Draft release notes from recent commits", "engine": "claude" }
 }
 ```
 
 Then run:
 
 ```sh
-crontick jobs new --file script-job.json
+crontick jobs new --file release-notes-job.json
 ```
 
-### Exec job via JSON file
+### Prompt job with session reuse via JSON file
 
-Create `exec-job.json`:
+Create `incident-triage-job.json`:
 
 ```json
 {
-  "alias": "node-hello",
-  "schedule": { "kind": "interval", "everySec": 30 },
-  "action": { "kind": "exec", "command": "node", "args": ["-e", "console.log('hi')"] }
+  "alias": "incident-triage",
+  "schedule": { "kind": "interval", "everySec": 1800 },
+  "action": { "kind": "prompt", "prompt": "Continue triaging the incident queue", "engine": "claude", "reuseSession": true },
+  "overlap": "skip"
 }
 ```
 
 Then run:
 
 ```sh
-crontick jobs new --file exec-job.json
+crontick jobs new --file incident-triage-job.json
 ```
+
+`reuseSession` captures the engine session id after a run so the agent keeps conversational context on the next fire; it requires `overlap: "skip"` (the default).
+
+### Passing engine options through
+
+Unknown long flags are forwarded to the engine and stored in `action.args`:
+
+```sh
+crontick jobs new --every 300 --prompt 'Review this repository' --permission-mode acceptEdits --alias repo-review
+```
+
+Flags crontick manages itself (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, `-p`, `-r`) are rejected. The old `--engine` flag is now `--runner`.
 
 ### One-shot prompt job
 
@@ -128,7 +141,10 @@ Expected: prints `runId: <uuid>`.
 ```sh
 crontick runs list --job hello-world --limit 5
 crontick runs list --status success --limit 5
+crontick runs list --status skipped --limit 5
 ```
+
+`--status` accepts `queued`, `running`, `success`, `failed`, `canceled`, `skipped`, `timeout`, or `missed`. `skipped` means an overlap `skip` fire never started because another run was active.
 
 ### Get a specific run
 
@@ -136,13 +152,9 @@ crontick runs list --status success --limit 5
 crontick runs get <runId>
 ```
 
-### View logs
+Shows the run fields, the Runner Session ID, `Transcript:` and `Log file:` paths, then the cleaned output. Claude runs also show cost and turns. `--json` prints `{ run, output }`.
 
-```sh
-crontick runs logs <runId> --tail 20
-crontick runs logs <runId> engine --tail 20
-crontick runs logs <runId> crontick --tail 20
-```
+The `Log file:` line names the per-job file of crontick-side events (`tail -n 20 <path>`); the engine's own transcript is the `Transcript:` line.
 
 ### Cancel a running run
 
@@ -163,24 +175,24 @@ crontick stats job hello-world
 
 ```sh
 crontick info
-crontick info doctor
-crontick info daemon reload
-crontick info daemon stop
+crontick doctor
+crontick daemon reload
+crontick daemon stop
 ```
 
-`info` prints version, runtime, config path, storage paths, daemon status, and dashboard URL. Edit `config.json` by hand; `info` tells you where it lives. If `retention.maxRunsPerJob` changes, stop the daemon with `crontick info daemon stop` and then run any daemon-backed command to start it again.
+`info` prints version, runtime, config path, storage paths, daemon status, and dashboard URL. Edit `config.json` by hand; `info` tells you where it lives. If `retention.maxRunsPerJob` changes, run `crontick daemon reload` to apply it.
 
 ---
 
 ## Export / Import
 
 ```sh
-crontick share export --out jobs-backup.json
-crontick share export --out jobs-and-runs-backup.json --include-runs
+crontick share export --out jobs-backup            # writes jobs-backup.json
+crontick share export --only-jobs morning-report,hello-world --out two-jobs.json
 crontick share import jobs-backup.json
 ```
 
-`--include-runs` adds a `runs` array to the export; import restores it archivally when present.
+Exports are `{ "schema": 1, ... }` and jobs only (no run history, no ids). Import gives every job a new id; an alias already in use becomes `<alias>-2`, `-3`, ...
 
 ---
 

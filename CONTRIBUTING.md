@@ -36,6 +36,12 @@ We use [Changesets](https://github.com/changesets/changesets) for versioning.
 
 - If your PR changes user-facing behaviour, run `npx changeset` and commit the generated file.
 - Patch: bug fixes. Minor: new features. Major: breaking changes.
+- CI blocks any PR that adds a `major` changeset (see `scripts/check-changeset-bumps.mjs`) --
+  crontick is pre-1.0, so a major bump jumps straight to `1.0.0` and must be intentional.
+  If you really mean it, say so in the PR description; a maintainer overrides the guard at
+  release time via the `allow_major` workflow input.
+- Releases are triggered manually from GitHub Actions, not on merge to `main`. See
+  [`RELEASING.md`](RELEASING.md) for the full flow.
 
 ## Code style
 

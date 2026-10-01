@@ -16,7 +16,13 @@ import {
   writeConfigFile,
 } from '../../src/config.js';
 import { normalizeJobInput } from '../../src/job-input.js';
+import { ConfigSchema } from '../../src/schemas/config.js';
 import type { JobCreateInput } from '../../src/job-input.js';
+import {
+  DEFAULT_MAX_LOG_FILES,
+  DEFAULT_MAX_OUTPUT_BYTES_PER_RUN,
+  DEFAULT_RUN_RETENTION_CAP,
+} from '../../src/constants/retention.js';
 
 const scratchRoot = resolve('.crontick', 'config-tests');
 const cleanupDirs: string[] = [];
@@ -61,16 +67,55 @@ afterEach(() => {
 });
 
 describe('crontick config core', () => {
+  it('uses Claude as the sole built-in engine in both effective and schema defaults', () => {
+    const { env } = makeHome();
+    const expectedEngine = { command: 'claude', args: [], env: {}, type: 'claude' };
+    expect(loadConfig({ env })).toMatchObject({ defaultEngine: 'claude', engines: { claude: expectedEngine } });
+    expect(Object.keys(loadConfig({ env }).engines)).toEqual(['claude']);
+    expect(ConfigSchema.parse({})).toMatchObject({ defaultEngine: 'claude', engines: { claude: expectedEngine } });
+    expect(Object.keys(ConfigSchema.parse({}).engines)).toEqual(['claude']);
+  });
+
+  it('rejects the removed built-in name as default unless it is explicitly configured', () => {
+    const { env, path } = makeHome();
+    writeRawConfig(path, { defaultEngine: 'copilot' });
+    expect(() => loadConfig({ env })).toThrow(/defaultEngine "copilot" must match a key in engines/);
+
+    writeRawConfig(path, { defaultEngine: 'copilot', engines: { copilot: { command: 'custom' } } });
+    expect(loadConfig({ env }).defaultEngine).toBe('copilot');
+    expect(loadConfig({ env }).engines.copilot).toMatchObject({ command: 'custom', type: 'raw' });
+  });
+
   it('uses built-in defaults when the config file is missing', () => {
     const { env, path } = makeHome();
 
     expect(loadConfig({ env })).toEqual({
-      defaultEngine: 'copilot',
-      engines: { copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {} } },
-      retention: { maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 },
+      defaultEngine: 'claude',
+      engines: { claude: { command: 'claude', args: [], env: {}, type: 'claude' } },
+      retention: { maxRunsPerJob: DEFAULT_RUN_RETENTION_CAP, maxOutputBytesPerRun: DEFAULT_MAX_OUTPUT_BYTES_PER_RUN, maxLogFiles: DEFAULT_MAX_LOG_FILES },
       logging: { fileEnabled: true },
+      defaults: { overlap: 'skip', retry: { max: 0, backoffSec: 30 } },
     });
     expect(validateConfigFile({ env })).toMatchObject({ ok: true, path, problems: [] });
+  });
+
+  it('deep-merges job defaults and preserves raw unset semantics', () => {
+    const { env, path } = makeHome();
+    writeRawConfig(path, { defaults: { overlap: 'queue', retry: { max: 2 } } });
+    expect(loadConfig({ env }).defaults).toEqual({ overlap: 'queue', retry: { max: 2, backoffSec: 30 } });
+    expect(getConfigValue('defaults.retry.backoffSec', { env })).toBe(30);
+
+    setConfigValue('defaults.retry.backoffSec', 45, { env });
+    expect(loadConfig({ env }).defaults.retry).toEqual({ max: 2, backoffSec: 45 });
+    removeConfigValue('defaults.retry.backoffSec', { env });
+    expect(JSON.parse(readFileSync(path, 'utf-8')).defaults.retry).toEqual({ max: 2 });
+    expect(loadConfig({ env }).defaults.retry).toEqual({ max: 2, backoffSec: 30 });
+  });
+
+  it('rejects invalid job defaults in config.json', () => {
+    const { env, path } = makeHome();
+    writeRawConfig(path, { defaults: { timeoutSec: 0 } });
+    expect(() => loadConfig({ env })).toThrow(/defaults.timeoutSec/);
   });
 
   it('validates a minimal custom config and merges built-in engines', () => {
@@ -83,7 +128,7 @@ describe('crontick config core', () => {
     expect(loadConfig({ env })).toMatchObject({
       defaultEngine: 'agency',
       engines: {
-        copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {} },
+        claude: { command: 'claude', args: [], env: {}, type: 'claude' },
         agency: { command: 'agency', args: ['cp', '--logs-dir=XYZ'], env: {} },
       },
     });
@@ -195,20 +240,18 @@ describe('crontick config core', () => {
     });
   });
 
-  it('places the built-in copilot -p flag immediately before the prompt text', () => {
+  it('uses the built-in Claude adapter for a prompt without an explicit engine', () => {
     const { env } = makeHome();
     const result = buildPromptRunCommand({
       kind: 'prompt',
       prompt: 'do the thing',
-      engine: 'copilot',
       args: [],
       reuseSession: false,
     }, { env });
-    expect(result.command).toBe('copilot');
-    expect(result.args).toEqual(['--allow-all-tools', '-p', 'do the thing']);
-    // -p is the last engine arg, so it directly precedes the prompt.
-    const pIndex = result.args.indexOf('-p');
-    expect(result.args[pIndex + 1]).toBe('do the thing');
+    expect(result.command).toBe('claude');
+    expect(result.engine).toBe('claude');
+    expect(result.args.slice(0, 5)).toEqual(['-p', 'do the thing', '--output-format', 'stream-json', '--verbose']);
+    expect(result.args).toContain('--session-id');
   });
 
   it('supports client config CRUD', () => {
@@ -216,7 +259,7 @@ describe('crontick config core', () => {
     const client = createClient({ env, startDaemon: false });
 
     expect(client.initConfig()).toMatchObject({ path, created: true });
-    expect(readFileSync(path, 'utf-8')).toContain('"defaultEngine": "copilot"');
+    expect(readFileSync(path, 'utf-8')).toContain('"defaultEngine": "claude"');
     expect(client.addEngine('agency', { command: 'agency', args: ['cp'], env: { LOGS: 'XYZ' } })).toMatchObject({
       engines: { agency: { command: 'agency', args: ['cp'], env: { LOGS: 'XYZ' } } },
     });
@@ -226,9 +269,9 @@ describe('crontick config core', () => {
     });
     expect(client.setConfigValue('defaultEngine', 'agency')).toMatchObject({ defaultEngine: 'agency' });
     expect(client.getConfigValue('engines.agency.args')).toEqual(['cp', '--logs-dir=XYZ']);
-    expect(client.setConfigValue('defaultEngine', 'copilot')).toMatchObject({ defaultEngine: 'copilot' });
+    expect(client.setConfigValue('defaultEngine', 'claude')).toMatchObject({ defaultEngine: 'claude' });
     expect(client.removeEngine('agency')).not.toHaveProperty('engines.agency');
-    expect(client.removeConfigValue('engines.copilot.args')).toMatchObject({ engines: { copilot: { args: ['--allow-all-tools', '-p'] } } });
+    expect(client.removeConfigValue('engines.claude.args')).toMatchObject({ engines: { claude: { args: [] } } });
     expect(client.validateConfig()).toMatchObject({ ok: true, problems: [] });
   });
 
@@ -262,11 +305,11 @@ describe('crontick config core', () => {
     const { env, path } = makeHome();
 
     // No config file at all: built-in default applies.
-    expect(loadConfig({ env }).retention.maxRunsPerJob).toBe(100);
+    expect(loadConfig({ env }).retention.maxRunsPerJob).toBe(DEFAULT_RUN_RETENTION_CAP);
 
     // Custom config file that omits `retention` entirely: deep-merge keeps the default.
     writeRawConfig(path, { defaultEngine: 'copilot', engines: { copilot: { command: 'copilot' } } });
-    expect(loadConfig({ env }).retention.maxRunsPerJob).toBe(100);
+    expect(loadConfig({ env }).retention.maxRunsPerJob).toBe(DEFAULT_RUN_RETENTION_CAP);
 
     setConfigValue('retention.maxRunsPerJob', 250, { env });
     expect(getConfigValue('retention.maxRunsPerJob', { env })).toBe(250);
@@ -279,11 +322,11 @@ describe('crontick config core', () => {
     const { env, path } = makeHome();
 
     // No config file at all: built-in default applies.
-    expect(loadConfig({ env }).retention.maxOutputBytesPerRun).toBe(2_000_000);
+    expect(loadConfig({ env }).retention.maxOutputBytesPerRun).toBe(DEFAULT_MAX_OUTPUT_BYTES_PER_RUN);
 
     // Custom config file that omits `retention` entirely: deep-merge keeps the default.
     writeRawConfig(path, { defaultEngine: 'copilot', engines: { copilot: { command: 'copilot' } } });
-    expect(loadConfig({ env }).retention.maxOutputBytesPerRun).toBe(2_000_000);
+    expect(loadConfig({ env }).retention.maxOutputBytesPerRun).toBe(DEFAULT_MAX_OUTPUT_BYTES_PER_RUN);
 
     setConfigValue('retention.maxOutputBytesPerRun', 5_000_000, { env });
     expect(getConfigValue('retention.maxOutputBytesPerRun', { env })).toBe(5_000_000);
@@ -300,10 +343,10 @@ describe('crontick config core', () => {
     const { env, path } = makeHome();
     initConfig({ env });
     expect(() => initConfig({ env })).toThrow(/already exists/);
-    writeConfigFile({ defaultEngine: 'copilot', engines: { copilot: { command: 'custom' } } }, { env });
-    expect(loadConfig({ env }).engines.copilot.command).toBe('custom');
+    writeConfigFile({ defaultEngine: 'claude', engines: { claude: { command: 'custom' } } }, { env });
+    expect(loadConfig({ env }).engines.claude.command).toBe('custom');
     expect(initConfig({ env, force: true })).toMatchObject({ path, created: true });
-    expect(loadConfig({ env }).engines.copilot.command).toBe('copilot');
+    expect(loadConfig({ env }).engines.claude.command).toBe('claude');
   });
 
   // Blocker 2 regression: `config unset` must genuinely remove the key from
@@ -312,23 +355,23 @@ describe('crontick config core', () => {
   describe('config unset genuinely removes keys from the persisted file (not baked back in)', () => {
     it('defaultEngine: unset removes the raw key even though the effective value (built-in default) is unchanged', () => {
       const { env, path } = makeHome();
-      initConfig({ env }); // writes a full explicit file, including defaultEngine: "copilot"
-      expect(JSON.parse(readFileSync(path, 'utf-8'))).toHaveProperty('defaultEngine', 'copilot');
+      initConfig({ env }); // writes a full explicit file, including defaultEngine: "claude"
+      expect(JSON.parse(readFileSync(path, 'utf-8'))).toHaveProperty('defaultEngine', 'claude');
 
       removeConfigValue('defaultEngine', { env });
 
       // The raw file must no longer contain the key at all...
       expect(JSON.parse(readFileSync(path, 'utf-8'))).not.toHaveProperty('defaultEngine');
       // ...while the effective (merged) value still falls back to the built-in default.
-      expect(getConfigValue('defaultEngine', { env })).toBe('copilot');
-      expect(loadConfig({ env }).defaultEngine).toBe('copilot');
+      expect(getConfigValue('defaultEngine', { env })).toBe('claude');
+      expect(loadConfig({ env }).defaultEngine).toBe('claude');
     });
 
     it('defaultEngine: unset after an explicit set truly falls back, and stays removed across repeat writes', () => {
       const { env, path } = makeHome();
       initConfig({ env });
-      setConfigValue('defaultEngine', 'copilot', { env }); // re-affirm explicitly (same value, still baked into raw file)
-      expect(JSON.parse(readFileSync(path, 'utf-8'))).toHaveProperty('defaultEngine', 'copilot');
+      setConfigValue('defaultEngine', 'claude', { env }); // re-affirm explicitly (same value, still baked into raw file)
+      expect(JSON.parse(readFileSync(path, 'utf-8'))).toHaveProperty('defaultEngine', 'claude');
 
       removeConfigValue('defaultEngine', { env });
       expect(JSON.parse(readFileSync(path, 'utf-8'))).not.toHaveProperty('defaultEngine');
@@ -336,7 +379,7 @@ describe('crontick config core', () => {
       // Writing an unrelated key afterward must not resurrect defaultEngine in the file.
       setConfigValue('retention.maxRunsPerJob', 42, { env });
       expect(JSON.parse(readFileSync(path, 'utf-8'))).not.toHaveProperty('defaultEngine');
-      expect(getConfigValue('defaultEngine', { env })).toBe('copilot');
+      expect(getConfigValue('defaultEngine', { env })).toBe('claude');
     });
 
     it('retention.*: unset removes the raw key, falling back to the built-in default effectively', () => {
@@ -349,22 +392,22 @@ describe('crontick config core', () => {
 
       const raw = JSON.parse(readFileSync(path, 'utf-8')) as { retention?: { maxRunsPerJob?: number } };
       expect(raw.retention?.maxRunsPerJob).toBeUndefined();
-      expect(getConfigValue('retention.maxRunsPerJob', { env })).toBe(100);
-      expect(loadConfig({ env }).retention.maxRunsPerJob).toBe(100);
+      expect(getConfigValue('retention.maxRunsPerJob', { env })).toBe(DEFAULT_RUN_RETENTION_CAP);
+      expect(loadConfig({ env }).retention.maxRunsPerJob).toBe(DEFAULT_RUN_RETENTION_CAP);
     });
 
-    it('engines map: unsetting a customized built-in copilot field removes it from the file and falls back to the built-in value', () => {
+    it('engines map: unsetting a customized built-in Claude field removes it from the file and falls back to the built-in value', () => {
       const { env, path } = makeHome();
       initConfig({ env });
-      setConfigValue('engines.copilot.command', 'my-custom-copilot', { env });
-      expect((JSON.parse(readFileSync(path, 'utf-8')) as { engines: { copilot: { command: string } } }).engines.copilot.command)
-        .toBe('my-custom-copilot');
+      setConfigValue('engines.claude.command', 'my-custom-claude', { env });
+      expect((JSON.parse(readFileSync(path, 'utf-8')) as { engines: { claude: { command: string } } }).engines.claude.command)
+        .toBe('my-custom-claude');
 
-      removeConfigValue('engines.copilot.command', { env });
+      removeConfigValue('engines.claude.command', { env });
 
-      const raw = JSON.parse(readFileSync(path, 'utf-8')) as { engines: { copilot: Record<string, unknown> } };
-      expect(raw.engines.copilot).not.toHaveProperty('command');
-      expect(getConfigValue('engines.copilot.command', { env })).toBe('copilot');
+      const raw = JSON.parse(readFileSync(path, 'utf-8')) as { engines: { claude: Record<string, unknown> } };
+      expect(raw.engines.claude).not.toHaveProperty('command');
+      expect(getConfigValue('engines.claude.command', { env })).toBe('claude');
     });
 
     it('config get with no path still reports full effective values (including inherited defaults) after unsetting', () => {
@@ -374,12 +417,12 @@ describe('crontick config core', () => {
       removeConfigValue('retention.maxRunsPerJob', { env });
 
       expect(getConfigValue(undefined, { env })).toEqual({
-        defaultEngine: 'copilot',
-        engines: { copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {} } },
-        retention: { maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 },
+        defaultEngine: 'claude',
+        engines: { claude: { command: 'claude', args: [], env: {}, type: 'claude' } },
+        retention: { maxRunsPerJob: DEFAULT_RUN_RETENTION_CAP, maxOutputBytesPerRun: DEFAULT_MAX_OUTPUT_BYTES_PER_RUN, maxLogFiles: DEFAULT_MAX_LOG_FILES },
         logging: { fileEnabled: true },
+        defaults: { overlap: 'skip', retry: { max: 0, backoffSec: 30 } },
       });
     });
   });
 });
-

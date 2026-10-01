@@ -229,7 +229,7 @@ describe('Integration: persistence and orphan run reconciler', () => {
         // once, during open()) doesn't just heal the drop before the prune
         // gets a chance to run.
         const raw = new DatabaseSync(dbPath);
-        raw.exec('DROP TABLE run_logs;');
+        raw.exec('DROP TABLE run_outputs;');
         raw.close();
 
         expect(() => smallCapStore.pruneAllJobsRunHistory()).not.toThrow();

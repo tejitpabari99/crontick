@@ -22,9 +22,8 @@ All library examples import exclusively from the `"crontick"` package specifier 
 
 | File | What it demonstrates | How to run |
 |------|---------------------|------------|
-| `01-quick-start.ts` | Create client, add interval script job, list jobs, delete | `npx tsx examples/01-quick-start.ts` |
+| `01-quick-start.ts` | Create client, add interval prompt job, list jobs, delete | `npx tsx examples/01-quick-start.ts` |
 | `02-cron-schedule.ts` | Cron schedule with timezone, preview next runs, validate | `npx tsx examples/02-cron-schedule.ts` |
-| `03-exec-job.ts` | Exec action (no shell) with command + args | `npx tsx examples/03-exec-job.ts` |
 | `04-prompt-job.ts` | Prompt action with engine, list engines | `npx tsx examples/04-prompt-job.ts` |
 | `05-one-shot.ts` | One-shot schedule (run-at a specific time) | `npx tsx examples/05-one-shot.ts` |
 | `06-run-history.ts` | Trigger run, read run record and logs | `npx tsx examples/06-run-history.ts` |

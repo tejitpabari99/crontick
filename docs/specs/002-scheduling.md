@@ -4,6 +4,11 @@
 - Owner: crontick maintainers
 - Last reviewed: 2026-07-25
 
+Audience: contributors changing the scheduler or schedule validation. Non-duplication: this
+spec is the normative contract; for the mental model see
+[concepts/scheduling.md](../concepts/scheduling.md), and for implementation detail see
+[implementation/scheduler.md](../implementation/scheduler.md).
+
 ## Summary
 
 Crontick supports three schedule kinds: `cron` (recurring via cron expression),
@@ -30,10 +35,11 @@ correct behavior across regions.
 ### Functional requirements
 
 - **R-002-1**: The `schedule.kind` discriminator MUST be one of `cron`, `interval`, `one-shot`.
-- **R-002-2**: A `cron` schedule MUST have a non-empty `cron` string and MAY have a `tz` string.
+- **R-002-2**: A `cron` schedule MUST have a non-empty `cron` string and MUST NOT have a `tz` field: cron expressions fire in the machine local timezone. (New input containing `tz` is rejected with `VALIDATION_ERROR`; a `tz` in an already-stored job file is silently ignored: no warning, log or event.)
 - **R-002-3**: An `interval` schedule MUST have a positive `everySec` number and MAY have a `startAt` ISO-8601 string.
-- **R-002-4**: A `one-shot` schedule MUST have a non-empty `runAt` ISO-8601 string.
-- **R-002-5**: When `tz` is provided for a `cron` schedule, the scheduler MUST pass it to croner as `CronOptions.timezone`.
+- **R-002-4**: A `one-shot` schedule MUST have a non-empty `runAt` ISO-8601 string. A date-time without an offset is interpreted in the machine's local timezone.
+- **R-002-4a**: A job MUST have exactly one schedule; supplying more than one of `--cron`, `--every`, `--at` MUST be rejected with `VALIDATION_ERROR`, and none with `MISSING_ARG`.
+- **R-002-5**: The scheduler MUST create cron entries without a timezone option so croner evaluates them in the machine local timezone.
 - **R-002-6**: The scheduler MUST NOT schedule a disabled job (enabled=false); calling `schedule()` on a disabled job MUST be a no-op.
 - **R-002-7**: `schedule()` MUST be idempotent; calling it on an already-scheduled job MUST first unschedule the previous entry.
 - **R-002-8**: A one-shot whose `runAt` is in the past MUST NOT fire; the entry MUST NOT be registered.
@@ -52,7 +58,7 @@ correct behavior across regions.
 
 ## Behavior
 
-**Cron**: A `Cron` instance from `croner` is created with the pattern and optional timezone.
+**Cron**: A `Cron` instance from `croner` is created with the pattern and no timezone option (machine local time).
 On each cron match, the callback emits a `tick` event with `plannedAt = new Date()`.
 
 **Interval**: An initial `safeSetTimeout` fires after the computed delay. On first fire,
@@ -68,7 +74,7 @@ removes the entry from the internal map. `unscheduleAll()` iterates all entries.
 
 **Input to `schedule()`**: A full `Job` object (uses `job.schedule` and `job.enabled`).
 **Output**: No return value; side-effect is a registered timer that emits `tick` events.
-**`previewNext()` input**: A `Schedule` object + optional `{ n, tz }`.
+**`previewNext()` input**: A `Schedule` object + optional `{ n }`.
 **`previewNext()` output**: `string[]` of ISO-8601 timestamps.
 **`validateSchedule()` input**: A `Schedule` object.
 **`validateSchedule()` output**: `{ ok: boolean; error?: string }`.
@@ -85,17 +91,17 @@ removes the entry from the internal map. `unscheduleAll()` iterates all entries.
 
 ## Acceptance criteria
 
-- [x] Cron scheduling fires ticks at correct times (test file: `tests/scheduler.test.ts`)
-- [x] Interval scheduling respects startAt alignment (test file: `tests/scheduler.test.ts`)
-- [x] One-shot fires exactly once and removes entry (test file: `tests/scheduler.test.ts`)
-- [x] Disabled jobs are not scheduled (test file: `tests/scheduler.test.ts`)
-- [x] Idempotent schedule() replaces previous entry (test file: `tests/scheduler.test.ts`)
-- [x] validateSchedule rejects invalid cron (test file: `tests/scheduler.test.ts`)
-- [x] previewNext returns correct ISO timestamps (test file: `tests/scheduler.test.ts`)
-- [x] safeSetTimeout chains for large delays (test file: `tests/property.scheduler.test.ts`)
-- [x] Property: arbitrary cron expressions produce sorted future dates (test file: `tests/property.cron.test.ts`)
-- [x] One-shot past-time no-op verified in integration context (test file: `tests/integration.oneshot.test.ts`)
-- [x] A live daemon's real Scheduler auto-fires a cron/interval tick end-to-end into a run, with no manual `/run` trigger (test file: `tests/integration.autofire.test.ts`)
+- [x] Cron scheduling fires ticks at correct times (test file: `tests/unit/scheduler.test.ts`)
+- [x] Interval scheduling respects startAt alignment (test file: `tests/unit/scheduler.test.ts`)
+- [x] One-shot fires exactly once and removes entry (test file: `tests/unit/scheduler.test.ts`)
+- [x] Disabled jobs are not scheduled (test file: `tests/unit/scheduler.test.ts`)
+- [x] Idempotent schedule() replaces previous entry (test file: `tests/unit/scheduler.test.ts`)
+- [x] validateSchedule rejects invalid cron (test file: `tests/unit/scheduler.test.ts`)
+- [x] previewNext returns correct ISO timestamps (test file: `tests/unit/scheduler.test.ts`)
+- [x] safeSetTimeout chains for large delays (test file: `tests/unit/property.scheduler.test.ts`)
+- [x] Property: arbitrary cron expressions produce sorted future dates (test file: `tests/unit/property.cron.test.ts`)
+- [x] One-shot past-time no-op verified in integration context (test file: `tests/unit/integration.oneshot.test.ts`)
+- [x] A live daemon's real Scheduler auto-fires a cron/interval tick end-to-end into a run, with no manual `/run` trigger (test file: `tests/unit/integration.autofire.test.ts`)
 
 ## Out of scope
 

@@ -25,19 +25,12 @@ const validJobArb = fc.record({
       everySec: fc.integer({ min: 1, max: 3600 }),
     }),
   ),
-  action: fc.oneof(
-    fc.record({
-      kind: fc.constant('exec' as const),
-      command: fc.constantFrom('echo', 'node', 'pwsh'),
-      args: fc.array(fc.string({ maxLength: 20 }), { maxLength: 5 }),
-    }),
-    fc.record({
-      kind: fc.constant('prompt' as const),
-      prompt: fc.string({ minLength: 1, maxLength: 100 }),
-      engine: fc.constantFrom('copilot' as const, 'agency' as const, 'openai' as const),
-      args: fc.array(fc.string({ maxLength: 20 }), { maxLength: 5 }),
-    }),
-  ),
+  action: fc.record({
+    kind: fc.constant('prompt' as const),
+    prompt: fc.string({ minLength: 1, maxLength: 100 }),
+    engine: fc.constantFrom('copilot' as const, 'agency' as const, 'openai' as const),
+    args: fc.array(fc.string({ maxLength: 20 }), { maxLength: 5 }),
+  }),
 });
 
 const invalidJobArb = fc.oneof(
@@ -99,5 +92,21 @@ describe('property: JobSchema', () => {
       schedule: { kind: 'cron', cron: '* * * * *' },
       action: { kind: 'prompt', prompt: 'hello', promptFile: 'x.txt' },
     }).success).toBe(false);
+  });
+
+  it('requires overlap skip when a prompt reuses a session', () => {
+    const input = {
+      schedule: { kind: 'cron', cron: '* * * * *' },
+      action: { kind: 'prompt', prompt: 'hello', reuseSession: true },
+    };
+    expect(JobSchema.parse(input).overlap).toBe('skip');
+    for (const overlap of ['queue', 'cancel-previous']) {
+      const result = JobSchema.safeParse({ ...input, overlap });
+      expect(result.success).toBe(false);
+      if (!result.success) expect(result.error.issues).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: ['overlap'], message: expect.stringContaining('reuseSession') }),
+      ]));
+    }
+    expect(JobSchema.safeParse({ ...input, action: { ...input.action, reuseSession: false }, overlap: 'queue' }).success).toBe(true);
   });
 });

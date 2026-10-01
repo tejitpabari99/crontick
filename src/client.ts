@@ -9,8 +9,9 @@
  * machine-readable codes; see `src/errors.ts`.
  */
 import http from 'node:http';
+import { existsSync } from 'node:fs';
 import { CrontickError } from './errors.js';
-import { LOG_SOURCES, type LogSource } from './log-source.js';
+import type { RunOutput } from './run-output.js';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -19,12 +20,15 @@ import {
   type DaemonInfo,
   type EnsureDaemonOptions,
 } from './daemon/ensure.js';
+import { getEngineAdapter } from './engines/registry.js';
 import { restartDaemon, startDaemon, stopDaemon, type DaemonRestartResult, type DaemonStartResult, type DaemonStopResult } from './daemon/lifecycle.js';
 import { ScheduleSchema, type Job, type Schedule } from './schemas/job.js';
 import {
   buildJobFromCreateOptions,
+  ExportFileSchema,
   normalizeJobInput,
   normalizeJobPatch,
+  type ExportFile,
   type JobCreateCliOptions,
   type JobCreateInput,
   type JobPatchInput,
@@ -51,6 +55,7 @@ import {
   updateEngine,
   validateConfigFile,
   configFilePath,
+  ensureConfigFile,
   type ConfigValidationResult,
   type CrontickConfig,
   type EngineConfig,
@@ -71,6 +76,13 @@ export interface CrontickClientOptions extends Omit<EnsureDaemonOptions, 'startD
 
 export interface CreateJobOptions extends NormalizeJobInputOptions {
   force?: boolean;
+  /** Mark the job's working directory as trusted in Claude when it is not yet (otherwise TRUST_REQUIRED is thrown). */
+  trustFolder?: boolean;
+}
+
+export interface UpdateJobOptions extends NormalizeJobInputOptions {
+  /** Mark the job's working directory as trusted in Claude when it is not yet (otherwise TRUST_REQUIRED is thrown). */
+  trustFolder?: boolean;
 }
 
 // Bundled layout: client.ts's compiled chunk and index.js both live directly
@@ -90,37 +102,66 @@ function defaultMcpScript(): string {
   return resolvePath(distDir, 'mcp', 'index.js');
 }
 
-export interface LogEntry {
-  runId?: string;
-  stream: string;
-  ts: number;
-  data: string;
-}
+export type { RunOutput, ExportFile };
 
-export interface LogsResult {
-  runId: string;
-  lines: LogEntry[];
+/** Result of `importJobs`: one row per job; `renamedFrom` is set when the alias was suffixed to avoid a collision. */
+export interface ImportResult {
+  imported: number;
+  results: Array<{ id: string; alias?: string; ok: boolean; renamedFrom?: string; error?: string }>;
 }
-
-export { LOG_SOURCES };
-export type { LogSource };
 
 export interface StatsSummary {
   totalJobs: number;
   enabledJobs: number;
-  totalRuns: number;
   succeeded: number;
   failed: number;
-  avgDurationMs: number | null;
+  canceled: number;
+  skipped: number;
+  /** Average execution time in seconds (2 decimals) over runs that finished executing; null when none. */
+  avgDurationSec: number | null;
+  totalCostUsd: number;
+  totalTurns: number;
+}
+
+/** Run fields returned by getRun() and listRuns() on all three surfaces. */
+export interface RunRecord {
+  id: string;
+  jobId: string;
+  startedAt: number;
+  endedAt?: number;
+  status: string;
+  exitCode?: number;
+  error?: string;
+  durationMs?: number;
+  pid?: number;
+  outputTruncated: boolean;
+  sessionId?: string;
+  command?: string;
+  costUsd?: number;
+  turns?: number;
+  usageJson?: string;
+  transcriptPath?: string;
+  engineStatus?: string;
+  /** Absolute path of the per-job log file (crontick-side events only, all runs of the job); null when file logging is off. Only set by getRun(). */
+  logFile?: string | null;
+  /** Whether the file at `logFile` exists on disk. Only set by getRun(), when `logFile` is not null. */
+  logFileExists?: boolean;
+  /** Whether the file at `transcriptPath` exists on disk. Only set by getRun(), when `transcriptPath` is set. */
+  transcriptExists?: boolean;
 }
 
 export interface JobStats {
   jobId: string;
-  totalRuns: number;
   succeeded: number;
   failed: number;
+  canceled: number;
+  skipped: number;
   lastStatus: string | null;
   lastRunAt: number | null;
+  /** Average execution time in seconds (2 decimals) over runs that finished executing; null when none. */
+  avgDurationSec: number | null;
+  totalCostUsd: number;
+  totalTurns: number;
 }
 
 interface DaemonMissedFiresSummary {
@@ -135,6 +176,10 @@ export interface DaemonStatus {
   version: string;
   port: number;
   baseUrl: string;
+  /** Dashboard URL served by this daemon. */
+  dashboardUrl: string;
+  /** `started on fallback port N; default 47615 is in use` when the daemon is not on the preferred port, else null. */
+  portNote: string | null;
   uptimeSec: number;
   jobs: number;
   missedFires: DaemonMissedFiresSummary;
@@ -155,8 +200,10 @@ export interface CrontickInfo {
   node: string;
   platform: string;
   configPath: string;
+  /** Whether the config file exists on disk. When false, built-in defaults are in use (create it with initConfig). */
+  configExists: boolean;
   paths: CrontickInfoPaths;
-  daemon: { running: boolean; pid?: number; port?: number };
+  daemon: { running: boolean; pid?: number; port?: number; portNote?: string | null };
   /**
    * URL of the daemon-served dashboard, or null when it cannot be resolved
    * (no running daemon and no readable port file). The dashboard is always
@@ -207,6 +254,13 @@ export class CrontickClient {
   /** Resolves daemon URL, probes health, and demand-starts if needed. Library-only (not in surface parity). */
   async ensure(): Promise<DaemonInfo> {
     this.logger.debug('Ensuring daemon', { startDaemon: this.shouldStartDaemon() });
+    try {
+      // First use writes the full default config.json so it can be discovered
+      // and edited; an existing file is never touched. Best-effort only.
+      ensureConfigFile({ env: this.effectiveEnv(), logger: this.logger.child('config') });
+    } catch (err) {
+      this.logger.debug('Default config file could not be created', { error: errorMessage(err) });
+    }
     const info = await ensureDaemon({
       ...this.options,
       env: this.effectiveEnv(),
@@ -224,8 +278,9 @@ export class CrontickClient {
   }
 
   async createJob(input: Job | JobCreateInput, options: CreateJobOptions = {}): Promise<Job> {
-    const { force, ...normalizeInputOptions } = options;
+    const { force, trustFolder, ...normalizeInputOptions } = options;
     const job = normalizeJobInput(input as JobCreateInput, this.normalizeOptions(normalizeInputOptions));
+    this.ensureFoldersTrusted([job], trustFolder === true);
     return this.request<Job>('POST', force ? '/api/jobs?force=1' : '/api/jobs', job);
   }
 
@@ -233,7 +288,7 @@ export class CrontickClient {
   async createJobFromCliOptions(input: JobCreateCliOptions): Promise<Job> {
     return this.createJob(
       buildJobFromCreateOptions(input, this.normalizeOptions({ cwd: this.options.cwd ?? process.cwd() })),
-      { force: input.force },
+      { force: input.force, trustFolder: input.trustFolder },
     );
   }
 
@@ -247,24 +302,25 @@ export class CrontickClient {
   }
 
   /** Fetches the existing job first so the patch is applied over the current state. `id` accepts either the job's GUID id or its alias -- the daemon resolves it (see docs/concepts/jobs.md#identity). */
-  async updateJob(id: string, patch: JobPatchInput, options: NormalizeJobInputOptions = {}): Promise<Job> {
+  async updateJob(id: string, patch: JobPatchInput, options: UpdateJobOptions = {}): Promise<Job> {
+    const { trustFolder, ...normalizeInputOptions } = options;
     const existing = await this.getJob(id);
-    const normalized = normalizeJobPatch(id, existing, patch, this.normalizeOptions(options));
+    const normalized = normalizeJobPatch(id, existing, patch, this.normalizeOptions(normalizeInputOptions));
+    // Only a new folder or a different engine can change the trust answer.
+    if (this.trustTarget(existing)?.key !== this.trustTarget(normalized)?.key) this.ensureFoldersTrusted([normalized], trustFolder === true);
     return this.request<Job>('PUT', `/api/jobs/${encodeURIComponent(id)}`, normalized);
   }
 
   /** `id` accepts either the job's GUID id or its alias. */
-  async deleteJob(id?: string, options: { all?: boolean; force?: boolean } = {}): Promise<{ ok: true } | { ok: true; deleted: number }> {
+  async deleteJob(id?: string, options: { all?: boolean; force?: boolean } = {}): Promise<{ ok: true; canceledRun: boolean; deletedRuns: number } | { ok: true; deleted: number }> {
     if (options.all) {
       if (!options.force) throw new CrontickError('VALIDATION_ERROR', 'Deleting all jobs requires force:true');
       // Single atomic daemon call: DELETE /api/jobs wipes every job (and its
-      // runs/logs/schedule-state) in one store transaction. Avoids the old
-      // per-job loop, which had no atomicity and could report success after a
-      // partial failure.
+      // runs/outputs/schedule-state) in one store transaction.
       return this.request<{ ok: true; deleted: number }>('DELETE', '/api/jobs?force=1');
     }
     if (!id) throw new CrontickError('VALIDATION_ERROR', 'Provide a job id or alias, or set all:true (with force:true) to delete every job');
-    return this.request<{ ok: true }>('DELETE', `/api/jobs/${encodeURIComponent(id)}`);
+    return this.request<{ ok: true; canceledRun: boolean; deletedRuns: number }>('DELETE', `/api/jobs/${encodeURIComponent(id)}`);
   }
 
   /** `id` accepts either the job's GUID id or its alias. */
@@ -277,7 +333,11 @@ export class CrontickClient {
     return this.request<Job>('POST', `/api/jobs/${encodeURIComponent(id)}/disable`);
   }
 
-  /** `id` accepts either the job's GUID id or its alias. */
+  /**
+   * Run a job once immediately, even when disabled. Does not enable the job or
+   * touch its schedule; the overlap policy still applies. `id` accepts either
+   * the job's GUID id or its alias.
+   */
   async runNow(id: string): Promise<{ runId: string }> {
     return this.request<{ runId: string }>('POST', `/api/jobs/${encodeURIComponent(id)}/run`);
   }
@@ -287,46 +347,77 @@ export class CrontickClient {
   }
 
 
-  async getRun(runId: string): Promise<unknown> {
-    return this.request('GET', `/api/runs/${encodeURIComponent(runId)}`);
+  async getRun(runId: string): Promise<RunRecord> {
+    return this.request<RunRecord>('GET', `/api/runs/${encodeURIComponent(runId)}`);
   }
 
   /** `options.jobId` accepts either the job's GUID id or its alias. */
-  async listRuns(options: { jobId?: string; limit?: number; since?: number; status?: string } = {}): Promise<unknown[]> {
+  async listRuns(options: { jobId?: string; limit?: number; since?: number; status?: string } = {}): Promise<RunRecord[]> {
     const params = new URLSearchParams();
     if (options.jobId) params.set('jobId', options.jobId);
     if (options.limit !== undefined) params.set('limit', String(options.limit));
     if (options.since !== undefined) params.set('since', String(options.since));
     if (options.status !== undefined) params.set('status', options.status);
     const qs = params.toString();
-    return this.request<unknown[]>('GET', `/api/runs${qs ? `?${qs}` : ''}`);
+    return this.request<RunRecord[]>('GET', `/api/runs${qs ? `?${qs}` : ''}`);
   }
 
-  async getLogs(runId: string, options: { lines?: number; source?: LogSource | (string & {}) } = {}): Promise<LogsResult> {
-    const source = options.source;
-    // Core is the single source of truth for `source` validation: the CLI/MCP
-    // shims forward the value unchecked and the daemon defensively normalizes
-    // unknowns, so the user-facing rejection must originate here.
-    if (source !== undefined && !LOG_SOURCES.includes(source as LogSource)) {
-      throw new CrontickError(
-        'VALIDATION_ERROR',
-        `Invalid source '${source}'. Expected one of: ${LOG_SOURCES.join(', ')}.`,
-      );
-    }
-    const query = source && source !== 'all' ? `?source=${source}` : '';
-    const logs = await this.request<LogEntry[]>('GET', `/api/runs/${encodeURIComponent(runId)}/logs${query}`);
-    const logicalLines = reconstructLogicalLogLines(logs);
-    const lines = options.lines !== undefined ? logicalLines.slice(-options.lines) : logicalLines;
-    return { runId, lines };
+  /**
+   * Cleaned output of a run: the engine's final answer, the error (if any), and the
+   * assistant's text only (segments split by tool calls are joined with `---`; no tool
+   * lines, thinking or hook noise). The per-job crontick log file path is `getRun().logFile`.
+   */
+  async getOutput(runId: string): Promise<RunOutput> {
+    return this.request<RunOutput>('GET', `/api/runs/${encodeURIComponent(runId)}/output`);
   }
 
-  async exportJobs(options: { includeRuns?: boolean } = {}): Promise<{ jobs: Job[]; runs?: unknown[] }> {
-    return this.request('GET', `/api/export${options.includeRuns ? '?includeRuns=1' : ''}`);
+  /**
+   * Export jobs as a share file (`schema: 1`, jobs only, ids omitted). `onlyJobs`
+   * (ids or aliases) limits the export; any unknown entry fails with
+   * JOB_NOT_FOUND listing every miss.
+   */
+  async exportJobs(options: { onlyJobs?: string[] } = {}): Promise<ExportFile> {
+    const params = new URLSearchParams();
+    if (options.onlyJobs && options.onlyJobs.length > 0) params.set('jobs', options.onlyJobs.join(','));
+    const qs = params.toString();
+    return this.request<ExportFile>('GET', `/api/export${qs ? `?${qs}` : ''}`);
   }
 
-  async importJobs(jobs: unknown[], options: NormalizeJobInputOptions & { runs?: unknown[] } = {}): Promise<unknown> {
-    const normalized = jobs.map((job) => normalizeJobInput(job as JobCreateInput, this.normalizeOptions(options)));
-    return this.request('POST', '/api/import', { jobs: normalized, runs: options.runs });
+  /**
+   * Import jobs from a share file (`schema: 1`). The whole file is validated
+   * first (a bad file imports nothing); every job gets a new GUID and an alias
+   * collision gets a `-2`, `-3`, ... suffix (`renamedFrom` in the result row).
+   * A job whose working directory does not exist fails on its own row; Claude
+   * folder trust is checked once per distinct folder (see `trustFolder`).
+   */
+  async importJobs(file: unknown, options: NormalizeJobInputOptions & { trustFolder?: boolean } = {}): Promise<ImportResult> {
+    const { trustFolder, ...normalizeInputOptions } = options;
+    const parsed = ExportFileSchema.safeParse(file);
+    if (!parsed.success) throw importFileError(file, parsed.error);
+    const normalizeOptions = this.normalizeOptions(normalizeInputOptions);
+    const failures: ImportResult['results'] = [];
+    const jobs: Job[] = [];
+    parsed.data.jobs.forEach((entry, index) => {
+      const { id: _ignoredId, ...input } = entry;
+      void _ignoredId;
+      try {
+        jobs.push(normalizeJobInput(input as JobCreateInput, normalizeOptions));
+      } catch (err) {
+        if (err instanceof CrontickError && err.code === 'INVALID_CWD') {
+          failures.push({ id: '?', alias: entry.alias, ok: false, error: `${err.code}: jobs.${index}: ${err.message}` });
+          return;
+        }
+        if (err instanceof CrontickError) {
+          throw new CrontickError(err.code, `Invalid import file: jobs.${index}: ${err.message}`, err.details);
+        }
+        throw err;
+      }
+    });
+    this.ensureFoldersTrusted(jobs, trustFolder === true);
+    const applied = jobs.length > 0
+      ? await this.request<ImportResult>('POST', '/api/import', { jobs })
+      : { imported: 0, results: [] };
+    return { imported: applied.imported, results: [...applied.results, ...failures] };
   }
 
   async validateSchedule(schedule: Schedule): Promise<unknown> {
@@ -334,7 +425,7 @@ export class CrontickClient {
   }
 
   /** Library-only: preview upcoming fire times for a raw schedule object. Surfaced via jobSchedule (per-job). */
-  async previewSchedule(input: { schedule: Schedule; n?: number; tz?: string }): Promise<unknown> {
+  async previewSchedule(input: { schedule: Schedule; n?: number }): Promise<unknown> {
     return this.request('POST', '/api/schedules/preview', {
       ...input,
       n: input.n ?? 5,
@@ -349,7 +440,7 @@ export class CrontickClient {
   async jobSchedule(id: string, options: { n?: number } = {}): Promise<unknown> {
     const job = await this.getJob(id);
     const preview = await this.previewSchedule({ schedule: job.schedule, n: options.n });
-    return { jobId: job.id, alias: job.alias ?? null, schedule: job.schedule, ...(preview as Record<string, unknown>) };
+    return { jobId: job.id, alias: job.alias ?? null, enabled: job.enabled, cwd: job.action.cwd ?? null, schedule: job.schedule, ...(preview as Record<string, unknown>) };
   }
 
   async statsSummary(): Promise<StatsSummary> {
@@ -433,7 +524,7 @@ export class CrontickClient {
     let dashboardUrl: string | null = null;
     try {
       const status = await this.request<DaemonStatus>('GET', '/api/daemon/status', undefined, { ensure: false });
-      daemon = { running: true, pid: status.pid, port: status.port };
+      daemon = { running: true, pid: status.pid, port: status.port, portNote: status.portNote ?? null };
       dashboardUrl = status.port ? `http://127.0.0.1:${String(status.port)}/dashboard` : null;
     } catch {
       daemon = { running: false };
@@ -444,6 +535,7 @@ export class CrontickClient {
       node: process.version,
       platform: process.platform,
       configPath: config.path,
+      configExists: existsSync(config.path),
       paths: {
         dataDir: dataDir(env),
         jobsDir: jobsDir(env),
@@ -468,7 +560,7 @@ export class CrontickClient {
     return {
       path: configFilePath({ env: this.effectiveEnv() }),
       note:
-        'Edit this file to change the config. Engine, logging, and per-run retention settings apply automatically on the next run; the store retention cap (retention.maxRunsPerJob) is read at daemon start, so changing it requires a daemon restart — from the CLI, run `crontick info daemon stop` and then any daemon-backed command to start it again.',
+        'Edit this file to change the config. Engine, logging, and per-run retention settings apply automatically on the next run; the store retention cap (retention.maxRunsPerJob) is read at daemon start, so changing it requires a daemon restart — from the CLI, run `crontick daemon stop` and then any daemon-backed command to start it again.',
     };
   }
 
@@ -493,7 +585,7 @@ export class CrontickClient {
     return listEngines({ env: this.effectiveEnv(), logger: this.logger.child('config') });
   }
 
-  addEngine(name: string, engine: EngineConfig): CrontickConfig {
+  addEngine(name: string, engine: Omit<EngineConfig, 'type'> & { type?: EngineConfig['type'] }): CrontickConfig {
     return addEngine(name, engine, { env: this.effectiveEnv(), logger: this.logger.child('config') });
   }
 
@@ -595,6 +687,47 @@ export class CrontickClient {
     return baseUrl;
   }
 
+  /** `engine|cwd` identity of what the trust check applies to, or undefined when the job's engine has no trust concept. */
+  private trustTarget(job: Job): { key: string; cwd: string; engine: string; adapter: ReturnType<typeof getEngineAdapter> } | undefined {
+    if (job.action.kind !== 'prompt') return undefined;
+    const config = loadConfig({ env: this.effectiveEnv() });
+    const engine = job.action.engine ?? config.defaultEngine;
+    const engineConfig = config.engines[engine];
+    if (!engineConfig) return undefined;
+    const adapter = getEngineAdapter(engineConfig.type);
+    if (!adapter.isFolderTrusted || !adapter.trustFolder) return undefined;
+    const cwd = job.action.cwd ?? this.options.cwd ?? process.cwd();
+    return { key: `${engine}|${cwd}`, cwd, engine, adapter };
+  }
+
+  /**
+   * Claude folder trust guardrail (engines without trust hooks are skipped).
+   * Untrusted folders throw TRUST_REQUIRED before anything is persisted, unless
+   * `trustFolder` is true, in which case they are trusted first. Distinct
+   * folders are checked once each; details.folders lists every untrusted one.
+   */
+  private ensureFoldersTrusted(jobs: Job[], trustFolder: boolean): void {
+    const env = this.effectiveEnv() ?? process.env;
+    const untrusted = new Map<string, NonNullable<ReturnType<CrontickClient['trustTarget']>>>();
+    for (const job of jobs) {
+      const target = this.trustTarget(job);
+      if (!target || untrusted.has(target.cwd)) continue;
+      if (!target.adapter.isFolderTrusted!(target.cwd, { env })) untrusted.set(target.cwd, target);
+    }
+    if (untrusted.size === 0) return;
+    const targets = [...untrusted.values()];
+    if (!trustFolder) {
+      const folders = targets.map((target) => target.cwd);
+      const subject = folders.length === 1 ? `Folder ${folders[0]} is not` : `Folders ${folders.join(', ')} are not`;
+      throw new CrontickError(
+        'TRUST_REQUIRED',
+        `${subject} trusted by Claude. Re-run with --trust-folder (CLI) or trustFolder: true (library/MCP) to trust ${folders.length === 1 ? 'it' : 'them'}. Agents: ask the user for permission first, then call again with trustFolder: true.`,
+        { cwd: folders[0], folders, engine: targets[0]!.engine },
+      );
+    }
+    for (const target of targets) target.adapter.trustFolder!(target.cwd, { env });
+  }
+
   private normalizeOptions(options: NormalizeJobInputOptions): NormalizeJobInputOptions {
     return {
       cwd: this.options.cwd,
@@ -691,55 +824,15 @@ async function boundedBackoff(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 100));
 }
 
-function reconstructLogicalLogLines(entries: LogEntry[]): LogEntry[] {
-  const linesByEntry: LogEntry[][] = entries.map(() => []);
-  const remainders = new Map<string, {
-    data: string;
-    runId?: string;
-    lastTs: number;
-    lastIndex: number;
-  }>();
-
-  entries.forEach((entry, index) => {
-    const previous = remainders.get(entry.stream);
-    const buffer = `${previous?.data ?? ''}${entry.data}`;
-    let cursor = 0;
-
-    while (cursor < buffer.length) {
-      const newlineIndex = buffer.indexOf('\n', cursor);
-      if (newlineIndex === -1) break;
-      linesByEntry[index]!.push({
-        runId: entry.runId ?? previous?.runId,
-        stream: entry.stream,
-        ts: entry.ts,
-        data: buffer.slice(cursor, newlineIndex + 1),
-      });
-      cursor = newlineIndex + 1;
-    }
-
-    const remainder = buffer.slice(cursor);
-    if (remainder) {
-      remainders.set(entry.stream, {
-        data: remainder,
-        runId: entry.runId ?? previous?.runId,
-        lastTs: entry.ts,
-        lastIndex: index,
-      });
-    } else {
-      remainders.delete(entry.stream);
-    }
-  });
-
-  for (const [stream, remainder] of remainders) {
-    linesByEntry[remainder.lastIndex]!.push({
-      runId: remainder.runId,
-      stream,
-      ts: remainder.lastTs,
-      data: remainder.data,
-    });
-  }
-
-  return linesByEntry.flat();
+/** Maps a failed export-file parse to a VALIDATION_ERROR naming the offending path (nothing is imported). */
+function importFileError(file: unknown, error: { issues: Array<{ path: PropertyKey[]; message: string }> }): CrontickError {
+  const problems = error.issues.slice(0, 10).map((issue) => `${issue.path.length > 0 ? issue.path.map(String).join('.') : '<root>'}: ${issue.message}`);
+  const hint = Array.isArray(file)
+    ? ' A bare array is not supported; use a file written by `crontick share export` (an object with "schema": 1 and "jobs").'
+    : typeof file === 'object' && file !== null && !('schema' in file)
+      ? ' The file has no "schema" field; use a file written by `crontick share export` (schema 1).'
+      : '';
+  return new CrontickError('VALIDATION_ERROR', `Invalid import file: ${problems.join('; ')}.${hint} Nothing was imported.`, { issues: problems });
 }
 
 function errorMessage(err: unknown): string {

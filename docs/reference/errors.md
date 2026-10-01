@@ -77,6 +77,14 @@ class CrontickError extends Error {
 | **Message shape** | `MCP server script not found: <path>. Run: npm run build` |
 | **Details** | — |
 
+### JOB_NOT_FOUND
+
+| | |
+|---|---|
+| **When** | The daemon API cannot resolve a job identifier (GUID or alias) |
+| **Message shape** | `Job <idOrAlias> not found` |
+| **Details** | — |
+
 ### NOT_FOUND
 
 | | |
@@ -117,12 +125,20 @@ class CrontickError extends Error {
 | **Message shape** | `Invalid job` or specific validation failure |
 | **Details** | Zod formatted error (`.format()`) |
 
+### ALIAS_GENERATION_FAILED
+
+| | |
+|---|---|
+| **When** | `generateAlias()` could not find an unused auto-generated alias after 50 attempts |
+| **Message shape** | `Could not generate a unique job alias after <n> attempts. Provide an explicit alias.` |
+| **Details** | — |
+
 ### MISSING_ARG
 
 | | |
 |---|---|
 | **When** | CLI invocation omits a required argument (e.g., no schedule or action source) |
-| **Message shape** | `Provide --cron, --every <sec>, or --at <iso>` (or similar) |
+| **Message shape** | `Provide exactly one schedule: --cron <expr>, --every <interval> ..., or --at <datetime> ...` (or similar) |
 | **Details** | — |
 
 ### ENV_FILE_ERROR
@@ -193,9 +209,61 @@ class CrontickError extends Error {
 
 | | |
 |---|---|
-| **When** | Attempting to remove a built-in engine (e.g., `copilot`) |
+| **When** | Attempting to remove a built-in engine (currently `claude`) |
 | **Message shape** | `Engine "<name>" is a built-in fallback engine and cannot be removed...` |
 | **Details** | `{ path, key }` |
+
+### TRUST_REQUIRED
+
+| | |
+|---|---|
+| **When** | A Claude job's working directory is not trusted in Claude's config (`hasTrustDialogAccepted`); thrown before anything is saved |
+| **Message shape** | Names the folder and how to trust it (`--trust-folder` / `trustFolder: true`) |
+| **Details** | — |
+
+See [troubleshooting.md](../troubleshooting.md#trust_required-when-creating-a-claude-job).
+
+### CLAUDE_CONFIG_UNREADABLE
+
+| | |
+|---|---|
+| **When** | Recording folder trust needs Claude's `.claude.json`, which is not parsable JSON |
+| **Details** | — |
+
+### TRUST_DECLINED
+
+| | |
+|---|---|
+| **When** | CLI only: an interactive `Trust it? (y/N)` prompt after `TRUST_REQUIRED` was answered with anything but `y`/`yes`; nothing is created or changed |
+| **Details** | Same as `TRUST_REQUIRED` |
+
+### CLAUDE_CONFIG_BUSY
+
+| | |
+|---|---|
+| **When** | Recording folder trust: Claude's `.claude.json` kept changing during the atomic write, so crontick gave up after its retries and changed nothing. Try again |
+| **Details** | `{ path }` |
+
+### CWD_CHANGE_BREAKS_SESSION
+
+| | |
+|---|---|
+| **When** | An update changes `cwd` of a job that has a session (`sessionId` or `reuseSession`) |
+| **Fix** | Also pass `--session-id <id>` for the new directory, or `--reuse-session` for a fresh one |
+
+### INVALID_CWD
+
+| | |
+|---|---|
+| **When** | A job's working directory does not exist (also reported per row on `share import`) |
+
+### NOT_IMPLEMENTED
+
+| | |
+|---|---|
+| **When** | The daemon API route is reached in a context that does not support it (HTTP 501), e.g. graceful shutdown without a shutdown hook |
+| **Message shape** | `Graceful shutdown is not wired for this context` |
+| **Details** | — |
 
 ### FORBIDDEN
 
@@ -241,17 +309,20 @@ an unrelated, run-scoped vocabulary; do not conflate the two.
 
 | Stored `runs.error` prefix | Set by | Meaning |
 |-----------------------------|--------|---------|
-| `DAEMON_RESTART: run was canceled ...` | `Store.reconcileOrphanRuns()` | A run left `queued` (never spawned), or left `running` and confirmed dead by a process-liveness check, when the daemon last stopped. Exported as `ORPHAN_RUN_ERROR_CODE` (`'DAEMON_RESTART'`) and `ORPHAN_RUN_ERROR_MESSAGE` from `src/errors.ts` and the package root — see [library-api.md](./library-api.md). A run whose liveness check finds the process still alive (or the check was inconclusive) is *adopted* instead of canceled — see [storage internals](../internals/storage.md#orphan-reconciliation) — and does not get this error. |
+| `DAEMON_RESTART: run was canceled ...` | `Store.reconcileOrphanRuns()` | A run left `queued` (never spawned), or left `running` and confirmed dead by a process-liveness check, when the daemon last stopped. Exported as `ORPHAN_RUN_ERROR_CODE` (`'DAEMON_RESTART'`) and `ORPHAN_RUN_ERROR_MESSAGE` from `src/errors.ts` and the package root — see [library-api.md](./library-api.md). A run whose liveness check finds the process still alive (or the check was inconclusive) is *adopted* instead of canceled — see [storage internals](../implementation/storage.md#orphan-reconciliation) — and does not get this error. |
 | `DAEMON_RESTART: adopted run was terminated` | `Runner.cancelRun()`/`cancelJob()` | An adopted run (see above) was explicitly canceled by a user or overlap policy after being re-attached to a new daemon process. |
 | `DAEMON_RESTART: process exited while the daemon was not running or between adoption and this check; exit code unknown` | `Runner` adoption poll, exported as `ADOPTED_RUN_EXITED_MESSAGE` from `src/daemon/runner.ts` (internal, not re-exported from the package root) | An adopted run's process had already exited by the time the adoption poll first checked it, so no exit code could be captured. Distinct from the orphan-cancellation message above: this run *did* run to completion, just without a daemon present to observe how. |
 | `MISSED: daemon was not running at the scheduled fire time` | `Store.recordMissedRun()`, exported as `MISSED_RUN_ERROR_MESSAGE` from `src/daemon/store.ts` (internal, not re-exported from the package root) | A scheduled fire that occurred while no daemon process was running; recorded, never executed. See [concepts/daemon-lifecycle.md](../concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down). |
+| `overlap=skip: another run is already active` | `Runner.run()` (`src/daemon/runner.ts`) | The fire never started a process because overlap policy `skip` found another run for the job already active; recorded `status: 'skipped'`. Distinct from `canceled`, which stops a run that had already started. |
 | `run exceeded timeoutSec (<n>s)` | `Runner`'s per-action timer (`src/daemon/runner.ts`) | The job's `timeoutSec` elapsed before the process exited; the runner sent `SIGTERM` itself and recorded `status: 'timeout'`. Distinct from `status: 'canceled'`, which is a user- or overlap-policy-initiated stop — see [concepts/execution.md](../concepts/execution.md#timeouts). |
 | `RUNNER_CALLBACK_FAILED: ...` | `src/daemon/runner.ts` | A user-supplied run callback threw. |
 | `SESSION_ID_NOT_FOUND: ...` | `src/daemon/runner.ts` | `reuseSession` capture found no session id in prompt engine output. |
+| `SESSION_NOT_FOUND: ...` | `src/daemon/runner.ts` | Claude resume was rejected before spawn because no completed result for this job or no transcript exists for the session. Thrown as a `CrontickError` internally and recorded on the failed run. |
+| `ACTION_CWD_INVALID: ...` | `src/daemon/runner.ts` | The job's `action.cwd` does not exist or is not a directory; the run fails before spawn. |
 | `SESSION_PERSIST_FAILED: ...` | `src/daemon/runner.ts` | Persisting a captured session id back to the job file failed. |
 
 See [error-model.md](../concepts/error-model.md#stored-runserror-values-are-not-crontickerror-codes)
-and [storage internals](../internals/storage.md#orphan-reconciliation).
+and [storage internals](../implementation/storage.md#orphan-reconciliation).
 
 ---
 

@@ -8,11 +8,11 @@ import { createClient } from 'crontick';
 
 const client = createClient();
 
-// Create a simple script job (interval schedule, but we will trigger manually).
+// Create a simple prompt job (interval schedule, but we will trigger manually).
 await client.createJob({
   id: 'run-history-demo',
   schedule: { kind: 'interval', everySec: 3600 },
-  action: { kind: 'script', script: 'echo "run at $(date)"' },
+  action: { kind: 'prompt', prompt: 'Report the current date and time' },
 });
 
 // Trigger an immediate run.
@@ -26,12 +26,18 @@ await new Promise((resolve) => setTimeout(resolve, 2000));
 const run = await client.getRun(runId);
 console.log('Run record:', JSON.stringify(run, null, 2));
 
-// Retrieve captured logs (last 20 lines).
-const logs = await client.getLogs(runId, { lines: 20 });
-console.log('Logs:');
-for (const line of logs.lines) {
-  console.log(`  [${line.stream}] ${line.data}`);
-}
+// The record carries the per-job log file path (crontick's own lifecycle events); null when file logging is off.
+console.log('Log file:', run.logFile);
+
+// The output view: the engine's final answer, error and full stderr. Tool calls and
+// interim assistant text are never kept.
+const output = await client.getOutput(runId);
+console.log('Result:', output.result);
+console.log('Error:', output.error);
+console.log('Stderr:', output.stderr);
+
+// Claude runs also carry the path of the engine's own transcript (crontick never reads it).
+console.log('Transcript:', run.transcriptPath ?? '(none)');
 
 // List recent runs for this job.
 const runs = await client.listRuns({ jobId: 'run-history-demo', limit: 5 });

@@ -2,27 +2,32 @@
 
 - Status: Active
 - Owner: crontick maintainers
-- Last reviewed: 2026-07-30
+- Last reviewed: 2026-09-28
+
+Audience: contributors and coding agents changing the runner or engine adapters.
+Non-duplication: this spec is the normative contract; for the mental model see
+[concepts/execution.md](../concepts/execution.md), and for implementation detail see
+[implementation/prompt-execution.md](../implementation/prompt-execution.md) and
+[implementation/engines.md](../implementation/engines.md).
 
 ## Summary
 
-When the scheduler emits a tick, the daemon creates a run record and delegates to the
-runner. The runner applies the overlap policy, spawns a child process appropriate to the
-action kind, captures output, enforces timeouts, handles retries, and finalizes the run
-status.
+When the scheduler emits a tick, the daemon creates a run record and delegates to the runner.
+The runner applies the overlap policy, spawns the configured prompt engine, captures output,
+enforces timeouts, handles retries, and finalizes the run status. Engine-specific invocation and
+result parsing live in an adapter selected by `engine.type` (see spec 007).
 
 ## Motivation
 
-Reliable execution with deterministic overlap, retry, and timeout semantics is critical
-for a local cron daemon. The runner must handle all three action kinds uniformly while
-preserving observability through captured logs and structured run records.
+Reliable execution with deterministic overlap, retry, and timeout semantics is critical for a
+local cron daemon, with observability through parsed run output, a per-job log file of crontick-side events, and structured run records.
 
 ## Terminology
 
 | Term | Definition |
 |------|-----------|
 | Run | A single execution attempt of a job, identified by a UUID. |
-| Run status | One of: `queued`, `running`, `success`, `failed`, `canceled`, `timeout`. (A seventh status, `missed`, is inserted directly by daemon startup for a fire that occurred while no daemon was running -- see spec 004 R-004-28. It is never produced by the runner and is out of scope for this spec.) |
+| Run status | One of: `queued`, `running`, `success`, `failed`, `canceled`, `skipped`, `timeout`. `missed` is inserted directly by daemon startup for a fire that occurred while no daemon was running (spec 004 R-004-28). |
 | Overlap policy | `skip`: drop new tick if active; `queue`: serialize; `cancel-previous`: abort active. |
 | Retry | Re-attempt after backoff on failure (not on cancel/timeout). |
 
@@ -32,33 +37,39 @@ preserving observability through captured logs and structured run records.
 
 - **R-003-1**: On tick, the daemon MUST insert a run with status `queued` via `Store.insertRun()` before invoking the runner.
 - **R-003-2**: The runner MUST transition the run to `running` before spawning the child process.
-- **R-003-3**: `overlap=skip`: If a run for the same job is already active, the new run MUST be immediately finalized as `canceled` with the error `"overlap=skip: another run is already active"`.
-- **R-003-4**: `overlap=cancel-previous`: If a run for the same job is active, the runner MUST abort it (via `AbortController`) before starting the new run.
-- **R-003-5**: `overlap=queue`: Runs MUST be serialized in FIFO order per job; the queue drains sequentially.
-- **R-003-6**: For `script` actions, the runner MUST write the script to a temp file under the managed data root (`<dataDir>/tmp/scripts/`), resolve the shell (`auto` -> pwsh on Windows, bash elsewhere), and spawn the shell with the temp file as argument. When the resolved shell is PowerShell (`pwsh`/`powershell`), the runner MUST invoke a wrapper script (also under `<dataDir>/tmp/scripts/`) that preserves an explicit user `exit N`, promotes PowerShell/native failures to a truthful non-zero exit status, and sets UTF-8 output encoding before the user script runs.
-- **R-003-7**: For `exec` actions, the runner MUST spawn `command` with `args` directly and verbatim (shell=false): no shell interpretation, no whitespace splitting, no re-quoting. `args` is the array supplied by the job schema or library API, so an argument containing a space or shell metacharacter MUST pass through to the child exactly as given.
-- **R-003-8**: For `prompt` actions, the runner MUST resolve the engine command via `buildPromptRunCommand()` and spawn it with shell=false.
-- **R-003-9**: All spawned processes MUST inherit `process.env` merged with `action.env` (action.env wins). If `envFile` is specified, its variables are merged below `action.env` but above `process.env`.
-- **R-003-10**: `action.cwd` MUST be used as the working directory; if omitted, `process.cwd()` MUST be used. If `action.cwd` is provided but does not exist or is not a directory, the runner MUST fail the run before spawn with `ACTION_CWD_INVALID: <kind> action cwd ...` naming both the action kind and the rejected path.
+- **R-003-3**: `overlap=skip`: if a run for the same job is already active, the new run MUST be immediately finalized as `skipped` with error `"overlap=skip: another run is already active"`; it MUST NOT start a process or cancel the active run.
+- **R-003-4**: `overlap=cancel-previous`: if a run for the same job is active, the runner MUST abort it (via `AbortController`) before starting the new run.
+- **R-003-5**: `overlap=queue`: runs MUST be serialized in FIFO order per job; the queue drains sequentially.
+- **R-003-8**: The runner MUST resolve the engine adapter for `action.engine ?? config.defaultEngine`, ask it to build the invocation, and spawn it with `shell: false`.
+- **R-003-9**: All spawned processes MUST inherit `process.env` merged with `action.env` (action.env wins). If `envFile` is specified, its variables are merged below `action.env` but above `process.env` and above engine-config `env`.
+- **R-003-10**: `action.cwd` MUST be used as the working directory; if omitted, `process.cwd()` MUST be used. If `action.cwd` is provided but does not exist or is not a directory, the runner MUST fail the run before spawn with `ACTION_CWD_INVALID: prompt action cwd ...` naming the rejected path.
 - **R-003-11**: If `action.timeoutSec` is set, the runner MUST start its own timer for `timeoutSec * 1000` ms (not the spawn-level `timeout` option, which cannot be distinguished from a user cancellation -- see R-003-15) and, on expiry, send `SIGTERM` to the child itself.
-- **R-003-12**: stdout and stderr MUST be captured, redacted via `safeRedact()`, and stored via `Store.appendLog()`. For text-like output, the shared redaction contract MUST redact full `BEGIN/END ... PRIVATE KEY` blocks, lone private-key markers, high-confidence structured secret values, and AWS secret-access-key values only when a high-confidence key hint or nearby AWS access-key-id pair context is present before persistence. Streaming capture MUST preserve that protection even when a private-key block spans multiple chunks or lines. For PowerShell script jobs, capture MUST also preserve UTF-8 byte sequences exactly across chunk boundaries instead of splitting a multibyte character.
-- **R-003-13**: On exit code 0, run status MUST be `success`. On non-zero exit, status MUST be `failed`. For PowerShell script jobs this includes non-terminating errors, uncaught terminating errors, command-not-found, missing-module failures, and native non-zero exits that occur without an explicit `exit N`; an explicit `exit N` remains authoritative.
-- **R-003-14**: On `SIGTERM`/`SIGKILL` signal that was NOT sent by the runner's own timeout timer (R-003-11) -- i.e. a user cancellation or overlap-policy abort -- run status MUST be `canceled`.
-- **R-003-15**: On expiry of the runner's own timeout timer (R-003-11), run status MUST be `timeout`, distinct from `canceled`, with an error message naming `timeoutSec`.
+- **R-003-12**: stdout and stderr MUST be consumed as described in R-003-27, redacted with `redactText()` when stored, and held in memory only; the engine's raw output MUST NOT be written to the database or any file. When the run is finalized, the runner MUST parse it and store just the parsed output via `Store.setRunOutput()`. The shared redaction contract MUST redact full private-key blocks, high-confidence structured secret values, and contextually-paired AWS secret-access-key values, preserved across chunk/line boundaries (stdout is redacted per complete result/plain text, stderr as one text).
+- **R-003-13**: On exit code 0 with no adapter-reported error, run status MUST be `success`. On non-zero exit, or an adapter-reported error (e.g. Claude `is_error`), status MUST be `failed`.
+- **R-003-14**: On `SIGTERM`/`SIGKILL` signal that was NOT sent by the runner's own timeout timer (R-003-11), run status MUST be `canceled`.
+- **R-003-15**: On expiry of the runner's own timeout timer, run status MUST be `timeout`, distinct from `canceled`, with an error message naming `timeoutSec`.
 - **R-003-16**: On `ABORT_ERR` or signal aborted, run status MUST be `canceled`.
-- **R-003-17**: On `ENOENT` for a prompt engine binary, the error message MUST name the engine and suggest corrective action.
-- **R-003-18**: Retry MUST re-attempt up to `retry.max` times; on each retry, the runner MUST wait `retry.backoffSec` seconds. Retry MUST NOT occur on `canceled` or `timeout` status.
-- **R-003-19**: After all attempts complete (or on final success/cancel/timeout), the runner MUST finalize the run with `endedAt`, `durationMs`, final `status`, `exitCode`, and `error`.
-- **R-003-20**: `safeRedact` MUST only redact text-like chunks; binary data (containing NUL bytes or failing UTF-8 round-trip) MUST be stored as-is.
-- **R-003-21**: For `script` actions, every temp wrapper/user-script file MUST be deleted after the process exits (best-effort), regardless of whether the run succeeded, failed, timed out, or was canceled.
+- **R-003-17**: On `ENOENT` for the prompt engine binary, the error message MUST name the engine and suggest corrective action.
+- **R-003-18**: Retry MUST re-attempt up to `retry.max` times; on each retry, the runner MUST wait `retry.backoffSec` seconds. Retry MUST NOT occur on `canceled` or `timeout` status, nor on non-retryable engine errors (R-003-34).
+- **R-003-19**: After all attempts complete, the runner MUST finalize the run with `endedAt`, `durationMs`, final `status`, `exitCode`, and `error`.
 - **R-003-22**: `cancelRun(runId)` MUST abort the active run by its run ID and return true; if no such active run exists, it MUST return false.
-- **R-003-25**: Every spawn (script, exec, and prompt actions alike) MUST pass `windowsHide: true` and `detached: true` to the child process, with exactly one exception: a `script` action on Windows whose resolved shell is `pwsh`/`powershell.exe` MUST be spawned with `detached: false`, because a detached PowerShell host on Windows receives no console and writes nothing to its (even redirected) stdio. A daemon restart or graceful stop MUST NOT kill in-flight work as a side effect for any other combination of platform/action/shell; the pwsh-on-Windows exception trades that survival guarantee for non-empty output capture (see `../decisions/0020-no-detach-powershell-script-jobs-windows.md`).
-- **R-003-26**: The child process's `pid` MUST be persisted to the run record (`Store.updateRun()`) as soon as the process spawns, before any output arrives; `missed` runs (spec 004 R-004-28) never spawn a process and so never get a `pid`.
-- **R-003-27**: Captured stdout/stderr for a single run MUST be capped at `retention.maxOutputBytesPerRun` (default 2,000,000; configurable range 1024..1,000,000,000). Once the cap is reached, the runner MUST trim the trailing bytes to a UTF-8 character boundary (never splitting a multi-byte character), append a single truncation marker, set the run's `outputTruncated` field, and drop all further output for that run without persisting it. Hitting the cap MUST NOT kill, signal, or otherwise affect the child process itself; only capture stops.
-- **R-003-28**: `Runner.adoptRun(jobId, runId, pid, store)` MUST re-attach a run that survived a daemon restart (per spec 004 R-004-8) into this daemon's overlap tracking (`activeRunIds`), so that `overlap: 'skip'` and `overlap: 'cancel-previous'` hold for a subsequent tick of the same job exactly as they would for a run spawned by this daemon process. Since no `ChildProcess` handle exists for an adopted run, the runner MUST poll process liveness periodically instead of listening for a native `'exit'` event, and MUST finalize the run once the poll observes the process has exited.
-- **R-003-29**: In addition to the engine's `stdout`/`stderr` streams, the runner MUST record its own scheduling/execution lifecycle events (at minimum: run started, executing with the redacted command, run finished with status/exit/duration, and overlap `run skipped`) on a dedicated `crontick` log stream via `Store.appendLog(runId, 'crontick', ...)`. These events MUST be redacted like engine output.
-- **R-003-30**: Log retrieval MUST support a `source` filter of `all` (default -- every stream), `engine` (`stdout`+`stderr` only), or `crontick` (the `crontick` stream only), exposed consistently across `Store.getLogs()`, the client `getLogs()`, the daemon `GET /api/runs/:id/logs` route, the MCP `crontick_run_logs_tail` tool, and the CLI `logs --source` flag.
-- **R-003-31**: Every run's logs (engine output and crontick lifecycle events, interleaved) MUST additionally be mirrored to a per-job log file at `<logging.dir ?? <dataDir>/logs>/<jobId>.log`, controlled by `logging.fileEnabled` (default `true`) and `logging.dir`. File logging MUST be best-effort: a missing directory or a failed write MUST be swallowed (at most one debug log) and MUST NEVER block or fail a run. The file side effect MUST be behind an injectable interface.
+- **R-003-25**: Every spawn MUST pass `windowsHide: true` and `detached: true` to the child process, with exactly one exception: when the resolved engine command's basename is `pwsh`/`powershell.exe` on Windows, it MUST be spawned with `detached: false`, because a detached PowerShell host on Windows receives no console and writes nothing to its stdio. A daemon restart or graceful stop MUST NOT kill in-flight work as a side effect for any other combination (see [ADR 0001](../decisions/0001-architecture-and-runtime-model.md)).
+- **R-003-26**: The child process's `pid` MUST be persisted to the run record as soon as the process spawns, before any output arrives; `missed` runs never spawn a process and so never get a `pid`.
+- **R-003-27**: The runner MUST parse engine stdout line by line as it arrives and retain only the final `result` event (one line; no line-size limit) and stderr capped at 1,000,000 bytes per run (`DEFAULT_MAX_STDERR_BYTES_PER_RUN`; on overflow trim to a UTF-8 boundary, append one truncation marker, set `outputTruncated`, drop further stderr); structured events MUST be interpreted only through the selected adapter's `parseStreamEvent` (Claude stream-json), and for adapters without it (raw engines) all stdout MUST be treated as plain output, event-shaped JSON MUST NOT be interpreted, and the runner MUST log a warning that the runner has no adapter support and generic output handling is used; every other event (system, assistant, tool use/results, stream events) MUST be discarded immediately, so memory does not grow with stream length. Plain (non-event) stdout of text engines is the run's result and MUST be capped at `retention.maxOutputBytesPerRun` (default 2,000,000; configurable 1024..1,000,000,000): once reached, the runner MUST trim to a UTF-8 character boundary, append a single truncation marker, set `outputTruncated`, and drop further plain output. Hitting the cap MUST NOT affect the child process itself.
+- **R-003-28**: `Runner.adoptRun(jobId, runId, pid, store)` MUST re-attach a run that survived a daemon restart (spec 004 R-004-8) into this daemon's overlap tracking, so `overlap: 'skip'`/`'cancel-previous'` hold for a subsequent tick exactly as for a run spawned by this daemon. Since no `ChildProcess` handle exists for an adopted run, the runner MUST poll process liveness periodically and finalize the run once the poll observes it exited.
+- **R-003-29**: The runner MUST record its own scheduling/execution lifecycle events (run started, executing, retries, session capture, run finished, overlap skips) -- and only those -- in the per-job log file, one timestamped line per event tagged with the run id, redacted like engine output.
+- **R-003-30**: crontick MUST NOT store the engine's raw logs: there is no log table, no `Store` log API, and no `GET /api/runs/:id/logs` route. `runs get` / `crontick_run_get` return the run record, `logFile` and the cleaned output.
+- **R-003-31**: crontick-side events (R-003-29) MUST be written to a per-job log file at `<logging.dir ?? <dataDir>/logs>/<jobId>.log`, controlled by `logging.fileEnabled`/`logging.dir`. File logging MUST be best-effort and MUST NEVER block or fail a run, behind an injectable interface.
+- **R-003-32**: A Claude invocation MUST append an ephemeral `--settings` JSON with a `SessionEnd` command hook, implemented by a plain helper script at `<dataDir>/hooks/session-end.cjs` (no `eval`/base64; marker path passed as argv; omitted entirely when the helper cannot be written or paths are unsafe), writing `{exitStatus, sessionId, transcriptPath}` (`transcriptPath` is the hook input's `transcript_path`, or null) to `<dataDir>/runs/<runId>.claude-hook.json`, without editing the user's Claude settings. For a normal run, `parseResult` and the process exit remain authoritative; the marker only supplements restart recovery.
+- **R-003-33**: While a run is live, the runner MUST scan complete stdout lines with the engine adapter's `detectTerminalError`. When the engine reports a terminal failure in-band (Claude: a `result` event with `is_error: true`, or an assistant message flagged with an authentication API error such as 401 / `authentication_error`), the run MUST end `failed` with the parsed error message: if the process exits within `TERMINAL_ERROR_SETTLE_MS` (2s) the normal close path finalizes it (keeping the real exit code); otherwise the runner MUST finalize it anyway, terminate the process tree (`taskkill /PID <pid> /T /F` on Windows, process-group SIGTERM on POSIX), and force-kill after `KILL_GRACE_MS` (5s). The active-run lock MUST be released at finalization so the next tick is not `skipped`.
+- **R-003-34**: A terminal engine error that a retry cannot fix (authentication) MUST NOT be retried even when `retry.max > 0`.
+- **R-003-35**: A run MUST always finalize: after SIGTERM for a timeout or cancel the runner MUST force-kill the process tree after `KILL_GRACE_MS` and finalize (`timeout`/`canceled`) even if `close` never arrives; if the process `exit`s but stdio stays open (inherited by a grandchild), the run MUST finalize `EXIT_CLOSE_GRACE_MS` (3s) after `exit`.
+- **R-003-36**: `run-now` (`CrontickClient.runNow`, `crontick jobs run-now`, `crontick_job_run_now`, `POST /api/jobs/:id/run-now` with `/run` as an alias) MUST run the job once immediately regardless of `enabled`, MUST NOT change `enabled` or the schedule, and MUST honour the overlap policy. It returns `202 { runId }`.
+- **R-003-37**: The run output view (`getOutput` (library-only), `crontick runs get`, `crontick_run_get`, `GET /api/runs/:id/output`) MUST be derived from the output parsed and stored when the run finished (`run_outputs`), MUST return `{ runId, status, format, result, error, stderr, sessionId, costUsd, turns, durationMs, usage, truncated }`. For `claude-stream-json`, `result` is the final `result` event's answer text (`null` when it is an error) and `error` its error text; no assistant text segments, thinking blocks, hook events or tool results are stored or returned. `GET /api/runs/:id/output` additionally returns `logFile` (the per-job crontick log file, null when file logging is off). There is no route serving the log file contents; surfaces show the path only.
+- **R-003-38**: The stored run `command` and diagnostic log lines MUST show the `--settings` value as `<session-end-hook>`. The per-job log file is shared by all runs of the job and holds crontick-side events only; `GET /api/runs/:id` MUST include `logFile` (absolute path, or null when `logging.fileEnabled=false`), plus `logFileExists` (when `logFile` is non-null) and `transcriptExists` (when `transcriptPath` is set) booleans so surfaces can show `file not found`. Raw `usageJson` storage is unchanged; display surfaces use `normalizeUsage`.
+
+- **R-003-39**: `crontick runs get <runId>` MUST print one `Label: value` line per run field (local ISO-8601 timestamps, `Runner Session ID`, `Status` exactly once), `Transcript:` with `Log file:` directly below it (full absolute paths, plain text, suffixed `(file not found)` when missing on disk), a blank line, then the cleaned output (`Error:`, the final answer, `[stderr]` only without an error); `--json` MUST print `{ run, output }`. `crontick_run_get` MUST return the run record plus `logFile` and `output`.
+- **R-003-40**: A job runs in `action.cwd` (default: the invoking directory on create, resolved absolute and existing, else `INVALID_CWD`). For engines with trust hooks (Claude) create/update (when cwd or engine changes)/import MUST throw `TRUST_REQUIRED` before persisting when the folder (or an ancestor) lacks `hasTrustDialogAccepted: true` in `$CLAUDE_CONFIG_DIR/.claude.json` (else `~/.claude.json`), unless `trustFolder` is set, in which case only that flag is written (other keys preserved; unparsable file: `CLAUDE_CONFIG_UNREADABLE`; stat-guarded atomic rename with up to 3 retries). Moving a job with a session to a different cwd MUST fail with `CWD_CHANGE_BREAKS_SESSION` unless a new `sessionId` or `reuseSession: true` is given.
 
 ### Non-functional requirements
 
@@ -68,66 +79,55 @@ preserving observability through captured logs and structured run records.
 ## Behavior
 
 1. Tick arrives -> daemon calls `store.insertRun(jobId, plannedAt)` -> status=`queued`.
-2. `runner.run(job, runId, store)` evaluates overlap policy.
-3. If allowed to proceed, run transitions to `running`.
-4. Runner resolves command/args per action kind; script jobs materialize transient wrapper files under `<dataDir>/tmp/scripts/`, and a PowerShell script job emits a wrapper + user script pair there so exit semantics and UTF-8 output are normalized before spawn.
-5. stdout/stderr `data` events -> per-stream UTF-8 buffering (when needed) + per-stream private-key streaming redaction -> `safeRedact` -> `store.appendLog`.
-6. Child `close` event determines status from exit code/signal.
-7. If failed and retries remain, waits backoff then re-spawns (step 4).
-8. `finalizeRun` writes terminal status, endedAt, durationMs to store.
-9. For queued overlap, the queue drains to the next entry after finalization.
+2. `runner.run(job, runId, store)` evaluates overlap policy; if allowed, transitions to `running`.
+3. Runner resolves the engine adapter and invocation (spec 007), then spawns with `shell: false`.
+4. stdout/stderr `data` events -> `EngineOutputCollector` (line-by-line trimming) -> in-memory result + stderr (parsed into `store.setRunOutput` at finalization).
+5. Child `close` event: the adapter parses the exit code and captured output into status/session/usage.
+6. If failed and retries remain, waits backoff then re-spawns (step 3).
+7. `finalizeRun` writes terminal status, endedAt, durationMs to store; for `queued` overlap, the queue drains to the next entry.
 
 ## Inputs and outputs
 
 **Input**: A `Job` object, a run ID (UUID), and a `Store` reference.
-**Output**: Side effects only (store mutations, log entries). No return value from `run()`.
-**Run record fields**: `id`, `jobId`, `startedAt`, `endedAt`, `status`, `exitCode`, `error`, `durationMs`, `sessionId?` (prompt-engine session id captured for or provided to the run).
-**Log record fields**: `runId`, `stream` (`stdout`/`stderr` for engine output; `crontick` for crontick lifecycle events), `ts`, `chunk` (Buffer).
+**Output**: Side effects only (store mutations, log entries).
+**Run record fields**: `id`, `jobId`, `startedAt`, `endedAt`, `status`, `exitCode`, `error`, `durationMs`, `sessionId?`, `costUsd?`, `turns?`, `usageJson?`, `transcriptPath?`, `engineStatus?`.
+**Log record fields**: `runId`, `stream` (`stdout`/`stderr` engine output; `crontick` lifecycle events), `ts`, `chunk`.
 
 ## Edge cases and failure modes
 
-- Missing or non-directory `action.cwd`: Run finalized as `failed` before spawn with an `ACTION_CWD_INVALID` message naming the action kind and path.
-- Command not found (`ENOENT`): Run finalized as `failed` with descriptive error. When the missing binary is a prompt engine command, the error remains the existing PATH-focused guidance rather than the cwd-preflight message.
-- envFile not found/unreadable: Run fails with `ENV_FILE_ERROR` before spawn.
-- Private-key PEM output split across chunk/line boundaries: persisted log bytes store a single redacted placeholder rather than raw begin/body/end fragments.
-- Contextual or nearby-access-key-paired AWS secret-access-key output is redacted, while unlabeled standalone 40-character base64-ish values, benign lookalikes, and non-private-key PEM text remain visible.
-- PowerShell non-terminating or uncaught terminating error without explicit `exit N`: the wrapper exits non-zero and the run finalizes `failed` instead of `success/0`.
-- PowerShell UTF-8 output split across chunk boundaries: buffered per stream and reconstructed exactly before persistence.
-- Process exits without code (null): Status is `failed`, error "process exited without code".
-- Abort during retry backoff: Run finalized as `canceled`, error "canceled before retry".
-- Runner callback throws during log append: Run finalized as `failed` with `RUNNER_CALLBACK_FAILED` prefix; child is killed.
-- Overlapping cancel-previous race: Active abort maps only cleared if they still point to the current run's controller.
-- Binary stdout/stderr: Stored unredacted.
-- Output exceeds `retention.maxOutputBytesPerRun`: capture truncates, `outputTruncated` is set, the run otherwise completes normally.
-- Daemon restarts mid-run: the detached child keeps running; the next startup's orphan reconciliation adopts it (liveness confirmed) or cancels the run (liveness confirmed dead) -- see spec 004 R-004-8.
+- Missing or non-directory `action.cwd`: run finalized `failed` before spawn with `ACTION_CWD_INVALID`.
+- Command not found (`ENOENT`): run finalized `failed` with the engine-PATH-focused error message.
+- `envFile` not found/unreadable: run fails with `ENV_FILE_ERROR` before spawn.
+- Private-key or secret output split across chunk/line boundaries: persisted log bytes store a single redacted placeholder.
+- Process exits without code (null): status `failed`, error "process exited without code".
+- Abort during retry backoff: run finalized `canceled`, error "canceled before retry".
+- Runner callback throws during output capture: run finalized `failed` with `RUNNER_CALLBACK_FAILED` prefix; child is killed.
+- Overlapping cancel-previous race: active abort maps only cleared if they still point to the current run's controller.
+- Binary stdout/stderr: not redacted.
+- Output exceeds `retention.maxOutputBytesPerRun` (stdout) or the stderr cap: capture truncates, `outputTruncated` is set, the run otherwise completes normally.
+- Daemon restarts mid-run: the detached child keeps running; the next startup's orphan reconciliation adopts it (liveness confirmed) or cancels the run (confirmed dead) -- see spec 004 R-004-8.
 
 ## Acceptance criteria
 
-- [x] overlap=skip cancels new run when active (test file: `tests/integration.overlap.test.ts`)
-- [x] overlap=queue serializes runs FIFO (test file: `tests/integration.overlap.test.ts`)
-- [x] overlap=cancel-previous aborts active run (test file: `tests/integration.overlap.test.ts`)
-- [x] Timeout fires and produces status=timeout, distinct from a user/overlap cancellation (test file: `tests/integration.timeout.test.ts`; exact-status assertion in `tests/runner.test.ts`, "exec: timeout cancels long-running job")
-- [x] Retry re-attempts on failure with backoff (test file: `tests/integration.retry.test.ts`)
-- [x] Retry stops on cancel/timeout (test file: `tests/integration.retry.test.ts`)
-- [x] Script action resolves shell correctly (test file: `tests/runner.test.ts`)
-- [x] Exec action spawns command directly (test file: `tests/runner.test.ts`)
-- [x] envFile is loaded and merged (test file: `tests/env-file.test.ts`)
-- [x] safeRedact skips binary data (test file: `tests/redact.test.ts`)
-- [x] Streaming private-key and contextual or nearby-access-key-paired AWS-secret redaction protects persisted logs without over-redacting benign key names, benign standalone 40-character base64-ish values, or non-private-key PEM text (test files: `tests/redact.test.ts`, `tests/secret-redaction.ctd-003.test.ts`)
-- [x] cancelRun aborts active run (test file: `tests/runner.test.ts`)
-- [x] ENOENT for prompt engine produces actionable error, while a missing `action.cwd` fails earlier with a consistent explicit cwd message across script/exec/prompt actions (test files: `tests/runner.test.ts`, `tests/spawn-enoent-cwd.ctd-011.test.ts`)
-- [x] Spawn sets `detached: true` and `windowsHide: true` for every action kind except a Windows pwsh/powershell.exe script job, which is spawned attached so it can produce output (test file: `tests/runner.test.ts`, "script: shell=\"auto\" (the default job kind) captures non-empty output on every platform (BLOCKER 1 regression)")
-- [x] Child `pid` is persisted on the run row as soon as the process spawns (test file: `tests/runner.test.ts`, "spawn: persists the child pid on the run row...")
-- [x] Output byte cap truncates capture at a UTF-8 character boundary, sets `outputTruncated`, and never affects the child process (test file: `tests/runner.test.ts`, "truncateToUtf8Boundary: ..." and "captureChunk: truncation at the byte cap does not split a multi-byte character (MINOR 7 regression)")
-- [x] `adoptRun` re-attaches overlap tracking for `skip` and `cancel-previous` across a restart (test file: `tests/runner.test.ts`, `adoptRun` describe block)
-- [x] PowerShell script jobs fail truthfully for implicit PowerShell/native failures while preserving explicit `exit N` (test file: `tests/powershell-exit.ctd-002.test.ts`)
-- [x] PowerShell script jobs preserve exact UTF-8 bytes across Windows code pages and chunk boundaries (test file: `tests/powershell-utf8.ctd-008.test.ts`)
-- [x] Script temp wrappers live under CRONTICK_HOME-managed state and are removed after the run (test file: `tests/temp-script-cleanup.ctd-017.test.ts`)
-- [x] Exec actions pass `command` and `args` verbatim with no whitespace splitting (test file: `tests/job-input.test.ts`)
+- [x] overlap=skip records the new run as `skipped` when active (test files: `tests/unit/integration.overlap.test.ts`, `tests/unit/runner.test.ts`)
+- [x] overlap=queue serializes runs FIFO (test file: `tests/unit/integration.overlap.test.ts`)
+- [x] overlap=cancel-previous aborts active run (test file: `tests/unit/integration.overlap.test.ts`)
+- [x] Timeout fires and produces status=timeout, distinct from a user/overlap cancellation (test file: `tests/unit/integration.timeout.test.ts`; `tests/unit/runner.test.ts`)
+- [x] Retry re-attempts on failure with backoff, and stops on cancel/timeout (test file: `tests/unit/integration.retry.test.ts`)
+- [x] envFile is loaded and merged (test file: `tests/unit/env-file.test.ts`)
+- [x] Streaming secret redaction protects stored output without over-redacting benign values (test files: `tests/unit/redact.test.ts`, `tests/unit/secret-redaction.test.ts`)
+- [x] cancelRun aborts active run (test file: `tests/unit/runner.test.ts`)
+- [x] ENOENT for the prompt engine produces an actionable error, and a missing `action.cwd` fails earlier with an explicit cwd message (test files: `tests/unit/runner.test.ts`, `tests/unit/spawn-enoent-cwd.test.ts`)
+- [x] Spawn sets `detached: true` and `windowsHide: true` except a Windows pwsh/powershell.exe engine command, spawned attached (test file: `tests/unit/runner.test.ts`)
+- [x] Child `pid` is persisted on the run row as soon as the process spawns (test file: `tests/unit/runner.test.ts`)
+- [x] Output byte cap truncates capture at a UTF-8 character boundary, sets `outputTruncated`, and never affects the child process (test file: `tests/unit/runner.test.ts`)
+- [x] `adoptRun` re-attaches overlap tracking for `skip` and `cancel-previous` across a restart (test file: `tests/unit/runner.test.ts`, `adoptRun` describe block)
+- [x] Claude adapter invocation, result parsing, and session resume preflight (test files: `tests/unit/claude-adapter.test.ts`, `tests/unit/integration.prompt-e2e.test.ts`)
+- [x] Raw adapter invocation and generic session extraction (test file: `tests/unit/raw-adapter.test.ts`)
 
 ## Out of scope
 
-- Prompt session capture semantics (see spec 007).
+- Prompt session capture semantics and adapter contract details (see spec 007).
 - Scheduling logic (see spec 002).
 - Persistence/schema details (see spec 006).
 
@@ -142,9 +142,5 @@ None.
 - [004-daemon.md](004-daemon.md)
 - [006-state-and-persistence.md](006-state-and-persistence.md)
 - [007-prompt-jobs.md](007-prompt-jobs.md)
-- `../reference/`
-- `../concepts/`
-- `../decisions/0016-detached-children-cross-platform.md` (superseded by 0020)
-- `../decisions/0018-exec-dash-dash-args.md` (superseded by 0019)
-- `../decisions/0019-arg-flag-primary-for-exec-and-prompt-args.md`
-- `../decisions/0020-no-detach-powershell-script-jobs-windows.md`
+- [../decisions/0001-architecture-and-runtime-model.md](../decisions/0001-architecture-and-runtime-model.md)
+- [../decisions/0002-prompt-only-jobs-and-engine-adapters.md](../decisions/0002-prompt-only-jobs-and-engine-adapters.md)

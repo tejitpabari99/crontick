@@ -2,7 +2,8 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join, resolve, sep } from 'node:path';
+import { tmpdir } from 'node:os';
+import { join, parse, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rmWithRetry, resolveInstalledBin, runWithTimeout } from './utils.mjs';
 
@@ -35,6 +36,20 @@ export async function setup({ build = false, clean = false } = {}) {
   if (!resolve(scratchDir).startsWith(resolve(repoRoot) + sep)) {
     throw new Error(`SAFETY: scratchDir is not under repoRoot (${repoRoot})`);
   }
+
+  // Isolated Claude config with the filesystem root trusted: harness jobs use the
+  // default (claude) engine and must never hit the folder-trust prompt, nor read
+  // or modify the real ~/.claude.json. Inherited by every spawned crontick process.
+  // On Windows the repo and the temp dir can live on different drives, each with its own root.
+  const roots = [...new Set([repoRoot, tmpdir()].map((path) => parse(path).root))];
+  const claudeConfigDir = join(scratchDir, 'claude-config');
+  mkdirSync(claudeConfigDir, { recursive: true });
+  writeFileSync(
+    join(claudeConfigDir, '.claude.json'),
+    JSON.stringify({ projects: Object.fromEntries(roots.map((root) => [root, { allowedTools: [], hasTrustDialogAccepted: true }])) }, null, 2),
+    'utf-8',
+  );
+  process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
 
   const repoPkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf-8'));
   const packageVersion = repoPkg.version;

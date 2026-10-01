@@ -10,14 +10,15 @@ where new content belongs.
 
 | Area | Answers | Audience |
 |------|---------|----------|
+| [docs/tech/](tech/) | Guiding docs: mission/tenets and design principles every change is checked against | Contributors and coding agents |
 | [docs/architecture.md](architecture.md) | High-level design: how the system fits together | Everyone |
 | [docs/concepts/](concepts/) | "How should I think about this?" -- behavior that crosses components | Users and contributors |
-| [docs/internals/](internals/) | "How is this implemented?" -- private implementation details | Maintainers and coding agents |
+| [docs/implementation/](implementation/) | "How is this implemented?" -- private implementation details | Maintainers and coding agents |
 | [docs/reference/](reference/) | "What exactly is supported?" -- precise, lookup-oriented facts | Users |
 | [docs/decisions/](decisions/) | "Why is it like this?" -- architecture decision records | Contributors |
-| [docs/testing.md](testing.md) | How to test and what to verify before a release | Contributors |
-| [specs/](specs/) | Normative behavior contracts with acceptance criteria | Contributors and coding agents |
-| [examples/](examples/) | Runnable public-API usage examples | Users |
+| [docs/testing/](testing/) | How to test and what to verify before a release | Contributors |
+| [docs/specs/](specs/) | Normative behavior contracts with acceptance criteria | Contributors and coding agents |
+| [docs/examples/](examples/) | Runnable public-API usage examples | Users |
 
 ---
 
@@ -25,7 +26,7 @@ where new content belongs.
 
 - **A user-visible fact** (command syntax, config option, error code) -> `docs/reference/`
 - **A mental model** (how scheduling works, job lifecycle, surface parity) -> `docs/concepts/`
-- **An implementation detail** (how the scheduler loop works, storage format internals) -> `docs/internals/`
+- **An implementation detail** (how the scheduler loop works, storage format internals) -> `docs/implementation/`
 - **A design choice with trade-offs** -> a new ADR in `docs/decisions/` (copy `0000-template.md`)
 - **A behavior contract with acceptance criteria** -> a new spec in `docs/specs/`
 - **A runnable code sample** -> `docs/examples/`
@@ -41,39 +42,52 @@ observable behavior without updating relevant docs is incomplete.
 
 ## Full index
 
+### docs/tech/
+
+| File | Description |
+|------|-------------|
+| [mission.md](tech/mission.md) | Mission, problem statement, and tenets design decisions are checked against |
+| [design-principles.md](tech/design-principles.md) | Rules every design and implementation must follow |
+
 ### docs/ (top-level)
 
 | File | Description |
 |------|-------------|
 | [architecture.md](architecture.md) | System architecture: daemon, client, shims, state, IPC |
-| [testing.md](testing.md) | Test layers, running tests, pre-release checklist |
-| [e2e-testing.md](e2e-testing.md) | How to run the end-to-end integration harness |
 | [troubleshooting.md](troubleshooting.md) | Common issues and diagnostics |
 
 ### docs/concepts/
 
 | File | Description |
 |------|-------------|
-| [jobs.md](concepts/jobs.md) | What a job is: identity, lifecycle, enabled/disabled semantics |
+| [jobs.md](concepts/jobs.md) | What a job is: identity, prompt action, lifecycle |
 | [scheduling.md](concepts/scheduling.md) | Cron, interval, and one-shot schedule behavior |
-| [execution.md](concepts/execution.md) | How actions run: shell rules, timeouts, cancellation |
+| [execution.md](concepts/execution.md) | How a run happens: spawn, overlap, timeouts, retries |
 | [daemon-lifecycle.md](concepts/daemon-lifecycle.md) | Demand-start, shutdown, no supervision |
 | [state-and-storage.md](concepts/state-and-storage.md) | Where state lives, SQLite WAL, JSON files |
-| [surface-parity.md](concepts/surface-parity.md) | The 21-capability contract across CLI/MCP/library |
+| [surface-parity.md](concepts/surface-parity.md) | The 20-capability contract across CLI/MCP/library |
 | [error-model.md](concepts/error-model.md) | Error codes, structured errors, surface presentation |
 
-### docs/internals/
+### docs/implementation/
 
 | File | Description |
 |------|-------------|
-| [README.md](internals/README.md) | Internals overview and reading order |
-| [core-client.md](internals/core-client.md) | CrontickClient implementation details |
-| [daemon.md](internals/daemon.md) | Daemon process: HTTP server, routing, lifecycle |
-| [scheduler.md](internals/scheduler.md) | Scheduler loop: croner integration, tick behavior |
-| [executors.md](internals/executors.md) | Script, exec, and prompt executor implementations |
-| [storage.md](internals/storage.md) | SQLite schema, WAL mode, retention and eviction |
-| [shims.md](internals/shims.md) | CLI and MCP shim architecture (thin adapters) |
-| [build-and-package.md](internals/build-and-package.md) | tsup config, bin entries, publish pipeline |
+| [README.md](implementation/README.md) | Implementation overview and reading order |
+| [core-client.md](implementation/core-client.md) | CrontickClient implementation details |
+| [daemon.md](implementation/daemon.md) | Daemon process: HTTP server, routing, lifecycle |
+| [scheduler.md](implementation/scheduler.md) | Scheduler loop: croner integration, tick behavior |
+| [prompt-execution.md](implementation/prompt-execution.md) | Runner: prompt execution, overlap policy, retry, timeout, log capture, restart adoption |
+| [engines.md](implementation/engines.md) | Engine adapter contract, registry, raw/Claude adapters |
+| [storage.md](implementation/storage.md) | SQLite schema, WAL mode, retention and eviction |
+| [shims.md](implementation/shims.md) | CLI and MCP shim architecture (thin adapters) |
+| [build-and-package.md](implementation/build-and-package.md) | tsup config, bin entries, publish pipeline |
+
+### docs/testing/
+
+| File | Description |
+|------|-------------|
+| [testing.md](testing/testing.md) | Test layers, running tests, pre-release checklist |
+| [e2e-testing.md](testing/e2e-testing.md) | How to run the end-to-end integration harness |
 
 ### docs/reference/
 
@@ -95,7 +109,7 @@ observable behavior without updating relevant docs is incomplete.
 | [README.md](decisions/README.md) | ADR index and process |
 | [0000-template.md](decisions/0000-template.md) | Template for new ADRs |
 
-See [decisions/README.md](decisions/README.md) for the full list of architecture decision records (ADRs 0001-0027).
+See [decisions/README.md](decisions/README.md) for the full list of architecture decision records (ADRs 0001-0003).
 
 ### specs/
 
@@ -118,10 +132,9 @@ See [decisions/README.md](decisions/README.md) for the full list of architecture
 | [README.md](examples/README.md) | Examples overview and how to run them |
 | [01-quick-start.ts](examples/01-quick-start.ts) | Create, list, and delete a job |
 | [02-cron-schedule.ts](examples/02-cron-schedule.ts) | Cron-scheduled job |
-| [03-exec-job.ts](examples/03-exec-job.ts) | Direct command execution job |
-| [04-prompt-job.ts](examples/04-prompt-job.ts) | LLM prompt job |
+| [04-prompt-job.ts](examples/04-prompt-job.ts) | Prompt action with engine, list engines |
 | [05-one-shot.ts](examples/05-one-shot.ts) | One-shot scheduled job |
-| [06-run-history.ts](examples/06-run-history.ts) | Querying run history and logs |
+| [06-run-history.ts](examples/06-run-history.ts) | Querying run history and run output |
 | [07-lifecycle.ts](examples/07-lifecycle.ts) | Daemon lifecycle management |
 | [cli/README.md](examples/cli/README.md) | CLI usage examples |
 | [mcp/README.md](examples/mcp/README.md) | MCP integration examples |

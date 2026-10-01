@@ -31,7 +31,7 @@ describe('startup registration removal guards', () => {
     // Scope: product code and the shipped/packaged surface only. docs/, specs/,
     // and examples/ are prose describing the removal, not the product itself, and
     // are intentionally NOT scanned -- scanning docs/ previously forced deletion
-    // and rewording of legitimate ADR content (see docs/decisions/0003, commit
+    // and rewording of legitimate ADR content (see docs/decisions/0001, commit
     // 9adbd63) and would break CI on the release PR the first time the pending
     // changeset (.changeset/purple-crabs-prompt.md) is consumed into CHANGELOG.md,
     // which is also excluded for the same reason. Every actual reappearance

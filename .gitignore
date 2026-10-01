@@ -24,3 +24,6 @@ npm-debug.log*
 # repo root during manual debugging -- never commit these; use a directory
 # outside the repo instead
 /*.txt
+
+# git worktrees used for parallel feature branches
+.worktrees/

@@ -7,7 +7,7 @@ function makeOneShotJob(id: string, runAt: string) {
     id,
     enabled: true,
     schedule: { kind: 'one-shot' as const, runAt },
-    action: { kind: 'exec' as const, command: 'echo', args: [] },
+    action: { kind: 'prompt' as const, prompt: 'noop', args: [], reuseSession: false },
     overlap: 'skip' as const,
     retry: { max: 0, backoffSec: 30 },
   };

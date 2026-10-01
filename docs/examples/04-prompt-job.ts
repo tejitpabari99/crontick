@@ -2,9 +2,9 @@
 // Demonstrates: a prompt job with an engine configured.
 //
 // PREREQUISITE: You must have a prompt engine CLI installed and registered.
-// By default, crontick ships with a built-in "copilot" engine definition
-// (command: "copilot", args: ["--allow-all-tools", "-p"], env: {}). You need
-// the `copilot` CLI available on your PATH, or edit config.json (see
+// By default, crontick ships with a built-in "claude" engine definition
+// (command: "claude", args: [], env: {}, type: "claude"). You need the
+// `claude` CLI available on your PATH, or edit config.json (see
 // `crontick info`) to point at a custom engine.
 //
 // Run: npx tsx examples/04-prompt-job.ts
@@ -20,7 +20,7 @@ const job = await client.createJob({
   action: {
     kind: 'prompt',
     prompt: 'Summarize the system status for today.',
-    engine: 'copilot',
+    engine: 'claude',
     reuseSession: false,
   },
 });

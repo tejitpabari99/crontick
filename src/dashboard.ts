@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { CrontickError } from './errors.js';
 import { redactValue } from './logger.js';
 import { VERSION } from './version.js';
+import { dataDir } from './paths.js';
 import type { Job, Schedule } from './schemas/job.js';
 import type { Store, Run } from './daemon/store.js';
 import type { Scheduler } from './daemon/scheduler.js';
@@ -16,6 +17,12 @@ import type { Scheduler } from './daemon/scheduler.js';
 export interface DashboardOptions {
   runsLimit?: number;
   jobId?: string;
+  /** Restrict the runs list to any of these job ids. */
+  jobIds?: string[];
+  /** Restrict the runs list to any of these statuses. */
+  statuses?: Run['status'][];
+  /** Free-text search over run id, status, error, session id, job id/alias and run logs. */
+  q?: string;
 }
 
 export interface DashboardHealth {
@@ -25,6 +32,8 @@ export interface DashboardHealth {
   uptimeSec: number;
   pid: number;
   port: number;
+  /** Data directory of this daemon (lets a second daemon name the holder of the preferred port). */
+  dataDir: string;
   node: string;
   platform: string;
   jobs: {
@@ -40,10 +49,14 @@ export interface DashboardHealth {
 export interface DashboardStats {
   totalJobs: number;
   enabledJobs: number;
-  totalRuns: number;
   succeeded: number;
   failed: number;
-  avgDurationMs: number | null;
+  canceled: number;
+  skipped: number;
+  /** Average execution time in seconds (2 decimals), over runs that finished executing; null when none. */
+  avgDurationSec: number | null;
+  totalCostUsd: number;
+  totalTurns: number;
 }
 
 export interface DashboardJob {
@@ -52,6 +65,8 @@ export interface DashboardJob {
   /** Human-friendly, optional, user-editable identifier; unique among currently-defined jobs. Null when unset. */
   alias: string | null;
   description: string | null;
+  /** The job's working directory (`action.cwd`); null when unset (the engine then starts in the daemon's directory). */
+  cwd: string | null;
   enabled: boolean;
   scheduleLabel: string;
   actionKind: Job['action']['kind'];
@@ -122,10 +137,10 @@ const MIME_TYPES: Record<string, string> = {
 export function buildDashboardData(ctx: DashboardContext, options: DashboardOptions = {}): DashboardData {
   const runsLimit = normalizeLimit(options.runsLimit, 100);
   const jobs = ctx.store.listJobs();
-  const recentRuns = ctx.store.listRunsForExistingJobs({ jobId: options.jobId, limit: runsLimit });
-  const allRuns = ctx.store.listRunsForExistingJobs({ limit: 1000 });
+  const recentRuns = ctx.store.listRuns({ jobId: options.jobId, jobIds: options.jobIds, statuses: options.statuses, q: options.q, limit: runsLimit });
+  const allRuns = ctx.store.listRuns({ limit: 1000 });
   const since24h = Date.now() - 24 * 60 * 60 * 1000;
-  const runs24h = ctx.store.listRunsForExistingJobs({ since: since24h });
+  const runs24h = ctx.store.listRuns({ since: since24h });
   // Snapshot of jobId -> alias for run display convenience (DashboardRun.jobAlias).
   const aliasByJobId = new Map(jobs.map((job) => [job.id, job.alias ?? null] as const));
 
@@ -146,6 +161,7 @@ export function buildDashboardHealth(ctx: DashboardContext, jobs: Job[], runs24h
     uptimeSec: Math.floor((Date.now() - ctx.startedAt.getTime()) / 1000),
     pid: ctx.pid ?? process.pid,
     port: ctx.port,
+    dataDir: dataDir(),
     jobs: {
       total: jobs.length,
       enabled: jobs.filter((job) => job.enabled).length,
@@ -167,19 +183,32 @@ export function buildDashboardHealth(ctx: DashboardContext, jobs: Job[], runs24h
 // long jobs actually take to run.
 const EXECUTED_RUN_STATUSES: ReadonlySet<Run['status']> = new Set(['success', 'failed', 'timeout']);
 
+/** Average `durationMs` over runs that actually executed (success/failed/timeout); null when there are none. */
+export function averageDurationMs(runs: Run[]): number | null {
+  const executedRuns = runs.filter((run) => EXECUTED_RUN_STATUSES.has(run.status));
+  return executedRuns.length > 0
+    ? Math.round(executedRuns.reduce((sum, run) => sum + (run.durationMs ?? 0), 0) / executedRuns.length)
+    : null;
+}
+
+/** Milliseconds to seconds, rounded to 2 decimals; null passes through. */
+export function msToSec(ms: number | null): number | null {
+  return ms === null ? null : Math.round(ms / 10) / 100;
+}
+
 export function buildDashboardStats(jobs: Job[], runs: Run[]): DashboardStats {
   const failed = runs.filter((run) => run.status === 'failed').length;
   const succeeded = runs.filter((run) => run.status === 'success').length;
-  const executedRuns = runs.filter((run) => EXECUTED_RUN_STATUSES.has(run.status));
   return {
     totalJobs: jobs.length,
     enabledJobs: jobs.filter((job) => job.enabled).length,
-    totalRuns: runs.length,
     succeeded,
     failed,
-    avgDurationMs: executedRuns.length > 0
-      ? Math.round(executedRuns.reduce((sum, run) => sum + (run.durationMs ?? 0), 0) / executedRuns.length)
-      : null,
+    canceled: runs.filter((run) => run.status === 'canceled').length,
+    skipped: runs.filter((run) => run.status === 'skipped').length,
+    totalCostUsd: runs.reduce((sum, run) => sum + (run.costUsd ?? 0), 0),
+    totalTurns: runs.reduce((sum, run) => sum + (run.turns ?? 0), 0),
+    avgDurationSec: msToSec(averageDurationMs(runs)),
   };
 }
 
@@ -272,6 +301,7 @@ function buildDashboardJob(ctx: DashboardContext, job: Job): DashboardJob {
     id: job.id,
     alias: job.alias ?? null,
     description: job.description ?? null,
+    cwd: job.action.cwd ?? null,
     enabled: job.enabled,
     scheduleLabel: scheduleLabel(job.schedule),
     actionKind: job.action.kind,
@@ -298,7 +328,7 @@ function toDashboardRun(run: Run, aliasByJobId: ReadonlyMap<string, string | nul
 }
 
 function scheduleLabel(schedule: Schedule): string {
-  if (schedule.kind === 'cron') return schedule.cron + (schedule.tz ? ` (${schedule.tz})` : '');
+  if (schedule.kind === 'cron') return schedule.cron;
   if (schedule.kind === 'interval') return `every ${schedule.everySec}s`;
   return `once at ${schedule.runAt}`;
 }

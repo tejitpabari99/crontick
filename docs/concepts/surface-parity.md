@@ -1,5 +1,10 @@
 # Surface Parity
 
+Audience: contributors adding or changing a user-facing capability. Non-duplication: for the
+normative requirements and capability table see
+[specs/005-surface-parity.md](../specs/005-surface-parity.md) -- this page is the "why" and the
+add-a-capability checklist.
+
 After reading this page you will understand the single-core/thin-shim design principle, how crontick enforces it, and what is required when adding a new capability.
 
 ## The single-core principle
@@ -14,12 +19,12 @@ All three are thin adapters over `CrontickClient`, which communicates with the d
 
 ## The `SURFACE_CAPABILITIES` constant
 
-`src/surface.ts` exports a single constant that canonically enumerates the 21 parity capabilities:
+`src/surface.ts` exports a single constant that canonically enumerates the 20 parity capabilities:
 
 ```typescript
 export const SURFACE_CAPABILITIES = [
-  { capability: 'create-job', clientMethod: 'createJob', cliCommand: ['jobs', 'new'], mcpTool: 'crontick_job_create', optionNames: ['force'] },
-  // ... 20 more entries
+  { capability: 'create-job', clientMethod: 'createJob', cliCommand: ['jobs', 'new'], mcpTool: 'crontick_job_create', optionNames: ['force', 'trustFolder'] },
+  // ... 19 more entries
 ] as const satisfies readonly SurfaceCapability[];
 ```
 
@@ -35,37 +40,15 @@ Each entry maps:
 
 ## Current capability map
 
-| Capability | Client method | CLI command | MCP tool |
-|------------|---------------|-------------|----------|
-| `create-job` | `createJob` | `crontick jobs new` | `crontick_job_create` |
-| `list-jobs` | `listJobs` | `crontick jobs list` | `crontick_job_list` |
-| `get-job` | `getJob` | `crontick jobs get` | `crontick_job_get` |
-| `update-job` | `updateJob` | `crontick jobs update` | `crontick_job_update` |
-| `enable-job` | `enableJob` | `crontick jobs update --enable` | `crontick_job_enable` |
-| `disable-job` | `disableJob` | `crontick jobs update --disable` | `crontick_job_disable` |
-| `delete-job` | `deleteJob` | `crontick jobs delete` | `crontick_job_delete` |
-| `run-now` | `runNow` | `crontick jobs run-now` | `crontick_job_run_now` |
-| `job-schedule` | `jobSchedule` | `crontick jobs schedule` | `crontick_job_schedule` |
-| `cancel-run` | `cancelRun` | `crontick runs cancel` | `crontick_job_cancel_run` |
-| `list-runs` | `listRuns` | `crontick runs list` | `crontick_run_list` |
-| `get-run` | `getRun` | `crontick runs get` | `crontick_run_get` |
-| `logs` | `getLogs` | `crontick runs logs` | `crontick_run_logs_tail` |
-| `stats-summary` | `statsSummary` | `crontick stats summary` | `crontick_stats_summary` |
-| `stats-job` | `statsJob` | `crontick stats job` | `crontick_stats_job` |
-| `export` | `exportJobs` | `crontick share export` | `crontick_export` |
-| `import` | `importJobs` | `crontick share import` | `crontick_import` |
-| `daemon-stop` | `daemonStop` | `crontick info daemon stop` | `crontick_daemon_stop` |
-| `daemon-reload` | `daemonReload` | `crontick info daemon reload` | `crontick_daemon_reload` |
-| `doctor` | `doctor` | `crontick info doctor` | `crontick_doctor` |
-| `info` | `info` | `crontick info` | `crontick_info` |
-
-The CLI may fold
-
-The CLI may fold multiple capabilities into one command path when the operation is an option on a shared command. For example, `enable-job` and `disable-job` are expressed as `crontick jobs update --enable` and `crontick jobs update --disable`.
+20 capabilities are defined today; see
+[specs/005-surface-parity.md](../specs/005-surface-parity.md#current-capability-table) for the
+full table. The CLI may fold multiple capabilities into one command path when the operation is
+an option on a shared command -- `enable-job`/`disable-job` are `crontick jobs update --enable`
+and `--disable`.
 
 ## The surface-drift test
 
-`tests/surface-drift.test.ts` uses the `SURFACE_CAPABILITIES` array to verify at test time that:
+`tests/unit/surface-drift.test.ts` uses the `SURFACE_CAPABILITIES` array to verify at test time that:
 
 1. Every capability's `clientMethod` exists as a function on `CrontickClient.prototype`.
 2. Every client prototype method is either in the capabilities table or in a known non-parity set.
@@ -111,4 +94,4 @@ These are tracked in the test's `NON_PARITY_CLIENT_METHODS` set.
 
 - [Architecture](../architecture.md) - component diagram and module map
 - [Error model](./error-model.md) - how errors translate across surfaces
-- [Testing](../testing.md) - the surface-drift test in detail
+- [Testing](../testing/testing.md) - the surface-drift test in detail

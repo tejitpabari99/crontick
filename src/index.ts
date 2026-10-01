@@ -7,23 +7,26 @@
  * isVerbose, jobJsonSchema, createJobFromCliOptions, configPath, daemonStart,
  * daemonStatus, daemonRestart) are intentionally library-only — they serve
  * internal wiring or direct-use scenarios and are outside the surface-parity
- * contract enforced by tests/surface-drift.test.ts.
+ * contract enforced by tests/unit/surface-drift.test.ts.
  */
 
 export { VERSION } from './version.js';
 export { CrontickError, ORPHAN_RUN_ERROR_CODE, ORPHAN_RUN_ERROR_MESSAGE } from './errors.js';
-export { CrontickClient, createClient, LOG_SOURCES } from './client.js';
+export { CrontickClient, createClient } from './client.js';
+export type { NormalizedUsage } from './run-output.js';
 export type {
   ConfigPathInfo,
   CreateJobOptions,
+  ExportFile,
+  ImportResult,
+  UpdateJobOptions,
   CrontickClientOptions,
   CrontickInfo,
   CrontickInfoPaths,
   DaemonStatus,
   JobStats,
-  LogEntry,
-  LogSource,
-  LogsResult,
+  RunOutput,
+  RunRecord,
   StatsSummary,
 } from './client.js';
 export {

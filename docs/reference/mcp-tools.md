@@ -66,9 +66,9 @@ Tools that expose run rows or log text apply the shared redaction contract befor
 
 ## Tool Inventory
 
-The MCP server exposes 21 `crontick_*` tools, matching `SURFACE_CAPABILITIES`.
+The MCP server exposes 20 `crontick_*` tools, matching `SURFACE_CAPABILITIES`.
 
-Removed tools are not present: the `crontick_config_*` get/set/unset/init/validate/engine tools, `crontick_schedule_validate`, `crontick_schedule_preview`, `crontick_dashboard_data`, `crontick_run_delete`, and the `crontick_daemon_start`/`crontick_daemon_status`/`crontick_daemon_restart` plus `crontick_dashboard_start`/`crontick_dashboard_status`/`crontick_dashboard_stop` tools. The dashboard is always served by the daemon; call `crontick_info`, read `configPath`, and open its `dashboardUrl`. Use `crontick_job_schedule` to preview an existing job's upcoming fire times.
+Removed tools are not present: the `crontick_config_*` get/set/unset/init/validate/engine tools, `crontick_schedule_validate`, `crontick_schedule_preview`, `crontick_dashboard_data`, `crontick_run_delete`, `crontick_run_logs_tail` and `crontick_run_output` (folded into `crontick_run_get`), and the `crontick_daemon_start`/`crontick_daemon_status`/`crontick_daemon_restart` plus `crontick_dashboard_start`/`crontick_dashboard_status`/`crontick_dashboard_stop` tools. The dashboard is always served by the daemon; call `crontick_info`, read `configPath`, and open its `dashboardUrl`. Use `crontick_job_schedule` to preview an existing job's upcoming fire times.
 
 ---
 
@@ -81,17 +81,22 @@ Create and schedule a new job.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `id` | `string` (GUID) | no | generated | Immutable GUID; omit and let one be generated automatically |
-| `alias` | `string` | no | auto-generated | Human-friendly unique job alias |
+| `alias` | `string` | no | auto-generated | Unique kebab-case job alias (set via CLI `--alias`/`-a`) |
 | `description` | `string` | no | — | Job description |
 | `enabled` | `boolean` | no | `true` | Whether job is active |
 | `schedule` | `Schedule` | yes | — | Schedule object (see [job-schema.md](job-schema.md)) |
-| `action` | `ActionInput` | yes | — | Action with `kind` discriminator (`script`, `exec`, or `prompt`) |
-| `overlap` | `"skip"\|"queue"\|"cancel-previous"` | no | `"skip"` | Overlap policy |
-| `retry` | `{ max?: number, backoffSec?: number }` | no | `{ max: 0, backoffSec: 30 }` | Retry config |
-| `force` | `boolean` | no | `false` | Replace an existing job with the same alias/id |
+| `action` | `ActionInput` | yes | — | Prompt action with `kind: "prompt"` |
+| `overlap` | `"skip"\|"queue"\|"cancel-previous"` | no | config `defaults.overlap`, then `"skip"` | Overlap policy |
+| `retry` | `{ max?: number, backoffSec?: number }` | no | config `defaults.retry`, then `{ max: 0, backoffSec: 30 }` | Retry config |
+| `force` | `boolean` | no | `false` | Replace an existing job with the same alias or id |
+| `trustFolder` | `boolean` | no | `false` | Claude jobs only: trust `action.cwd` when it is not trusted yet. On `TRUST_REQUIRED`, ask the user, then call again with `true` |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** The created `Job` object, with secret-like `action.env` values redacted.
+
+If `action.reuseSession` is `true`, resolved `overlap` must be `skip`. Other overlap values return `VALIDATION_ERROR`.
+
+**Working directory:** the job runs in `action.cwd`. Always pass the absolute path of the project folder: MCP hosts often start the server in an unrelated directory such as `/`, which would otherwise be stored as the default (the server process's directory). A nonexistent folder fails with `INVALID_CWD`. For Claude jobs the folder must be trusted in Claude's config; otherwise the call fails with `TRUST_REQUIRED` and nothing is saved. Ask the user, then call again with `trustFolder: true`. Cron schedules fire in the machine's local timezone (there is no `tz` field).
 
 ---
 
@@ -131,12 +136,15 @@ Update an existing job by GUID or alias. The patch is merged with the existing d
 | `description` | `string` | no | — | Job description |
 | `enabled` | `boolean` | no | — | Enable/disable |
 | `schedule` | `Schedule` | no | — | New schedule |
-| `action` | `ActionInput` | no | — | New or patched action (`script`, `exec`, or `prompt`) |
+| `action` | `ActionInput` | no | — | New or patched prompt action |
 | `overlap` | `"skip"\|"queue"\|"cancel-previous"` | no | — | Overlap policy |
 | `retry` | `{ max?: number, backoffSec?: number }` | no | — | Retry config |
+| `trustFolder` | `boolean` | no | `false` | See `crontick_job_create`; checked only when `action.cwd` or the engine changes |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Updated `Job` object.
+
+Changing `action.cwd` of a job that has a session (`sessionId`/`reuseSession`) fails with `CWD_CHANGE_BREAKS_SESSION` unless the patch also sets a new `sessionId` or `reuseSession: true` (fresh session). The merged job must still use `overlap: "skip"` when `action.reuseSession` is `true`; incompatible updates return `VALIDATION_ERROR`.
 
 ---
 
@@ -177,13 +185,15 @@ Permanently delete one job definition by GUID or alias, or delete every job with
 | `force` | `boolean` | no | `false` | Required when `all: true` |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ ok: true }` for a single delete, or `{ ok: true, deleted: number }` when `all: true`. The literal CLI keyword `all` is only reserved on the CLI; MCP callers may still delete an alias `all` job by passing `id: "all"`.
+Deleting a job also deletes its runs, stored run output, schedule state and per-job log file; Claude's session transcripts are untouched.
+
+**Result:** `{ ok: true, canceledRun: boolean, deletedRuns: number }` for a single delete, or `{ ok: true, deleted: number }` when `all: true`. The literal CLI keyword `all` is only reserved on the CLI; MCP callers may still delete an alias `all` job by passing `id: "all"`.
 
 ---
 
 ### crontick_job_run_now
 
-Trigger an immediate run of a job, bypassing its schedule.
+Run a job once immediately, even if it is disabled. Does not enable the job or change its schedule; the overlap policy still applies (a run blocked by `overlap: skip` is recorded as `skipped`). Returns `{ runId }`.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
@@ -204,7 +214,7 @@ Show upcoming fire times for an existing job.
 | `n` | `integer` (1-20) | no | `5` | Number of upcoming fire times |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ jobId, alias, schedule, ...preview }`.
+**Result:** `{ jobId, alias, enabled, cwd, schedule, next }`; `enabled: false` means the job will not fire on its own.
 
 ---
 
@@ -230,7 +240,7 @@ List recent runs, optionally filtered by job and/or status.
 | `jobId` | `string` | no | — | Job GUID or alias |
 | `limit` | `integer` (positive) | no | — | Maximum runs to return |
 | `since` | `integer` | no | — | Only runs since epoch milliseconds |
-| `status` | `enum` | no | — | `queued`, `running`, `success`, `failed`, `canceled`, `timeout`, or `missed` |
+| `status` | `enum` | no | — | `queued`, `running`, `success`, `failed`, `canceled`, `skipped`, `timeout`, or `missed` |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Array of run objects.
@@ -246,22 +256,7 @@ Get the details and current status of a run.
 | `id` | `string` | yes | — | Run ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Run object, including resolved/redacted `command`, engine/status/timing fields, `pid` when spawned, `sessionId` when available, and `outputTruncated`.
-
----
-
-### crontick_run_logs_tail
-
-Get the last N logical lines of output for a run.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `id` | `string` | yes | — | Run ID |
-| `lines` | `integer` (positive) | no | `50` | Number of logical lines |
-| `source` | `"all"\|"engine"\|"crontick"` | no | `all` | `engine` = stdout/stderr, `crontick` = lifecycle events, `all` = both |
-| `verbose` | `boolean` | no | `false` | Include diagnostics |
-
-**Result:** `{ runId: string, lines: LogEntry[] }`.
+**Result:** Run object, including the cleaned `output` (a `RunOutput`: the engine's final answer `result`, `error`, and the full `stderr`; see [library-api.md](library-api.md#runoutput)), resolved/redacted `command`, engine/status/timing fields, `pid` when spawned, `sessionId` (the Runner Session ID) when available, `outputTruncated`, and `logFile` (absolute path of the per-job file of crontick-side events for all runs of the job, or `null` when file logging is off, with `logFileExists`/`transcriptExists` booleans that are `false` when the file is missing on disk; crontick does not store the engine's raw logs, see `transcriptPath` for the engine's own transcript). Claude runs with a complete result include `costUsd`, `turns`, redacted `usageJson` (JSON string), `transcriptPath`, and `engineStatus` (Claude result subtype). Raw-engine runs omit these fields.
 
 ---
 
@@ -273,7 +268,7 @@ Get aggregate summary of all jobs.
 |-----------|------|----------|---------|-------------|
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ totalJobs, enabledJobs, totalRuns, succeeded, failed, avgDurationMs }`.
+**Result:** `{ totalJobs, enabledJobs, succeeded, failed, canceled, skipped, avgDurationSec, totalCostUsd, totalTurns }`. `avgDurationSec` is the average execution time in seconds (2 decimals). Per-job stats also include `avgDurationSec`. `skipped` counts fires that never ran due to overlap; `canceled` counts terminated runs. Cost and turns sum the included runs; missing usage contributes zero.
 
 ---
 
@@ -286,34 +281,37 @@ Get run statistics for a specific job.
 | `id` | `string` | yes | — | Job GUID or alias |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ jobId, totalRuns, succeeded, failed, lastStatus, lastRunAt }`.
+**Result:** `{ jobId, succeeded, failed, canceled, skipped, lastStatus, lastRunAt (epoch ms), avgDurationSec, totalCostUsd, totalTurns }`, over every retained run of the job. `totalTurns` sums the agent turns (Claude `num_turns`: model round-trips) of all runs.
 
 ---
 
 ### crontick_export
 
-Export all job definitions as a JSON object.
+Export job definitions as a crontick export file. Jobs only: no run history, and job ids are omitted (an import assigns new ones).
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `includeRuns` | `boolean` | no | `false` | Include run history in the export |
+| `onlyJobs` | `string[]` | no | all jobs | Ids or aliases to export. Any unknown entry fails with `JOB_NOT_FOUND` listing every miss |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** `{ jobs: Job[], runs?: Run[] }`.
+**Result:** `{ schema: 1, exportedAt, crontickVersion, jobs }`.
 
 ---
 
 ### crontick_import
 
-Import job definitions. An optional `runs` array from `crontick_export` is restored archivally: no execution, no scheduler interaction.
+Import jobs from a crontick export file (pass the object `crontick_export` returned). The whole file is validated first; a bad file imports nothing (`VALIDATION_ERROR` naming the path). Every job gets a new id, an alias already in use becomes `<alias>-2`, `-3`, ... (`renamedFrom` in the result row), existing jobs are never overwritten, and run history is never imported.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `jobs` | `unknown[]` | yes | — | Array of job definitions |
-| `runs` | `unknown[]` | no | — | Run records to restore |
+| `schema` | `number` | yes | — | Export format version; must be `1` |
+| `jobs` | `unknown[]` | yes | — | Job definitions |
+| `exportedAt` | `string` | no | — | Informational |
+| `crontickVersion` | `string` | no | — | Informational |
+| `trustFolder` | `boolean` | no | `false` | Trust the jobs' working directories in Claude when needed (see `crontick_job_create`) |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Import summary.
+**Result:** `{ imported, results: [{ id, alias, ok, renamedFrom?, error? }] }`. A job whose `cwd` does not exist fails on its own row (`INVALID_CWD`).
 
 ---
 

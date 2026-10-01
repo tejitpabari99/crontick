@@ -1,5 +1,9 @@
 # Scheduling
 
+Audience: users and contributors reasoning about when jobs fire. Non-duplication: for the
+normative contract see [specs/002-scheduling.md](../specs/002-scheduling.md); for the timer
+implementation see [implementation/scheduler.md](../implementation/scheduler.md).
+
 After reading this page you will understand how crontick determines when to run jobs, how timezones apply, and what happens when the daemon is unavailable at a scheduled time.
 
 ## Schedule kinds
@@ -8,7 +12,7 @@ Every job has exactly one schedule, discriminated by `kind`:
 
 | Kind | Fields | Behavior |
 |------|--------|----------|
-| `cron` | `cron`, `tz?` | Fires at times matching a cron expression |
+| `cron` | `cron` | Fires at times matching a cron expression |
 | `interval` | `everySec`, `startAt?` | Fires repeatedly at a fixed interval |
 | `one-shot` | `runAt` | Fires once at a specific ISO-8601 timestamp |
 
@@ -23,9 +27,9 @@ Standard cron features (ranges, steps, lists, `L`, `W`, `#`) are supported as de
 
 ## Timezone handling
 
-The optional `tz` field on a `cron` schedule is passed directly to croner as `CronOptions.timezone`. When omitted, the daemon's local system timezone applies. There is no global timezone setting; each job owns its own.
+Cron expressions always fire in the machine's local timezone (the daemon's system timezone). There is no per-job `tz` field or `--tz` flag; new input containing `tz` is rejected, and a `tz` in an already-stored job file is silently ignored.
 
-Interval and one-shot schedules use UTC timestamps (ISO-8601 strings) and are timezone-agnostic.
+Interval schedules are timezone-agnostic. A one-shot `runAt` is an ISO-8601 string parsed with JavaScript `Date`: with an explicit offset (`Z`, `+02:00`) it is that exact instant; a date-time without an offset (`2026-10-01T09:00`) is interpreted in the machine's local timezone; a date-only value (`2026-10-01`) is UTC midnight. A job has exactly one schedule (`cron`, `interval`, or `one-shot`); the CLI rejects combining `--cron`, `--every`, and `--at`.
 
 ## Interval alignment
 
@@ -47,7 +51,7 @@ JavaScript `setTimeout` clamps delays greater than 2^31-1 ms (~24.8 days) to 1 m
 
 The `Scheduler.previewNext()` method returns up to `n` future fire times for any schedule without actually registering a timer. `Scheduler.validateSchedule()` checks structural validity (parseable cron, positive interval, valid ISO date).
 
-Both are exposed through the CLI (`schedule preview`, `schedule validate`) and MCP tools.
+Previews are exposed for an existing job as `crontick jobs schedule <id|alias>` and the `crontick_job_schedule` MCP tool. Raw schedule validation/preview (`validateSchedule`/`previewSchedule`) is library-only.
 
 ## Missed runs when the daemon is down
 
@@ -59,7 +63,7 @@ When the scheduler emits a tick but the job's previous run has not finished:
 
 | `overlap` | Behavior |
 |-----------|----------|
-| `skip` | New run is immediately finalized as `canceled` with error `overlap=skip: another run is already active` |
+| `skip` | New run is immediately finalized as `skipped` with error `overlap=skip: another run is already active`; no process starts |
 | `queue` | New run is placed in a per-job FIFO queue and executed after the active run completes |
 | `cancel-previous` | The active run's abort controller is triggered, and the new run starts |
 
@@ -69,4 +73,4 @@ See [Execution](./execution.md) for how the Runner enforces these policies.
 
 - [Jobs](./jobs.md) - job model and action kinds
 - [Daemon lifecycle](./daemon-lifecycle.md) - when the scheduler is active
-- [CLI reference](../reference/cli.md) - `schedule validate` and `schedule preview` commands
+- [CLI reference](../reference/cli.md) - `jobs schedule` command

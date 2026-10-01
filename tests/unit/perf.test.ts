@@ -15,7 +15,7 @@ function makeJob(id: string): Job {
     id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
-    action: { kind: 'exec', command: 'echo', args: [id] },
+    action: { kind: 'prompt', prompt: id, args: [], reuseSession: false },
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
   };

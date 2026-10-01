@@ -1,17 +1,21 @@
-// Dual-persistence layer: JSON files (source of truth for jobs) + SQLite WAL (runs, logs, job cache).
+// Dual-persistence layer: JSON files (source of truth for jobs) + SQLite WAL (runs, run outputs, job cache).
 // Only the daemon opens this store (single-writer invariant).
-// See docs/internals/storage.md
+// See docs/implementation/storage.md
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { writeFileSync, readFileSync, unlinkSync, readdirSync, existsSync, chmodSync } from 'node:fs';
-import { join } from 'node:path';
-import { z } from 'zod';
+import { dirname, join } from 'node:path';
 import { runsDbPath, jobsDir } from '../paths.js';
 import { JobSchema, type Job, type PromptAction } from '../schemas/job.js';
 import { CrontickError, ORPHAN_RUN_ERROR_MESSAGE } from '../errors.js';
 import { jobJsonSchemaText } from '../schema-json.js';
 import { nullLogger, type Logger } from '../logger.js';
-import type { LogSource } from '../log-source.js';
+import type { EngineOutput } from '../run-output.js';
+import { readClaudeCompletionMarker, readClaudeHookTranscriptPath } from '../claude-completion-marker.js';
+import { loadConfig } from '../config.js';
+import { resolveJobLogPath } from './job-log-file.js';
+import { getEngineAdapter } from '../engines/registry.js';
+import { DEFAULT_RUN_RETENTION_CAP } from '../constants/retention.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -19,7 +23,7 @@ import type { LogSource } from '../log-source.js';
 // fire the daemon was down for. It is never a success or a failure — it is
 // its own outcome — but it IS terminal for retention purposes (see
 // pruneRunsForJob(), which excludes only 'running'/'queued').
-export type RunStatus = 'queued' | 'running' | 'success' | 'failed' | 'canceled' | 'timeout' | 'missed';
+export type RunStatus = 'queued' | 'running' | 'success' | 'failed' | 'canceled' | 'skipped' | 'timeout' | 'missed';
 
 export interface Run {
   id: string;
@@ -34,66 +38,28 @@ export interface Run {
   outputTruncated: boolean; // true once a run's captured output hit the byte cap (NOT NULL DEFAULT 0 column, always present).
   sessionId?: string; // prompt-engine session id captured from output (or explicitly provided) for this run; absent for non-prompt runs.
   command?: string; // redacted resolved command line (binary + args) actually spawned for this run; absent for 'queued'/'missed' runs.
+  costUsd?: number;
+  turns?: number;
+  usageJson?: string; // redacted raw engine usage block
+  transcriptPath?: string;
+  engineStatus?: string;
 }
-
-/** Every RunStatus value, kept as a runtime array so RunImportSchema's z.enum
- *  stays in sync with the RunStatus type union above without hand-duplication
- *  drifting out of date. */
-const RUN_STATUS_VALUES = ['queued', 'running', 'success', 'failed', 'canceled', 'timeout', 'missed'] as const;
-
-/**
- * Validates one row of a `runs` import payload (see importRuns()). Mirrors
- * the Run interface field-for-field: required fields must be present and of
- * the right type (a missing/malformed `startedAt` or an out-of-union
- * `status` are the two concrete corruption cases this schema exists to
- * catch), while optional fields are genuinely optional so a valid partial
- * row round-trips. Unknown extra keys are ignored rather than rejected, so a
- * forward-compatible export (e.g. one with an added field) doesn't fail an
- * older import.
- */
-export const RunImportSchema = z.object({
-  id: z.string().min(1),
-  jobId: z.string().min(1),
-  startedAt: z.number(),
-  endedAt: z.number().optional(),
-  status: z.enum(RUN_STATUS_VALUES),
-  exitCode: z.number().optional(),
-  error: z.string().optional(),
-  durationMs: z.number().optional(),
-  pid: z.number().optional(),
-  outputTruncated: z.boolean().optional(),
-  sessionId: z.string().optional(),
-  command: z.string().optional(),
-});
-
-export interface RunLog {
-  runId: string;
-  stream: LogStream;
-  ts: number; // epoch ms
-  chunk: Buffer;
-}
-
-/**
- * Log streams captured per run. `stdout`/`stderr` are the engine's process
- * output; `crontick` is crontick's own scheduling/execution lifecycle events
- * (job fired, resolved command, exit code, duration, cancellation, captured
- * session id, errors). See LogSource for the retrieval-side filter.
- */
-export type LogStream = 'stdout' | 'stderr' | 'crontick';
-
-/**
- * Retrieval-side filter for getLogs(): `all` (default) returns every stream,
- * `engine` returns only stdout+stderr, `crontick` returns only crontick-side
- * lifecycle events. Canonically defined in `src/log-source.ts` and re-exported
- * here for daemon consumers (api.ts).
- */
-export type { LogSource };
 
 export interface ListRunsOptions {
   jobId?: string;
   limit?: number;
   since?: number; // epoch ms
   status?: RunStatus;
+  /** Restrict to any of these job ids (combined with `jobId` if both are given). */
+  jobIds?: string[];
+  /** Restrict to any of these statuses (combined with `status` if both are given). */
+  statuses?: RunStatus[];
+  /**
+   * Case-insensitive substring search over run id, status, error, session id, the job
+   * id/alias, and the stored run logs (all streams). Bound as a LIKE parameter (never
+   * interpolated); `%`, `_` and `\` in the text are matched literally.
+   */
+  q?: string;
 }
 
 /** Per-job watermark: the last time this job's schedule was known to be observed by a running daemon. */
@@ -129,12 +95,6 @@ export interface OrphanReconciliationResult {
  * ORPHAN_RUN_ERROR_MESSAGE (src/errors.ts) and other runs.error values.
  */
 export const MISSED_RUN_ERROR_MESSAGE = 'MISSED: daemon was not running at the scheduled fire time';
-
-// Not exported: this is an internal fallback for the constructor default
-// parameter below only. BUILT_IN_CONFIG.retention.maxRunsPerJob (src/config.ts)
-// is the actual default consumers see; keeping this un-exported avoids a
-// second, easily-drifting public source of the same "100" default.
-const DEFAULT_RUN_RETENTION_CAP = 100;
 
 export class Store {
   private db!: DatabaseSync;
@@ -186,12 +146,10 @@ export class Store {
   /**
    * Creates every table/index a fresh database needs, in one idempotent pass.
    * `CREATE TABLE/INDEX IF NOT EXISTS` throughout, so calling this again on an
-   * already-initialized database (e.g. a second open()) is a no-op. There is
-   * no migration ledger and no prior on-disk shape to reconcile: crontick has
-   * a single fixed schema and always creates it in its final shape. Every
-   * column (including `jobs.alias`, `runs.session_id`, and `runs.command`) is
-   * declared directly in its `CREATE TABLE`, and the alias-uniqueness index is
-   * created alongside the tables.
+   * already-initialized database (e.g. a second open()) is a no-op. crontick has
+   * a single fixed schema (no migrations): every column is declared directly
+   * in its `CREATE TABLE`, and the alias-uniqueness index is created
+   * alongside the tables.
    */
   private createSchema(): void {
     this.db.exec(`
@@ -214,15 +172,23 @@ export class Store {
         pid INTEGER,
         output_truncated INTEGER NOT NULL DEFAULT 0,
         session_id TEXT,
-        command TEXT
+        claude_result_completed INTEGER NOT NULL DEFAULT 0,
+        command TEXT,
+        cost_usd REAL,
+        turns INTEGER,
+        usage_json TEXT,
+        transcript_path TEXT,
+        engine_status TEXT
       );
 
-      CREATE TABLE IF NOT EXISTS run_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        run_id TEXT NOT NULL,
-        stream TEXT NOT NULL,
-        ts INTEGER NOT NULL,
-        chunk BLOB NOT NULL
+      -- Parsed engine output (final answer, error, full stderr) for a run. The engine's raw stdout/stderr is never stored: the runner keeps
+      -- its own transcript, and crontick-side events go to a log file.
+      CREATE TABLE IF NOT EXISTS run_outputs (
+        run_id TEXT PRIMARY KEY,
+        format TEXT NOT NULL,
+        result TEXT,
+        engine_error TEXT,
+        stderr TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS job_schedule_state (
@@ -238,7 +204,6 @@ export class Store {
       -- walk to avoid a scan-then-sort per pruneRunsForJob() call.
       CREATE INDEX IF NOT EXISTS idx_runs_job_id_started_at ON runs(job_id, started_at);
       CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs(started_at);
-      CREATE INDEX IF NOT EXISTS idx_run_logs_run_id ON run_logs(run_id);
 
       -- Alias uniqueness enforced at the DB layer as a defense-in-depth
       -- backstop against a race between two concurrent create/update requests
@@ -263,6 +228,35 @@ export class Store {
     writeJobFileHardened(filePath, json);
     writeJobFileHardened(schemaPath, jobJsonSchemaText());
     this.logger.debug('Persisted job files', { jobId: persisted.id, alias: persisted.alias, filePath, schemaPath });
+  }
+
+  /**
+   * Imported sessions lack trustworthy job-to-transcript provenance.
+   *
+   * This resets `sessionId` only for engines whose resume is transcript-backed
+   * (today: Claude) -- routed through the adapter registry, per design
+   * principle #1, rather than a literal `engine.type === 'claude'` branch.
+   * `resumeTranscriptPath(...) !== undefined` is the same signal runner.ts's
+   * own resume preflight uses to decide whether provenance-gating applies at
+   * all (an adapter without transcript-backed resume, like RawAdapter,
+   * returns undefined and its sessionId is left untouched).
+   */
+  prepareImportedJob(job: Job): Job {
+    if (job.action.kind !== 'prompt' || !job.action.sessionId) return job;
+    const config = loadConfig({ path: join(dirname(this.dbPath), 'config.json') });
+    const engine = config.engines[job.action.engine ?? config.defaultEngine];
+    const requiresResumeProvenance = engine !== undefined
+      && getEngineAdapter(engine.type).resumeTranscriptPath(job.action.cwd ?? process.cwd(), job.action.sessionId) !== undefined;
+    if (!requiresResumeProvenance || this.hasCompletedClaudeSession(job.id, job.action.sessionId)) return job;
+    const action = { ...job.action };
+    delete action.sessionId;
+    return {
+      ...job,
+      action: {
+        ...action,
+        reuseSession: (job.overlap ?? 'skip') === 'skip',
+      },
+    };
   }
 
   /**
@@ -331,30 +325,66 @@ export class Store {
     return rows.map((r) => JSON.parse(r.json) as Job);
   }
 
-  /** Accepts either the GUID `id` or the `alias` (see getJob) and deletes the resolved job's row + files. */
+  /** Accepts either the GUID `id` or the `alias` (see getJob) and deletes the resolved job together with its runs, run outputs and schedule state. */
   deleteJob(idOrAlias: string): boolean {
+    return this.deleteJobAndRuns(idOrAlias) !== undefined;
+  }
+
+  /**
+   * Deletes a job and everything that belongs to it in ONE transaction: its
+   * run outputs, runs, schedule state, then the job row. Deleting a job removes
+   * its history on every surface (nothing is archived). After the commit the
+   * job JSON files and the per-job log file are unlinked best-effort (the
+   * SQLite rows are the transactional source of truth; files are mirrors).
+   * Claude's own transcripts are never touched. Returns undefined when the job
+   * does not exist, else the number of runs removed.
+   */
+  deleteJobAndRuns(idOrAlias: string): { jobId: string; deletedRuns: number } | undefined {
     const job = this.getJob(idOrAlias);
-    if (!job) return false;
-    const changes = (this.db.prepare('DELETE FROM jobs WHERE id = ?').run(job.id) as { changes: number }).changes;
+    if (!job) return undefined;
+    let deletedRuns = 0;
+    let deleted = 0;
+    this.db.exec('BEGIN;');
+    try {
+      this.db.prepare('DELETE FROM run_outputs WHERE run_id IN (SELECT id FROM runs WHERE job_id = ?)').run(job.id);
+      deletedRuns = (this.db.prepare('DELETE FROM runs WHERE job_id = ?').run(job.id) as { changes: number }).changes;
+      this.db.prepare('DELETE FROM job_schedule_state WHERE job_id = ?').run(job.id);
+      deleted = (this.db.prepare('DELETE FROM jobs WHERE id = ?').run(job.id) as { changes: number }).changes;
+      this.db.exec('COMMIT;');
+    } catch (err) {
+      this.db.exec('ROLLBACK;');
+      throw err;
+    }
     this.removeJobFiles(job.id);
-    this.logger.debug('Deleted job', { jobId: job.id, alias: job.alias, deleted: changes > 0 });
-    return changes > 0;
+    this.removeJobLogFile(job.id);
+    this.logger.debug('Deleted job', { jobId: job.id, alias: job.alias, deleted: deleted > 0, deletedRuns });
+    return deleted > 0 ? { jobId: job.id, deletedRuns } : undefined;
+  }
+
+  /** Best-effort removal of a job's per-job log file (see resolveJobLogPath). */
+  private removeJobLogFile(jobId: string): void {
+    try {
+      const logPath = resolveJobLogPath(jobId);
+      if (logPath && existsSync(logPath)) unlinkSync(logPath);
+    } catch {
+      // best-effort
+    }
   }
 
   /**
    * Atomically delete every job and all data associated with jobs: run history,
-   * run logs, and per-job schedule state, in a single transaction. Returns the
-   * number of job rows removed. Unlike single-job delete (which archives run
-   * history), a bulk wipe leaves nothing to archive against, so runs/logs are
-   * removed too. Job JSON files are unlinked best-effort after the DB commit
-   * (the SQLite rows are the transactional source of truth; files are a mirror).
+   * run outputs, and per-job schedule state, in a single transaction. Returns the
+   * number of job rows removed. Like single-job delete, runs and their outputs are
+   * removed too. Job JSON files and per-job log files are unlinked best-effort
+   * after the DB commit (the SQLite rows are the transactional source of truth;
+   * files are a mirror).
    */
   deleteAllJobs(): number {
     const jobs = this.listJobs();
     this.db.exec('BEGIN;');
     let deleted: number;
     try {
-      this.db.exec('DELETE FROM run_logs;');
+      this.db.exec('DELETE FROM run_outputs;');
       this.db.exec('DELETE FROM runs;');
       this.db.exec('DELETE FROM job_schedule_state;');
       deleted = (this.db.prepare('DELETE FROM jobs').run() as { changes: number }).changes;
@@ -363,7 +393,10 @@ export class Store {
       this.db.exec('ROLLBACK;');
       throw err;
     }
-    for (const job of jobs) this.removeJobFiles(job.id);
+    for (const job of jobs) {
+      this.removeJobFiles(job.id);
+      this.removeJobLogFile(job.id);
+    }
     this.logger.info('Deleted all jobs', { deleted });
     return deleted;
   }
@@ -475,10 +508,15 @@ export class Store {
 
   updateRun(
     id: string,
-    update: Partial<Pick<Run, 'status' | 'exitCode' | 'error' | 'endedAt' | 'durationMs' | 'pid' | 'outputTruncated' | 'sessionId' | 'command'>>,
+    update: Partial<Pick<Run, 'status' | 'exitCode' | 'error' | 'endedAt' | 'durationMs' | 'pid' | 'outputTruncated' | 'sessionId' | 'command' | 'costUsd' | 'turns' | 'usageJson' | 'transcriptPath' | 'engineStatus'>>,
   ): void {
     const run = this.getRun(id);
-    if (!run) throw new CrontickError('NOT_FOUND', `Run ${id} not found`);
+    if (!run) {
+      // The run's job may have been deleted while the run was still in flight
+      // (deleting a job removes its runs); late updates are simply dropped.
+      this.logger.debug('Ignoring update for a run that no longer exists', { runId: id });
+      return;
+    }
 
     const fields: string[] = [];
     const values: (string | number | null)[] = [];
@@ -512,12 +550,36 @@ export class Store {
       values.push(update.outputTruncated ? 1 : 0);
     }
     if (update.sessionId !== undefined) {
+      // A retry can assign a fresh Claude session to the same run row. Its
+      // earlier result must never certify the new, possibly incomplete ID.
+      fields.push('claude_result_completed = CASE WHEN session_id = ? THEN claude_result_completed ELSE 0 END');
+      values.push(update.sessionId);
       fields.push('session_id = ?');
       values.push(update.sessionId ?? null);
     }
     if (update.command !== undefined) {
       fields.push('command = ?');
       values.push(update.command ?? null);
+    }
+    if (update.costUsd !== undefined) {
+      fields.push('cost_usd = ?');
+      values.push(update.costUsd);
+    }
+    if (update.turns !== undefined) {
+      fields.push('turns = ?');
+      values.push(update.turns);
+    }
+    if (update.usageJson !== undefined) {
+      fields.push('usage_json = ?');
+      values.push(update.usageJson);
+    }
+    if (update.transcriptPath !== undefined) {
+      fields.push('transcript_path = ?');
+      values.push(update.transcriptPath);
+    }
+    if (update.engineStatus !== undefined) {
+      fields.push('engine_status = ?');
+      values.push(update.engineStatus);
     }
 
     if (fields.length === 0) return;
@@ -533,14 +595,49 @@ export class Store {
     return row ? rowToRun(row) : undefined;
   }
 
+  /** Records evidence that Claude produced a complete result for this session. */
+  markCompletedClaudeSession(runId: string, sessionId: string): void {
+    const result = this.db.prepare('UPDATE runs SET session_id = ?, claude_result_completed = 1 WHERE id = ?')
+      .run(sessionId, runId) as { changes: number };
+    if (result.changes === 0) throw new CrontickError('NOT_FOUND', `Run ${runId} not found`);
+  }
 
-  private queryRuns(opts: ListRunsOptions = {}, existingJobsOnly = false): Run[] {
+  /**
+   * Preflight eligibility requires a completed prior run for this job and ID.
+   *
+   * Keyed purely off `claude_result_completed` (set only after a real parsed
+   * `result` line, see markCompletedClaudeSession()) -- NOT the run row's
+   * terminal `status` column. A retry loop reuses the same run row across
+   * attempts and only calls finalizeRun() (which writes the terminal status)
+   * after the whole loop ends, so a mid-loop resume preflight would otherwise
+   * see `status: 'running'` on a row whose transcript was already written and
+   * wrongly conclude the session doesn't exist (see tests/unit/claude-adapter.test.ts
+   * "resumes across a retry within the same run"). A row can only ever reach
+   * claude_result_completed = 1 via markCompletedClaudeSession(), which itself
+   * only fires after parseResult() found a complete `result` line -- proof the
+   * transcript was written -- regardless of what status the row later settles
+   * on (even 'canceled'/'timeout' if a later attempt in the same run aborts).
+   * The transcript-existence preflight (resumeTranscriptPath + transcriptExists
+   * in runner.ts) still applies on top of this and is the actual guard against
+   * a pruned/missing transcript.
+   */
+  hasCompletedClaudeSession(jobId: string, sessionId: string): boolean {
+    return this.db.prepare(`SELECT 1 FROM runs
+      WHERE job_id = ? AND session_id = ? AND claude_result_completed = 1 LIMIT 1`).get(jobId, sessionId) !== undefined;
+  }
+
+
+  private queryRuns(opts: ListRunsOptions = {}): Run[] {
     const conditions: string[] = [];
     const params: (string | number)[] = [];
 
     if (opts.jobId) {
       conditions.push('runs.job_id = ?');
       params.push(opts.jobId);
+    }
+    if (opts.jobIds && opts.jobIds.length > 0) {
+      conditions.push(`runs.job_id IN (${opts.jobIds.map(() => '?').join(', ')})`);
+      params.push(...opts.jobIds);
     }
     if (opts.since !== undefined) {
       conditions.push('runs.started_at >= ?');
@@ -550,8 +647,25 @@ export class Store {
       conditions.push('runs.status = ?');
       params.push(opts.status);
     }
+    if (opts.statuses && opts.statuses.length > 0) {
+      conditions.push(`runs.status IN (${opts.statuses.map(() => '?').join(', ')})`);
+      params.push(...opts.statuses);
+    }
+    const q = opts.q?.trim();
+    if (q) {
+      const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+      conditions.push(`(
+        runs.id LIKE ? ESCAPE '\\'
+        OR runs.status LIKE ? ESCAPE '\\'
+        OR runs.error LIKE ? ESCAPE '\\'
+        OR runs.session_id LIKE ? ESCAPE '\\'
+        OR runs.job_id LIKE ? ESCAPE '\\'
+        OR runs.job_id IN (SELECT jobs.id FROM jobs WHERE jobs.alias LIKE ? ESCAPE '\\')
+        OR EXISTS (SELECT 1 FROM run_outputs WHERE run_outputs.run_id = runs.id AND run_outputs.result LIKE ? ESCAPE '\\')
+      )`);
+      params.push(like, like, like, like, like, like, like);
+    }
 
-    const join = existingJobsOnly ? 'INNER JOIN jobs ON jobs.id = runs.job_id' : '';
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     // Defense-in-depth: bind LIMIT as a parameter (never string-interpolated)
     // and reject any non-finite / non-positive value so a bad limit can never
@@ -569,7 +683,7 @@ export class Store {
       limitClause = 'LIMIT ?';
       params.push(n);
     }
-    const rows = this.db.prepare(`SELECT runs.* FROM runs ${join} ${where} ORDER BY runs.started_at DESC ${limitClause}`)
+    const rows = this.db.prepare(`SELECT runs.* FROM runs ${where} ORDER BY runs.started_at DESC ${limitClause}`)
       .all(...params) as unknown as DbRunRow[];
     this.logger.debug('Listed runs', {
       count: rows.length,
@@ -577,136 +691,38 @@ export class Store {
       limit: opts.limit,
       since: opts.since,
       status: opts.status,
-      existingJobsOnly,
     });
     return rows.map(rowToRun);
   }
 
   listRuns(opts: ListRunsOptions = {}): Run[] {
-    return this.queryRuns(opts, false);
+    return this.queryRuns(opts);
   }
 
-  /**
-   * Current-job aggregate views exclude archived runs whose parent job row was
-   * deleted, but direct run/log lookups by run id still use listRuns()/getRun().
-   */
-  listRunsForExistingJobs(opts: ListRunsOptions = {}): Run[] {
-    return this.queryRuns(opts, true);
-  }
+  // ── Run output CRUD ──────────────────────────────────────────────────────────
 
-  /**
-   * Bulk-restores previously-exported run history (L7's `export --include-runs`
-   * mitigation for hard-delete retention). Inserts are archival only: no
-   * execution, no scheduler interaction. Idempotent on `id` (INSERT OR IGNORE
-   * — a run already present, e.g. from re-importing the same backup, is left
-   * untouched and not counted as imported).
-   *
-   * Every row is validated against RunImportSchema before it is ever bound to
-   * a statement (mirrors the per-item validate-and-collect pattern the jobs
-   * loop in api.ts's POST /api/import already uses): a malformed row (bad
-   * `status`, missing `startedAt`, wrong types, ...) is skipped individually
-   * with a reason rather than throwing and aborting the whole batch. Rows
-   * referencing a job that doesn't exist in this store are likewise skipped
-   * individually. Each row is also its own try/catch around the INSERT itself
-   * so an unexpected DB-level failure on one row can never take down the
-   * rows around it — the loop has no surrounding transaction, so every row
-   * that does succeed is durably committed independently of any row that
-   * doesn't (atomic-per-row, not all-or-nothing).
-   *
-   * After the loop, retention is enforced (pruneRunsForJob) for every job
-   * that received at least one imported row, so a large restore can't leave a
-   * job permanently above its cap until its next real run.
-   */
-  importRuns(runs: unknown[]): { imported: number; skipped: Array<{ id: string; error: string }> } {
-    const skipped: Array<{ id: string; error: string }> = [];
-    let imported = 0;
-    const affectedJobIds = new Set<string>();
-    const jobExists = this.db.prepare('SELECT 1 FROM jobs WHERE id = ?');
-    const insert = this.db.prepare(
-      `INSERT OR IGNORE INTO runs
-         (id, job_id, started_at, ended_at, status, exit_code, error, duration_ms, pid, output_truncated, session_id, command)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    for (const raw of runs) {
-      const parsed = RunImportSchema.safeParse(raw);
-      if (!parsed.success) {
-        const idGuess = isRecord(raw) && typeof raw.id === 'string' ? raw.id : '?';
-        skipped.push({ id: idGuess, error: `validation failed: ${parsed.error.issues.map((issue) => issue.message).join('; ')}` });
-        continue;
-      }
-      const run = parsed.data;
-      if (!jobExists.get(run.jobId)) {
-        skipped.push({ id: run.id, error: 'job not found' });
-        continue;
-      }
-      try {
-        const result = insert.run(
-          run.id,
-          run.jobId,
-          run.startedAt,
-          run.endedAt ?? null,
-          run.status,
-          run.exitCode ?? null,
-          run.error ?? null,
-          run.durationMs ?? null,
-          run.pid ?? null,
-          run.outputTruncated ? 1 : 0,
-          run.sessionId ?? null,
-          run.command ?? null,
-        ) as { changes: number };
-        if (result.changes > 0) {
-          imported += 1;
-          affectedJobIds.add(run.jobId);
-        }
-        // else: id already present -- idempotent re-import, not an error.
-      } catch (err) {
-        skipped.push({ id: run.id, error: `insert failed: ${String(err)}` });
-      }
-    }
-    for (const jobId of affectedJobIds) {
-      // Best-effort per job, same as pruneAllJobsRunHistory(): retention is
-      // maintenance, not correctness, so one job's prune failure must not
-      // affect the reported import result or any other job's retention.
-      try {
-        this.pruneRunsForJob(jobId);
-      } catch (err) {
-        this.logger.error('Run retention prune failed after import; rows were still imported', { jobId, error: String(err) });
-      }
-    }
-    this.logger.debug('Imported runs', { requested: runs.length, imported, skipped: skipped.length });
-    return { imported, skipped };
-  }
-
-  // ── Log CRUD ────────────────────────────────────────────────────────────────
-
-  appendLog(runId: string, stream: LogStream, chunk: Buffer): void {
+  /** Persist (replace) a run's parsed engine output. No-op when the run no longer exists (e.g. its job was deleted mid-run). */
+  setRunOutput(runId: string, out: EngineOutput): void {
     this.db
-      .prepare('INSERT INTO run_logs (run_id, stream, ts, chunk) VALUES (?, ?, ?, ?)')
-      .run(runId, stream, Date.now(), chunk);
+      .prepare(
+        `INSERT INTO run_outputs (run_id, format, result, engine_error, stderr)
+         SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM runs WHERE id = ?)
+         ON CONFLICT(run_id) DO UPDATE SET format=excluded.format, result=excluded.result, engine_error=excluded.engine_error,
+           stderr=excluded.stderr`,
+      )
+      .run(runId, out.format, out.result, out.engineError, out.stderr, runId);
   }
 
-  /**
-   * Returns a run's logs, optionally filtered by source: `all` (default)
-   * returns every stream, `engine` returns only stdout+stderr, `crontick`
-   * returns only crontick-side lifecycle events.
-   */
-  getLogs(runId: string, source: LogSource = 'all'): RunLog[] {
-    const streams = logStreamsForSource(source);
-    const rows = streams
-      ? (this.db
-          .prepare(`SELECT * FROM run_logs WHERE run_id = ? AND stream IN (${streams.map(() => '?').join(', ')}) ORDER BY id`)
-          .all(runId, ...streams) as unknown as DbLogRow[])
-      : (this.db
-          .prepare('SELECT * FROM run_logs WHERE run_id = ? ORDER BY id')
-          .all(runId) as unknown as DbLogRow[]);
-    return rows.map(rowToLog);
-  }
-
-  tailLogs(runId: string, sinceTs: number): RunLog[] {
-    const rows = this.db
-      .prepare('SELECT * FROM run_logs WHERE run_id = ? AND ts > ? ORDER BY id')
-      .all(runId, sinceTs) as unknown as DbLogRow[];
-    return rows.map(rowToLog);
+  /** The parsed engine output stored for a run; undefined when the run never produced any (skipped, missed, still running). */
+  getRunOutput(runId: string): EngineOutput | undefined {
+    const row = this.db.prepare('SELECT * FROM run_outputs WHERE run_id = ?').get(runId) as unknown as DbOutputRow | undefined;
+    if (!row) return undefined;
+    return {
+      format: row.format === 'claude-stream-json' ? 'claude-stream-json' : 'text',
+      result: row.result,
+      engineError: row.engine_error,
+      stderr: row.stderr,
+    };
   }
 
   // ── Schedule state (missed-fire watermark) ───────────────────────────────────
@@ -769,6 +785,20 @@ export class Store {
           continue;
         }
       }
+      if (row.status === 'running') {
+        const marker = readClaudeCompletionMarker(dirname(this.dbPath), row.id, row.session_id ?? undefined);
+        const hookTranscriptPath = readClaudeHookTranscriptPath(dirname(this.dbPath), row.id, row.session_id ?? undefined);
+        if (marker) {
+          this.updateRun(row.id, {
+            status: marker.exitStatus === 0 ? 'success' : 'failed',
+            exitCode: marker.exitStatus,
+            ...(hookTranscriptPath ? { transcriptPath: hookTranscriptPath } : {}),
+            ...(marker.exitStatus === 0 ? {} : { error: `CLAUDE_HOOK: SessionEnd reported exit status ${marker.exitStatus}` }),
+            endedAt: Date.now(),
+          });
+          continue;
+        }
+      }
       toCancel.push(row.id);
     }
 
@@ -807,9 +837,9 @@ export class Store {
 
   /**
    * Evict the oldest terminal (non-running/non-queued) runs for a job so that at
-   * most `cap` rows remain for it, deleting matching run_logs first (run_logs
-   * has no FK/cascade — see docs/internals/storage.md) so a crash between the
-   * two deletes can only ever leave a run with no logs, never an orphaned log
+   * most `cap` rows remain for it, deleting matching run_outputs first (run_outputs
+   * has no FK/cascade — see docs/implementation/storage.md) so a crash between the
+   * two deletes can only ever leave a run with no output, never an orphaned output
    * row with no parent run. In-flight runs are excluded from the candidate set
    * so an active run is never evicted no matter how old it is; this can let a
    * job's total row count temporarily exceed `cap` by the number of active runs.
@@ -817,7 +847,7 @@ export class Store {
    * Eviction happens in bounded batches (see EVICTION_BATCH_SIZE) rather than
    * one unbounded statement: each batch is its own transaction, so a crash or
    * thrown error mid-run can only roll back the batch in progress — every
-   * previously committed batch stays evicted, and no batch's run_logs delete
+   * previously committed batch stays evicted, and no batch's run_outputs delete
    * can ever be separated from its runs delete. The loop recomputes the
    * remaining-to-evict count from the DB every iteration (rather than just
    * looping until a fixed pre-computed total), so it converges to `cap` and
@@ -849,7 +879,7 @@ export class Store {
 
       this.db.exec('BEGIN;');
       try {
-        this.db.prepare(`DELETE FROM run_logs WHERE run_id IN (${placeholders})`).run(...ids);
+        this.db.prepare(`DELETE FROM run_outputs WHERE run_id IN (${placeholders})`).run(...ids);
         this.db.prepare(`DELETE FROM runs WHERE id IN (${placeholders})`).run(...ids);
         this.db.exec('COMMIT;');
       } catch (err) {
@@ -915,26 +945,25 @@ interface DbRunRow {
   output_truncated: number;
   session_id: string | null;
   command: string | null;
+  cost_usd: number | null;
+  turns: number | null;
+  usage_json: string | null;
+  transcript_path: string | null;
+  engine_status: string | null;
 }
 
-interface DbLogRow {
-  id: number;
+interface DbOutputRow {
   run_id: string;
-  stream: LogStream;
-  ts: number;
-  chunk: Buffer;
+  format: string;
+  result: string | null;
+  engine_error: string | null;
+  stderr: string;
 }
 
 interface DbScheduleStateRow {
   job_id: string;
   last_tick_at: number;
   updated_at: number;
-}
-
-/** Type guard used by importRuns() to best-effort recover an `id` for the
- *  skipped-row report when a raw import row fails schema validation. */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function rowToRun(row: DbRunRow): Run {
@@ -952,23 +981,12 @@ function rowToRun(row: DbRunRow): Run {
   if (row.pid !== null) r.pid = row.pid;
   if (row.session_id !== null) r.sessionId = row.session_id;
   if (row.command !== null) r.command = row.command;
+  if (row.cost_usd !== null) r.costUsd = row.cost_usd;
+  if (row.turns !== null) r.turns = row.turns;
+  if (row.usage_json !== null) r.usageJson = row.usage_json;
+  if (row.transcript_path !== null) r.transcriptPath = row.transcript_path;
+  if (row.engine_status !== null) r.engineStatus = row.engine_status;
   return r;
-}
-
-/** Maps a LogSource filter to the concrete stream list, or null for "all". */
-function logStreamsForSource(source: LogSource): LogStream[] | null {
-  if (source === 'engine') return ['stdout', 'stderr'];
-  if (source === 'crontick') return ['crontick'];
-  return null;
-}
-
-function rowToLog(row: DbLogRow): RunLog {
-  return {
-    runId: row.run_id,
-    stream: row.stream,
-    ts: row.ts,
-    chunk: Buffer.from(row.chunk),
-  };
 }
 
 function isSamePromptCaptureTarget(current: PromptAction, expected: PromptAction): boolean {

@@ -10,25 +10,27 @@ Read the relevant docs before modifying the corresponding area:
 
 | Area | Read first |
 |------|-----------|
+| Mission and design principles | `docs/tech/` |
 | High-level design | `docs/architecture.md` |
 | Concepts (jobs, scheduling, execution, parity) | `docs/concepts/` |
-| Internal module design | `docs/internals/` |
+| Internal module design | `docs/implementation/` |
 | CLI / MCP / Library reference | `docs/reference/` |
 | Feature specifications | `docs/specs/` |
 | Design decisions and rationale | `docs/decisions/` |
-| Testing strategy and layers | `docs/testing.md` |
+| Testing strategy and layers | `docs/testing/testing.md` |
 | Full documentation index | `docs/README.md` |
 
 ## Required commands
 
 ```sh
 npm ci                       # Install dependencies (clean)
-npm run validate             # Full check: lint + typecheck + typecheck:examples + test + build + typecheck:examples:dist
+npm run validate             # Full check: lint + typecheck + typecheck:examples + build + test + typecheck:examples:dist
 npm run lint                 # ESLint
 npm run typecheck            # TypeScript type-check (src)
 npm run typecheck:examples   # TypeScript type-check (examples, against source types)
 npm run typecheck:examples:dist  # TypeScript type-check (examples, against built dist/index.d.ts -- requires `npm run build` first, or run `npm run validate` which builds for you)
 npm test                     # Vitest run (requires prior build for integration tests)
+npm run clean:test           # Kill leaked test daemons + remove /tmp/crontick-* dirs (teardown does this automatically; use after a crashed run)
 npm run build                # tsup build + sqlite fix
 npm run verify-package-install  # CI-only, not part of validate: packs+installs a real tarball, exercises every public export and all three bins
 ```
@@ -38,7 +40,10 @@ npm run verify-package-install  # CI-only, not part of validate: packs+installs 
 - `src/client.ts` -- `CrontickClient`: all business logic lives here or in modules it calls.
 - `src/cli/` -- CLI shim (thin adapter over client). No business logic.
 - `src/mcp/` -- MCP server shim (thin adapter over client). No business logic.
-- `src/daemon/` -- Daemon process (HTTP server, scheduler, executors).
+- `src/daemon/` -- Daemon process (HTTP server, scheduler, prompt execution/runner).
+- `src/engines/` -- Engine adapter contract and registry (raw and Claude adapters).
+- `src/constants/` -- Constants used in more than one file, grouped by domain.
+- `src/utils/` -- Reusable, pure helper functions.
 - `src/surface.ts` -- `SURFACE_CAPABILITIES` constant: canonical list of all operations.
 - `src/index.ts` -- Public API boundary. Only symbols exported here are public.
 - `tests/` -- All tests live at root `tests/` (not co-located).
@@ -54,7 +59,8 @@ Do not import from `src/daemon/`, `src/cli/`, or `src/mcp/` internals outside th
 5. Prefer Node.js platform APIs (`node:fs`, `node:sqlite`, `node:crypto`, etc.) over third-party packages.
 6. Keep filesystem, network, and timing side effects behind injectable interfaces.
 7. Shims contain zero business logic -- all behavior lives in the core client and daemon modules.
-8. A feature removed from the product (guarded by a regression test, e.g. `tests/autostart-removal.test.ts`) MUST NOT be reintroduced without explicit sign-off in the PR description explaining why the original removal rationale no longer applies.
+8. A feature removed from the product (guarded by a regression test, e.g. `tests/unit/autostart-removal.test.ts`) MUST NOT be reintroduced without explicit sign-off in the PR description explaining why the original removal rationale no longer applies.
+9. Constants used in more than one file live in `src/constants/`; reusable logic lives in `src/utils/`.
 
 ## Surface parity rule
 
@@ -65,7 +71,7 @@ Every capability change must update ALL of:
 3. The MCP tool (`src/mcp/`)
 4. The `SURFACE_CAPABILITIES` constant (`src/surface.ts`)
 
-If any surface is missing, `tests/surface-drift.test.ts` will fail. See `docs/concepts/surface-parity.md` for the full protocol.
+If any surface is missing, `tests/unit/surface-drift.test.ts` will fail. See `docs/concepts/surface-parity.md` for the full protocol.
 
 ## Testing rules
 
@@ -74,7 +80,7 @@ If any surface is missing, `tests/surface-drift.test.ts` will fail. See `docs/co
 - No order dependence between tests.
 - Use fake timers for timing-sensitive tests.
 - Examples must type-check in CI (`npm run typecheck:examples`).
-- See `docs/testing.md` for test layers, running instructions, and the full procedure.
+- See `docs/testing/testing.md` for test layers, running instructions, and the full procedure.
 
 ## Documentation rules
 
@@ -89,7 +95,7 @@ When public behavior changes:
 ## Packaging rules
 
 1. Run `npm run validate` (must pass).
-2. Run `npm pack --dry-run` and confirm only intended files are included per the `files` allowlist in `package.json`: `dist`, `plugin/**`, `src/skill/SKILL.md`, `README.md`, `LICENSE`.
+2. Run `npm pack --dry-run` and confirm only intended files are included per the `files` allowlist in `package.json`: `dist`, `src/skill/SKILL.md`, `README.md`, `LICENSE`.
 3. Run `npm pack` to produce the tarball.
 4. Install the tarball in a scratch directory (`npm install ./crontick-*.tgz`).
 5. Exercise every documented public import (`import { createClient } from 'crontick'`) and each bin. `crontick --help` works (Commander-parsed); `crontick-daemon` and `crontick-mcp` do **not** parse `--help` or any other argv flag at all -- they always start as long-running servers, so the only exercisable check for those two bins is that the process launches and stays up (confirmed by `scripts/verify-package-install.mjs`, which starts each under a timeout and then stops it).

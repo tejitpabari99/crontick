@@ -1,10 +1,11 @@
 // Per-job timer management: cron (via croner), interval, and one-shot schedules.
 // Emits 'tick' events consumed by the daemon to trigger runs.
-// See docs/internals/scheduler.md
+// See docs/implementation/scheduler.md
 import { EventEmitter } from 'node:events';
 import { Cron, type CronOptions } from 'croner';
 import type { Job, Schedule } from '../schemas/job.js';
 import { nullLogger, type Logger } from '../logger.js';
+import { DEFAULT_ENUMERATE_FIRES_CAP } from '../constants/scheduler.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -15,7 +16,6 @@ export interface TickEvent {
 
 export interface PreviewOptions {
   n?: number;
-  tz?: string;
 }
 
 export interface ValidateResult {
@@ -30,9 +30,6 @@ export interface EnumerateFiresResult {
   /** True if the schedule had more fires in the window than the cap allowed to enumerate. */
   capped: boolean;
 }
-
-/** Default cap for enumerateFiresBetween() when the caller doesn't specify one. */
-export const DEFAULT_ENUMERATE_FIRES_CAP = 500;
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
@@ -56,8 +53,8 @@ export class Scheduler extends EventEmitter {
 
     const { schedule } = job;
     if (schedule.kind === 'cron') {
-      this.logger.debug('Scheduling cron job', { jobId: job.id, cron: schedule.cron, tz: schedule.tz });
-      this.scheduleCron(job, schedule.cron, schedule.tz);
+      this.logger.debug('Scheduling cron job', { jobId: job.id, cron: schedule.cron });
+      this.scheduleCron(job, schedule.cron);
     } else if (schedule.kind === 'interval') {
       this.logger.debug('Scheduling interval job', { jobId: job.id, everySec: schedule.everySec, startAt: schedule.startAt });
       this.scheduleInterval(job, schedule.everySec, schedule.startAt);
@@ -89,7 +86,7 @@ export class Scheduler extends EventEmitter {
     const n = opts.n ?? 5;
 
     if (schedule.kind === 'cron') {
-      return cronNextN(schedule.cron, opts.tz ?? schedule.tz, n);
+      return cronNextN(schedule.cron, n);
     }
 
     if (schedule.kind === 'interval') {
@@ -168,7 +165,7 @@ export class Scheduler extends EventEmitter {
     if (fromExclusiveMs >= toExclusiveMs) return { fires: [], capped: false };
 
     if (schedule.kind === 'cron') {
-      return enumerateCronFires(schedule.cron, schedule.tz, fromExclusiveMs, toExclusiveMs, cap);
+      return enumerateCronFires(schedule.cron, fromExclusiveMs, toExclusiveMs, cap);
     }
     if (schedule.kind === 'interval') {
       return enumerateIntervalFires(schedule.everySec, fromExclusiveMs, toExclusiveMs, cap);
@@ -190,10 +187,9 @@ export class Scheduler extends EventEmitter {
   private scheduleCron(
     job: Job,
     pattern: string,
-    tz: string | undefined,
   ): void {
+    // Cron expressions fire in the machine local timezone (croner's default).
     const options: CronOptions = {};
-    if (tz) options.timezone = tz;
 
     const cron = new Cron(pattern, options, () => {
       this.fireTick(job.id, new Date());
@@ -231,12 +227,12 @@ export class Scheduler extends EventEmitter {
 
     // Stable disposer: the SAME closure identity is stored in `entries` for the
     // entire lifetime of this job's schedule, across both the pre-fire (timeout)
-    // and post-fire (interval) phases — unlike the old code, which replaced the
-    // map entry object when the timer transitioned. `disposed` guards against
+    // and post-fire (interval) phases (the map entry object is never replaced
+    // when the timer transitions). `disposed` guards against
     // unschedule() being called synchronously from within this job's own first
     // tick listener: without the guard, the code below would unconditionally
     // re-arm a setInterval even though the job was just unscheduled from inside
-    // its own tick callback (see docs/internals/scheduler.md).
+    // its own tick callback (see docs/implementation/scheduler.md).
     let disposed = false;
     let currentTimer: { clear(): void } = safeSetTimeout(() => {
       if (disposed) return;
@@ -306,14 +302,12 @@ function safeSetTimeout(cb: () => void, ms: number): SafeTimer {
 /** Iterate croner's nextRun() forward from `fromExclusiveMs`, capped, without registering a live timer. */
 function enumerateCronFires(
   pattern: string,
-  tz: string | undefined,
   fromExclusiveMs: number,
   toExclusiveMs: number,
   cap: number,
 ): EnumerateFiresResult {
   try {
     const options: CronOptions = { paused: true };
-    if (tz) options.timezone = tz;
     const cron = new Cron(pattern, options);
     const fires: number[] = [];
     let ref = new Date(fromExclusiveMs);
@@ -359,10 +353,9 @@ function enumerateIntervalFires(
 }
 
 /** Iterate croner's nextRun() N times from now without registering a live timer. */
-function cronNextN(pattern: string, tz: string | undefined, n: number): string[] {
+function cronNextN(pattern: string, n: number): string[] {
   try {
     const options: CronOptions = { paused: true };
-    if (tz) options.timezone = tz;
     const cron = new Cron(pattern, options);
     const results: string[] = [];
     let ref: Date | undefined;

@@ -1,11 +1,12 @@
-// Per-job log file sink: mirrors a run's engine output AND crontick-side
-// lifecycle events to <logDir>/<jobGuid>.log, in addition to the SQLite
-// run-log storage. All writes are best-effort and never block or fail a run
+// Per-job log file sink: records crontick's own scheduling/execution events
+// (run started, resolved command, exit, errors) to <logDir>/<jobGuid>.log. The
+// engine's raw stdout/stderr is never written here or to the database; the
+// runner (e.g. Claude) keeps its own transcript. All writes are best-effort and never block or fail a run
 // (a missing directory or a failed write is swallowed, at most one debug log
 // is emitted). The factory is injectable so the runner and tests can supply a
-// fake sink without touching real disk. See docs/internals/executors.md.
+// fake sink without touching real disk. See docs/implementation/prompt-execution.md.
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { loadConfig } from '../config.js';
 import { logsDir } from '../paths.js';
 import { nullLogger, type Logger } from '../logger.js';
@@ -30,6 +31,25 @@ export const nullJobLogFileFactory: JobLogFileFactory = { open: () => nullJobLog
 function safeLogFileName(jobId: string): string {
   const safe = jobId.replace(/[^A-Za-z0-9._-]/g, '_');
   return `${safe || 'job'}.log`;
+}
+
+/**
+ * Absolute path of the per-job crontick log file, or null when file logging is
+ * disabled (`logging.fileEnabled=false`). The file is per job: every run of the
+ * job appends to it, each line tagged with its run id.
+ */
+export function resolveJobLogPath(jobId: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  let fileEnabled = true;
+  let dir: string;
+  try {
+    const logging = loadConfig({ env }).logging;
+    fileEnabled = logging.fileEnabled;
+    dir = logging.dir ?? logsDir(env);
+  } catch {
+    dir = logsDir(env);
+  }
+  if (!fileEnabled) return null;
+  return resolve(join(dir, safeLogFileName(jobId)));
 }
 
 /**

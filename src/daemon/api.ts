@@ -1,11 +1,11 @@
 // Loopback-only HTTP API for the daemon. All routes enforce localhost access.
-// See docs/internals/daemon.md for the full route table.
+// See docs/implementation/daemon.md for the full route table.
 import http from 'node:http';
-import { createReadStream } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { URL } from 'node:url';
 import type { Store } from './store.js';
-import type { Run, RunStatus } from './store.js';
-import { LOG_SOURCES, type LogSource } from '../log-source.js';
+import type { RunStatus } from './store.js';
 import type { Scheduler } from './scheduler.js';
 import type { Runner } from './runner.js';
 import { JobSchema } from '../schemas/job.js';
@@ -13,25 +13,25 @@ import { CrontickError } from '../errors.js';
 import { VERSION } from '../version.js';
 import { applyConfigDefaults, generateAlias } from '../job-input.js';
 import {
+  averageDurationMs,
+  msToSec,
   buildDashboardData,
   buildDashboardStats,
   dashboardStatusFromDaemon,
   resolveDashboardAsset,
 } from '../dashboard.js';
+import { buildRunOutput } from '../run-output.js';
 import { nullLogger, redactValue, type Logger } from '../logger.js';
 import { readEnvFileForAction } from './env-file.js';
+import { resolveJobLogPath } from './job-log-file.js';
+import { describeDaemonPort } from './bind-port.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 // Invariant: only loopback addresses may connect. Non-loopback → 403.
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
-/** Poll interval for SSE log streaming. Stream closes when run reaches a terminal status. */
-const SSE_POLL_MS = 200;
 
-/** Coerce an untrusted `source` query value to a valid LogSource, defaulting to 'all'. */
-function normalizeLogSource(value: string | null): LogSource {
-  return value !== null && (LOG_SOURCES as readonly string[]).includes(value) ? (value as LogSource) : 'all';
-}
+/** Run ids are generated identifiers; anything else cannot name a run. */
 
 // ── Context shared with handlers ──────────────────────────────────────────────
 
@@ -110,6 +110,7 @@ async function handleRequest(
       // Auto-generate a unique alias when the caller didn't supply one (see
       // generateAlias in job-input.ts): word + random 1-1000, retried on
       // collision against every currently-live job's id AND alias.
+      const autoAlias = job.alias === undefined;
       const alias = job.alias ?? generateAlias((candidate) => ctx.store.getJob(candidate) !== undefined);
       job = { ...job, alias };
       // A job identifier collides if either the (fresh, so this normally only
@@ -126,7 +127,23 @@ async function handleRequest(
       }
       if (!validateJobSchedule(res, ctx.scheduler, job.schedule)) return;
       readEnvFileForAction(job.action);
-      ctx.store.upsertJob(job);
+      // A concurrent create can claim the same auto-generated alias between the
+      // collision check above and this insert; the alias UNIQUE index then
+      // rejects the write. Regenerate and retry (max 3). Explicit aliases never
+      // retry: they surface as JOB_ALREADY_EXISTS.
+      for (let attempt = 0; ; attempt++) {
+        try {
+          ctx.store.upsertJob(job);
+          break;
+        } catch (err) {
+          if (autoAlias && attempt < MAX_ALIAS_RACE_RETRIES && isUniqueConstraintError(err)) {
+            job = { ...job, alias: generateAlias((candidate) => ctx.store.getJob(candidate) !== undefined) };
+            continue;
+          }
+          if (isUniqueConstraintError(err)) return sendDuplicateCreateError(res, job.alias ?? job.id);
+          throw err;
+        }
+      }
       const stored = ctx.store.getJob(job.id) ?? job;
       ctx.scheduler.schedule(stored);
       // L2: seed the missed-fire watermark so a restart computes forward from
@@ -201,17 +218,17 @@ async function handleRequest(
 
       if (method === 'DELETE' && sub === '') {
         if (!job) return sendJobNotFoundError(res, requestedId);
-        const deleted = ctx.store.deleteJob(job.id);
-        if (!deleted) return sendJobNotFoundError(res, requestedId);
+        // Stop everything that could still touch the job first: the schedule,
+        // then any in-flight run (unlike a daemon stop, where a detached child
+        // surviving is deliberate, L8, deleting a job removes the definition
+        // entirely, so nothing is left for a run to belong to). Visible via
+        // `canceledRun` instead of silently orphaning it. Only then delete the
+        // job together with its runs/logs/schedule state.
         ctx.scheduler.unschedule(job.id);
-        // Major 4: unlike a daemon stop (where a detached child surviving is
-        // deliberate, L8), deleting a job removes the definition entirely, so
-        // there is nothing left for an in-flight run to belong to. Cancel any
-        // active run for this job rather than leaving its process running
-        // against a job that no longer exists. Visible via `canceledRun` in
-        // the response instead of silently orphaning it.
         const canceledRun = ctx.runner.cancelJob(job.id);
-        return sendJson(res, 200, { ok: true, canceledRun });
+        const deleted = ctx.store.deleteJobAndRuns(job.id);
+        if (!deleted) return sendJobNotFoundError(res, requestedId);
+        return sendJson(res, 200, { ok: true, canceledRun, deletedRuns: deleted.deletedRuns });
       }
 
       if (method === 'POST' && sub === '/enable') {
@@ -232,7 +249,10 @@ async function handleRequest(
         return sendJson(res, 200, redactValue(updated));
       }
 
-      if (method === 'POST' && sub === '/run') {
+      // `/run-now` is an alias of `/run` (used by the dashboard). Runs the job once
+      // immediately WITHOUT touching `enabled` or the schedule: a disabled job stays
+      // disabled, an enabled job keeps its normal schedule. Overlap policy still applies.
+      if (method === 'POST' && (sub === '/run' || sub === '/run-now')) {
         if (!job) return sendJobNotFoundError(res, requestedId);
         const run = ctx.store.insertRun(job.id);
         // Fire-and-forget: return 202 immediately while the run executes async.
@@ -251,16 +271,13 @@ async function handleRequest(
 
     // ── Runs ─────────────────────────────────────────────────────────────────
     if (method === 'GET' && path === '/api/runs') {
-      const requestedJobId = url.searchParams.get('jobId') ?? undefined;
-      // Accept id-or-alias for the jobId filter, same as every other job lookup.
-      const jobId = requestedJobId !== undefined ? (ctx.store.getJob(requestedJobId)?.id ?? requestedJobId) : undefined;
+      const { jobIds, statuses, q } = runFilterParams(url, ctx);
       // Validate with the shared positive-int helper so NaN/negative/Infinity
       // yield a clean 400 (VALIDATION_ERROR) instead of reaching SQLite and
       // surfacing as an opaque 500.
       const limit = optionalPositiveInt(url.searchParams.get('limit'), 'limit');
       const since = optionalPositiveInt(url.searchParams.get('since'), 'since');
-      const status = (url.searchParams.get('status') ?? undefined) as RunStatus | undefined;
-      return sendJson(res, 200, redactValue(ctx.store.listRuns({ jobId, limit, since, status })));
+      return sendJson(res, 200, redactValue(ctx.store.listRuns({ jobIds, limit, since, statuses, q })));
     }
 
 
@@ -273,7 +290,14 @@ async function handleRequest(
       if (method === 'GET' && sub === '') {
         const run = ctx.store.getRun(id);
         if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
-        return sendJson(res, 200, redactValue(run));
+        // Per-job (not per-run) mirror file; null when file logging is disabled.
+        const logFile = resolveJobLogPath(run.jobId);
+        return sendJson(res, 200, redactValue({
+          ...run,
+          logFile,
+          ...(logFile !== null ? { logFileExists: existsSync(logFile) } : {}),
+          ...(run.transcriptPath ? { transcriptExists: existsSync(run.transcriptPath) } : {}),
+        }));
       }
 
       if (method === 'POST' && sub === '/cancel') {
@@ -283,23 +307,12 @@ async function handleRequest(
         return sendJson(res, 200, { ok: true, canceled });
       }
 
-      if (method === 'GET' && sub === '/logs') {
+      // Cleaned, human-readable view of the run's engine output (final answer, error, stderr) -- see src/run-output.ts. crontick does not store the engine's
+      // raw logs; `logFile` is the per-job file of crontick-side events.
+      if (method === 'GET' && sub === '/output') {
         const run = ctx.store.getRun(id);
         if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
-        const source = normalizeLogSource(url.searchParams.get('source'));
-        const logs = ctx.store.getLogs(id, source);
-        return sendJson(res, 200, redactValue(logs.map((l) => ({
-          runId: l.runId,
-          stream: l.stream,
-          ts: l.ts,
-          data: l.chunk.toString('utf-8'),
-        }))));
-      }
-
-      if (method === 'GET' && sub === '/logs/stream') {
-        const run = ctx.store.getRun(id);
-        if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
-        return streamLogs(req, res, id, ctx);
+        return sendJson(res, 200, redactValue({ ...buildRunOutput(run, ctx.store.getRunOutput(run.id)), logFile: resolveJobLogPath(run.jobId) }));
       }
     }
 
@@ -323,15 +336,14 @@ async function handleRequest(
         return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid schedule');
       }
       const n = typeof body?.n === 'number' ? body.n : 5;
-      const tz = body?.tz as string | undefined;
-      const next = ctx.scheduler.previewNext(scheduleResult.data, { n, tz });
+      const next = ctx.scheduler.previewNext(scheduleResult.data, { n });
       return sendJson(res, 200, { next });
     }
 
     // ── Stats ─────────────────────────────────────────────────────────────────
     if (method === 'GET' && path === '/api/stats/summary') {
       const jobs = ctx.store.listJobs();
-      const runs = ctx.store.listRunsForExistingJobs({ limit: 1000 });
+      const runs = ctx.store.listRuns({ limit: 1000 });
       return sendJson(res, 200, buildDashboardStats(jobs, runs));
     }
 
@@ -340,14 +352,18 @@ async function handleRequest(
       const requestedId = decodeURIComponent(statsJobMatch[1]);
       const job = ctx.store.getJob(requestedId);
       if (!job) return sendJobNotFoundError(res, requestedId);
-      const runs = ctx.store.listRuns({ jobId: job.id, limit: 100 });
+      const runs = ctx.store.listRuns({ jobId: job.id });
       return sendJson(res, 200, {
         jobId: job.id,
-        totalRuns: runs.length,
         succeeded: runs.filter((r) => r.status === 'success').length,
         failed: runs.filter((r) => r.status === 'failed').length,
+        canceled: runs.filter((r) => r.status === 'canceled').length,
+        skipped: runs.filter((r) => r.status === 'skipped').length,
+        totalCostUsd: runs.reduce((sum, run) => sum + (run.costUsd ?? 0), 0),
+        totalTurns: runs.reduce((sum, run) => sum + (run.turns ?? 0), 0),
         lastStatus: runs[0]?.status ?? null,
         lastRunAt: runs[0]?.startedAt ?? null,
+        avgDurationSec: msToSec(averageDurationMs(runs)),
       });
     }
 
@@ -358,6 +374,8 @@ async function handleRequest(
         version: VERSION,
         port: ctx.port,
         baseUrl: `http://127.0.0.1:${ctx.port}`,
+        dashboardUrl: `http://127.0.0.1:${ctx.port}/dashboard`,
+        portNote: describeDaemonPort(ctx.port),
         uptimeSec: Math.floor((Date.now() - ctx.startedAt.getTime()) / 1000),
         jobs: ctx.store.listJobs().length,
         // L2: report-only missed-fire summary computed once at startup.
@@ -401,59 +419,75 @@ async function handleRequest(
 
     // ── Export / Import ───────────────────────────────────────────────────────
     if (method === 'GET' && path === '/api/export') {
-      // L7: run history is opt-in via ?includeRuns=1 to keep the common
-      // (jobs-only) export small; bounded by whatever retention has left.
-      const includeRuns = url.searchParams.get('includeRuns') === '1';
-      const payload: { jobs: ReturnType<Store['listJobs']>; runs?: Run[] } = { jobs: ctx.store.listJobs() };
-      if (includeRuns) payload.runs = ctx.store.listRuns({});
-      return sendJson(res, 200, redactValue(payload));
+      // Share format, schema 1: jobs only (no run history), ids omitted so every
+      // import mints new ones. `?jobs=a,b` limits the export to those ids or
+      // aliases, resolved here; any unknown one fails the whole export.
+      const requested = url.searchParams.getAll('jobs').flatMap((v) => v.split(',')).map((v) => v.trim()).filter(Boolean);
+      let selected = ctx.store.listJobs();
+      if (requested.length > 0) {
+        const missing = requested.filter((idOrAlias) => !ctx.store.getJob(idOrAlias));
+        if (missing.length > 0) {
+          return sendError(res, 404, 'JOB_NOT_FOUND', `Job(s) not found (id or alias): ${missing.join(', ')}`, { missing });
+        }
+        const seen = new Set<string>();
+        selected = [];
+        for (const idOrAlias of requested) {
+          const found = ctx.store.getJob(idOrAlias)!;
+          if (!seen.has(found.id)) {
+            seen.add(found.id);
+            selected.push(found);
+          }
+        }
+      }
+      const jobs = selected.map(({ id: _id, ...rest }) => (void _id, rest));
+      return sendJson(res, 200, redactValue({ schema: 1, exportedAt: new Date().toISOString(), crontickVersion: VERSION, jobs }));
     }
 
     if (method === 'POST' && path === '/api/import') {
+      // The client validated the whole file first; every row here is a job that
+      // already went through normalization with a fresh GUID. Imports never
+      // overwrite: an alias held by a live job (or by an earlier row of the same
+      // file) gets the next free `-2`, `-3`, ... suffix and the row reports
+      // `renamedFrom`.
       const body = await readBody(req);
       const jobs = Array.isArray(body?.jobs) ? body.jobs : [];
-      const results: Array<{ id: string; ok: boolean; error?: string }> = [];
+      const results: Array<{ id: string; alias?: string; ok: boolean; renamedFrom?: string; error?: string }> = [];
+      const usedAliases = new Set<string>();
       for (const raw of jobs) {
         const parsed = JobSchema.safeParse(raw);
-        if (parsed.success) {
-          let job = applyConfigDefaults(parsed.data);
-          // Import is a restore/merge operation, not a strict create: if this
-          // row's id-or-alias already matches a currently-live job (e.g.
-          // re-importing the same backup), overwrite that job in place --
-          // keeping ITS GUID id -- rather than colliding on the
-          // alias-uniqueness constraint (see store.ts) with a brand-new GUID.
-          // This mirrors POST /api/jobs's --force semantics and keeps
-          // re-import idempotent.
-          const existing = (job.alias ? ctx.store.getJob(job.alias) : undefined) ?? ctx.store.getJob(job.id);
-          if (existing) job = { ...job, id: existing.id };
-          try {
-            // Best-effort: the alias-uniqueness DB index (see store.ts) can
-            // still reject an import row whose alias collides with a
-            // DIFFERENT already-live job; skip that one row rather than
-            // failing the whole import.
-            ctx.store.upsertJob(job);
-            ctx.scheduler.schedule(job);
-            results.push({ id: job.id, ok: true });
-          } catch (err) {
-            results.push({ id: job.id, ok: false, error: err instanceof Error ? err.message : String(err) });
-          }
-        } else {
-          results.push({ id: String(raw?.id ?? '?'), ok: false, error: 'validation failed' });
+        if (!parsed.success) {
+          results.push({ id: String((raw as { id?: unknown })?.id ?? '?'), ok: false, error: 'validation failed' });
+          continue;
+        }
+        let job = applyConfigDefaults(parsed.data);
+        // Never reuse an id that is live (ids are fresh GUIDs, so this is defensive).
+        if (ctx.store.getJob(job.id)) job = { ...job, id: randomUUID() };
+        const taken = (candidate: string): boolean => usedAliases.has(candidate) || ctx.store.getJob(candidate) !== undefined;
+        let renamedFrom: string | undefined;
+        let alias = job.alias;
+        if (alias === undefined) {
+          alias = generateAlias(taken);
+        } else if (taken(alias)) {
+          renamedFrom = alias;
+          let n = 2;
+          while (taken(`${alias}-${n}`)) n++;
+          alias = `${alias}-${n}`;
+        }
+        job = { ...job, alias };
+        try {
+          const schedule = ctx.scheduler.validateSchedule(job.schedule);
+          if (!schedule.ok) throw new CrontickError('VALIDATION_ERROR', `Invalid schedule: ${schedule.error ?? 'unknown'}`);
+          job = ctx.store.prepareImportedJob(job);
+          ctx.store.upsertJob(job);
+          ctx.scheduler.schedule(job);
+          ctx.store.recordTick(job.id);
+          usedAliases.add(alias);
+          results.push({ id: job.id, alias, ok: true, ...(renamedFrom ? { renamedFrom } : {}) });
+        } catch (err) {
+          results.push({ id: job.id, alias, ok: false, error: err instanceof Error ? err.message : String(err) });
         }
       }
-      // L7: optional `runs` array (as produced by GET /api/export?includeRuns=1)
-      // is restored archivally -- no execution, no scheduler interaction.
-      // Passed through unvalidated (`unknown[]`, not cast to `Run[]`) --
-      // Store.importRuns() validates each row itself (see RunImportSchema)
-      // and skips malformed rows individually, the same way the jobs loop
-      // above does, instead of trusting the wire payload's shape.
-      const runs = Array.isArray(body?.runs) ? body.runs : undefined;
-      const runsResult = runs ? ctx.store.importRuns(runs) : undefined;
-      return sendJson(res, 200, {
-        imported: results.filter((r) => r.ok).length,
-        results,
-        ...(runsResult ? { runsImported: runsResult.imported, runsSkipped: runsResult.skipped } : {}),
-      });
+      return sendJson(res, 200, { imported: results.filter((r) => r.ok).length, results });
     }
 
     // ── Dashboard ─────────────────────────────────────────────────────────────
@@ -475,10 +509,8 @@ async function handleRequest(
 
     if (method === 'GET' && path === '/api/dashboard') {
       const runsLimit = optionalPositiveInt(url.searchParams.get('runsLimit'), 'runsLimit');
-      const requestedJobId = url.searchParams.get('jobId') ?? undefined;
-      // Accept id-or-alias for the jobId filter, same as every other job lookup.
-      const jobId = requestedJobId !== undefined ? (ctx.store.getJob(requestedJobId)?.id ?? requestedJobId) : undefined;
-      return sendJson(res, 200, buildDashboardData({ ...ctx, pid: process.pid }, { runsLimit, jobId }));
+      const { jobIds, statuses, q } = runFilterParams(url, ctx);
+      return sendJson(res, 200, buildDashboardData({ ...ctx, pid: process.pid }, { runsLimit, jobIds, statuses, q }));
     }
 
     if (method === 'GET' && (path === '/' || path === '/dashboard' || path.startsWith('/dashboard/'))) {
@@ -496,13 +528,35 @@ async function handleRequest(
   }
 }
 
+/**
+ * Shared run-list filters: `jobId` (id or alias; comma-separated for several), `status`
+ * (comma-separated for several) and `q` (free-text search incl. run output).
+ */
+function runFilterParams(url: URL, ctx: ApiContext): { jobIds?: string[]; statuses?: RunStatus[]; q?: string } {
+  const split = (name: string): string[] => url.searchParams.getAll(name).flatMap((v) => v.split(',')).map((v) => v.trim()).filter(Boolean);
+  const jobIds = split('jobId').map((requested) => ctx.store.getJob(requested)?.id ?? requested);
+  const statuses = split('status') as RunStatus[];
+  const q = url.searchParams.get('q')?.trim() || undefined;
+  return {
+    jobIds: jobIds.length > 0 ? jobIds : undefined,
+    statuses: statuses.length > 0 ? statuses : undefined,
+    q,
+  };
+}
+
+const MAX_ALIAS_RACE_RETRIES = 3;
+
+function isUniqueConstraintError(err: unknown): boolean {
+  return err instanceof Error && /UNIQUE constraint failed/i.test(err.message);
+}
+
 function forceParam(url: URL): boolean {
   const raw = (url.searchParams.get('force') ?? '').toLowerCase();
   return raw === '1' || raw === 'true';
 }
 
 function sendJobNotFoundError(res: http.ServerResponse, idOrAlias: string): void {
-  sendError(res, 404, 'JOB_NOT_FOUND', `Job ${idOrAlias} not found`);
+  sendError(res, 404, 'JOB_NOT_FOUND', `Job ${idOrAlias} not found (id or alias)`);
 }
 
 function sendDuplicateCreateError(res: http.ServerResponse, jobId: string): void {
@@ -527,53 +581,6 @@ function validateJobSchedule(
   return true;
 }
 
-// ── SSE log streaming ─────────────────────────────────────────────────────────
-// Sends existing log entries immediately, then polls for new entries every
-// SSE_POLL_MS until the run reaches a terminal status or the client disconnects.
-
-function streamLogs(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-  runId: string,
-  ctx: ApiContext,
-): void {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-  });
-
-  let lastTs = 0;
-
-  // Send existing logs first
-  const existing = ctx.store.getLogs(runId);
-  for (const log of existing) {
-    sseEvent(res, redactValue({ stream: log.stream, ts: log.ts, data: log.chunk.toString('utf-8') }));
-    if (log.ts > lastTs) lastTs = log.ts;
-  }
-
-  // Poll for new logs until run is terminal
-  const poll = setInterval(() => {
-    const run = ctx.store.getRun(runId);
-    const newLogs = ctx.store.tailLogs(runId, lastTs);
-    for (const log of newLogs) {
-      sseEvent(res, redactValue({ stream: log.stream, ts: log.ts, data: log.chunk.toString('utf-8') }));
-      if (log.ts > lastTs) lastTs = log.ts;
-    }
-
-    const terminal = new Set(['success', 'failed', 'canceled', 'timeout', 'missed']);
-    if (!run || terminal.has(run.status)) {
-      sseEvent(res, { done: true, status: run?.status });
-      clearInterval(poll);
-      res.end();
-    }
-  }, SSE_POLL_MS);
-
-  req.on('close', () => {
-    clearInterval(poll);
-  });
-}
-
 function serveDashboard(
   res: http.ServerResponse,
   reqPath: string,
@@ -586,10 +593,6 @@ function serveDashboard(
     'Cache-Control': 'no-cache',
   });
   createReadStream(asset.filePath).pipe(res);
-}
-
-function sseEvent(res: http.ServerResponse, data: unknown): void {
-  res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

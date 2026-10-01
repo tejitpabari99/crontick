@@ -31,30 +31,30 @@ class CrontickClient {
 
 #### Methods
 
-Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJob`, `enableJob`, `disableJob`, `runNow`, `statsJob`, the `jobId` filter on `listRuns`) accepts EITHER the job's immutable GUID `id` OR its human-friendly `alias` — an exact GUID match is tried first, falling back to an alias lookup. An identifier that resolves to neither throws `CrontickError('JOB_NOT_FOUND', ...)`. See [job-schema.md](job-schema.md#identity-guid-id--alias) for how `id`/`alias` are assigned.
+Every method below that takes an `id` parameter (`getJob`, `updateJob`, `deleteJob`, `enableJob`, `disableJob`, `runNow`, `statsJob`, the `jobId` filter on `listRuns`) accepts EITHER the job's immutable GUID `id` OR its **alias** (the unique kebab-case job name; CLI `--alias`/`-a`) — an exact GUID match is tried first, falling back to an alias lookup. An identifier that resolves to neither throws `CrontickError('JOB_NOT_FOUND', 'Job X not found (id or alias)')`. See [job-schema.md](job-schema.md#identity-guid-id--alias) for how `id`/`alias` are assigned.
 
 | Method | Signature | Returns | Throws |
 |--------|-----------|---------|--------|
 | `ensure` | `(): Promise<DaemonInfo>` | `DaemonInfo` | `CrontickError` (`DAEMON_START_FAILED`, `DAEMON_TIMEOUT`, `DAEMON_START_LOCK_TIMEOUT`) |
 | `health` | `(options?: { ensure?: boolean }): Promise<unknown>` | Health response | `CrontickError` |
-| `createJob` | `(input: Job \| JobCreateInput, options?: CreateJobOptions): Promise<Job>` | Created `Job` | `CrontickError` (`VALIDATION_ERROR`, `JOB_ALREADY_EXISTS`, `ENV_FILE_ERROR`, `DAEMON_REQUEST_FAILED`) |
+| `createJob` | `(input: Job \| JobCreateInput, options?: CreateJobOptions): Promise<Job>` | Created `Job` | `CrontickError` (`VALIDATION_ERROR`, `INVALID_CWD`, `TRUST_REQUIRED`, `CLAUDE_CONFIG_UNREADABLE`, `JOB_ALREADY_EXISTS`, `ENV_FILE_ERROR`, `DAEMON_REQUEST_FAILED`) |
 | `createJobFromCliOptions` | `(input: JobCreateCliOptions): Promise<Job>` | Created `Job` | `CrontickError` |
 | `listJobs` | `(): Promise<Job[]>` | Array of `Job` | `CrontickError` |
-| `getJob` | `(id: string): Promise<Job>` | `Job` | `CrontickError` (`NOT_FOUND`) |
-| `updateJob` | `(id: string, patch: JobPatchInput, options?: NormalizeJobInputOptions): Promise<Job>` | Updated `Job` | `CrontickError` (`VALIDATION_ERROR`, `ENV_FILE_ERROR`, `NOT_FOUND`, `DAEMON_REQUEST_FAILED`) |
-| `deleteJob` | `(id?: string, options?: { all?: boolean; force?: boolean }): Promise<{ ok: true } \| { ok: true; deleted: number }>` | `{ ok: true }` for a single delete, or `{ ok: true, deleted }` when `all` is set (requires `force`) | `CrontickError` (`VALIDATION_ERROR`, `NOT_FOUND`) |
+| `getJob` | `(id: string): Promise<Job>` | `Job` | `CrontickError` (`JOB_NOT_FOUND`) |
+| `updateJob` | `(id: string, patch: JobPatchInput, options?: UpdateJobOptions): Promise<Job>` | Updated `Job` | `CrontickError` (`VALIDATION_ERROR`, `INVALID_CWD`, `CWD_CHANGE_BREAKS_SESSION`, `TRUST_REQUIRED`, `ENV_FILE_ERROR`, `JOB_NOT_FOUND`, `DAEMON_REQUEST_FAILED`) |
+| `deleteJob` | `(id?: string, options?: { all?: boolean; force?: boolean }): Promise<{ ok: true; canceledRun: boolean; deletedRuns: number } \| { ok: true; deleted: number }>` | `{ ok, canceledRun, deletedRuns }` for a single delete (the job's runs, logs and schedule state are deleted with it), or `{ ok: true, deleted }` when `all` is set (requires `force`) | `CrontickError` (`VALIDATION_ERROR`, `JOB_NOT_FOUND`) |
 | `enableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
 | `disableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
-| `runNow` | `(id: string): Promise<{ runId: string }>` | `{ runId }` | `CrontickError` |
+| `runNow` | `(id: string): Promise<{ runId: string }>` (runs once now, even if disabled; does not enable the job or alter the schedule) | `{ runId }` | `CrontickError` |
 | `cancelRun` | `(runId: string): Promise<{ ok: true; canceled: boolean }>` | Cancel result | `CrontickError` |
-| `getRun` | `(runId: string): Promise<unknown>` | Run object | `CrontickError` |
-| `listRuns` | `(options?: { jobId?: string; limit?: number; since?: number; status?: string }): Promise<unknown[]>` | Array of runs | `CrontickError` |
-| `getLogs` | `(runId: string, options?: { lines?: number; source?: 'all' \| 'engine' \| 'crontick' }): Promise<LogsResult>` | `LogsResult` | `CrontickError` (`VALIDATION_ERROR` on an invalid `source`) |
-| `exportJobs` | `(options?: { includeRuns?: boolean }): Promise<{ jobs: Job[]; runs?: unknown[] }>` | Export payload; `runs` present only when `includeRuns` is set | `CrontickError` |
-| `importJobs` | `(jobs: unknown[], options?: NormalizeJobInputOptions & { runs?: unknown[] }): Promise<unknown>` | Import result, including `runsImported`/`runsSkipped` when `options.runs` is passed | `CrontickError` |
+| `getRun` | `(runId: string): Promise<RunRecord>` | Run object | `CrontickError` |
+| `listRuns` | `(options?: { jobId?: string; limit?: number; since?: number; status?: string }): Promise<RunRecord[]>` | Array of runs | `CrontickError` |
+| `getOutput` | `(runId: string): Promise<RunOutput>` (cleaned output view; library-only, shown by `crontick runs get` and `crontick_run_get`; the file of crontick-side events is `getRun().logFile`; crontick stores no raw engine log) | `RunOutput` | `CrontickError` (`NOT_FOUND`) |
+| `exportJobs` | `(options?: { onlyJobs?: string[] }): Promise<ExportFile>` | Share file `{ schema: 1, exportedAt, crontickVersion, jobs }` (jobs only, ids omitted) | `CrontickError` (`JOB_NOT_FOUND` listing every unknown `onlyJobs` entry) |
+| `importJobs` | `(file: unknown, options?: NormalizeJobInputOptions & { trustFolder?: boolean }): Promise<ImportResult>` | `{ imported, results }`; each row `{ id, alias, ok, renamedFrom?, error? }`. Every job gets a new GUID, alias collisions get `-2`, `-3`, ... | `CrontickError` (`VALIDATION_ERROR` for a bad file or wrong `schema`, nothing imported; `TRUST_REQUIRED`) |
 | `validateSchedule` | `(schedule: Schedule): Promise<unknown>` | Validation result | `CrontickError` |
-| `previewSchedule` | `(input: { schedule: Schedule; n?: number; tz?: string }): Promise<unknown>` | Fire times | `CrontickError` |
-| `jobSchedule` | `(id: string, options?: { n?: number }): Promise<unknown>` | Upcoming fire times for an existing job (id or alias); powers `crontick jobs schedule` and `crontick_job_schedule` | `CrontickError` (`NOT_FOUND`) |
+| `previewSchedule` | `(input: { schedule: Schedule; n?: number }): Promise<unknown>` | Fire times | `CrontickError` |
+| `jobSchedule` | `(id: string, options?: { n?: number }): Promise<unknown>` | Upcoming fire times for an existing job (id or alias); returns `{ jobId, alias, enabled, cwd, schedule, next }`; powers `crontick jobs schedule` and `crontick_job_schedule` | `CrontickError` (`JOB_NOT_FOUND`) |
 | `statsSummary` | `(): Promise<StatsSummary>` | `StatsSummary` | `CrontickError` |
 | `statsJob` | `(id: string): Promise<JobStats>` | `JobStats` | `CrontickError` |
 | `daemonStart` | `(options?: { foreground?: boolean }): Promise<DaemonStartResult>` | Start result (library-only after round-2 simplification) | `CrontickError` |
@@ -71,20 +71,22 @@ Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `setConfigValue` | `(path: string, value: unknown): CrontickConfig` | Updated config | `CrontickError` |
 | `removeConfigValue` | `(path: string): CrontickConfig` | Updated config | `CrontickError` |
 | `listEngines` | `(): Record<string, EngineConfig>` | Engines map | `CrontickError` |
-| `addEngine` | `(name: string, engine: EngineConfig): CrontickConfig` | Updated config | `CrontickError` (`CONFIG_ENGINE_EXISTS`) |
+| `addEngine` | `(name: string, engine: Omit<EngineConfig, 'type'> & { type?: EngineConfig['type'] }): CrontickConfig` | Updated config | `CrontickError` (`CONFIG_ENGINE_EXISTS`) |
 | `updateEngine` | `(name: string, engine: Partial<EngineConfig>): CrontickConfig` | Updated config | `CrontickError` (`CONFIG_ENGINE_NOT_FOUND`) |
 | `removeEngine` | `(name: string): CrontickConfig` | Updated config | `CrontickError` (`CONFIG_ENGINE_NOT_FOUND`, `CONFIG_BUILTIN_ENGINE`) |
 | `initConfig` | `(options?: { force?: boolean }): { path: string; config: CrontickConfig; created: boolean }` | Init result | `CrontickError` (`CONFIG_EXISTS`) |
 | `validateConfig` | `(path?: string): ConfigValidationResult` | Validation result | `CrontickError` |
 | `configPath` | `(): ConfigPathInfo` | `{ path, note }` — library-only helper mirrored by `info().configPath` | — |
-| `info` | `(): Promise<CrontickInfo>` | `{ version, node, platform, configPath, paths, daemon, dashboardUrl }` — powers `crontick info` and `crontick_info`; `dashboardUrl` is the daemon-served dashboard URL when running, otherwise `null` | `CrontickError` |
+| `info` | `(): Promise<CrontickInfo>` | `{ version, node, platform, configPath, configExists, paths: CrontickInfoPaths, daemon: { running, pid?, port?, portNote? }, dashboardUrl }` (`CrontickInfoPaths` = `dataDir`, `jobsDir`, `runsDb`, `logsDir`, `configFile`, `portFile`, `pidFile`; `configExists: false` means built-in defaults are in use) — powers `crontick info` and `crontick_info`; `dashboardUrl` is the daemon-served dashboard URL when running, otherwise `null` | `CrontickError` |
 | `drainNotices` | `(): string[]` | Accumulated notices | — |
 | `isVerbose` | `(): boolean` | Verbose flag | — |
+
+`RunRecord` includes optional `costUsd`, `turns`, `usageJson`, `transcriptPath`, and `engineStatus` for Claude runs with a complete result. `usageJson` is the redacted raw usage block serialized as JSON. `getRun` also returns `logFile`, the absolute path of the per-job log file (crontick-side lifecycle events of all runs of the job, one file per job, no engine output; `null` when file logging is off). `getLogs` and its types (`LogsResult`, `LogEntry`, `LogSource`, `LOG_SOURCES`) were removed; `crontick runs get` and `crontick_run_get` show the cleaned output and this path instead. `sessionId` is displayed as the Runner Session ID. The stored `command` shows `--settings <session-end-hook>` rather than the hook JSON. Raw-engine runs omit these fields. Run status `skipped` means an overlap fire never started; `canceled` means a run was terminated. `StatsSummary` and `JobStats` include separate `canceled` and `skipped` counts, plus `totalCostUsd` and `totalTurns`, summing runs with recorded usage and treating missing values as zero. `JobStats` covers every retained run of the job; `totalTurns` is the sum of `turns` (Claude `num_turns`, the agentic model round-trips of a run, accumulated across retries). `lastRunAt` stays epoch milliseconds (the CLI prints it as local ISO-8601).
 
 **Library-only methods (retained in the client but no longer part of `SURFACE_CAPABILITIES`, so they have no CLI/MCP equivalent):** `ensure`, `health`, `createJobFromCliOptions`, `jobJsonSchema`, `getConfig`, `drainNotices`, `isVerbose`, `daemonStart`, `daemonStatus`, `daemonRestart`, `configPath`, `validateSchedule`, `previewSchedule`, `dashboardStatus`, `dashboardData`, and the config/engine helpers (`getConfigValue`, `setConfigValue`, `removeConfigValue`, `listEngines`, `addEngine`, `updateEngine`, `removeEngine`, `initConfig`, `validateConfig`). These are intentionally excluded from the parity contract because they serve internal wiring, direct-use library scenarios, or launch infrastructure rather than proxying a daemon operation exposed on every surface. The `dashboard` command group and MCP tools were removed because the dashboard is always served by the daemon; `dashboardStart`/`dashboardStop` were removed entirely (they only made sense as commands), while `dashboardStatus`/`dashboardData` remain for direct library use.
 
 Read methods that surface config values or captured text (`getConfigValue`, `getRun`,
-`listRuns`, `getLogs`, and `dashboardData`) apply the shared redaction contract before
+`listRuns`, and `dashboardData`) apply the shared redaction contract before
 returning strings or structured text fields. Job-returning methods (`createJob`, `listJobs`,
 `getJob`, and `updateJob`) and config mutators (`setConfigValue`, `removeConfigValue`,
 `addEngine`, `updateEngine`, and `removeEngine`) also redact secret-like env/config values
@@ -99,9 +101,9 @@ the file is missing or unreadable, they reject with `ENV_FILE_ERROR`, resolve re
 paths against `action.cwd` when set (otherwise the caller's current working directory),
 and leave previously stored job state unchanged.
 
-`getLogs({ lines: N })` reconstructs newline-delimited text lines from the ordered
-stdout/stderr chunk rows returned by the daemon before applying the last-`N` slice, so
-chunk boundaries do not change the visible tail result.
+**Working directory and Claude trust.** A job runs in `action.cwd`, which `createJob`/`updateJob`/`importJobs` resolve to an absolute, existing directory (`INVALID_CWD` otherwise); an omitted cwd on create defaults to the client's `cwd` option, else `process.cwd()`. For Claude jobs the client checks Claude's trust config (`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`) before persisting anything and throws `TRUST_REQUIRED` (`details: { cwd, folders, engine }`) for an untrusted folder unless `trustFolder: true` is passed, in which case it records the trust first. Only the `hasTrustDialogAccepted` flag of that folder is written; all other keys are preserved and an unparsable file aborts with `CLAUDE_CONFIG_UNREADABLE`. `updateJob` checks only when the cwd or engine changes; engines without a trust concept (raw) are skipped. Changing the cwd of a job with a session throws `CWD_CHANGE_BREAKS_SESSION`. `claude -p` itself skips Claude's trust dialog, so this is a guardrail rather than a hard requirement.
+
+Cron expressions fire in the machine's local timezone; passing `tz` is rejected on create/update input, and a `tz` in an already-stored job file is silently ignored.
 
 ---
 
@@ -157,55 +159,29 @@ interface CrontickClientOptions {
 }
 ```
 
-### LogEntry
-
-```ts
-interface LogEntry {
-  runId?: string;
-  stream: string;
-  ts: number;
-  data: string;
-}
-```
-
-### LogsResult
-
-```ts
-interface LogsResult {
-  runId: string;
-  lines: LogEntry[];
-}
-```
-
-### LogSource / LOG_SOURCES
-
-```ts
-const LOG_SOURCES = ['all', 'engine', 'crontick'] as const;
-type LogSource = (typeof LOG_SOURCES)[number];
-```
-
-The canonical set of accepted `getLogs` / `runs logs` sources. `getLogs` validates its `source`
-argument against this set and throws `CrontickError` (`VALIDATION_ERROR`) for any other value.
-
 ### StatsSummary
 
 ```ts
 interface StatsSummary {
   totalJobs: number;
   enabledJobs: number;
-  totalRuns: number;
   succeeded: number;
   failed: number;
-  avgDurationMs: number | null;
+  canceled: number;
+  skipped: number;
+  avgDurationSec: number | null;
+  totalCostUsd: number;
+  totalTurns: number;
 }
 ```
 
-`avgDurationMs` averages `durationMs` over runs that actually finished executing --
-`success`/`failed`/`timeout` -- and excludes `missed`, `queued`, `running`, and `canceled` runs,
+`canceled` counts runs that started and were terminated; `skipped` counts fires that never started because overlap `skip` found another run active. `totalCostUsd` and `totalTurns` sum the included runs; runs without usage contribute zero.
+
+`avgDurationSec` is the average of `durationMs` (in seconds, 2 decimals) over runs that actually finished executing --
+`success`/`failed`/`timeout` -- and excludes `missed`, `queued`, `running`, `canceled`, and `skipped` runs,
 since those either never ran to completion or never ran at all. `null` when there are no
 qualifying runs. These summary counts include only runs whose parent job still exists: deleting a
-job keeps its historical runs directly queryable by run id/logs, but removes those archived rows
-from live aggregate totals. Same computation backs [`DashboardStats`](#dashboardstats) (`GET
+job removes its runs, so they no longer count toward live aggregate totals. Same computation backs [`DashboardStats`](#dashboardstats) (`GET
 /api/stats/summary` and the dashboard both call `buildDashboardStats()`).
 
 ### JobStats
@@ -213,13 +189,46 @@ from live aggregate totals. Same computation backs [`DashboardStats`](#dashboard
 ```ts
 interface JobStats {
   jobId: string;
-  totalRuns: number;
   succeeded: number;
   failed: number;
+  canceled: number;
+  skipped: number;
   lastStatus: string | null;
   lastRunAt: number | null;
+  avgDurationSec: number | null;
+  totalCostUsd: number;
+  totalTurns: number;
 }
 ```
+
+### RunRecord
+
+```ts
+interface RunRecord {
+  id: string;
+  jobId: string;
+  startedAt: number;
+  endedAt?: number;
+  status: string; // queued | running | success | failed | canceled | skipped | timeout | missed
+  exitCode?: number;
+  error?: string;
+  durationMs?: number;
+  pid?: number;
+  outputTruncated: boolean;
+  sessionId?: string;
+  command?: string;          // redacted resolved command line
+  costUsd?: number;          // Claude runs with a complete result
+  turns?: number;
+  usageJson?: string;        // redacted raw usage block, JSON string
+  logFile?: string | null;   // getRun() only: absolute per-JOB log file (all runs appended); null when logging.fileEnabled=false
+  logFileExists?: boolean;   // getRun() only: whether logFile exists on disk (set when logFile is non-null)
+  transcriptExists?: boolean; // getRun() only: whether transcriptPath exists on disk (set when transcriptPath is set)
+  transcriptPath?: string;
+  engineStatus?: string;     // Claude result subtype
+}
+```
+
+The last five fields are populated only for Claude runs with a complete `stream-json` result line; raw-engine runs omit them. See [job-schema.md](job-schema.md#run-statuses) for status meanings.
 
 ### NormalizeJobInputOptions
 
@@ -238,6 +247,11 @@ interface NormalizeJobInputOptions {
 ```ts
 interface CreateJobOptions extends NormalizeJobInputOptions {
   force?: boolean;
+  trustFolder?: boolean; // trust the job's cwd in Claude when not trusted yet (else TRUST_REQUIRED)
+}
+
+interface UpdateJobOptions extends NormalizeJobInputOptions {
+  trustFolder?: boolean;
 }
 ```
 
@@ -248,29 +262,31 @@ interface CreateJobOptions extends NormalizeJobInputOptions {
 
 ```ts
 interface JobCreateCliOptions {
-  id: string;
+  alias?: string;
   engineArgs?: string[];
   rawArgs?: string[];
+  passthroughArgs?: string[];
+  cliArgvOrder?: string[];
   args?: string[];
   file?: string;
   cron?: string;
   every?: number;
   at?: string;
-  tz?: string;
-  script?: string;
-  exec?: string;
+  cwd?: string;
+  trustFolder?: boolean;
   prompt?: string;
   promptFile?: string;
   engine?: string;
   sessionId?: string;
   reuseSession?: boolean;
-  shell?: string;
   envFile?: string;
   timeout?: number;
   overlap?: string;
   retry?: number;
   desc?: string;
   enabled?: boolean;
+  enable?: boolean;
+  disable?: boolean;
   force?: boolean;
 }
 ```
@@ -278,7 +294,7 @@ interface JobCreateCliOptions {
 ### JobPatchCliOptions
 
 ```ts
-type JobPatchCliOptions = Omit<JobCreateCliOptions, 'id'>;
+type JobPatchCliOptions = JobCreateCliOptions;
 ```
 
 `createJobFromCliOptions()` inherits the CLI file-loading behavior: `input.file` accepts
@@ -300,14 +316,14 @@ interface DaemonStopResult {
 }
 ```
 
-Returned by `daemonStop` (`CrontickClient`) and by `crontick info daemon stop`. `mode` reports how the daemon was actually stopped: `'graceful'` if the
+Returned by `daemonStop` (`CrontickClient`) and by `crontick daemon stop`. `mode` reports how the daemon was actually stopped: `'graceful'` if the
 `POST /api/daemon/stop` route accepted the request and the process exited before the poll
 timeout; `'hard-kill'` if that stalled or the route was unreachable and `stopDaemon()` had to
 escalate to `SIGTERM` then `SIGKILL`; `'already-stopped'` if no daemon was running. `activeRuns`
 lists any runs still `status: 'running'` at the moment the stop was accepted — they are not
 canceled by a stop, since [detached children survive daemon shutdown by design](../concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down)
-(with one Windows exception, see [ADR 0020](../decisions/0020-no-detach-powershell-script-jobs-windows.md)).
-See [cli.md](./cli.md#daemon-stop) and [internals/daemon.md](../internals/daemon.md#shutdown).
+(PowerShell-hosted commands retain the exception described in [ADR 0001](../decisions/0001-architecture-and-runtime-model.md)).
+See [cli.md](./cli.md#crontick-info-daemon-stop) and [implementation/daemon.md](../implementation/daemon.md#shutdown).
 
 ### DaemonRestartResult
 
@@ -343,7 +359,7 @@ interface DaemonStatus {
 }
 ```
 
-Returned by the library-only `daemonStatus()` helper. `crontick info` / `crontick_info` expose the lighter `{ running, pid?, port? }` daemon summary instead. `baseUrl` is always the daemon's loopback listener URL
+Returned by the library-only `daemonStatus()` helper; it also carries `dashboardUrl` and `portNote` (`started on fallback port N; default 47615 is in use`, else `null`). `crontick info` / `crontick_info` expose the lighter `{ running, pid?, port? }` daemon summary instead. `baseUrl` is always the daemon's loopback listener URL
 (`http://127.0.0.1:<port>`), so scripts can discover the daemon endpoint without reading internal
 state files.
 
@@ -353,6 +369,12 @@ state files.
 interface DashboardOptions {
   runsLimit?: number;
   jobId?: string;
+  /** Restrict runs to any of these job ids. */
+  jobIds?: string[];
+  /** Restrict runs to any of these statuses. */
+  statuses?: RunStatus[];
+  /** Substring search over run id, status, error, session id, job id/alias and stored run output. */
+  q?: string;
 }
 ```
 
@@ -385,23 +407,51 @@ interface DashboardHealth {
 }
 ```
 
+### RunOutput
+
+Returned by `getOutput`, shown by `crontick runs get <runId>` (`--json` prints `{ run, output }`) and `crontick_run_get`, and served at `GET /api/runs/:id/output`.
+
+```ts
+interface RunOutput {
+  runId: string;
+  status: string;
+  format: 'claude-stream-json' | 'text'; // how engine stdout was parsed
+  result: string | null;   // the engine's final answer (Claude `result` event text, else plain stdout for text engines)
+  error: string | null;    // run.error, else an error reported in the engine output
+  logFile?: string | null; // per-job file of crontick-side events (all runs of the job), null when file logging is off; set by the daemon route
+  stderr: string;          // engine stderr, redacted (capped at 1,000,000 bytes per run)
+  sessionId: string | null;
+  costUsd: number | null;
+  turns: number | null;
+  durationMs: number | null;
+  usage: NormalizedUsage | null; // display-only token counts parsed from usageJson; null when none
+  truncated: boolean;      // a text engine's stdout hit the retention cap
+}
+```
+
+`NormalizedUsage` is `{ inputTokens?, outputTokens?, cacheReadTokens?, cacheCreationTokens?, thinkingTokens? }`; fields are `undefined` when missing or non-numeric. It reads the run-total counters of Claude's usage block and ignores `iterations[]`. Cost (`costUsd`) is Claude-reported `total_cost_usd`, not computed by crontick.
+
+Only the final `result` event and stderr are kept (tool calls, interim assistant text, thinking and system events are discarded as the stream arrives), with secret redaction applied. crontick does not store the engine's raw logs: the runner keeps its own transcript (`transcriptPath`), and `logFile` holds only crontick's own events.
+
 ### DashboardStats
 
 ```ts
 interface DashboardStats {
   totalJobs: number;
   enabledJobs: number;
-  totalRuns: number;
   succeeded: number;
   failed: number;
-  avgDurationMs: number | null;
+  canceled: number;
+  skipped: number;
+  avgDurationSec: number | null;
+  totalCostUsd: number;
+  totalTurns: number;
 }
 ```
 
 Same shape and computation as [`StatsSummary`](#statssummary) -- see there for how
-`avgDurationMs` is averaged and how deleted-job history is excluded from live aggregates.
-`DashboardData.runs` likewise lists only runs whose parent job still exists, even though deleted
-job runs remain directly queryable by run id.
+`avgDurationSec` is averaged and how deleted-job history is excluded from live aggregates.
+`DashboardData.runs` likewise lists only runs whose parent job still exists.
 
 ### DashboardJob
 
@@ -411,9 +461,10 @@ interface DashboardJob {
   description: string | null;
   enabled: boolean;
   scheduleLabel: string;
-  actionKind: 'script' | 'exec' | 'prompt';
+  actionKind: 'prompt';
   lastStatus: string | null;
   lastRunAt: number | null;
+  avgDurationSec: number | null;
   nextRunAt: string | null;
   job: Job;
 }
@@ -433,6 +484,8 @@ interface DashboardRun {
   durationMs: number | null;
   exitCode: number | null;
   error: string | null;
+  /** Prompt-engine session id captured for this run; null when none. */
+  sessionId: string | null;
 }
 ```
 
@@ -608,13 +661,16 @@ function buildJobPatchFromUpdateOptions(input: JobPatchCliOptions, options?: Nor
 function applyConfigDefaults(job: Job, options?: NormalizeJobInputOptions): Job;
 ```
 
-Fills `action.engine` from config `defaultEngine` if unset on prompt actions.
+Fills `action.engine` from config `defaultEngine` if unset on prompt actions. Engine `type` (`claude` or `raw`) selects the adapter used by `buildPromptRunCommand()`.
 
 ### normalizeJobInput
 
 ```ts
 function normalizeJobInput(input: JobCreateInput, options?: NormalizeJobInputOptions): Job;
 ```
+
+On creation, omitted overlap, retry, and timeout values are copied from
+`config.defaults` into the stored job; later config edits do not rewrite it.
 
 ### normalizeJobPatch
 
@@ -699,7 +755,7 @@ values are redacted using the same shared read-surface contract described above.
 const VERSION: string;
 ```
 
-Build-time injected version from `package.json` (currently `"0.1.1"`).
+Build-time injected version from `package.json` (currently `"0.2.0"`).
 
 ### BUILT_IN_CONFIG
 
@@ -708,7 +764,7 @@ const BUILT_IN_CONFIG: CrontickConfig;
 ```
 
 ```json
-{ "defaultEngine": "copilot", "engines": { "copilot": { "command": "copilot", "args": ["--allow-all-tools", "-p"], "env": {} } }, "retention": { "maxRunsPerJob": 100, "maxOutputBytesPerRun": 2000000, "maxLogFiles": 30 } }
+{ "defaultEngine": "claude", "engines": { "claude": { "command": "claude", "args": [], "env": {}, "type": "claude" } }, "retention": { "maxRunsPerJob": 100, "maxOutputBytesPerRun": 2000000, "maxLogFiles": 30 }, "logging": { "fileEnabled": true }, "defaults": { "overlap": "skip", "retry": { "max": 0, "backoffSec": 30 } } }
 ```
 
 ### SURFACE_CAPABILITIES
@@ -717,7 +773,7 @@ const BUILT_IN_CONFIG: CrontickConfig;
 const SURFACE_CAPABILITIES: readonly SurfaceCapability[];
 ```
 
-21-element array mapping every capability to its client method, CLI command path, and
+20-element array mapping every capability to its client method, CLI command path, and
 MCP tool name. The existing `create-job` capability row also records its parity-coupled
 `force` option via `optionNames: ['force']`.
 
@@ -731,7 +787,7 @@ The stable code prefix stored in `runs.error` when `Store.reconcileOrphanRuns()`
 `queued` run (never spawned) or a `running` run confirmed dead by a process-liveness check, left
 behind by a daemon restart. A `running` run whose process is still alive (or the liveness check
 was inconclusive) is adopted instead and does not get this error — see
-[storage internals](../internals/storage.md#orphan-reconciliation). Not a thrown `CrontickError`
+[storage internals](../implementation/storage.md#orphan-reconciliation). Not a thrown `CrontickError`
 code — see [errors.md](errors.md#stored-run-error-values-not-crontickerror-codes).
 
 ### ORPHAN_RUN_ERROR_MESSAGE
@@ -756,4 +812,3 @@ The full stored `runs.error` value written by `reconcileOrphanRuns()`.
 | `ConfigSchema` | `z.ZodObject` | Config file schema |
 | `EngineConfigSchema` | `z.ZodObject` | Single engine config |
 | `RetentionConfigSchema` | `z.ZodObject` | `{ maxRunsPerJob: number; maxOutputBytesPerRun: number; maxLogFiles: number }`, `.strict()`, defaults `100`/`2_000_000`/`30` |
-

@@ -20,7 +20,7 @@ const cleanupFns: Array<() => Promise<void> | void> = [];
 const testJob = {
   alias: 'client-test-job',
   schedule: { kind: 'cron', cron: '0 0 * * *' },
-  action: { kind: 'exec', command: 'echo', args: ['hello'] },
+  action: { kind: 'prompt', prompt: 'hello', args: [], reuseSession: false },
 } satisfies JobInput;
 
 function makeHome(): string {
@@ -119,12 +119,11 @@ const server = http.createServer(async (req, res) => {
       runs.set(runId, { ...run, status: 'canceled' });
       return json(res, 200, { ok: true, canceled: true });
     }
-    if (runMatch[2] === '/logs') return json(res, 200, [{ runId, stream: 'stdout', ts: Date.now(), data: 'ok\\n' }]);
     return json(res, 200, runs.get(runId) ?? { id: runId, status: 'queued' });
   }
-  if (req.method === 'GET' && url.pathname === '/api/stats/summary') return json(res, 200, { totalJobs: jobs.size, enabledJobs: [...jobs.values()].filter(j => j.enabled !== false).length, totalRuns: runs.size, succeeded: 0, failed: 0, avgDurationMs: null });
+  if (req.method === 'GET' && url.pathname === '/api/stats/summary') return json(res, 200, { totalJobs: jobs.size, enabledJobs: [...jobs.values()].filter(j => j.enabled !== false).length, succeeded: 0, failed: 0 });
   const statsMatch = url.pathname.match(/^\\/api\\/stats\\/jobs\\/([^/]+)$/);
-  if (req.method === 'GET' && statsMatch) return json(res, 200, { jobId: decodeURIComponent(statsMatch[1]), totalRuns: 0, succeeded: 0, failed: 0, lastStatus: null, lastRunAt: null });
+  if (req.method === 'GET' && statsMatch) return json(res, 200, { jobId: decodeURIComponent(statsMatch[1]), succeeded: 0, failed: 0, lastStatus: null, lastRunAt: null });
   if (req.method === 'GET' && url.pathname === '/api/dashboard/status') {
     const port = server.address() && typeof server.address() === 'object' ? server.address().port : 0;
     return json(res, 200, { ok: true, running: true, url: 'http://127.0.0.1:' + port + '/dashboard', port, pid: process.pid, daemon: { pid: process.pid } });
@@ -133,7 +132,7 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, {
       generatedAt: Date.now(),
       health: { ok: true, product: 'crontick', version: 'test', uptimeSec: 1, pid: process.pid, port: 0, node: process.versions.node, platform: process.platform, jobs: { total: jobs.size, enabled: jobs.size }, runs: { last24h: runs.size, failures24h: 0 } },
-      stats: { totalJobs: jobs.size, enabledJobs: jobs.size, totalRuns: runs.size, succeeded: 0, failed: 0, avgDurationMs: null },
+      stats: { totalJobs: jobs.size, enabledJobs: jobs.size, succeeded: 0, failed: 0 },
       jobs: [...jobs.values()].map((job) => ({ id: job.id, description: job.description ?? null, enabled: job.enabled !== false, scheduleLabel: job.schedule?.cron ?? 'schedule', actionKind: job.action?.kind ?? 'exec', lastStatus: null, lastRunAt: null, nextRunAt: null, job })),
       runs: [...runs.values()].map((run) => ({ ...run, endedAt: null, durationMs: null, exitCode: null, error: null })),
     });
@@ -145,7 +144,7 @@ const server = http.createServer(async (req, res) => {
       const job = { ...incoming, id: incoming.id ?? randomUUID() };
       jobs.set(job.id, job);
     }
-    return json(res, 200, { imported: (body.jobs ?? []).length });
+    return json(res, 200, { imported: (body.jobs ?? []).length, results: [] });
   }
   if (req.method === 'POST' && url.pathname === '/api/schedules/validate') return json(res, 200, { ok: true });
   if (req.method === 'POST' && url.pathname === '/api/schedules/preview') return json(res, 200, { next: [] });
@@ -238,7 +237,7 @@ const client = createClient({ startupTimeoutMs: 10_000 });
 const created = await client.createJob({
   alias: 'bare-default-daemon-script-job',
   schedule: { kind: 'cron', cron: '0 0 * * *' },
-  action: { kind: 'exec', command: 'echo', args: ['hello'] },
+  action: { kind: 'prompt', prompt: 'hello', args: [], reuseSession: false },
 });
 process.stdout.write(JSON.stringify({ alias: created.alias }));
 `);
@@ -291,19 +290,7 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     const client = createClient({ daemonUrl: server.baseUrl, startDaemon: false });
 
     await expect(client.createJob({ ...testJob, alias: 'not valid' })).rejects.toBeInstanceOf(Error);
-    await expect(client.importJobs([{ ...testJob, alias: 'also invalid' }])).rejects.toBeInstanceOf(Error);
-  });
-
-  it('getLogs validates the source filter in core before hitting the daemon', async () => {
-    makeHome();
-    // startDaemon:false and an unreachable URL: an invalid source must reject
-    // from core validation, never reaching the transport.
-    const client = createClient({ daemonUrl: 'http://127.0.0.1:1/', startDaemon: false, requestTimeoutMs: 200 });
-
-    await expect(client.getLogs('run-1', { source: 'bogus' as never })).rejects.toBeInstanceOf(CrontickError);
-    await expect(client.getLogs('run-1', { source: 'bogus' as never })).rejects.toMatchObject({
-      code: 'VALIDATION_ERROR',
-    });
+    await expect(client.importJobs({ schema: 1, jobs: [{ ...testJob, alias: 'also invalid' }] })).rejects.toBeInstanceOf(Error);
   });
 
   it('surfaces ENV_FILE_ERROR from createJob without persisting a broken job', async () => {
@@ -315,9 +302,8 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
       alias: 'client-missing-env-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: {
-        kind: 'exec',
-        command: process.execPath,
-        args: ['-e', 'process.exit(0)'],
+        kind: 'prompt',
+        prompt: 'noop',
         cwd: home,
         envFile: 'missing-client.env',
       },
@@ -335,15 +321,14 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     const original = await client.createJob({
       alias: 'client-missing-env-update-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
-      action: { kind: 'exec', command: 'echo', args: ['before'] },
+      action: { kind: 'prompt', prompt: 'before', args: [], reuseSession: false },
     });
     const missingEnvFile = join(home, 'missing-client-update.env');
 
     await expect(client.updateJob('client-missing-env-update-job', {
       action: {
-        kind: 'exec',
-        command: process.execPath,
-        args: ['-e', 'process.exit(0)'],
+        kind: 'prompt',
+        prompt: 'noop',
         cwd: home,
         envFile: 'missing-client-update.env',
       },
@@ -355,24 +340,32 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     await expect(client.listJobs()).resolves.toEqual([original]);
   }, 15_000);
 
-  it('updates cron schedules with explicit timezone objects through updateJob', async () => {
+  it('rejects the removed schedule.tz field on createJob and updateJob', async () => {
     makeHome();
     const client = createClient({ daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 15_000 });
 
     await client.createJob({
       alias: 'client-cron-tz-update-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
-      action: { kind: 'exec', command: 'echo', args: ['before'] },
+      action: { kind: 'prompt', prompt: 'before', args: [], reuseSession: false },
     });
 
-    await expect(client.updateJob('client-cron-tz-update-job', {
-      schedule: { kind: 'cron', cron: '0 1 * * *', tz: 'UTC' },
-    })).resolves.toMatchObject({
-      schedule: { kind: 'cron', cron: '0 1 * * *', tz: 'UTC' },
+    const withTz = { kind: 'cron', cron: '0 1 * * *', tz: 'UTC' } as unknown as { kind: 'cron'; cron: string };
+    await expect(client.updateJob('client-cron-tz-update-job', { schedule: withTz })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: expect.stringContaining('schedule.tz is not supported'),
     });
+    await expect(client.createJob({
+      alias: 'client-cron-tz-create-job',
+      schedule: withTz,
+      action: { kind: 'prompt', prompt: 'x', args: [], reuseSession: false },
+    })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    await expect(client.updateJob('client-cron-tz-update-job', {
+      schedule: { kind: 'cron', cron: '0 1 * * *' },
+    })).resolves.toMatchObject({ schedule: { kind: 'cron', cron: '0 1 * * *' } });
   }, 15_000);
 
-  it('accepts modifier-only shell/envFile/timeout action patches through updateJob and merges them (CTD-026)', async () => {
+  it('accepts modifier-only engine/envFile/timeout action patches through updateJob and merges them (CTD-026)', async () => {
     const home = makeHome();
     const client = createClient({ daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 15_000 });
     const envFilePath = join(home, '.env.client-update.test');
@@ -382,31 +375,31 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
       alias: 'client-action-modifier-update-job',
       schedule: { kind: 'cron', cron: '0 0 * * *' },
       action: {
-        kind: 'script',
-        script: 'echo before',
-        shell: 'cmd',
+        kind: 'prompt',
+        prompt: 'before',
+        engine: 'agency',
         envFile: envFilePath,
         timeoutSec: 30,
       },
     });
 
-    // envFile-only patch — script and shell must be preserved
+    // envFile-only patch — prompt and engine must be preserved
     const afterEnvFile = await client.updateJob('client-action-modifier-update-job', {
-      action: { kind: 'script', envFile: envFilePath } as Parameters<typeof client.updateJob>[1]['action'],
+      action: { kind: 'prompt', envFile: envFilePath } as Parameters<typeof client.updateJob>[1]['action'],
     });
-    expect(afterEnvFile.action).toMatchObject({ kind: 'script', script: 'echo before', shell: 'cmd', envFile: envFilePath });
+    expect(afterEnvFile.action).toMatchObject({ kind: 'prompt', prompt: 'before', engine: 'agency', envFile: envFilePath });
 
-    // shell-only patch — script must be preserved
-    const afterShell = await client.updateJob('client-action-modifier-update-job', {
-      action: { kind: 'script', shell: 'pwsh' } as Parameters<typeof client.updateJob>[1]['action'],
+    // engine-only patch — prompt must be preserved
+    const afterEngine = await client.updateJob('client-action-modifier-update-job', {
+      action: { kind: 'prompt', engine: 'openai' } as Parameters<typeof client.updateJob>[1]['action'],
     });
-    expect(afterShell.action).toMatchObject({ kind: 'script', script: 'echo before', shell: 'pwsh' });
+    expect(afterEngine.action).toMatchObject({ kind: 'prompt', prompt: 'before', engine: 'openai' });
 
-    // timeoutSec-only patch — script and shell must be preserved
+    // timeoutSec-only patch — prompt and engine must be preserved
     const afterTimeout = await client.updateJob('client-action-modifier-update-job', {
-      action: { kind: 'script', timeoutSec: 45 } as Parameters<typeof client.updateJob>[1]['action'],
+      action: { kind: 'prompt', timeoutSec: 45 } as Parameters<typeof client.updateJob>[1]['action'],
     });
-    expect(afterTimeout.action).toMatchObject({ kind: 'script', script: 'echo before', shell: 'pwsh', timeoutSec: 45 });
+    expect(afterTimeout.action).toMatchObject({ kind: 'prompt', prompt: 'before', engine: 'openai', timeoutSec: 45 });
   }, 15_000);
 
   it('supports common CRUD and helper methods through the HTTP API', async () => {
@@ -426,11 +419,10 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     await expect(client.getRun(run.runId)).resolves.toMatchObject({ id: run.runId });
     await expect(client.listRuns({ jobId })).resolves.toEqual(expect.any(Array));
     await expect(client.cancelRun(run.runId)).resolves.toMatchObject({ ok: true, canceled: true });
-    await expect(client.getLogs(run.runId)).resolves.toMatchObject({ runId: run.runId, lines: expect.any(Array) });
     await expect(client.statsSummary()).resolves.toMatchObject({ totalJobs: expect.any(Number) });
     await expect(client.statsJob(jobId)).resolves.toMatchObject({ jobId });
     await expect(client.exportJobs()).resolves.toMatchObject({ jobs: expect.any(Array) });
-    await expect(client.importJobs([{ ...testJob, alias: 'imported-client-job' }])).resolves.toMatchObject({ imported: 1 });
+    await expect(client.importJobs({ schema: 1, jobs: [{ ...testJob, alias: 'imported-client-job' }] })).resolves.toMatchObject({ imported: 1 });
     await expect(client.validateSchedule(testJob.schedule)).resolves.toMatchObject({ ok: true });
     await expect(client.previewSchedule({ schedule: testJob.schedule, n: 1 })).resolves.toMatchObject({ next: [] });
     await expect(client.daemonReload()).resolves.toMatchObject({ ok: true });
@@ -489,13 +481,13 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     });
 
     await expect(
-      client.importJobs([
+      client.importJobs({ schema: 1, jobs: [
         {
           alias: 'client-import-prompt-job',
           schedule: { kind: 'cron', cron: '0 10 * * *' },
           action: { kind: 'prompt', promptFile: promptPath },
         },
-      ]),
+      ] }),
     ).resolves.toMatchObject({ imported: 1 });
   });
 

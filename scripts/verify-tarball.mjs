@@ -28,7 +28,6 @@ if (packInfo) {
     { name: 'dist/index.js', required: true },
     { name: 'dist/index.d.ts', required: true },
     { name: 'src/skill/SKILL.md', required: true },
-    { name: 'plugin/install.mjs', required: true },
     { name: 'README.md', required: true },
     { name: 'LICENSE', required: true },
   ];
@@ -67,7 +66,6 @@ if (packInfo) {
     'dist/mcp/index.js',
     'dist/daemon/index.js',
     'src/skill/SKILL.md',
-    'plugin/install.mjs',
   ];
   let allOk = true;
   for (const file of distChecks) {

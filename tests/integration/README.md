@@ -53,7 +53,7 @@ node tests/integration/run-harness.mjs --tier tier1 --dry-run
 | `--end M` | Run tests with `seq <= M`; combine with `--start` for a range |
 | `--id CT-X-NNN` | Run exactly one test by id (overrides range/tier filters) |
 | `--tier smoke\|tier1\|tier2\|tier3` | Run tests at this tier and all lower tiers (smoke ⊂ tier1 ⊂ tier2 ⊂ tier3) |
-| `--area <area>` | Filter by area (e.g. `install`, `daemon`, `script`, `exec`, `prompt`, `parity`, …) |
+| `--area <area>` | Filter by area (e.g. `install`, `daemon`, `prompt`, `parity`, …) |
 | `--surface cli\|api\|mcp` | Filter to tests whose `surface` array includes the given value |
 | `--list` | Print test IDs, titles, tiers, and platform-skip status; exit 0 without running |
 | `--dry-run` | Print what would run (including platform-skipped tests); exit 0 without running |
@@ -130,7 +130,7 @@ Key `TestEntry` fields:
 | `id` | Unique identifier in `CT-AREA-NNN` format |
 | `seq` | Sort key (multiples of 10; gap slots reserved for insertions) |
 | `title` | Human-readable description |
-| `area` | Area group: `install`, `daemon`, `script`, `exec`, `prompt`, `sched`, `job`, `run`, `log`, `err`, `cfg`, `parity`, `clean`, … |
+| `area` | Area group: `install`, `daemon`, `prompt`, `sched`, `job`, `run`, `log`, `err`, `cfg`, `parity`, `clean`, … |
 | `surface` | Array of `"cli"`, `"api"`, `"mcp"` — which surfaces this test exercises |
 | `priority` | `P0`–`P3` criticality |
 | `tier` | `"smoke"` \| `"tier1"` \| `"tier2"` \| `"tier3"` |
@@ -166,8 +166,8 @@ Key `TestEntry` fields:
 | `runStatusEquals` | `runs list --job <jobId>` → `[runIndex].status === expectedStatus` |
 | `runExitCodeEquals` | `runs list --job <jobId>` → `[runIndex].exitCode === expectedExitCode` |
 | `runErrorMatches` | `runs list --job <jobId>` → `[runIndex].error` matches regex `pattern` |
-| `runLogContains` | `logs <runId>` stdout+stderr contains `substring` |
-| `runLogNotContains` | `logs <runId>` stdout+stderr does NOT contain `forbidden` (resolves most-recent run from `jobId` if `runId` is null) |
+| `runLogContains` | `runs get <runId>` output (stdout+stderr) contains `substring` |
+| `runLogNotContains` | `runs get <runId>` output (stdout+stderr) does NOT contain `forbidden` (resolves most-recent run from `jobId` if `runId` is null) |
 | `crossSurfaceFieldEquals` | Same `jsonPath` value across multiple named invocation `refs` |
 | `daemonHealthOk` | `GET http://127.0.0.1:<port>/health` returns `{ ok: true }` |
 
@@ -199,9 +199,9 @@ Key `TestEntry` fields:
    ```
 
 4. **Write invocations and checks** using the check types listed above.
-   - CLI invocations: `"surface": "cli", "command": ["daemon", "status", "--json"]`
-   - API invocations: `"surface": "api", "script": "const c = crontick.createClient(); return await c.daemonStatus();"`
-   - MCP invocations: `"surface": "mcp", "tool": "crontick_daemon_status", "args": {}`
+   - CLI invocations: `"surface": "cli", "command": ["jobs", "list"]`
+   - API invocations: `"surface": "api", "script": "const c = crontick.createClient(); return await c.info();"`
+   - MCP invocations: `"surface": "mcp", "tool": "crontick_info", "args": {}`
 
 5. **Mark `skipOn`** if the test is platform-specific (e.g. `["linux","darwin"]` for PowerShell tests).
 
@@ -237,7 +237,7 @@ Key `TestEntry` fields:
 
 3. **Add a test** in `tests.json` that exercises the new check type (see "How to add a new test" above).
 
-4. **Document the type** in the check-type table in this README and in `docs/internals/` if applicable.
+4. **Document the type** in the check-type table in this README and in `docs/implementation/` if applicable.
 
 ---
 

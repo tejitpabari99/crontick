@@ -1,17 +1,22 @@
 /**
  * Configuration management for crontick. Handles `config.json` read/write, engine
  * CRUD, and config key-path operations. The built-in default config provides the
- * `copilot` engine; file config is deep-merged over it.
+ * `claude` engine; file config is deep-merged over it.
  *
  * Precedence for engine resolution: file config > BUILT_IN_CONFIG.
  * Writes use atomic rename (write-to-tmp, rename) for crash safety.
  */
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
 import { CrontickError } from './errors.js';
 import { configPath as defaultConfigPath, ensureDirs } from './paths.js';
 import { readJsonFile } from './json-file.js';
+import {
+  DEFAULT_MAX_LOG_FILES,
+  DEFAULT_MAX_OUTPUT_BYTES_PER_RUN,
+  DEFAULT_RUN_RETENTION_CAP,
+} from './constants/retention.js';
 import {
   ConfigKeySchema,
   ConfigSchema,
@@ -27,6 +32,8 @@ import {
 } from './schemas/config.js';
 import type { PromptAction } from './schemas/job.js';
 import { nullLogger, redactValue, type Logger } from './logger.js';
+import { getEngineAdapter } from './engines/registry.js';
+import type { EngineOptions } from './engines/types.js';
 
 export { ConfigSchema, EngineConfigSchema, LoggingConfigSchema, RetentionConfigSchema, type CrontickConfig, type EngineConfig, type LoggingConfig, type RetentionConfig };
 
@@ -52,16 +59,29 @@ export interface PromptRunCommand {
   args: string[];
   env: Record<string, string>;
   engine: string;
+  sessionId?: string;
+}
+
+/** Internal execution bundle: invocation and parser share one config read. */
+export interface ResolvedPromptRunCommand {
+  invocation: PromptRunCommand;
+  adapter: ReturnType<typeof getEngineAdapter>;
+  engineOptions: EngineOptions;
 }
 
 /** Built-in fallback config used when no file exists; also serves as the merge base. */
 export const BUILT_IN_CONFIG: CrontickConfig = Object.freeze({
-  defaultEngine: 'copilot',
+  defaultEngine: 'claude',
   engines: {
-    copilot: Object.freeze({ command: 'copilot', args: ['--allow-all-tools', '-p'], env: {} }),
+    claude: Object.freeze({ command: 'claude', args: [], env: {}, type: 'claude' }),
   },
-  retention: Object.freeze({ maxRunsPerJob: 100, maxOutputBytesPerRun: 2_000_000, maxLogFiles: 30 }),
+  retention: Object.freeze({
+    maxRunsPerJob: DEFAULT_RUN_RETENTION_CAP,
+    maxOutputBytesPerRun: DEFAULT_MAX_OUTPUT_BYTES_PER_RUN,
+    maxLogFiles: DEFAULT_MAX_LOG_FILES,
+  }),
   logging: Object.freeze({ fileEnabled: true }),
+  defaults: Object.freeze({ overlap: 'skip', retry: Object.freeze({ max: 0, backoffSec: 30 }), timeoutSec: undefined }),
 });
 
 export function redactConfigForRead(config: CrontickConfig): CrontickConfig {
@@ -116,10 +136,48 @@ export function initConfig(options: InitConfigOptions = {}): { path: string; con
       { path: filePath },
     );
   }
-  const config = cloneConfig(BUILT_IN_CONFIG);
+  const config = defaultConfigTemplate();
   writeJsonAtomic(filePath, config, options.env);
   (options.logger ?? nullLogger).child('config').debug('Initialized config file', { path: filePath, force: options.force === true });
   return { path: filePath, config, created: true };
+}
+
+/** The full, explicit built-in config as written to a fresh config.json (`timeoutSec` is omitted: unset). */
+export function defaultConfigTemplate(): CrontickConfig {
+  return cloneConfig(BUILT_IN_CONFIG);
+}
+
+/**
+ * Creates `<dataDir>/config.json` with the full default config when it does not
+ * exist yet; an existing file (hand-edited or not) is never read, merged or
+ * touched. The content is written to a temp file and published with a hard link,
+ * which is both atomic (readers never see a partial file) and exclusive (EEXIST
+ * when another process won the race). Filesystems without hard links fall back
+ * to an exclusive `wx` write.
+ */
+export function ensureConfigFile(options: ConfigOptions = {}): { path: string; created: boolean } {
+  const filePath = configFilePath(options);
+  if (existsSync(filePath)) return { path: filePath, created: false };
+  ensureDirs(options.env);
+  mkdirSync(dirname(filePath), { recursive: true });
+  const content = `${JSON.stringify(defaultConfigTemplate(), null, 2)}\n`;
+  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmpPath, content, { encoding: 'utf-8', mode: 0o600 });
+  try {
+    linkSync(tmpPath, filePath);
+    return { path: filePath, created: true };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return { path: filePath, created: false };
+    try {
+      writeFileSync(filePath, content, { encoding: 'utf-8', mode: 0o600, flag: 'wx' });
+      return { path: filePath, created: true };
+    } catch (fallbackErr) {
+      if ((fallbackErr as NodeJS.ErrnoException).code === 'EEXIST') return { path: filePath, created: false };
+      throw fallbackErr;
+    }
+  } finally {
+    try { unlinkSync(tmpPath); } catch { /* best-effort temp cleanup */ }
+  }
 }
 
 export function validateConfigFile(options: ConfigOptions = {}): ConfigValidationResult {
@@ -209,7 +267,20 @@ export function removeEngine(name: string, options: ConfigOptions = {}): Crontic
  * Builds the full command+args for executing a prompt action via its engine.
  * Merges engine-level args, the prompt text, job-level args, and optional sessionId.
  */
-export function buildPromptRunCommand(action: PromptAction, options: ConfigOptions = {}): PromptRunCommand {
+export function buildPromptRunCommand(
+  action: PromptAction,
+  options: ConfigOptions = {},
+  context: Partial<Pick<EngineOptions, 'runId' | 'jobId' | 'dataDir'>> = {},
+): PromptRunCommand {
+  return resolvePromptRunCommand(action, options, context).invocation;
+}
+
+/** Resolves the invocation and its adapter from a single engine config snapshot. */
+export function resolvePromptRunCommand(
+  action: PromptAction,
+  options: ConfigOptions = {},
+  context: Partial<Pick<EngineOptions, 'runId' | 'jobId' | 'dataDir'>> = {},
+): ResolvedPromptRunCommand {
   const logger = (options.logger ?? nullLogger).child('config');
   const config = loadConfig(options);
   const engineName = action.engine ?? config.defaultEngine;
@@ -221,16 +292,22 @@ export function buildPromptRunCommand(action: PromptAction, options: ConfigOptio
       { path: configFilePath(options), key: `engines.${engineName}` },
     );
   }
-  const args = [
-    ...(engine.args ?? []),
-    action.prompt,
-    ...(action.args ?? []),
-  ];
-  if (action.sessionId) args.push(`--session-id=${action.sessionId}`);
-  const result = {
+  const adapter = getEngineAdapter(engine.type);
+  const engineOptions: EngineOptions = {
     command: engine.command,
-    args,
-    env: { ...(engine.env ?? {}) },
+    engineArgs: engine.args ?? [],
+    runId: context.runId ?? '',
+    jobId: context.jobId ?? '',
+    dataDir: context.dataDir ?? '',
+    sessionId: action.sessionId,
+    reuseSession: action.reuseSession,
+    args: action.args ?? [],
+    env: engine.env ?? {},
+  };
+  const invocation = adapter.buildInvocation(action.prompt, engineOptions);
+  if (invocation.sessionId) engineOptions.sessionId = invocation.sessionId;
+  const result = {
+    ...invocation,
     engine: engineName,
   };
   logger.debug('Resolved prompt engine command', {
@@ -240,7 +317,7 @@ export function buildPromptRunCommand(action: PromptAction, options: ConfigOptio
     args: result.args,
     envKeys: Object.keys(result.env),
   });
-  return result;
+  return { invocation: result, adapter, engineOptions };
 }
 
 function setEngine(name: string, engine: unknown, mustExist: boolean, options: ConfigOptions): CrontickConfig {
@@ -357,7 +434,7 @@ function parseKeyPath(path: string): string[] {
   if (!parsed.success) {
     throw new CrontickError(
       'CONFIG_KEY_ERROR',
-      `Invalid config key path "${path}". Use dot-separated keys such as defaultEngine or engines.copilot.command.`,
+      `Invalid config key path "${path}". Use dot-separated keys such as defaultEngine or engines.claude.command.`,
       { key: path },
     );
   }

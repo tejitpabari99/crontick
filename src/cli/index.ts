@@ -16,6 +16,9 @@ import { createClient, type CrontickClient } from '../client.js';
 import { buildJobPatchFromUpdateOptions, type JobCreateCliOptions, type JobPatchCliOptions } from '../job-input.js';
 import { isVerboseEnv, type LogEvent } from '../logger.js';
 import { readJsonFile } from '../json-file.js';
+import { formatJobStats, formatRunDetail, formatRunsTable } from '../run-format.js';
+import { resolveExportPath } from '../share.js';
+import { terminalTrustPromptIo, withTrustPrompt } from './trust-prompt.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -207,18 +210,18 @@ function groupHelp(command: Command): Command {
 
 function commonJobOptions(command: Command): Command {
   return command
-    .option('--desc <description>', 'Job description')
-    .option('--cron <expr>', 'Cron expression (e.g. "0 9 * * *")')
-    .option('--every <sec>', 'Interval in seconds', parseInteger)
-    .option('--at <iso>', 'One-shot run-at ISO-8601 time')
-    .option('--tz <tz>', 'Timezone for cron schedule')
-    .option('--prompt <text>', 'Prompt text for a prompt action')
+    .option('-a, --alias <alias>', 'Unique kebab-case job alias (auto-generated when omitted)')
+    .option('-p, --prompt <text>', 'Prompt text for a prompt action')
     .option('--prompt-file <path>', 'UTF-8 .txt file to read into the prompt')
-    .option('--engine <engine>', 'Configured prompt engine name (default: config defaultEngine, i.e. copilot)')
-    .option('--session-id <id>', 'Reuse this prompt engine session every run')
-    .option('--reuse-session', 'Capture the first successful run session id and reuse it')
-    .option('--file <path>', 'Create the job from a full job-definition JSON file (advanced; supports all action kinds including script/exec)')
-    .option('--alias <alias>', 'Human-friendly, unique, kebab-case job identifier; auto-generated on create when omitted')
+    .option('--cron <expr>', 'Schedule (exactly one of --cron/--every/--at): cron expression, e.g. "0 9 * * *"')
+    .option('--every <interval>', 'Schedule (exactly one of --cron/--every/--at): repeat every N seconds, or use an s/m/h/d suffix (e.g. 30m)', parseEveryInterval)
+    .option('--at <datetime>', 'Schedule (exactly one of --cron/--every/--at): one-shot run time, ISO-8601 (e.g. 2026-10-01T09:00)')
+    .option('-C, --cwd <dir>', 'Working directory the job runs in (default: the current directory)')
+    .option('--trust-folder', 'Trust the working directory in Claude without asking (when it is not trusted yet)')
+    .option('--runner <runner>', 'Configured prompt engine name (default: config defaultEngine)')
+    .option('--session-id <id>', 'Run it on a given session ID')
+    .option('--reuse-session', 'Start session and resume on succeeding runs.')
+    .option('--file <path>', 'Create the job from a full job-definition JSON file (advanced)')
     // No hardcoded default here (unlike most flags): a Commander default would
     // be indistinguishable from the user explicitly typing the same value,
     // which on `update` previously caused an omitted flag to silently reset
@@ -227,22 +230,26 @@ function commonJobOptions(command: Command): Command {
     // "explicitly set to the default value" on both `new` and `update`.
     // `new` still defaults to skip explicitly in job-input.ts.
     .option('--timeout <sec>', 'Per-run timeout in seconds (default: none/unbounded; omit on update to leave unchanged)', parseInteger)
-    .option('--overlap <policy>', 'Overlap policy: skip|queue|cancel-previous (default on create: skip; omit on update to leave unchanged)')
-    .option('--retry <max>', 'Retry count on failure (default: 0; omit on update to leave unchanged)', parseInteger);
+    .option('--overlap <policy>', 'Overlap policy: skip|queue|cancel-previous (default: skip)')
+    .option('--retry <max>', 'Retry count on failure (default: 0; omit on update to leave unchanged)', parseInteger)
+    .option('--desc <description>', 'Job description');
 }
 
-function collectJobOptions(engineArgs: string[], opts: Record<string, unknown>): JobCreateCliOptions {
+function collectJobOptions(engineArgs: string[], passthroughArgs: string[], cliArgvOrder: string[], opts: Record<string, unknown>): JobCreateCliOptions {
   return {
     alias: stringOption(opts.alias),
     rawArgs: Array.isArray(engineArgs) ? engineArgs : [],
+    passthroughArgs,
+    cliArgvOrder,
     file: stringOption(opts.file),
     cron: stringOption(opts.cron),
     every: numberOption(opts.every),
     at: stringOption(opts.at),
-    tz: stringOption(opts.tz),
+    cwd: stringOption(opts.cwd),
+    trustFolder: booleanOption(opts.trustFolder),
     prompt: stringOption(opts.prompt),
     promptFile: stringOption(opts.promptFile),
-    engine: stringOption(opts.engine),
+    engine: stringOption(opts.runner),
     sessionId: stringOption(opts.sessionId),
     reuseSession: booleanOption(opts.reuseSession),
     timeout: numberOption(opts.timeout),
@@ -253,18 +260,21 @@ function collectJobOptions(engineArgs: string[], opts: Record<string, unknown>):
   };
 }
 
-function collectPatchOptions(engineArgs: string[], opts: Record<string, unknown>): JobPatchCliOptions {
+function collectPatchOptions(engineArgs: string[], passthroughArgs: string[], cliArgvOrder: string[], opts: Record<string, unknown>): JobPatchCliOptions {
   return {
     alias: stringOption(opts.alias),
     rawArgs: Array.isArray(engineArgs) ? engineArgs : [],
+    passthroughArgs,
+    cliArgvOrder,
     file: stringOption(opts.file),
     cron: stringOption(opts.cron),
     every: numberOption(opts.every),
     at: stringOption(opts.at),
-    tz: stringOption(opts.tz),
+    cwd: stringOption(opts.cwd),
+    trustFolder: booleanOption(opts.trustFolder),
     prompt: stringOption(opts.prompt),
     promptFile: stringOption(opts.promptFile),
-    engine: stringOption(opts.engine),
+    engine: stringOption(opts.runner),
     sessionId: stringOption(opts.sessionId),
     reuseSession: booleanOption(opts.reuseSession),
     timeout: numberOption(opts.timeout),
@@ -284,6 +294,15 @@ function parseInteger(value: string): number {
   return parsed;
 }
 
+function parseEveryInterval(value: string): number {
+  const match = /^(\d+)([smhd]?)$/.exec(value);
+  if (!match) throw new InvalidArgumentError(`Invalid interval: ${value}. Use seconds or an s/m/h/d suffix.`);
+  const units: Record<string, number> = { '': 1, s: 1, m: 60, h: 3600, d: 86400 };
+  const seconds = Number(match[1]) * units[match[2]!]!;
+  if (!Number.isSafeInteger(seconds)) throw new InvalidArgumentError(`Interval is too large: ${value}`);
+  return seconds;
+}
+
 function stringOption(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
@@ -297,7 +316,7 @@ function booleanOption(value: unknown): boolean | undefined {
 }
 
 /**
- * Guards against a user placing a crontick flag (e.g. --engine) after `--`,
+ * Guards against a user placing a crontick flag (e.g. --runner) after `--`,
  * expecting it to still be parsed as a crontick option. Commander treats
  * everything after a literal `--` as positional, so such a token instead
  * becomes a literal argument to the job's prompt action — silently corrupting
@@ -319,6 +338,45 @@ function assertNoCrontickFlagCollision(rawArgs: string[], cmd: Command): void {
     `Argument(s) ${collisions.join(', ')} placed after -- match a crontick flag name and were NOT applied as crontick options -- ` +
       'this would otherwise silently store them as literal job arguments. Move crontick flags before the -- delimiter.',
   );
+}
+
+/** Separate unrecognized long flags from positional args that Commander leaves in one array. */
+function splitPromptEngineArgs(engineArgs: string[]): { rawArgs: string[]; passthroughArgs: string[] } {
+  const separator = process.argv.indexOf('--', 2);
+  const afterSeparator = separator < 0 ? [] : process.argv.slice(separator + 1);
+  // A literal `--` may itself be a known option's value. In that case it did
+  // not start a positional suffix and should not affect this split.
+  const hasSeparator = separator >= 0
+    && afterSeparator.length <= engineArgs.length
+    && afterSeparator.every((arg, i) => arg === engineArgs[engineArgs.length - afterSeparator.length + i]);
+  const beforeSeparator = hasSeparator && afterSeparator.length > 0
+    ? engineArgs.slice(0, -afterSeparator.length)
+    : engineArgs;
+  const rawArgs: string[] = [];
+  const passthroughArgs: string[] = [];
+
+  for (const tokens of [beforeSeparator, hasSeparator ? afterSeparator : []]) {
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i]!;
+      if (token.startsWith('--') && token.length > 2) {
+        // Removed CLI switches must stay unknown instead of being forwarded
+        // to the prompt runner through the generic long-flag passthrough.
+        const flag = token.split('=', 1)[0]!;
+        if (flag === '--job-env-file' || flag === '--engine' || flag === '--tz') {
+          throw new Error(`unknown option '${flag}'`);
+        }
+        passthroughArgs.push(token);
+        if (!token.includes('=') && i + 1 < tokens.length && !tokens[i + 1]!.startsWith('-')) {
+          passthroughArgs.push(tokens[++i]!);
+        }
+      } else if (tokens === beforeSeparator && token.startsWith('-')) {
+        throw new CrontickError('VALIDATION_ERROR', `Unknown short option: ${token}`);
+      } else {
+        rawArgs.push(token);
+      }
+    }
+  }
+  return { rawArgs, passthroughArgs };
 }
 
 const program = new Command();
@@ -352,12 +410,18 @@ program
 const jobs = groupHelp(program.command('jobs').description('Create, inspect, and manage scheduled jobs'));
 
 commonJobOptions(jobs.command('new [engineArgs...]').description('Create a new job (alias auto-generated when --alias is omitted)'))
+  .allowUnknownOption()
   .option('--force', 'Replace an existing job when the same alias already exists')
   .action(async (engineArgs: string[], opts, cmd: Command) => {
     const c = client();
     try {
       assertNoCrontickFlagCollision(engineArgs, cmd);
-      const result = await c.createJobFromCliOptions(collectJobOptions(engineArgs, opts));
+      const { rawArgs, passthroughArgs } = splitPromptEngineArgs(engineArgs);
+      const options = collectJobOptions(rawArgs, passthroughArgs, engineArgs, opts);
+      const result = await withTrustPrompt(
+        (trustFolder) => c.createJobFromCliOptions({ ...options, trustFolder }),
+        { trustFolder: options.trustFolder, io: terminalTrustPromptIo() },
+      );
       printNotices(c);
       print(result);
     } catch (err) {
@@ -365,7 +429,8 @@ commonJobOptions(jobs.command('new [engineArgs...]').description('Create a new j
     }
   });
 
-commonJobOptions(jobs.command('update <id> [engineArgs...]').description('Update an existing job (id or alias)'))
+commonJobOptions(jobs.command('update <id|alias> [engineArgs...]').description('Update an existing job (id or alias)'))
+  .allowUnknownOption()
   .option('--enable', 'Enable the job')
   .option('--disable', 'Disable the job')
   .action(async (id: string, engineArgs: string[], opts, cmd: Command) => {
@@ -373,11 +438,16 @@ commonJobOptions(jobs.command('update <id> [engineArgs...]').description('Update
     const notices: string[] = [];
     try {
       assertNoCrontickFlagCollision(engineArgs, cmd);
-      const patch = buildJobPatchFromUpdateOptions(collectPatchOptions(engineArgs, opts), {
+      const { rawArgs, passthroughArgs } = splitPromptEngineArgs(engineArgs);
+      const patchOptions = collectPatchOptions(rawArgs, passthroughArgs, engineArgs, opts);
+      const patch = buildJobPatchFromUpdateOptions(patchOptions, {
         cwd: process.cwd(),
         onNotice: (message) => notices.push(message),
       });
-      const result = await c.updateJob(id, patch);
+      const result = await withTrustPrompt(
+        (trustFolder) => c.updateJob(id, patch, { trustFolder }),
+        { trustFolder: patchOptions.trustFolder, io: terminalTrustPromptIo() },
+      );
       printNotices(c, notices);
       print(result);
     } catch (err) {
@@ -389,18 +459,26 @@ jobs.command('list').description('List all jobs').action(async () => {
   try { print(await client().listJobs()); } catch (err) { handleError(err); }
 });
 
-jobs.command('get <id>').description('Get a job by id or alias').action(async (id: string) => {
-  try { print(await client().getJob(id)); } catch (err) { handleError(err); }
+jobs.command('get <id|alias>').description('Get a job by id or alias').action(async (id: string) => {
+  try {
+    const job = await client().getJob(id);
+    print(job);
+    if (job.action.cwd) stdout(`cwd: ${job.action.cwd}`);
+    if (job.action.sessionId) stdout(`Runner Session ID: ${job.action.sessionId}`);
+  } catch (err) { handleError(err); }
 });
 
-jobs.command('schedule <id>')
+jobs.command('schedule <id|alias>')
   .description('Show upcoming fire times for a job (id or alias)')
   .option('-n, --count <n>', 'Number of upcoming fire times to show (default: 5)', parseInteger, 5)
   .action(async (id: string, opts) => {
-    try { print(await client().jobSchedule(id, { n: opts.count as number | undefined })); } catch (err) { handleError(err); }
+    try {
+      const { enabled, next, ...rest } = await client().jobSchedule(id, { n: opts.count as number | undefined }) as { enabled: boolean; next: unknown } & Record<string, unknown>;
+      print({ ...rest, status: enabled ? 'enabled' : 'disabled', next });
+    } catch (err) { handleError(err); }
   });
 
-jobs.command('delete <idOrAlias>')
+jobs.command('delete <id|alias>')
   .description('Delete a job (id or alias), or delete all jobs with the reserved `all` keyword and --force')
   .option('--force', 'Confirm a destructive delete when deleting all jobs')
   .action(async (idOrAlias: string, opts) => {
@@ -415,46 +493,43 @@ jobs.command('delete <idOrAlias>')
     } catch (err) { handleError(err); }
   });
 
-jobs.command('run-now <id>').description('Trigger an immediate run of a job (id or alias)').action(async (id: string) => {
+jobs.command('run-now <id|alias>').description('Run a job once right now, even if it is disabled (does not enable it or change its schedule)').action(async (id: string) => {
   try { print(await client().runNow(id)); } catch (err) { handleError(err); }
 });
 
 // ── runs ─────────────────────────────────────────────────────────────────────
-const RUN_STATUSES = ['queued', 'running', 'success', 'failed', 'canceled', 'timeout', 'missed'] as const;
+const RUN_STATUSES = ['queued', 'running', 'success', 'failed', 'canceled', 'skipped', 'timeout', 'missed'] as const;
 
 const runs = groupHelp(program.command('runs').description('Inspect and manage run history'));
 runs.command('list')
   .description('List recent runs, optionally filtered by job')
-  .option('--job <id>', 'Filter by job id or alias')
+  .option('--job <id|alias>', 'Filter by job id or alias')
   .option('--limit <n>', 'Maximum runs to return', parseInteger)
   .option('--since <ms>', 'Only runs since epoch milliseconds', parseInteger)
   .option('--status <status>', `Filter by run status (${RUN_STATUSES.join('|')})`)
+  .option('--json', 'Print the raw run records as JSON (epoch-millisecond timestamps, full error text)')
   .action(async (opts) => {
     try {
-      print(await client().listRuns({
+      const listed = await client().listRuns({
         jobId: opts.job as string | undefined,
         limit: opts.limit as number | undefined,
         since: opts.since as number | undefined,
         status: opts.status as string | undefined,
-      }));
+      });
+      if (opts.json) stdout(JSON.stringify(listed, null, 2));
+      else stdout(listed.length === 0 ? '(no items)' : formatRunsTable(listed));
     } catch (err) { handleError(err); }
   });
 
 runs.command('get <runId>')
-  .description('Show what was run for a run: resolved command, status, timing, and session id')
-  .action(async (runId: string) => {
-    try { print(await client().getRun(runId)); } catch (err) { handleError(err); }
-  });
-
-runs.command('logs <runId> [source]')
-  .description('Show logs for a run. Optional source: engine (stdout+stderr) or crontick (scheduling/execution events); default shows both')
-  .option('--tail <n>', 'Show last N lines', parseInteger)
-  .action(async (runId: string, source: string | undefined, opts) => {
+  .description('Show a run: status, timing, Runner Session ID, transcript and log file paths, then its cleaned output')
+  .option('--json', 'Print { run, output } as JSON (epoch-millisecond timestamps)')
+  .action(async (runId: string, opts) => {
     try {
-      // Source validation lives in the core client (single source of truth):
-      // the shim forwards the positional untouched.
-      const result = await client().getLogs(runId, { lines: opts.tail as number | undefined, source });
-      for (const entry of result.lines) process.stdout.write(`[${entry.stream}] ${entry.data}`);
+      const c = client();
+      const run = await c.getRun(runId);
+      const output = await c.getOutput(runId);
+      stdout(opts.json ? JSON.stringify({ run, output }, null, 2) : formatRunDetail(run, output));
     } catch (err) { handleError(err); }
   });
 
@@ -468,47 +543,59 @@ const stats = groupHelp(program.command('stats').description('Show job/run stati
 stats.command('summary').description('Show aggregate statistics').action(async () => {
   try { print(await client().statsSummary()); } catch (err) { handleError(err); }
 });
-stats.command('job <id>').description('Show statistics for one job (id or alias)').action(async (id: string) => {
-  try { print(await client().statsJob(id)); } catch (err) { handleError(err); }
+stats.command('job <id|alias>').description('Show statistics for one job (id or alias); totalTurns sums the agent turns of all its runs').action(async (id: string) => {
+  try { print(formatJobStats(await client().statsJob(id))); } catch (err) { handleError(err); }
 });
 
 // ── share ────────────────────────────────────────────────────────────────────
 const share = groupHelp(program.command('share').description('Export and import jobs'));
 share.command('export')
-  .description('Export all jobs')
-  .option('--out <file>', 'Output file (default: stdout)')
-  .option('--include-runs', 'Also include run history in the export')
+  .description('Export jobs to a crontick export file (schema 1, jobs only)')
+  .option('--out <file>', 'Output file; ".json" is appended unless the name already ends in .json (default: print to stdout)')
+  .option('--only-jobs <id|alias,...>', 'Comma-separated ids or aliases of the jobs to export (default: all jobs)')
   .action(async (opts) => {
     try {
-      const data = await client().exportJobs({ includeRuns: opts.includeRuns as boolean | undefined });
+      const onlyJobs = typeof opts.onlyJobs === 'string' ? opts.onlyJobs.split(',').map((v: string) => v.trim()).filter(Boolean) : undefined;
+      const data = await client().exportJobs({ onlyJobs });
       const json = JSON.stringify(data, null, 2);
       if (opts.out) {
-        writeFileSync(resolve(process.cwd(), opts.out as string), json, 'utf-8');
-        stdout(`Exported to ${opts.out as string}`);
+        const target = resolveExportPath(opts.out as string, process.cwd());
+        writeFileSync(target, `${json}\n`, 'utf-8');
+        stdout(`Exported ${data.jobs.length} job(s) to ${target}`);
       } else {
         stdout(json);
       }
     } catch (err) { handleError(err); }
   });
 
-share.command('import <file>').description('Import jobs (and run history, if present) from a JSON file').action(async (file: string) => {
-  try {
-    const filePath = resolve(process.cwd(), file);
-    const data = readJsonFile(filePath, {
-      errorCode: 'VALIDATION_ERROR',
-      subject: 'import file',
-      expectedShape: 'expected either a JSON array of jobs or an export object with jobs and optional runs',
-    }) as { jobs?: unknown[]; runs?: unknown[] } | unknown[];
-    const importJobs = Array.isArray(data) ? data : data.jobs;
-    const importRuns = Array.isArray(data) ? undefined : data.runs;
-    print(await client().importJobs(Array.isArray(importJobs) ? importJobs : [], { fileBaseDir: dirname(filePath), runs: importRuns }));
-  } catch (err) { handleError(err); }
-});
+share.command('import <file>')
+  .description('Import jobs from a crontick export file (schema 1). Jobs get new ids.')
+  .option('--trust-folder', 'Trust the jobs\' working directories in Claude without asking (when not trusted yet)')
+  .action(async (file: string, opts) => {
+    try {
+      const filePath = resolve(process.cwd(), file);
+      const data = readJsonFile(filePath, {
+        errorCode: 'VALIDATION_ERROR',
+        subject: 'import file',
+        expectedShape: 'expected a crontick export object: {"schema": 1, "jobs": [...]}',
+      });
+      const c = client();
+      print(await withTrustPrompt(
+        (trustFolder) => c.importJobs(data, { fileBaseDir: dirname(filePath), trustFolder }),
+        { trustFolder: booleanOption(opts.trustFolder), io: terminalTrustPromptIo() },
+      ));
+    } catch (err) { handleError(err); }
+  });
 
 // ── info ─────────────────────────────────────────────────────────────────────
+
 const info = program.command('info')
   .description('Show version, runtime, config path, storage locations, and daemon status')
+  .usage('[options]')
+  .argument('[extra...]')
   .action(async () => {
+    // `info` has no subcommands: a stray word (e.g. the removed `info daemon`) is an error.
+    if (info.args.length > 0) info.error(`unknown command '${info.args[0]}'`);
     try {
       const result = await client(false).info();
       stdout(`crontick   ${result.version}`);
@@ -517,8 +604,9 @@ const info = program.command('info')
       stdout('');
       stdout(result.daemon.running
         ? `daemon     running (pid ${String(result.daemon.pid ?? '?')}, port ${String(result.daemon.port ?? '?')})`
-        : 'daemon     stopped');
-      stdout(`config     ${result.configPath}`);
+        : 'daemon     stopped (starts automatically on first use, or run: crontick daemon start)');
+      if (result.daemon.portNote) stdout(`           ${result.daemon.portNote}`);
+      stdout(`config     ${result.configPath}${result.configExists ? '' : ' (not created yet - built-in defaults in use)'}`);
       stdout(result.dashboardUrl
         ? `dashboard  ${result.dashboardUrl}${result.daemon.running ? '' : ' (available once the daemon is running; it starts automatically on first use)'}`
         : 'dashboard  available once the daemon is running (it starts automatically on first use)');
@@ -530,7 +618,7 @@ const info = program.command('info')
     } catch (err) { handleError(err); }
   });
 
-info.command('doctor').description('Check system health').action(async () => {
+async function runDoctor(): Promise<void> {
   try {
     const result = await client(false).doctor({ mcpScript: mcpScript() });
     for (const check of result.checks) {
@@ -538,16 +626,58 @@ info.command('doctor').description('Check system health').action(async () => {
     }
     if (!result.ok) process.exitCode = 1;
   } catch (err) { handleError(err); }
-});
+}
 
-const infoDaemon = groupHelp(info.command('daemon').description('Manage daemon admin operations that remain on the CLI'));
-infoDaemon.command('stop').description('Stop the daemon').action(async () => {
+program.command('doctor').description('Check system health').action(runDoctor);
+
+// ── daemon ───────────────────────────────────────────────────────────────────
+// The daemon still demand-starts on first use; `daemon start` is the explicit,
+// manual way to start it (or run it in the foreground). It is NOT login/boot
+// registration (that removed feature is guarded by a regression test).
+
+const daemon = groupHelp(program.command('daemon').description('Start, stop, and inspect the background daemon'));
+daemon.command('start')
+  .description('Start the daemon now (background by default; it also starts automatically on first use)')
+  .option('--foreground', 'Run the daemon in this terminal until it exits (Ctrl+C to stop)')
+  .action(async (opts) => {
+    try {
+      const result = await client().daemonStart({ foreground: booleanOption(opts.foreground) });
+      if (result.foregroundExitCode !== undefined) {
+        stdout(`Daemon exited (code ${String(result.foregroundExitCode)})`);
+        return;
+      }
+      stdout(result.started
+        ? `Daemon started (pid ${String(result.pid ?? '?')}, ${result.baseUrl})`
+        : `Daemon already running (pid ${String(result.pid ?? '?')}, ${result.baseUrl})`);
+      if (result.portNote) stdout(`Note: ${result.portNote}`);
+    } catch (err) { handleError(err); }
+  });
+daemon.command('stop').description('Stop the daemon').action(async () => {
   try {
     const result = await client(false).daemonStop();
     stdout(`${result.message} (mode: ${result.mode})`);
   } catch (err) { handleError(err); }
 });
-infoDaemon.command('reload').description('Reload jobs from disk').action(async () => {
+daemon.command('restart').description('Stop the daemon and start it again').action(async () => {
+  try {
+    const result = await client().daemonRestart();
+    stdout(`Daemon restarted (pid ${String(result.pid ?? '?')}, ${result.baseUrl})`);
+    if (result.portNote) stdout(`Note: ${result.portNote}`);
+  } catch (err) { handleError(err); }
+});
+daemon.command('status').description('Show whether the daemon is running').action(async () => {
+  try {
+    print(await client(false).daemonStatus());
+  } catch (err) {
+    if (err instanceof CrontickError && err.code === 'DAEMON_NOT_RUNNING') {
+      stdout('Daemon is not running (start it with: crontick daemon start)');
+      process.exitCode = 1;
+      return;
+    }
+    handleError(err);
+  }
+});
+daemon.command('reload').description('Reload jobs from disk').action(async () => {
   try { print(await client().daemonReload()); } catch (err) { handleError(err); }
 });
 
@@ -597,4 +727,3 @@ async function main(): Promise<void> {
 }
 
 void main();
-

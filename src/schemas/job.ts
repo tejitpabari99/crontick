@@ -12,22 +12,21 @@ import { EngineNameSchema } from './config.js';
 
 export const CronScheduleSchema = z.object({
   kind: z.literal('cron'),
-  cron: z.string().min(1),
-  tz: z.string().optional(),
+  cron: z.string().min(1).describe('Cron expression, e.g. "0 9 * * *" (fires in the machine local timezone)'),
 });
 
 export const IntervalScheduleSchema = z.object({
   kind: z.literal('interval'),
-  everySec: z.number().positive(),
-  startAt: z.string().optional(), // ISO-8601
+  everySec: z.number().positive().describe('Repeat interval in seconds (the CLI --every flag also accepts s/m/h/d suffixes, e.g. 30m)'),
+  startAt: z.string().optional().describe('ISO-8601 time the interval starts counting from'),
 });
 
 export const OneShotScheduleSchema = z.object({
   kind: z.literal('one-shot'),
-  runAt: z.string().min(1), // ISO-8601
+  runAt: z.string().min(1).describe('One-shot run time, ISO-8601 (e.g. 2026-10-01T09:00). Interpreted in the machine local timezone unless an offset such as Z or +02:00 is given'),
 });
 
-/** Schedule discriminated union; croner v9 validates the cron expression at runtime. */
+/** Schedule discriminated union (exactly one schedule per job); croner v9 validates the cron expression at runtime. */
 export const ScheduleSchema = z.discriminatedUnion('kind', [
   CronScheduleSchema,
   IntervalScheduleSchema,
@@ -42,20 +41,6 @@ const CommonActionFields = {
   envFile: z.string().optional(),
   timeoutSec: z.number().positive().optional(),
 };
-
-export const ScriptActionSchema = z.object({
-  kind: z.literal('script'),
-  script: z.string().min(1),
-  shell: z.enum(['auto', 'bash', 'pwsh', 'cmd']).default('auto'),
-  ...CommonActionFields,
-}).strict();
-
-export const ExecActionSchema = z.object({
-  kind: z.literal('exec'),
-  command: z.string().min(1),
-  args: z.array(z.string()).default([]),
-  ...CommonActionFields,
-}).strict();
 
 export const PromptEngineSchema = EngineNameSchema;
 
@@ -78,13 +63,14 @@ export const PromptActionBaseSchema = z.object({
 export const PromptActionSchema = PromptActionBaseSchema.superRefine(addPromptRuntimeIssues);
 
 /**
- * Action discriminated union keyed on `kind`. Uses PromptActionBaseSchema
- * (not PromptActionSchema) as the union member because Zod discriminatedUnion
+ * Action discriminated union keyed on `kind`. Prompt is the only member
+ * (crontick is prompt-only -- see docs/decisions/0002-prompt-only-jobs-and-engine-adapters.md).
+ * `kind: 'prompt'` is kept explicit so job JSON stays self-describing and a
+ * future action kind can be added. Uses PromptActionBaseSchema (not
+ * PromptActionSchema) as the union member because Zod discriminatedUnion
  * requires plain objects; the prompt refinement is re-applied via superRefine.
  */
 export const ActionSchema = z.discriminatedUnion('kind', [
-  ScriptActionSchema,
-  ExecActionSchema,
   PromptActionBaseSchema,
 ]).superRefine((action, ctx) => {
   if (action.kind === 'prompt') addPromptRuntimeIssues(action, ctx);
@@ -112,7 +98,7 @@ export const JOB_ALIAS_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
  * fresh id is generated -- collision-free for practical purposes without
  * needing to consult existing jobs (unlike `alias`, which does).
  */
-export const JobSchema = z.object({
+export const JobBaseSchema = z.object({
   id: z.string().uuid().default(() => randomUUID()),
   /**
    * Human-friendly, user-editable, OPTIONAL identifier. Enforced unique only
@@ -122,7 +108,7 @@ export const JobSchema = z.object({
    * tried first, falling back to `alias`. When omitted on create, one is
    * auto-generated (see generateAlias in job-input.ts).
    */
-  alias: z.string().regex(JOB_ALIAS_PATTERN, 'Job alias must be kebab-case (e.g. "my-job")').optional(),
+  alias: z.string().regex(JOB_ALIAS_PATTERN, 'Job alias must be kebab-case (e.g. "my-job")').optional().describe('Unique kebab-case job alias (set via CLI --alias); auto-generated when omitted'),
   description: z.string().optional(),
   enabled: z.boolean().default(true),
   schedule: ScheduleSchema,
@@ -130,6 +116,17 @@ export const JobSchema = z.object({
   /** Default 'skip' means new ticks are discarded when a run is already active. */
   overlap: z.enum(['skip', 'queue', 'cancel-previous']).default('skip'),
   retry: RetrySchema.default({ max: 0, backoffSec: 30 }),
+});
+
+/** A reused session may have only one in-flight turn. */
+export const JobSchema = JobBaseSchema.superRefine((job, ctx) => {
+  if (job.action.reuseSession && job.overlap !== 'skip') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['overlap'],
+      message: 'reuseSession requires overlap: skip',
+    });
+  }
 });
 
 export type Job = z.infer<typeof JobSchema>;

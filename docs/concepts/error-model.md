@@ -1,5 +1,9 @@
 # Error Model
 
+Audience: users and contributors reasoning about how failures surface. Non-duplication: for the
+exhaustive code-by-code reference see [reference/errors.md](../reference/errors.md) -- this page
+only covers the shared shape and per-surface presentation.
+
 After reading this page you will understand how crontick classifies failures, how the same underlying error is presented differently by each surface, and where failures are recorded.
 
 ## CrontickError
@@ -18,16 +22,13 @@ The `toJSON()` method returns `{ code, message, details }` for serialization.
 
 ## Error codes
 
-Errors are grouped by origin:
-
-| Category | Codes |
-|----------|-------|
-| Daemon connectivity | `DAEMON_NOT_RUNNING`, `DAEMON_REQUEST_FAILED`, `DAEMON_START_FAILED`, `DAEMON_TIMEOUT`, `DAEMON_START_LOCK_TIMEOUT`, `DAEMON_STOP_FAILED` |
-| Validation | `VALIDATION_ERROR`, `PARSE_ERROR` |
-| Not found | `NOT_FOUND` |
-| Configuration | `CONFIG_EXISTS`, `CONFIG_READ_ERROR`, `CONFIG_VALIDATION_ERROR`, `CONFIG_KEY_ERROR`, `CONFIG_KEY_NOT_FOUND`, `CONFIG_ENGINE_NOT_FOUND`, `CONFIG_ENGINE_EXISTS`, `CONFIG_BUILTIN_ENGINE` |
-| Runtime | `ENV_FILE_ERROR`, `API_ERROR`, `INTERNAL_ERROR`, `FORBIDDEN` |
-| Build | `NOT_BUILT` |
+Errors are grouped by origin: daemon connectivity (`DAEMON_NOT_RUNNING`,
+`DAEMON_REQUEST_FAILED`, `DAEMON_START_FAILED`, `DAEMON_TIMEOUT`, ...), validation
+(`VALIDATION_ERROR`, `PARSE_ERROR`), not-found (`NOT_FOUND`), configuration
+(`CONFIG_EXISTS`, `CONFIG_READ_ERROR`, `CONFIG_ENGINE_NOT_FOUND`, ...), and runtime/build
+(`ENV_FILE_ERROR`, `API_ERROR`, `FORBIDDEN`, `NOT_BUILT`, `INTERNAL_ERROR`). See
+[reference/errors.md](../reference/errors.md) for the exhaustive, per-code table (when each is
+thrown, message shape, and `details`).
 
 ## Error presentation by surface
 
@@ -79,7 +80,8 @@ The client's `ensureDaemon` logic already handles the retryable daemon errors in
 | Location | What is recorded |
 |----------|-----------------|
 | SQLite `runs.error` column | Run-level failure message (exit info, timeout, overlap skip) |
-| SQLite `run_logs` table | Stderr output from the child process |
+| SQLite `run_outputs` table | Parsed engine output, including the full stderr of the child process |
+| `logs/<job-id>.log` | crontick-side events of the job's runs (one line per event, tagged with the run id) |
 | `logs/daemon-YYYY-MM-DD.log` | Daemon-level errors (startup, scheduler, unhandled) |
 | `logs/daemon.ensure.log` | Demand-start failure output |
 
@@ -95,13 +97,14 @@ is a distinct, smaller vocabulary scoped to run outcomes:
 |----------------------|---------|
 | `DAEMON_RESTART: ...` | `Store.reconcileOrphanRuns()` canceled a run that was `running`/`queued` when the daemon last stopped, exported as `ORPHAN_RUN_ERROR_CODE`/`ORPHAN_RUN_ERROR_MESSAGE` from `src/errors.ts` (and the package root) |
 | `RUNNER_CALLBACK_FAILED: ...` | A user-supplied run callback threw |
+| `SESSION_NOT_FOUND: ...` | Claude resume preflight found no completed run or no transcript for the session id; the run fails without spawning a process |
 | `SESSION_ID_NOT_FOUND: ...` | `reuseSession` capture could not find a session id in prompt engine output |
 | `SESSION_PERSIST_FAILED: ...` | Persisting a captured session id back to the job file failed |
 
 These prefixes are conventions for readability, not a closed enum validated
 anywhere, and they are unrelated to the `CrontickError` `code` table above —
 do not confuse a `runs.error` value like `DAEMON_RESTART: ...` with a thrown
-error code. See [storage internals](../internals/storage.md#orphan-reconciliation)
+error code. See [storage internals](../implementation/storage.md#orphan-reconciliation)
 and [errors reference](../reference/errors.md).
 
 ## Actionable error messages

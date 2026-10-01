@@ -9,7 +9,6 @@ import { describe, it, expect, afterEach } from 'vitest';
 import {
   mkdtempSync,
   mkdirSync,
-  rmSync,
   readFileSync,
   writeFileSync,
   existsSync,
@@ -20,6 +19,8 @@ import { tmpdir, platform } from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
 import { stopDaemon } from '../../src/daemon/lifecycle.js';
+import { stopProc, teardownDaemon } from '../helpers/cleanup.js';
+import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 
 const DAEMON_SCRIPT = join(process.cwd(), 'dist', 'daemon', 'index.js');
 const node = process.execPath;
@@ -127,6 +128,14 @@ async function apiCall(port: number, method: string, path: string, body?: unknow
 }
 
 async function spawnDaemon(dir: string, previousPort?: number): Promise<{ proc: ChildProcess; port: number }> {
+  // Registers the fake node-eval engine so `exec`-style inline-script
+  // fixtures (now expressed as prompt actions, see docs/decisions/0002) can
+  // run without a real engine CLI installed. Skipped if the test already
+  // wrote its own config.json (e.g. to also set retention overrides -- see
+  // writeFakeEngineConfig()'s callers below for that case) or if `dir` itself
+  // doesn't exist yet (the "creates the full data directory tree on a clean
+  // machine" test deliberately spawns against a not-yet-created home).
+  if (existsSync(dir) && !existsSync(join(dir, 'config.json'))) writeFakeEngineConfig(dir);
   const stderrChunks: string[] = [];
   const proc = spawn(node, [DAEMON_SCRIPT], {
     env: { ...process.env, CRONTICK_HOME: dir },
@@ -146,14 +155,10 @@ describe('Integration: daemon lifecycle', () => {
   const liveProcs = new Set<ChildProcess>();
   const liveDirs = new Set<string>();
 
-  afterEach(() => {
-    for (const proc of liveProcs) {
-      try { proc.kill('SIGTERM'); } catch { /* ignore */ }
-    }
+  afterEach(async () => {
+    for (const proc of liveProcs) await stopProc(proc);
     liveProcs.clear();
-    for (const dir of liveDirs) {
-      try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
-    }
+    for (const dir of liveDirs) await teardownDaemon(undefined, dir);
     liveDirs.clear();
   });
 
@@ -214,7 +219,7 @@ describe('Integration: daemon lifecycle', () => {
     const created = await apiCall(port, 'POST', '/api/jobs', {
       alias: jobId,
       schedule: { kind: 'one-shot', runAt: farRunAt },
-      action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'] },
+      action: { kind: 'prompt', prompt: 'process.exit(0)', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
     });
     expect(created.status).toBe(201);
 
@@ -274,7 +279,7 @@ describe('Integration: daemon lifecycle', () => {
     const created = await apiCall(port, 'POST', '/api/jobs', {
       alias: jobId,
       schedule: { kind: 'interval', everySec: 1 },
-      action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'] },
+      action: { kind: 'prompt', prompt: 'process.exit(0)', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
     });
     expect(created.status).toBe(201);
 
@@ -339,7 +344,7 @@ describe('Integration: daemon lifecycle', () => {
     const created = await apiCall(port, 'POST', '/api/jobs', {
       alias: jobId,
       schedule: { kind: 'interval', everySec: 1 },
-      action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'] },
+      action: { kind: 'prompt', prompt: 'process.exit(0)', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
     });
     expect(created.status).toBe(201);
 
@@ -493,7 +498,7 @@ describe('Integration: daemon lifecycle', () => {
     const created = await apiCall(port, 'POST', '/api/jobs', {
       alias: jobId,
       schedule: { kind: 'cron', cron: '0 0 * * *' },
-      action: { kind: 'exec', command: node, args: ['-e', script] },
+      action: { kind: 'prompt', prompt: script, engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
     });
     expect(created.status).toBe(201);
 
@@ -558,7 +563,7 @@ describe('Integration: daemon lifecycle', () => {
     const created = await apiCall(port, 'POST', '/api/jobs', {
       alias: jobId,
       schedule: { kind: 'cron', cron: '0 0 * * *' },
-      action: { kind: 'exec', command: node, args: ['-e', script] },
+      action: { kind: 'prompt', prompt: script, engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
     });
     expect(created.status).toBe(201);
 
@@ -604,7 +609,7 @@ describe('Integration: daemon lifecycle', () => {
     const created = await apiCall(port, 'POST', '/api/jobs', {
       alias: jobId,
       schedule: { kind: 'cron', cron: '0 0 * * *' },
-      action: { kind: 'exec', command: node, args: ['-e', script] },
+      action: { kind: 'prompt', prompt: script, engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
     });
     expect(created.status).toBe(201);
 
@@ -623,21 +628,15 @@ describe('Integration: daemon lifecycle', () => {
     expect(deleteRes.status).toBe(200);
     expect(deleteRes.data).toMatchObject({ ok: true, canceledRun: true });
 
-    // The run row must reflect the cancellation, and — crucially — the real
+    // Deleting the job removes its runs and logs, and — crucially — the real
     // child process must not be left running to completion after its job
-    // definition is gone.
-    const runDeadline = Date.now() + 10_000;
-    let finalStatus: string | undefined;
-    while (Date.now() < runDeadline) {
-      const runCheck = await apiCall(port, 'GET', `/api/runs/${runId}`);
-      finalStatus = (runCheck.data as { status?: string }).status;
-      if (finalStatus === 'canceled') break;
-      await new Promise((r) => setTimeout(r, 100));
-    }
-    expect(finalStatus).toBe('canceled');
-
+    // definition is gone. Late output of the canceled child must not leave
+    // orphan run/log rows behind either.
     await new Promise((r) => setTimeout(r, 4500));
     expect(existsSync(doneFile)).toBe(false);
+    expect((await apiCall(port, 'GET', `/api/runs/${runId}`)).status).toBe(404);
+    expect((await apiCall(port, 'GET', `/api/runs/${runId}/output`)).status).toBe(404);
+    expect((await apiCall(port, 'GET', '/api/runs')).data).toEqual([]);
   }, 30_000);
 
   // ── T-STALL-ESCALATE (Major 3) ───────────────────────────────────────────

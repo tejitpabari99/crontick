@@ -12,7 +12,6 @@ import { dirname, resolve as pathResolve } from 'node:path';
 import { VERSION } from '../version.js';
 import { JobCreateInputSchema, JobPatchInputSchema } from '../job-input.js';
 import { createClient, type CrontickClient } from '../client.js';
-import { LOG_SOURCES } from '../log-source.js';
 import { isVerboseEnv, type LogEvent } from '../logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -39,6 +38,10 @@ const VERBOSE_INPUT = { verbose: z.boolean().optional() };
 function withVerbose<T extends Record<string, unknown>>(schema: T): T & typeof VERBOSE_INPUT {
   return { ...schema, ...VERBOSE_INPUT };
 }
+
+const TRUST_FOLDER_INPUT = z.boolean().optional().describe(
+  'Claude only: trust the job\'s working directory when it is not trusted yet. If the call fails with TRUST_REQUIRED, ask the user whether to trust that folder and only then call again with trustFolder: true.',
+);
 
 function mcpVerbose(args?: VerboseArgs): boolean {
   return args?.verbose === true || isVerboseEnv();
@@ -146,17 +149,18 @@ export function createMcpServer(): McpServer {
     'crontick_job_create',
     {
       description:
-        'Create and schedule a new cron job. This executes arbitrary commands, scripts, or prompts on the user\'s machine on a recurring or future schedule that persists and outlives this session -- confirm the job definition (schedule and action) with the user before calling. Provide the job definition: schedule (kind: cron|interval|one-shot) and action (kind: script|exec|prompt) are required; id (GUID) is generated automatically and should be omitted; alias is an optional, unique, human-friendly identifier -- when omitted, one is auto-generated. Prompt actions use prompt, optional configured engine name, args, sessionId, or reuseSession. After creating, use crontick_job_schedule to preview the job\'s upcoming fire times.',
+        'Create and schedule a new cron job. This executes an AI prompt on the user\'s machine on a recurring or future schedule that persists and outlives this session -- confirm the job definition (schedule and action) with the user before calling. Provide the job definition: schedule (kind: cron|interval|one-shot) and action (kind: prompt) are required; id (GUID) is generated automatically and should be omitted; alias is the job\'s optional, unique, kebab-case identifier (set via CLI `--alias`) -- when omitted, one is auto-generated. Exactly one schedule is allowed per job: cron (expression), interval (everySec, in seconds), or one-shot (runAt, ISO-8601, interpreted in the machine local timezone unless an offset such as Z or +02:00 is given). Prompt actions use prompt, optional configured engine name, args, sessionId, reuseSession, or cwd. Always pass action.cwd as the absolute path of the project folder the job should run in: MCP hosts often start this server in an unrelated directory (such as /), which would otherwise become the job\'s working directory. After creating, use crontick_job_schedule to preview the job\'s upcoming fire times.',
       inputSchema: withVerbose({
         ...JobCreateInputSchema.shape,
         force: z.boolean().optional(),
+        trustFolder: TRUST_FOLDER_INPUT,
       }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async (args) => {
-      const { force, verbose: _verbose, ...input } = args;
+      const { force, trustFolder, verbose: _verbose, ...input } = args;
       void _verbose;
-      return toolWrap(args, (client) => client.createJob(input, { force }));
+      return toolWrap(args, (client) => client.createJob(input, { force, trustFolder }));
     },
   );
 
@@ -184,27 +188,17 @@ export function createMcpServer(): McpServer {
     'crontick_job_update',
     {
       description:
-        'Update an existing job (id or alias). Provide the job identifier and any fields to change (partial update is merged with existing definition); alias can be changed here (must remain unique). Action can be script, exec, or prompt.',
+        'Update an existing job (id or alias). Provide the job identifier and any fields to change (partial update is merged with existing definition); the alias can be changed here (must remain unique). Action is always a prompt action.',
       inputSchema: withVerbose({
         id: z.string().describe('Job id (GUID) or alias'),
         ...JobPatchInputSchema.shape,
+        trustFolder: TRUST_FOLDER_INPUT,
       }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
-      const { id, ...patch } = args;
-      const action = args.action;
-      if (action) {
-        if (action.kind === 'script' && action.script === undefined &&
-            (action.shell !== undefined || action.envFile !== undefined || action.timeoutSec !== undefined)) {
-          return errResult(new Error('Invalid action patch: shell, envFile, and timeoutSec require a script source on update'));
-        }
-        if (action.kind === 'exec' && action.command === undefined &&
-            (action.envFile !== undefined || action.timeoutSec !== undefined)) {
-          return errResult(new Error('Invalid action patch: envFile and timeoutSec require a command source on update'));
-        }
-      }
-      return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch)));
+      const { id, trustFolder, ...patch } = args;
+      return toolWrap(args, (client) => client.updateJob(id, withoutVerbose(patch), { trustFolder }));
     },
   );
 
@@ -212,7 +206,7 @@ export function createMcpServer(): McpServer {
     'crontick_job_delete',
     {
       description:
-        'Permanently delete one job definition by id/alias, or delete every job with all:true plus force:true. Archived runs and logs remain directly queryable by run ID, but live aggregates exclude deleted jobs. This may cancel an in-flight run and cannot be undone -- confirm with the user first.',
+        'Permanently delete one job definition by id/alias, or delete every job with all:true plus force:true. The job\'s run history and logs are deleted with it (Claude\'s own session transcripts are not touched). This may cancel an in-flight run and cannot be undone -- confirm with the user first.',
       inputSchema: withVerbose({
         id: z.string().describe('Job id (GUID) or alias to delete individually').optional(),
         all: z.boolean().optional().describe('Delete every job. Requires force:true.'),
@@ -254,7 +248,7 @@ export function createMcpServer(): McpServer {
     'crontick_job_run_now',
     {
       description:
-        'Trigger an immediate run of a job (id or alias), bypassing its schedule. This executes the job\'s command, script, or prompt on the user\'s machine right now -- confirm with the user before calling. Returns a runId to track progress with crontick_run_get.',
+        'Run a job (id or alias) once, right now, even if it is disabled -- it is NOT enabled and its schedule is not changed (an enabled job keeps running on its normal schedule). The overlap policy still applies (with overlap=skip and a run already active, the run is recorded as skipped). This executes the job\'s prompt on the user\'s machine right now -- confirm with the user before calling. Returns a runId to track progress with crontick_run_get.',
       inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
@@ -281,7 +275,7 @@ export function createMcpServer(): McpServer {
         jobId: z.string().describe('Job id (GUID) or alias').optional(),
         limit: z.number().int().positive().optional(),
         since: z.number().int().optional(),
-        status: z.enum(['queued', 'running', 'success', 'failed', 'canceled', 'timeout', 'missed']).optional(),
+        status: z.enum(['queued', 'running', 'success', 'failed', 'canceled', 'skipped', 'timeout', 'missed']).optional(),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
@@ -291,28 +285,16 @@ export function createMcpServer(): McpServer {
   server.registerTool(
     'crontick_run_get',
     {
-      description: 'Get the details and current status of a specific run. Includes the run pid (if it was spawned) and whether its output was truncated by the retention output cap.',
-      inputSchema: withVerbose({ id: z.string() }),
-      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => toolWrap(args, (client) => client.getRun(args.id)),
-  );
-
-  server.registerTool(
-    'crontick_run_logs_tail',
-    {
       description:
-        'Get the last N lines of output for a run. Useful for diagnosing failures. Use the source filter to select engine output (stdout+stderr), crontick scheduling/execution events, or all (default).',
-      inputSchema: withVerbose({
-        id: z.string(),
-        lines: z.number().int().positive().default(50),
-        source: z.enum(LOG_SOURCES).optional(),
-      }),
+        'Get run details and status, including Claude cost, turns, redacted usage, transcript path, engine status, the Runner Session ID (sessionId), logFile (absolute path of the per-job file of crontick-side events; the engine\'s own transcript is kept by the runner, see transcriptPath), and the cleaned output: the engine\'s final answer (result), any error, and the full engine stderr.',
+      inputSchema: withVerbose({ id: z.string().describe('Run id') }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.getLogs(args.id, { lines: args.lines, source: args.source })),
+    async (args) => toolWrap(args, async (client) => {
+      const run = await client.getRun(args.id);
+      return { ...run, output: await client.getOutput(args.id) };
+    }),
   );
-
 
   server.registerTool(
     'crontick_job_schedule',
@@ -334,7 +316,7 @@ export function createMcpServer(): McpServer {
     'crontick_stats_summary',
     {
       description:
-        'Get an aggregate summary of all jobs: total count, enabled count, run history, success/failure counts, average duration.',
+        'Get aggregate job/run counts, average duration, total engine cost in USD, and total turns.',
       inputSchema: withVerbose({}),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
@@ -344,7 +326,7 @@ export function createMcpServer(): McpServer {
   server.registerTool(
     'crontick_stats_job',
     {
-      description: 'Get run statistics for a specific job (id or alias): total runs, success/failure rates, last status.',
+      description: 'Get run counts, last status, total engine cost in USD, and total turns for one job (id or alias).',
       inputSchema: withVerbose({ id: z.string().describe('Job id (GUID) or alias') }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
@@ -384,27 +366,34 @@ export function createMcpServer(): McpServer {
     'crontick_export',
     {
       description:
-        'Export all job definitions as a JSON object. Use this to back up or migrate jobs. Set includeRuns to also include run history (the mitigation for retention\'s hard-delete of old runs).',
+        'Export job definitions as a crontick export file ({ schema: 1, exportedAt, crontickVersion, jobs }). Jobs only: no run history, and job ids are omitted (importing assigns new ids). Use this to back up or migrate jobs. Set onlyJobs (ids or aliases) to export a subset; an unknown entry fails the whole export with JOB_NOT_FOUND.',
       inputSchema: withVerbose({
-        includeRuns: z.boolean().optional(),
+        onlyJobs: z.array(z.string()).optional().describe('Ids or aliases of the jobs to export (default: all jobs)'),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.exportJobs({ includeRuns: args.includeRuns })),
+    async (args) => toolWrap(args, (client) => client.exportJobs({ onlyJobs: args.onlyJobs })),
   );
 
   server.registerTool(
     'crontick_import',
     {
       description:
-        'Import job definitions from a JSON array. Jobs are upserted (existing jobs with the same ID are updated), each import persisting recurring jobs that execute arbitrary commands, scripts, or prompts on the user\'s machine -- confirm the imported job definitions with the user before calling. An optional runs array (as produced by crontick_export with includeRuns) is restored archivally: no execution, no scheduler interaction.',
+        'Import jobs from a crontick export file (pass the object returned by crontick_export: schema 1 plus jobs). The whole file is validated first and a bad file imports nothing. Every job gets a new id; an alias already in use is renamed with a -2, -3, ... suffix (reported as renamedFrom); existing jobs are never overwritten and run history is never imported. Each import persists recurring jobs that execute AI prompts on the user\'s machine -- confirm the imported job definitions with the user before calling. Claude jobs in a folder Claude does not trust yet fail with TRUST_REQUIRED: ask the user, then call again with trustFolder: true.',
       inputSchema: withVerbose({
+        schema: z.number().describe('Export format version; must be 1'),
         jobs: z.array(z.unknown()),
-        runs: z.array(z.unknown()).optional(),
+        exportedAt: z.string().optional(),
+        crontickVersion: z.string().optional(),
+        trustFolder: TRUST_FOLDER_INPUT,
       }),
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.importJobs(args.jobs, { runs: args.runs })),
+    async (args) => {
+      const { trustFolder, verbose: _verbose, ...file } = args;
+      void _verbose;
+      return toolWrap(args, (client) => client.importJobs(file, { trustFolder }));
+    },
   );
 
   server.registerTool(

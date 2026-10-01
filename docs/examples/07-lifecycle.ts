@@ -14,7 +14,7 @@ const client = createClient();
 await client.createJob({
   id: 'lifecycle-demo',
   schedule: { kind: 'interval', everySec: 120 },
-  action: { kind: 'script', script: 'echo "tick"' },
+  action: { kind: 'prompt', prompt: 'tick' },
 });
 console.log('Created job: lifecycle-demo');
 

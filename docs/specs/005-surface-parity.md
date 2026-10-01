@@ -4,9 +4,13 @@
 - Owner: crontick maintainers
 - Last reviewed: 2026-08-02
 
+Audience: contributors adding or changing a user-facing capability. Non-duplication: this spec
+is the normative contract; for the design rationale see
+[concepts/surface-parity.md](../concepts/surface-parity.md).
+
 ## Summary
 
-Every user-facing capability in crontick MUST be available on all three parity surfaces: CLI, MCP server, and library API (`CrontickClient`). A canonical table (`SURFACE_CAPABILITIES` in `src/surface.ts`) encodes this mapping and an automated drift test enforces it. The current table contains 21 capabilities.
+Every user-facing capability in crontick MUST be available on all three parity surfaces: CLI, MCP server, and library API (`CrontickClient`). A canonical table (`SURFACE_CAPABILITIES` in `src/surface.ts`) encodes this mapping and an automated drift test enforces it. The current table contains 20 capabilities.
 
 When a change extends an existing capability rather than adding a new one (for example the `create-job` capability's `force` option), the same table MAY annotate the parity-coupled option names.
 
@@ -14,7 +18,7 @@ When a change extends an existing capability rather than adding a new one (for e
 
 Surface parity prevents feature fragmentation. Users and agents MUST be able to accomplish any parity-scoped task regardless of their chosen interface. The drift test catches regressions early: if a new parity capability is added to one surface without the others, CI fails.
 
-The command-tree reorganization intentionally narrowed some exposure without removing library/core behavior. Raw schedule validation/preview, dashboard status/data, and direct config mutation/engine helpers remain library-only and are excluded from parity. The dashboard itself is always served by the daemon on its loopback origin; the `dashboard` command group and MCP tools were removed and `crontick info` surfaces the `dashboardUrl` instead. Script and exec actions remain supported through the job schema and library, while the CLI creates them through `jobs new --file <job.json>` instead of dedicated flags.
+The command-tree reorganization intentionally narrowed some exposure without removing library/core behavior. Raw schedule validation/preview, dashboard status/data, and direct config mutation/engine helpers remain library-only and are excluded from parity. The dashboard itself is always served by the daemon on its loopback origin; the `dashboard` command group and MCP tools were removed and `crontick info` surfaces the `dashboardUrl` instead.
 
 ## Terminology
 
@@ -63,21 +67,20 @@ The command-tree reorganization intentionally narrowed some exposure without rem
 | `cancel-run` | `cancelRun` | `crontick runs cancel` | `crontick_job_cancel_run` |
 | `list-runs` | `listRuns` | `crontick runs list` | `crontick_run_list` |
 | `get-run` | `getRun` | `crontick runs get` | `crontick_run_get` |
-| `logs` | `getLogs` | `crontick runs logs` | `crontick_run_logs_tail` |
 | `stats-summary` | `statsSummary` | `crontick stats summary` | `crontick_stats_summary` |
 | `stats-job` | `statsJob` | `crontick stats job` | `crontick_stats_job` |
 | `export` | `exportJobs` | `crontick share export` | `crontick_export` |
 | `import` | `importJobs` | `crontick share import` | `crontick_import` |
-| `daemon-stop` | `daemonStop` | `crontick info daemon stop` | `crontick_daemon_stop` |
-| `daemon-reload` | `daemonReload` | `crontick info daemon reload` | `crontick_daemon_reload` |
-| `doctor` | `doctor` | `crontick info doctor` | `crontick_doctor` |
+| `daemon-stop` | `daemonStop` | `crontick daemon stop` | `crontick_daemon_stop` |
+| `daemon-reload` | `daemonReload` | `crontick daemon reload` | `crontick_daemon_reload` |
+| `doctor` | `doctor` | `crontick doctor` | `crontick_doctor` |
 | `info` | `info` | `crontick info` | `crontick_info` |
 
-Removed parity rows from the previous 37-capability surface include raw schedule validate/preview, dashboard data, dashboard start/status/stop, config get/set/unset/init/validate/engine management, `delete-run`, `config-path`, and the `daemon-start`/`daemon-status`/`daemon-restart` tools. The dashboard is always served by the daemon; `crontick info` (and `crontick_info`) surface `configPath`, daemon state, and `dashboardUrl`.
+Removed parity rows (including `logs` and `run-output`, folded into `get-run`; `getOutput` stays a library-only method) from the previous 37-capability surface include raw schedule validate/preview, dashboard data, dashboard start/status/stop, config get/set/unset/init/validate/engine management, `delete-run`, `config-path`, and the `daemon-start`/`daemon-status`/`daemon-restart` tools (the CLI keeps `crontick daemon start|status|restart` as CLI-only conveniences over the library-only client methods). The dashboard is always served by the daemon; `crontick info` (and `crontick_info`) surface `configPath`, daemon state, and `dashboardUrl`.
 
 ## Behavior
 
-The drift test (`tests/surface-drift.test.ts`) performs four checks:
+The drift test (`tests/unit/surface-drift.test.ts`) performs four checks:
 
 1. **Client method existence**: Iterates `SURFACE_CAPABILITIES` and asserts each `clientMethod` is a function on `CrontickClient.prototype`.
 2. **Client completeness**: Gets all prototype methods, filters out non-parity methods and constructors, and asserts each remaining method is in `SURFACE_CAPABILITIES`.
@@ -94,7 +97,7 @@ The drift test (`tests/surface-drift.test.ts`) performs four checks:
 - New client method added without surface entry: Test 2 fails naming the method.
 - New parity-coupled option added on only one surface: behavioral parity drifts even though the capability count stays the same; document the option on the existing capability row and update all three surfaces together.
 - Surface spellings MAY intentionally differ when a host runtime reserves a token, but the mapping MUST be documented in `SURFACE_CAPABILITIES`.
-- Run-oriented MCP tools use `id` as their selector parameter. `crontick_job_cancel_run`, `crontick_run_get`, and `crontick_run_logs_tail` docs, schemas, and tests must stay aligned on that name.
+- Run-oriented MCP tools use `id` as their selector parameter. `crontick_job_cancel_run`, and `crontick_run_get` docs, schemas, and tests must stay aligned on that name.
 - New MCP tool added without surface entry: Test 4 reports unexpected tool.
 - CLI command fails to register (typo in command name): Test 3 fails with non-zero exit.
 - MCP server fails to start (build broken): Test 4 times out or errors on connect.
@@ -102,12 +105,12 @@ The drift test (`tests/surface-drift.test.ts`) performs four checks:
 
 ## Acceptance criteria
 
-- [x] Client exposes every table capability method (test file: `tests/surface-drift.test.ts`)
-- [x] Surface table accounts for every client prototype method (test file: `tests/surface-drift.test.ts`)
-- [x] CLI exposes every table capability command (test file: `tests/surface-drift.test.ts`)
-- [x] MCP exposes every table capability tool (test file: `tests/surface-drift.test.ts`)
-- [x] All MCP tools have verbose parameter (test file: `tests/surface-drift.test.ts`)
-- [x] Documentation updated when capability count or parity-coupled option metadata changes (test file: `tests/surface-drift.test.ts`)
+- [x] Client exposes every table capability method (test file: `tests/unit/surface-drift.test.ts`)
+- [x] Surface table accounts for every client prototype method (test file: `tests/unit/surface-drift.test.ts`)
+- [x] CLI exposes every table capability command (test file: `tests/unit/surface-drift.test.ts`)
+- [x] MCP exposes every table capability tool (test file: `tests/unit/surface-drift.test.ts`)
+- [x] All MCP tools have verbose parameter (test file: `tests/unit/surface-drift.test.ts`)
+- [x] Documentation updated when capability count or parity-coupled option metadata changes (test file: `tests/unit/surface-drift.test.ts`)
 
 ## Out of scope
 
@@ -125,4 +128,4 @@ None.
 - [001-job-definition.md](001-job-definition.md)
 - [../reference/](../reference/)
 - [../architecture.md](../architecture.md)
-- [../decisions/0024-cli-command-tree-reorganization.md](../decisions/0024-cli-command-tree-reorganization.md)
+- [../decisions/0001-architecture-and-runtime-model.md](../decisions/0001-architecture-and-runtime-model.md)

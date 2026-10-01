@@ -1,0 +1,2 @@
+# Keep sources LF on every OS (Windows autocrlf checkouts break shebang scripts imported by vitest).
+* text=auto eol=lf

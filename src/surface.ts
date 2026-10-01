@@ -4,7 +4,7 @@
  * CrontickClient method, a Commander subcommand in cli/index.ts, a registerTool
  * call in mcp/index.ts, and (if new types are needed) an export in index.ts.
  *
- * tests/surface-drift.test.ts asserts all four columns stay in sync — it will
+ * tests/unit/surface-drift.test.ts asserts all four columns stay in sync — it will
  * fail if any surface drifts from this table.
  */
 
@@ -17,10 +17,10 @@ export interface SurfaceCapability {
 }
 
 export const SURFACE_CAPABILITIES = [
-  { capability: 'create-job', clientMethod: 'createJob', cliCommand: ['jobs', 'new'], mcpTool: 'crontick_job_create', optionNames: ['force'] },
+  { capability: 'create-job', clientMethod: 'createJob', cliCommand: ['jobs', 'new'], mcpTool: 'crontick_job_create', optionNames: ['force', 'trustFolder'] },
   { capability: 'list-jobs', clientMethod: 'listJobs', cliCommand: ['jobs', 'list'], mcpTool: 'crontick_job_list' },
   { capability: 'get-job', clientMethod: 'getJob', cliCommand: ['jobs', 'get'], mcpTool: 'crontick_job_get' },
-  { capability: 'update-job', clientMethod: 'updateJob', cliCommand: ['jobs', 'update'], mcpTool: 'crontick_job_update' },
+  { capability: 'update-job', clientMethod: 'updateJob', cliCommand: ['jobs', 'update'], mcpTool: 'crontick_job_update', optionNames: ['trustFolder'] },
   { capability: 'enable-job', clientMethod: 'enableJob', cliCommand: ['jobs', 'update'], mcpTool: 'crontick_job_enable', optionNames: ['enable'] },
   { capability: 'disable-job', clientMethod: 'disableJob', cliCommand: ['jobs', 'update'], mcpTool: 'crontick_job_disable', optionNames: ['disable'] },
   { capability: 'delete-job', clientMethod: 'deleteJob', cliCommand: ['jobs', 'delete'], mcpTool: 'crontick_job_delete' },
@@ -29,14 +29,13 @@ export const SURFACE_CAPABILITIES = [
   { capability: 'cancel-run', clientMethod: 'cancelRun', cliCommand: ['runs', 'cancel'], mcpTool: 'crontick_job_cancel_run' },
   { capability: 'list-runs', clientMethod: 'listRuns', cliCommand: ['runs', 'list'], mcpTool: 'crontick_run_list' },
   { capability: 'get-run', clientMethod: 'getRun', cliCommand: ['runs', 'get'], mcpTool: 'crontick_run_get' },
-  { capability: 'logs', clientMethod: 'getLogs', cliCommand: ['runs', 'logs'], mcpTool: 'crontick_run_logs_tail' },
   { capability: 'stats-summary', clientMethod: 'statsSummary', cliCommand: ['stats', 'summary'], mcpTool: 'crontick_stats_summary' },
   { capability: 'stats-job', clientMethod: 'statsJob', cliCommand: ['stats', 'job'], mcpTool: 'crontick_stats_job' },
-  { capability: 'export', clientMethod: 'exportJobs', cliCommand: ['share', 'export'], mcpTool: 'crontick_export' },
-  { capability: 'import', clientMethod: 'importJobs', cliCommand: ['share', 'import'], mcpTool: 'crontick_import' },
-  { capability: 'daemon-stop', clientMethod: 'daemonStop', cliCommand: ['info', 'daemon', 'stop'], mcpTool: 'crontick_daemon_stop' },
-  { capability: 'daemon-reload', clientMethod: 'daemonReload', cliCommand: ['info', 'daemon', 'reload'], mcpTool: 'crontick_daemon_reload' },
-  { capability: 'doctor', clientMethod: 'doctor', cliCommand: ['info', 'doctor'], mcpTool: 'crontick_doctor' },
+  { capability: 'export', clientMethod: 'exportJobs', cliCommand: ['share', 'export'], mcpTool: 'crontick_export', optionNames: ['onlyJobs'] },
+  { capability: 'import', clientMethod: 'importJobs', cliCommand: ['share', 'import'], mcpTool: 'crontick_import', optionNames: ['trustFolder'] },
+  { capability: 'daemon-stop', clientMethod: 'daemonStop', cliCommand: ['daemon', 'stop'], mcpTool: 'crontick_daemon_stop' },
+  { capability: 'daemon-reload', clientMethod: 'daemonReload', cliCommand: ['daemon', 'reload'], mcpTool: 'crontick_daemon_reload' },
+  { capability: 'doctor', clientMethod: 'doctor', cliCommand: ['doctor'], mcpTool: 'crontick_doctor' },
   { capability: 'info', clientMethod: 'info', cliCommand: ['info'], mcpTool: 'crontick_info' },
 ] as const satisfies readonly SurfaceCapability[];
 

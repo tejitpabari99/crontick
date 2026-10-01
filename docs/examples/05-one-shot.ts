@@ -14,7 +14,7 @@ const runAt = new Date(Date.now() + 10_000).toISOString();
 const job = await client.createJob({
   id: 'one-shot-demo',
   schedule: { kind: 'one-shot', runAt },
-  action: { kind: 'script', script: 'echo "one-shot fired!"' },
+  action: { kind: 'prompt', prompt: 'Announce that the one-shot job fired' },
 });
 console.log('Created one-shot job:', job.id);
 console.log('Scheduled to run at:', runAt);

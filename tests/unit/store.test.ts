@@ -29,7 +29,7 @@ function execJob(id: string): Job {
     id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
-    action: { kind: 'exec', command: 'echo', args: ['hello'] },
+    action: { kind: 'prompt', prompt: 'hello', args: [], reuseSession: false },
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
   };
@@ -156,14 +156,14 @@ describe('Store', () => {
     expect(store.deleteJob('ghost')).toBe(false);
   });
 
-  it('deleteAllJobs atomically removes every job plus its runs, logs, schedule state, and files, returning the count', () => {
+  it('deleteAllJobs atomically removes every job plus its runs, run outputs, schedule state, and files, returning the count', () => {
     store.upsertJob(execJob('bulk-a'));
     store.upsertJob(execJob('bulk-b'));
     const runA = store.insertRun('bulk-a');
-    store.appendLog(runA.id, 'stdout', Buffer.from('hi\n'));
+    store.setRunOutput(runA.id, { format: 'text', result: 'x', engineError: null, stderr: '' });
     store.recordTick('bulk-a', 1000);
     const runB = store.insertRun('bulk-b');
-    store.appendLog(runB.id, 'stderr', Buffer.from('err\n'));
+    store.setRunOutput(runB.id, { format: 'text', result: 'x', engineError: null, stderr: '' });
 
     expect(store.listJobs()).toHaveLength(2);
 
@@ -171,8 +171,8 @@ describe('Store', () => {
     expect(deleted).toBe(2);
     expect(store.listJobs()).toEqual([]);
     expect(store.listRuns({})).toEqual([]);
-    expect(store.getLogs(runA.id)).toEqual([]);
-    expect(store.getLogs(runB.id)).toEqual([]);
+    expect(store.getRunOutput(runA.id)).toBeUndefined();
+    expect(store.getRunOutput(runB.id)).toBeUndefined();
     expect(store.getScheduleState('bulk-a')).toBeUndefined();
     expect(existsSync(join(dir, 'jobs', 'bulk-a.json'))).toBe(false);
     expect(existsSync(join(dir, 'jobs', 'bulk-b.json'))).toBe(false);
@@ -191,7 +191,7 @@ describe('Store', () => {
     store.upsertJob(execJob('unlink-fail-a'));
     store.upsertJob(execJob('unlink-fail-b'));
     const runA = store.insertRun('unlink-fail-a');
-    store.appendLog(runA.id, 'stdout', Buffer.from('hi\n'));
+    store.setRunOutput(runA.id, { format: 'text', result: 'x', engineError: null, stderr: '' });
 
     const jobFile = join(dir, 'jobs', 'unlink-fail-a.json');
     rmSync(jobFile, { force: true });
@@ -201,7 +201,7 @@ describe('Store', () => {
     expect(deleted).toBe(2);
     expect(store.listJobs()).toEqual([]);
     expect(store.listRuns({})).toEqual([]);
-    expect(store.getLogs(runA.id)).toEqual([]);
+    expect(store.getRunOutput(runA.id)).toBeUndefined();
     // The un-unlinkable path is left behind (best-effort), but the wipe still succeeded.
     expect(existsSync(jobFile)).toBe(true);
   });
@@ -369,6 +369,31 @@ describe('Store', () => {
     expect(store.getRun(run.id)?.status).toBe('canceled');
   });
 
+  it('reconcileOrphanRuns uses a valid Claude marker for a run that finished while daemon was down', () => {
+    const run = store.insertRun('orphan-hook');
+    store.updateRun(run.id, { status: 'running', pid: 12345, sessionId: 'claude-session' });
+    mkdirSync(join(dir, 'runs'));
+    writeFileSync(join(dir, 'runs', `${run.id}.claude-hook.json`),
+      JSON.stringify({ exitStatus: 0, sessionId: 'claude-session' }));
+
+    const result = store.reconcileOrphanRuns({ isRunAlive: () => false });
+    expect(result.canceled).toBe(0);
+    expect(result.adopted).toEqual([]);
+    expect(store.getRun(run.id)).toMatchObject({ status: 'success', exitCode: 0, sessionId: 'claude-session' });
+  });
+
+  it('reconcileOrphanRuns ignores a marker for another session', () => {
+    const run = store.insertRun('orphan-stale-hook');
+    store.updateRun(run.id, { status: 'running', pid: 12345, sessionId: 'current-session' });
+    mkdirSync(join(dir, 'runs'));
+    writeFileSync(join(dir, 'runs', `${run.id}.claude-hook.json`),
+      JSON.stringify({ exitStatus: 0, sessionId: 'other-session' }));
+
+    const result = store.reconcileOrphanRuns({ isRunAlive: () => false });
+    expect(result.canceled).toBe(1);
+    expect(store.getRun(run.id)?.status).toBe('canceled');
+  });
+
   it('reconcileOrphanRuns adopts (favors not double-running) when the checker is inconclusive', () => {
     const run = store.insertRun('orphan-inconclusive');
     store.updateRun(run.id, { status: 'running', pid: 12345 });
@@ -400,28 +425,26 @@ describe('Store', () => {
 
   // ── Logs ────────────────────────────────────────────────────────────────────
 
-  it('appendLog and getLogs round-trips', () => {
-    const run = store.insertRun('log-job');
-    store.appendLog(run.id, 'stdout', Buffer.from('hello\n'));
-    store.appendLog(run.id, 'stderr', Buffer.from('err\n'));
-    const logs = store.getLogs(run.id);
-    expect(logs).toHaveLength(2);
-    expect(logs[0].chunk.toString('utf-8')).toBe('hello\n');
-    expect(logs[0].stream).toBe('stdout');
-    expect(logs[1].stream).toBe('stderr');
+  it('setRunOutput/getRunOutput round-trips the parsed engine output and replaces on rewrite', () => {
+    const run = store.insertRun('output-job');
+    expect(store.getRunOutput(run.id)).toBeUndefined();
+    store.setRunOutput(run.id, { format: 'claude-stream-json', result: 'done', engineError: null, stderr: 'warn' });
+    expect(store.getRunOutput(run.id)).toEqual({ format: 'claude-stream-json', result: 'done', engineError: null, stderr: 'warn' });
+    store.setRunOutput(run.id, { format: 'text', result: null, engineError: 'bad', stderr: '' });
+    expect(store.getRunOutput(run.id)).toEqual({ format: 'text', result: null, engineError: 'bad', stderr: '' });
   });
 
-  it('getLogs source filter: all/engine/crontick select the right streams', () => {
-    const run = store.insertRun('log-source-job');
-    store.appendLog(run.id, 'stdout', Buffer.from('out\n'));
-    store.appendLog(run.id, 'stderr', Buffer.from('err\n'));
-    store.appendLog(run.id, 'crontick', Buffer.from('[crontick] run started\n'));
-
-    expect(store.getLogs(run.id).map((l) => l.stream)).toEqual(['stdout', 'stderr', 'crontick']);
-    expect(store.getLogs(run.id, 'all').map((l) => l.stream)).toEqual(['stdout', 'stderr', 'crontick']);
-    expect(store.getLogs(run.id, 'engine').map((l) => l.stream)).toEqual(['stdout', 'stderr']);
-    expect(store.getLogs(run.id, 'crontick').map((l) => l.stream)).toEqual(['crontick']);
-    expect(store.getLogs(run.id, 'crontick')[0].chunk.toString('utf-8')).toBe('[crontick] run started\n');
+  it('has no table or API that stores raw engine logs', () => {
+    const db = new DatabaseSync(join(dir, 'runs.db'));
+    try {
+      const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((t) => t.name);
+      expect(tables).not.toContain('run_logs');
+      expect(tables).toContain('run_outputs');
+    } finally {
+      db.close();
+    }
+    expect((store as unknown as Record<string, unknown>)['appendLog']).toBeUndefined();
+    expect((store as unknown as Record<string, unknown>)['getLogs']).toBeUndefined();
   });
 
   it('updateRun persists sessionId and getRun/listRuns surface it', () => {
@@ -458,18 +481,6 @@ describe('Store', () => {
     } finally {
       db.close();
     }
-  });
-
-  it('tailLogs returns only logs after sinceTs', async () => {
-    const run = store.insertRun('tail-job');
-    store.appendLog(run.id, 'stdout', Buffer.from('before\n'));
-    await new Promise((r) => setTimeout(r, 15));
-    const sinceTs = Date.now();
-    await new Promise((r) => setTimeout(r, 15));
-    store.appendLog(run.id, 'stdout', Buffer.from('after\n'));
-    const tailed = store.tailLogs(run.id, sinceTs);
-    expect(tailed).toHaveLength(1);
-    expect(tailed[0].chunk.toString('utf-8')).toBe('after\n');
   });
 
   // ── Idempotent schema creation ──────────────────────────────────────────────
@@ -618,10 +629,9 @@ describe('Store', () => {
     expect(store.listRuns({ jobId: 'job-b2' })).toHaveLength(100);
   });
 
-  it('removes run_logs for evicted runs (no orphaned log rows)', () => {
+  it('removes run_outputs for evicted runs (no orphaned output rows)', () => {
     const run = store.insertRun('job-c', 0);
-    store.appendLog(run.id, 'stdout', Buffer.from('hi\n'));
-    store.appendLog(run.id, 'stderr', Buffer.from('err\n'));
+    store.setRunOutput(run.id, { format: 'text', result: 'x', engineError: null, stderr: '' });
     store.updateRun(run.id, { status: 'success' });
 
     for (let i = 0; i < 100; i++) {
@@ -630,7 +640,7 @@ describe('Store', () => {
     }
 
     expect(store.getRun(run.id)).toBeUndefined();
-    expect(store.getLogs(run.id)).toEqual([]);
+    expect(store.getRunOutput(run.id)).toBeUndefined();
   });
 
   it('respects a custom retention cap passed to the constructor', () => {
@@ -719,15 +729,15 @@ describe('Store', () => {
       smallCapStore.updateRun(first.id, { status: 'success' });
 
       // Corrupt the schema via a second raw connection so the next prune's
-      // "DELETE FROM run_logs" throws, without touching the runs table (so
+      // "DELETE FROM run_outputs" throws, without touching the runs table (so
       // the run INSERT performed by insertRun itself still succeeds).
       const raw = new DatabaseSync(join(dir, 'runs.db'));
-      raw.exec('DROP TABLE run_logs;');
+      raw.exec('DROP TABLE run_outputs;');
       raw.close();
 
       // This insert pushes job-prune-fail's terminal-run count to 2, over
       // cap=1, triggering an eviction attempt that throws on the now-missing
-      // run_logs table. insertRun must swallow that and still return the run.
+      // run_outputs table. insertRun must swallow that and still return the run.
       const second = smallCapStore.insertRun('job-prune-fail');
       expect(second.id).toBeTruthy();
       expect(smallCapStore.getRun(second.id)?.status).toBe('queued');
@@ -738,102 +748,63 @@ describe('Store', () => {
   });
 });
 
-// ── importRuns — validation, atomicity, retention (Major 2) ──────────────────
-// Prior to the fix, importRuns() cast `body.runs as Run[]` with no validation:
-// a single malformed row (e.g. missing startedAt) threw partway through the
-// loop, aborting the whole import non-atomically (rows already inserted
-// stayed, the rest were lost), an arbitrary `status` string could be
-// persisted, and retention was never enforced after a bulk restore. These
-// tests cover all of that.
-
-describe('Store.importRuns', () => {
-  let importDir: string;
-  let importStore: Store;
-
+describe('deleting a job removes its history (SP03 task 4)', () => {
+  let dir: string;
+  let store: Store;
   beforeEach(() => {
-    importDir = makeTmpDir();
-    mkdirSync(join(importDir, 'jobs'), { recursive: true });
-    importStore = makeStore(importDir);
-    importStore.open();
+    dir = makeTmpDir();
+    mkdirSync(join(dir, 'jobs'), { recursive: true });
+    store = makeStore(dir);
+    store.open();
   });
-
   afterEach(() => {
-    importStore.close();
-    rmSync(importDir, { recursive: true, force: true });
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
   });
 
-  it('imports valid rows and skips a malformed row (missing startedAt) individually, without aborting the batch', () => {
-    importStore.upsertJob(execJob('imp-job'));
-    const result = importStore.importRuns([
-      { id: 'run-ok-1', jobId: 'imp-job', startedAt: 1000, status: 'success', outputTruncated: false },
-      // Malformed: startedAt is missing entirely -- this is exactly the row
-      // shape that used to throw on an undefined bind and abort the batch.
-      { id: 'run-bad', jobId: 'imp-job', status: 'success', outputTruncated: false } as unknown,
-      { id: 'run-ok-2', jobId: 'imp-job', startedAt: 2000, status: 'failed', outputTruncated: false },
-    ]);
+  it('deleteJob removes the job runs, run outputs and schedule state in one go and leaves other jobs alone', () => {
+    store.upsertJob(execJob('gone'));
+    store.upsertJob(execJob('kept'));
+    const goneRun = store.insertRun('gone');
+    const keptRun = store.insertRun('kept');
+    store.setRunOutput(goneRun.id, { format: 'text', result: 'x', engineError: null, stderr: '' });
+    store.setRunOutput(keptRun.id, { format: 'text', result: 'x', engineError: null, stderr: '' });
+    store.recordTick('gone', 1000);
+    store.recordTick('kept', 1000);
 
-    expect(result.imported).toBe(2);
-    expect(result.skipped).toHaveLength(1);
-    expect(result.skipped[0]).toMatchObject({ id: 'run-bad' });
-    expect(result.skipped[0].error).toMatch(/validation failed/);
+    expect(store.deleteJobAndRuns('gone')).toEqual({ jobId: 'gone', deletedRuns: 1 });
 
-    // Both valid rows landed; the batch was not aborted by the bad row, and
-    // no partial/corrupt row leaked in for the bad one.
-    const runs = importStore.listRuns({ jobId: 'imp-job' });
-    expect(runs.map((r) => r.id).sort()).toEqual(['run-ok-1', 'run-ok-2']);
-    expect(importStore.getRun('run-bad')).toBeUndefined();
+    expect(store.getRun(goneRun.id)).toBeUndefined();
+    expect(store.listRuns({ jobId: 'gone' })).toEqual([]);
+    expect(store.getRunOutput(goneRun.id)).toBeUndefined();
+    expect(store.getScheduleState('gone')).toBeUndefined();
+    expect(store.getRun(keptRun.id)).toBeDefined();
+    expect(store.getRunOutput(keptRun.id)).toBeDefined();
+    expect(store.getScheduleState('kept')).toBeDefined();
+    expect(store.deleteJobAndRuns('gone')).toBeUndefined();
   });
 
-  it('rejects a run whose status is outside the RunStatus union instead of persisting it', () => {
-    importStore.upsertJob(execJob('imp-status-job'));
-    const result = importStore.importRuns([
-      { id: 'run-bad-status', jobId: 'imp-status-job', startedAt: 1000, status: 'not-a-real-status', outputTruncated: false },
-    ]);
-    expect(result.imported).toBe(0);
-    expect(result.skipped).toEqual([{ id: 'run-bad-status', error: expect.stringMatching(/validation failed/) }]);
-    expect(importStore.getRun('run-bad-status')).toBeUndefined();
+  it('does not leave an orphan output row when a run finishes after its job was deleted (in-flight delete)', () => {
+    store.upsertJob(execJob('inflight'));
+    const run = store.insertRun('inflight');
+    store.deleteJob('inflight');
+    store.setRunOutput(run.id, { format: 'text', result: 'x', engineError: null, stderr: '' });
+    expect(store.getRunOutput(run.id)).toBeUndefined();
   });
 
-  it('skips a row referencing a job that does not exist, without affecting other rows', () => {
-    importStore.upsertJob(execJob('imp-exists-job'));
-    const result = importStore.importRuns([
-      { id: 'run-orphan', jobId: 'no-such-job', startedAt: 1000, status: 'success', outputTruncated: false },
-      { id: 'run-fine', jobId: 'imp-exists-job', startedAt: 1000, status: 'success', outputTruncated: false },
-    ]);
-    expect(result.imported).toBe(1);
-    expect(result.skipped).toEqual([{ id: 'run-orphan', error: 'job not found' }]);
-    expect(importStore.getRun('run-fine')).toBeTruthy();
-  });
-
-  it('is idempotent on id: re-importing the same rows does not re-count them as imported or duplicate them', () => {
-    importStore.upsertJob(execJob('imp-idempotent-job'));
-    const rows = [{ id: 'run-dup', jobId: 'imp-idempotent-job', startedAt: 1000, status: 'success', outputTruncated: false }];
-    expect(importStore.importRuns(rows).imported).toBe(1);
-    expect(importStore.importRuns(rows).imported).toBe(0);
-    expect(importStore.listRuns({ jobId: 'imp-idempotent-job' })).toHaveLength(1);
-  });
-
-  it('enforces the retention cap for jobs affected by a large import that exceeds it', () => {
-    const smallCapStore = new Store(join(importDir, 'runs.db'), join(importDir, 'jobs'), undefined, 3);
-    smallCapStore.open();
+  it('unlinks the per-job log file of a deleted job', () => {
+    const logs = join(dir, 'logs');
+    mkdirSync(logs, { recursive: true });
+    const previous = process.env['CRONTICK_HOME'];
+    process.env['CRONTICK_HOME'] = dir;
     try {
-      smallCapStore.upsertJob(execJob('imp-cap-job'));
-      const rows = Array.from({ length: 10 }, (_, i) => ({
-        id: `imp-cap-run-${i}`,
-        jobId: 'imp-cap-job',
-        startedAt: i,
-        status: 'success' as const,
-        outputTruncated: false,
-      }));
-      const result = smallCapStore.importRuns(rows);
-      // All 10 rows are genuinely inserted (imported reflects the insert, not
-      // the post-retention count) ...
-      expect(result.imported).toBe(10);
-      // ... but retention is enforced immediately after, not left until the
-      // job's next real run.
-      expect(smallCapStore.listRuns({ jobId: 'imp-cap-job' })).toHaveLength(3);
+      store.upsertJob(execJob('with-log'));
+      writeFileSync(join(logs, 'with-log.log'), 'x', 'utf-8');
+      store.deleteJob('with-log');
+      expect(existsSync(join(logs, 'with-log.log'))).toBe(false);
     } finally {
-      smallCapStore.close();
+      if (previous === undefined) delete process.env['CRONTICK_HOME'];
+      else process.env['CRONTICK_HOME'] = previous;
     }
   });
 });

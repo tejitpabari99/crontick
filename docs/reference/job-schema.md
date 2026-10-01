@@ -11,13 +11,13 @@ Top-level job object.
 | Field | Type | Required | Default | Constraints | Description |
 |-------|------|----------|---------|-------------|-------------|
 | `id` | `string` (GUID) | no (server-assigned) | `randomUUID()` | UUID format | Immutable identifier assigned automatically at creation; never user-supplied. Primary key used internally by the store, `run.jobId`, and the scheduler. |
-| `alias` | `string` | no | auto-generated (`<word>-<1-1000>`) | Regex: `^[a-z0-9]+(?:-[a-z0-9]+)*$` (kebab-case); unique among currently-defined (live) jobs | Optional, user-editable human-friendly name. Deleting a job frees its alias for reuse. |
+| `alias` | `string` | no | auto-generated (`<word>-<1-1000>`) | Regex: `^[a-z0-9]+(?:-[a-z0-9]+)*$` (kebab-case); unique among currently-defined (live) jobs | Optional, user-editable unique **alias** (the one user-facing name for a job; CLI `--alias`/`-a`). Auto-generation regenerates on collision and falls back to a short random suffix. Deleting a job frees its alias for reuse. |
 | `description` | `string` | no | — | — | Human-readable description |
 | `enabled` | `boolean` | no | `true` | — | Whether the job runs on schedule |
 | `schedule` | `Schedule` | yes | — | Discriminated union on `kind` | When the job runs |
 | `action` | `Action` | yes | — | Discriminated union on `kind` | What the job does |
-| `overlap` | `"skip" \| "queue" \| "cancel-previous"` | no | `"skip"` | Enum | What happens when a new tick fires while a previous run is still active |
-| `retry` | `Retry` | no | `{ max: 0, backoffSec: 30 }` | — | Retry policy for failed runs |
+| `overlap` | `"skip" \| "queue" \| "cancel-previous"` | no | `config.json` `defaults.overlap`, then `"skip"` | Enum | What happens when a new tick fires while a previous run is still active |
+| `retry` | `Retry` | no | `config.json` `defaults.retry`, then `{ max: 0, backoffSec: 30 }` | — | Retry policy for failed runs |
 
 ### Identity: GUID `id` + `alias`
 
@@ -42,8 +42,9 @@ Discriminated union on `kind`.
 | Field | Type | Required | Default | Constraints | Description |
 |-------|------|----------|---------|-------------|-------------|
 | `kind` | `"cron"` | yes | — | Literal | Schedule discriminator |
-| `cron` | `string` | yes | — | Min length 1; parsed by croner v9 | Cron expression |
-| `tz` | `string` | no | — | IANA timezone | Timezone for evaluation |
+| `cron` | `string` | yes | — | Min length 1; parsed by croner v9 | Cron expression, evaluated in the machine's local timezone |
+
+Cron schedules have no `tz` field. New input containing `tz` is rejected; a `tz` in an already-stored job file is silently ignored.
 
 ### kind: `interval`
 
@@ -68,30 +69,10 @@ Discriminated union on `kind`. All action kinds share these common optional fiel
 
 | Field | Type | Required | Default | Constraints | Description |
 |-------|------|----------|---------|-------------|-------------|
-| `cwd` | `string` | no | — | — | Working directory for execution |
+| `cwd` | `string` | no | invoking directory on create | Resolved to an absolute, existing directory (`INVALID_CWD`) | Working directory for execution (CLI `--cwd`/`-C`). For Claude jobs the folder must be trusted in Claude (see [cli.md](cli.md#working-directory-and-claude-trust)) |
 | `env` | `Record<string, string>` | no | — | — | Additional environment variables |
 | `envFile` | `string` | no | — | — | Path to `.env` file for extra env vars |
-| `timeoutSec` | `number` | no | — | Positive | Kill the process after this many seconds |
-
-### kind: `script`
-
-| Field | Type | Required | Default | Constraints | Description |
-|-------|------|----------|---------|-------------|-------------|
-| `kind` | `"script"` | yes | — | Literal | Action discriminator |
-| `script` | `string` | yes | — | Min length 1 | Inline script body |
-| `shell` | `"auto" \| "bash" \| "pwsh" \| "cmd"` | no | `"auto"` | Enum | Shell to use (`auto` = pwsh on Windows, bash elsewhere) |
-
-Schema is `.strict()` — no extra fields allowed.
-
-### kind: `exec`
-
-| Field | Type | Required | Default | Constraints | Description |
-|-------|------|----------|---------|-------------|-------------|
-| `kind` | `"exec"` | yes | — | Literal | Action discriminator |
-| `command` | `string` | yes | — | Min length 1 | Executable command |
-| `args` | `string[]` | no | `[]` | — | Command arguments |
-
-Schema is `.strict()` — no extra fields allowed. Executed with `shell: false`.
+| `timeoutSec` | `number` | no | `config.json` `defaults.timeoutSec`, then unset | Positive | Kill the process after this many seconds |
 
 ### kind: `prompt`
 
@@ -101,10 +82,14 @@ Schema is `.strict()` — no extra fields allowed. Executed with `shell: false`.
 | `prompt` | `string` | yes | — | Min length 1 | Prompt text sent to the engine |
 | `engine` | `string` | no | config `defaultEngine` | Regex: `^[A-Za-z0-9_.-]+$` | Engine name from config |
 | `args` | `string[]` | no | `[]` | — | Extra arguments passed to the engine |
-| `sessionId` | `string` | no | — | Min length 1 | Fixed session ID to reuse across runs |
-| `reuseSession` | `boolean` | no | `false` | — | Capture first successful session ID and reuse it |
+| `sessionId` | `string` | no | — | Min length 1 | Fixed session ID to reuse across runs; Claude requires its transcript file to exist before resuming |
+| `reuseSession` | `boolean` | no | `false` | Requires `overlap: "skip"` | Capture a reusable session ID (Claude requires a completed result line) |
 
-Schema is `.strict()` — no extra fields allowed. Executed with `shell: false`. Subject to `promptRuntimeValidationMessage` refinement (Windows cmd-line length check, reserved arg detection).
+Schema is `.strict()` — no extra fields allowed. Executed with `shell: false`. Subject to `promptRuntimeValidationMessage` refinement (Windows cmd-line length check, reserved arg detection). Reserved `action.args` flags include `-p`, `-r`, `--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, and `--settings`; long `--flag=value` forms are also rejected.
+
+When `reuseSession` is `true`, the job's resolved `overlap` must be `skip`. Omitting `overlap` uses the configured default, which is `skip` unless changed. `queue` and `cancel-previous` fail job validation so an in-flight reused session cannot receive another turn or be canceled by an overlapping fire.
+
+For a Claude engine, `sessionId` must also match a completed prior run for the same job whose Claude result was parsed. A missing eligible run or transcript fails with `SESSION_NOT_FOUND` before the CLI starts. The transcript path is `<base>/projects/<encoded-cwd>/<sessionId>.jsonl` (`<base>` is `$CLAUDE_CONFIG_DIR` when set, else `~/.claude`), where every `/` and `.` in the absolute working directory becomes `-`. Prompt jobs run with stdin ignored.
 
 ---
 
@@ -131,10 +116,9 @@ The "Default" column above only applies **when creating a job** (`crontick jobs 
 
 Concretely:
 
-- `overlap`; `action.shell` (script), `action.envFile`, `action.timeoutSec` (all action kinds); `action.args` (exec/prompt); `action.reuseSession` (prompt); `retry.backoffSec` — all keep their previous value unless the patch explicitly sets them.
-- `action.engine` (prompt) is treated the same way for a same-kind update: the config `defaultEngine` fill-in only happens when creating a job or when a patch changes a non-prompt action into a `prompt` action for the first time. A patch that leaves an existing prompt action's `kind` unchanged never overwrites a configured `engine`, even if the patch omits it.
-- **Changing `action.kind`** (e.g. `script` -> `exec`) is not a field-by-field merge: the new action wholly replaces the old one, and only the fields provided in the patch (plus the normal create-time defaults for the new kind) apply. There is no cross-kind field preservation — e.g. updating a `script` job to `exec` does not carry over `shell`.
-- **Single-field action patches** (e.g. `{ action: { kind: 'script', shell: 'pwsh' } }` with no `script`) are valid on the API and MCP surfaces: the mandatory action source (`script`, `command`, or `prompt`) is optional in `JobPatchInputSchema` and is backfilled from the existing stored action by `mergeActionPatch`. The CLI no longer exposes dedicated script/exec modifier flags; use `crontick jobs update --file <patch.json>` for advanced action patches.
+- `overlap`, `action.envFile`, `action.timeoutSec`, `action.args`, `action.reuseSession`, and `retry.backoffSec` keep their previous values unless the patch explicitly sets them.
+- `action.engine` is treated the same way: the config `defaultEngine` fill-in happens on create. An update that omits it preserves the stored engine.
+- **Single-field prompt action patches** (for example, changing only `action.timeoutSec`) keep the existing prompt and other action fields. Use `crontick jobs update --file <patch.json>` for an advanced action patch.
 - `retry.max` and the rest of `retry` follow the same partial-merge rule as `overlap`.
 
 See [jobs.md](../concepts/jobs.md) for the conceptual explanation and [cli.md](cli.md) for the corresponding CLI defaults and update behavior.
@@ -142,48 +126,6 @@ See [jobs.md](../concepts/jobs.md) for the conceptual explanation and [cli.md](c
 ---
 
 ## JSON Examples
-
-### Script job with cron schedule
-
-```json
-{
-  "alias": "daily-backup",
-  "description": "Nightly database backup",
-  "enabled": true,
-  "schedule": {
-    "kind": "cron",
-    "cron": "0 2 * * *",
-    "tz": "America/New_York"
-  },
-  "action": {
-    "kind": "script",
-    "script": "pg_dump mydb > /backups/db.sql",
-    "shell": "bash"
-  },
-  "overlap": "skip",
-  "retry": { "max": 2, "backoffSec": 60 }
-}
-```
-
-### Exec job with interval schedule
-
-```json
-{
-  "alias": "health-check",
-  "enabled": true,
-  "schedule": {
-    "kind": "interval",
-    "everySec": 300
-  },
-  "action": {
-    "kind": "exec",
-    "command": "curl",
-    "args": ["-sf", "http://localhost:8080/health"]
-  },
-  "overlap": "skip",
-  "retry": { "max": 0, "backoffSec": 30 }
-}
-```
 
 ### Prompt job with cron schedule
 
@@ -194,13 +136,12 @@ See [jobs.md](../concepts/jobs.md) for the conceptual explanation and [cli.md](c
   "enabled": true,
   "schedule": {
     "kind": "cron",
-    "cron": "0 9 * * 1-5",
-    "tz": "America/Los_Angeles"
+    "cron": "0 9 * * 1-5"
   },
   "action": {
     "kind": "prompt",
     "prompt": "Summarize yesterday's git commits in this repo.",
-    "engine": "copilot",
+    "engine": "claude",
     "args": [],
     "reuseSession": true
   },
@@ -213,16 +154,15 @@ See [jobs.md](../concepts/jobs.md) for the conceptual explanation and [cli.md](c
 
 ```json
 {
-  "alias": "migration-run",
+  "alias": "release-reminder",
   "enabled": true,
   "schedule": {
     "kind": "one-shot",
     "runAt": "2026-08-01T03:00:00Z"
   },
   "action": {
-    "kind": "exec",
-    "command": "node",
-    "args": ["scripts/migrate.mjs"]
+    "kind": "prompt",
+    "prompt": "Remind me to cut the release."
   },
   "overlap": "skip",
   "retry": { "max": 0, "backoffSec": 30 }
@@ -239,8 +179,9 @@ Runs stored in SQLite use these status values:
 |--------|---------|
 | `queued` | Scheduled but not yet started (overlap policy) |
 | `running` | Currently executing |
-| `success` | Completed with exit code 0 |
-| `failed` | Completed with non-zero exit code or error |
-| `canceled` | Canceled by user, overlap policy `cancel-previous`, or a confirmed-dead orphan on daemon restart |
+| `success` | Completed with exit code 0 and no Claude `is_error` result |
+| `failed` | Completed with non-zero exit code, Claude `is_error`, or another run error |
+| `canceled` | Canceled by user, overlap policy `cancel-previous`, or orphan reconciliation on daemon restart (which can include queued runs) |
+| `skipped` | A fire that never ran because another run was already active (`overlap: "skip"`); distinct from an active run terminated by cancellation |
 | `timeout` | Killed due to `timeoutSec` |
 | `missed` | No process ever ran: recorded at daemon startup for a fire that occurred while no daemon was running. See [concepts/daemon-lifecycle.md](../concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down) |

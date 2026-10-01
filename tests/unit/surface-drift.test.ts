@@ -23,6 +23,9 @@ const NON_PARITY_CLIENT_METHODS = new Set([
   'normalizeOptions',
   'shouldStartDaemon',
   'effectiveEnv',
+  'getOutput',
+  'trustTarget',
+  'ensureFoldersTrusted',
   'fetchRequest',
   'daemonRequestError',
   // Library-only helpers retained after the CLI/MCP command reorganization
@@ -144,10 +147,10 @@ describe('surface capability drift', () => {
     }
   }, 30_000);
 
-  it('documented MCP tool count in docs/testing.md stays in sync with MCP_TOOLS', () => {
-    const doc = readFileSync(resolve('docs/testing.md'), 'utf-8');
+  it('documented MCP tool count in docs/testing/testing.md stays in sync with MCP_TOOLS', () => {
+    const doc = readFileSync(resolve('docs/testing/testing.md'), 'utf-8');
     const match = doc.match(/all (\d+) `crontick_\*` tools/);
-    expect(match, 'could not find tool count sentence in docs/testing.md — update the regex if the doc was reworded').not.toBeNull();
+    expect(match, 'could not find tool count sentence in docs/testing/testing.md — update the regex if the doc was reworded').not.toBeNull();
     expect(Number(match![1])).toBe(MCP_TOOLS.length);
   });
 });

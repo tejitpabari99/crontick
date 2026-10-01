@@ -17,6 +17,13 @@ import { fileURLToPath } from 'node:url';
 import { CrontickError } from '../errors.js';
 import { dataDir, ensureDirs, logsDir, pidFilePath, portFilePath } from '../paths.js';
 import { nullLogger, type Logger } from '../logger.js';
+import {
+  DEFAULT_HEALTH_TIMEOUT_MS,
+  DEFAULT_LOCK_TIMEOUT_MS,
+  DEFAULT_STARTUP_TIMEOUT_MS,
+  POLL_MS,
+} from '../constants/daemon.js';
+import { sleep } from '../utils/sleep.js';
 
 export interface EnsureDaemonOptions {
   daemonUrl?: string;
@@ -32,15 +39,12 @@ export interface EnsureDaemonOptions {
 export interface DaemonInfo {
   baseUrl: string;
   port?: number;
+  /** Data directory reported by the daemon's /health (when known). */
+  dataDir?: string;
   pid?: number;
   started: boolean;
 }
 
-const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
-const DEFAULT_HEALTH_TIMEOUT_MS = 2_000;
-const DEFAULT_LOCK_TIMEOUT_MS = 15_000;
-/** Polling interval while waiting for daemon health or lock release. */
-const POLL_MS = 100;
 /** Max bytes to read from daemon.ensure.log for error diagnostics. */
 const STDERR_LIMIT = 4096;
 /** Health probe rejects responses whose product field doesn't match. */
@@ -276,7 +280,7 @@ async function probePortFile(
  * Rejects responses where the reported port doesn't match the URL (prevents
  * accidentally connecting to a different service on the same port).
  */
-async function probeHealth(
+export async function probeHealth(
   baseUrl: string,
   timeoutMs: number,
 ): Promise<{ ok: true; info: Omit<DaemonInfo, 'baseUrl' | 'started'> } | { ok: false }> {
@@ -289,6 +293,7 @@ async function probeHealth(
       name?: unknown;
       pid?: unknown;
       port?: unknown;
+      dataDir?: unknown;
     };
     const product = data.product ?? data.name;
     if (
@@ -312,6 +317,7 @@ async function probeHealth(
       info: {
         pid: data.pid,
         port: data.port,
+        ...(typeof data.dataDir === 'string' ? { dataDir: data.dataDir } : {}),
       },
     };
   } catch {
@@ -330,7 +336,7 @@ function normalizeBaseUrl(url: string): string {
   return url.replace(/\/+$/, '');
 }
 
-function readPortFile(env: NodeJS.ProcessEnv = process.env): number | undefined {
+export function readPortFile(env: NodeJS.ProcessEnv = process.env): number | undefined {
   try {
     const port = parseInt(readFileSync(portFilePath(env), 'utf-8').trim(), 10);
     return Number.isInteger(port) && port > 0 ? port : undefined;
@@ -483,10 +489,6 @@ function readEnsureLogTail(path: string, startOffset: number): string {
 
 function stderrHint(stderr: string, logPath: string): string {
   return stderr ? `\nDaemon stderr excerpt from ${logPath}: ${stderr.slice(0, 500)}` : `\nDaemon log path: ${logPath}`;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function errorMessage(err: unknown): string {

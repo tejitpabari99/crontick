@@ -13,10 +13,12 @@
  * shared daemon serving ~30 unrelated CRUD tests.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { teardownDaemon } from '../helpers/cleanup.js';
+import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 
 const DAEMON_SCRIPT = join(process.cwd(), 'dist', 'daemon', 'index.js');
 const TIMEOUT_MS = 30_000;
@@ -90,6 +92,7 @@ describe('Integration: live Scheduler auto-fires ticks into runs (no manual /run
 
   beforeAll(async () => {
     dir = makeTmpDir();
+    writeFakeEngineConfig(dir);
     const stderrChunks: string[] = [];
     daemonProc = spawn(node, [DAEMON_SCRIPT], {
       env: { ...process.env, CRONTICK_HOME: dir },
@@ -99,9 +102,8 @@ describe('Integration: live Scheduler auto-fires ticks into runs (no manual /run
     port = await waitForPortFile(dir, 30_000, () => stderrChunks.join(''));
   }, TIMEOUT_MS);
 
-  afterAll(() => {
-    daemonProc?.kill('SIGTERM');
-    try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  afterAll(async () => {
+    await teardownDaemon(daemonProc, dir);
   });
 
   it('an interval job auto-fires through the live daemon Scheduler without any /run call', async () => {
@@ -113,7 +115,7 @@ describe('Integration: live Scheduler auto-fires ticks into runs (no manual /run
     const created = await apiCall(port, 'POST', '/api/jobs', {
       alias: jobId,
       schedule: { kind: 'interval', everySec: 1 },
-      action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'] },
+      action: { kind: 'prompt', prompt: 'process.exit(0)', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
     });
     expect(created.status).toBe(201);
 
@@ -141,7 +143,7 @@ describe('Integration: live Scheduler auto-fires ticks into runs (no manual /run
     const created = await apiCall(port, 'POST', '/api/jobs', {
       alias: jobId,
       schedule: { kind: 'cron', cron: '* * * * * *' },
-      action: { kind: 'exec', command: node, args: ['-e', 'process.exit(0)'] },
+      action: { kind: 'prompt', prompt: 'process.exit(0)', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false },
     });
     expect(created.status).toBe(201);
 

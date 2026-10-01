@@ -1,21 +1,35 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { platform, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { spawn as nodeSpawn } from 'node:child_process';
-import { Runner, DEFAULT_MAX_OUTPUT_BYTES_PER_RUN, truncationMarker, ADOPTED_RUN_EXITED_MESSAGE, truncateToUtf8Boundary } from '../../src/daemon/runner.js';
+import { nullLogger } from '../../src/logger.js';
+import { Runner, ADOPTED_RUN_EXITED_MESSAGE } from '../../src/daemon/runner.js';
+import { truncationMarker, truncateToUtf8Boundary } from '../../src/daemon/output-collector.js';
+import { DEFAULT_MAX_OUTPUT_BYTES_PER_RUN } from '../../src/constants/retention.js';
 import { isProcessAlive } from '../../src/process-liveness.js';
 import { Store } from '../../src/daemon/store.js';
 import type { Job } from '../../src/schemas/job.js';
 import { JobSchema } from '../../src/schemas/job.js';
+import { FAKE_ENGINE_CONFIG, FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 
 const node = process.execPath;
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), 'crontick-runner-'));
+}
+
+/** A per-job log-file sink that records every line the runner writes (crontick-side events only). */
+function recordingLogFiles(): { writes: Array<{ jobId: string; text: string }>; factory: { open(jobId: string): { write(text: string): void } }; text(): string } {
+  const writes: Array<{ jobId: string; text: string }> = [];
+  return {
+    writes,
+    factory: { open: (jobId: string) => ({ write: (text: string) => { writes.push({ jobId, text }); } }) },
+    text: () => writes.map((w) => w.text).join(''),
+  };
 }
 
 function makeStore(dir: string): Store {
@@ -24,12 +38,23 @@ function makeStore(dir: string): Store {
   return s;
 }
 
-function execJob(id: string, command: string, args: string[], opts?: Partial<Job>): Job {
+/**
+ * Builds a job whose prompt action resolves (via config, see
+ * writeFakeEngineConfig) to `node -e <code>`, so the runner really spawns a
+ * process running `code` -- this is what `exec`-kind fixtures did before
+ * crontick became prompt-only (see docs/decisions/0002-prompt-only-jobs-and-engine-adapters.md).
+ * Kept call-compatible with the old `execJob(id, node, ['-e', code, ...extraArgs])`
+ * shape used throughout this file: `command` is unused (always `node`
+ * already), and `args` is `['-e', code, ...extraArgs]`.
+ */
+function execJob(id: string, _command: string, args: string[], opts?: Partial<Job>): Job {
+  const code = args[0] === '-e' ? (args[1] ?? '') : args.join(' ');
+  const extraArgs = args[0] === '-e' ? args.slice(2) : [];
   return {
     id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
-    action: { kind: 'exec', command, args },
+    action: { kind: 'prompt', prompt: code, engine: FAKE_ENGINE_NAME, args: extraArgs, reuseSession: false },
     overlap: 'skip',
     retry: { max: 0, backoffSec: 30 },
     ...opts,
@@ -115,6 +140,11 @@ describe('Runner', () => {
     mkdirSync(join(dir, 'jobs'), { recursive: true });
     previousHome = process.env['CRONTICK_HOME'];
     process.env['CRONTICK_HOME'] = dir;
+    // Keep these raw-engine fixtures independent of the built-in Claude adapter.
+    writeFakeEngineConfig(dir, { engines: {
+      [FAKE_ENGINE_NAME]: FAKE_ENGINE_CONFIG,
+      copilot: { command: 'copilot', args: ['--allow-all-tools', '-p'], env: {}, type: 'raw' },
+    } });
     store = makeStore(dir);
     runner = new Runner();
   });
@@ -150,18 +180,27 @@ describe('Runner', () => {
     const job = execJob('log', node, ['-e', 'process.stdout.write("hello world\\n")']);
     const run = store.insertRun(job.id);
     await runner.run(job, run.id, store);
-    const logs = store.getLogs(run.id);
-    const text = logs.map((l) => l.chunk.toString('utf-8')).join('');
-    expect(text).toContain('hello world');
+    expect(store.getRunOutput(run.id)?.result).toContain('hello world');
   });
 
   it('exec: stderr logs are captured', async () => {
     const job = execJob('err-log', node, ['-e', 'process.stderr.write("error line\\n"); process.exit(1)']);
     const run = store.insertRun(job.id);
     await runner.run(job, run.id, store);
-    const logs = store.getLogs(run.id);
-    const stderrLogs = logs.filter((l) => l.stream === 'stderr');
-    expect(stderrLogs.length).toBeGreaterThan(0);
+    expect(store.getRunOutput(run.id)?.stderr).toContain('error line');
+  });
+
+  it('raw engine: event-shaped JSON on stdout is persisted as the plain result, with a generic-handling warning', async () => {
+    const warn = vi.fn();
+    const fakeLogger: Record<string, unknown> = { warn, error: vi.fn(), info: vi.fn(), debug: vi.fn(), isDebugEnabled: () => false };
+    fakeLogger['child'] = () => fakeLogger;
+    runner = new Runner(undefined, fakeLogger as unknown as typeof nullLogger);
+    const payload = '{"type":"assistant","message":"done"}';
+    const job = execJob('raw-event-json', node, ['-e', `process.stdout.write(${JSON.stringify(payload)} + "\\n")`]);
+    const run = store.insertRun(job.id);
+    await runner.run(job, run.id, store);
+    expect(store.getRunOutput(run.id)).toMatchObject({ format: 'text', result: payload });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no adapter support'), expect.anything());
   });
 
   it('exec: durationMs is set after completion', async () => {
@@ -172,61 +211,6 @@ describe('Runner', () => {
     expect(updated.durationMs).toBeGreaterThanOrEqual(0);
   });
 
-  // ── script kind ─────────────────────────────────────────────────────────────
-
-  it('script: executes inline script body', async () => {
-    const isWindows = platform() === 'win32';
-    const job: Job = {
-      id: 'script-job',
-      enabled: true,
-      schedule: { kind: 'cron', cron: '* * * * *' },
-      action: {
-        kind: 'script',
-        script: isWindows ? '@echo from-script\r\n' : 'printf "from-script\\n"\n',
-        shell: isWindows ? 'cmd' : 'bash',
-      },
-      overlap: 'skip',
-      retry: { max: 0, backoffSec: 30 },
-    };
-    const run = store.insertRun(job.id);
-    await runner.run(job, run.id, store);
-    const updated = store.getRun(run.id)!;
-    expect(updated.status).toBe('success');
-    expect(store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('')).toContain('from-script');
-  });
-
-  it('script: shell="auto" (the default job kind) captures non-empty output on every platform (BLOCKER 1 regression)', async () => {
-    // Before the L1 fix, spawn(..., { detached: true }) on Windows gave
-    // pwsh/powershell.exe no console at all (Win32 DETACHED_PROCESS flag —
-    // see nodejs/node#51018), and PowerShell's host silently never wrote to
-    // its (validly redirected) stdio pipes: a script job on the DEFAULT
-    // shell ('auto' -> pwsh on Windows) reported status: 'success' with zero
-    // captured output. That's exactly the README's first example
-    // (`crontick new hello --script "echo hello"`), so this must exercise
-    // 'auto' specifically — the test above pins an explicit non-pwsh shell
-    // and would not have caught this.
-    const isWindows = platform() === 'win32';
-    const job: Job = {
-      id: 'script-job-auto-shell',
-      enabled: true,
-      schedule: { kind: 'cron', cron: '* * * * *' },
-      action: {
-        kind: 'script',
-        script: isWindows ? "Write-Output 'from-auto-script'\r\n" : 'printf "from-auto-script\\n"\n',
-        shell: 'auto',
-      },
-      overlap: 'skip',
-      retry: { max: 0, backoffSec: 30 },
-    };
-    const run = store.insertRun(job.id);
-    await runner.run(job, run.id, store);
-    const updated = store.getRun(run.id)!;
-    expect(updated.status).toBe('success');
-    const output = store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('');
-    expect(output.length).toBeGreaterThan(0);
-    expect(output).toContain('from-auto-script');
-  }, 15_000);
-
   // ── Timeout ──────────────────────────────────────────────────────────────────
 
   it('exec: timeout cancels long-running job', async () => {
@@ -234,7 +218,7 @@ describe('Runner', () => {
       'timeout-job',
       node,
       ['-e', 'setTimeout(() => {}, 30000)'],
-      { action: { kind: 'exec', command: node, args: ['-e', 'setTimeout(() => {}, 30000)'], timeoutSec: 1 } },
+      { action: { kind: 'prompt', prompt: 'setTimeout(() => {}, 30000)', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false, timeoutSec: 1 } },
     );
     const run = store.insertRun(job.id);
     await runner.run(job, run.id, store);
@@ -264,7 +248,7 @@ describe('Runner', () => {
 
   // ── Overlap ──────────────────────────────────────────────────────────────────
 
-  it('overlap=skip: second run is canceled when first is active', async () => {
+  it('overlap=skip: second run is skipped when first is active', async () => {
     const job = execJob(
       'overlap-skip',
       node,
@@ -281,7 +265,9 @@ describe('Runner', () => {
     await new Promise((r) => setTimeout(r, 50));
     await runner.run(job, run2.id, store);
 
-    expect(store.getRun(run2.id)?.status).toBe('canceled');
+    expect(store.getRun(run2.id)).toMatchObject({ status: 'skipped', error: 'overlap=skip: another run is already active' });
+    expect(store.getRun(run2.id)?.pid).toBeUndefined();
+    expect(store.listRuns({ jobId: job.id, status: 'skipped' }).map((run) => run.id)).toContain(run2.id);
 
     // Cancel first run to clean up
     runner.cancelRun(run1.id);
@@ -352,32 +338,18 @@ describe('Runner', () => {
     await Promise.all([pB, pC]);
   }, 25000);
 
-  // ── Binary output (redaction must not corrupt) ───────────────────────────────
+  // ── Prompt schema: shell injection rejected ──────────────────────────────────
 
-  it('exec: binary stdout bytes are preserved without redaction corruption', async () => {
-    const job = execJob('binary', node, [
-      '-e',
-      'process.stdout.write(Buffer.from([0, 1, 2, 255, 65]))', // 65 = 'A'
-    ]);
-    const run = store.insertRun(job.id);
-    await runner.run(job, run.id, store);
-    const logs = store.getLogs(run.id);
-    const stdoutLogs = logs.filter((l) => l.stream === 'stdout');
-    const bytes = Buffer.concat(stdoutLogs.map((l) => l.chunk));
-    expect(bytes).toEqual(Buffer.from([0, 1, 2, 255, 65]));
-  });
-
-  // ── Exec schema: shell injection rejected ────────────────────────────────────
-
-  it('exec: job JSON with shell:true is stripped by zod — runner cannot receive shell:true', () => {
+  it('prompt: job JSON with an injected shell:true is rejected by the strict schema — runner cannot receive shell:true', () => {
     const jobData = {
       id: 'shell-test',
       schedule: { kind: 'cron', cron: '* * * * *' },
-      action: { kind: 'exec', command: 'echo', args: [], shell: true },
+      action: { kind: 'prompt', prompt: 'hello', shell: true },
     };
     const result = JobSchema.safeParse(jobData);
     expect(result.success).toBe(false);
-    // Either way shell:true cannot reach runner
+    // No action shape can smuggle shell:true through to the runner, which
+    // always spawns with shell:false regardless.
   });
 
   // ── prompt kind ─────────────────────────────────────────────────────────────
@@ -502,11 +474,13 @@ describe('Runner', () => {
     expect(fake.calls).toHaveLength(2);
     expect(fake.calls[0].args).toEqual(['--allow-all-tools', '-p', 'hello', '--silent', '--session-id=sess-12345678']);
     expect(fake.calls[1].args).toEqual(['--allow-all-tools', '-p', 'hello', '--silent', '--session-id=sess-12345678']);
+    expect(fake.calls[0].opts?.stdio).toEqual(['ignore', 'pipe', 'pipe']);
   });
 
   it('prompt: explicit session id wins over reuseSession and logs a notice', async () => {
     const fake = fakeSpawn([{ stdout: 'ok\n' }]);
-    runner = new Runner(fake.spawnFn as never);
+    const files = recordingLogFiles();
+    runner = new Runner(fake.spawnFn as never, undefined, undefined, undefined, files.factory);
     const job = promptJob('prompt-session-precedence', {
       sessionId: 'sess-12345678',
       reuseSession: true,
@@ -522,12 +496,13 @@ describe('Runner', () => {
       sessionId: 'sess-12345678',
       reuseSession: false,
     });
-    expect(store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('')).not.toContain('captured session id');
+    expect(files.text()).not.toContain('captured session id');
   });
 
-  it('prompt: reuseSession-ignored notice is written to the crontick stream, never the engine stream', async () => {
+  it('prompt: reuseSession-ignored notice goes to the crontick log file, never the stored engine output', async () => {
     const fake = fakeSpawn([{ stdout: 'ok\n' }]);
-    runner = new Runner(fake.spawnFn as never);
+    const files = recordingLogFiles();
+    runner = new Runner(fake.spawnFn as never, undefined, undefined, undefined, files.factory);
     // A job carrying both an explicit sessionId and reuseSession reaches the
     // runner (e.g. via the getJob-miss fallback where the in-memory job is
     // used directly). The runner emits a lifecycle notice that reuseSession was
@@ -541,17 +516,15 @@ describe('Runner', () => {
 
     await runner.run(job, run.id, store);
 
-    expect(store.getLogs(run.id, 'crontick').map((log) => log.chunk.toString('utf-8')).join('')).toContain(
-      'reuseSession was ignored',
-    );
-    expect(store.getLogs(run.id, 'engine').map((log) => log.chunk.toString('utf-8')).join('')).not.toContain(
-      'reuseSession was ignored',
-    );
+    expect(files.text()).toContain('reuseSession was ignored');
+    expect(files.text()).toContain(`[run ${run.id}]`);
+    expect(store.getRunOutput(run.id)?.result ?? '').not.toContain('reuseSession was ignored');
   });
 
   it('prompt: captures and persists a reusable session id after first successful run', async () => {
     const fake = fakeSpawn([{ stdout: 'session id: sess-abcdefgh\n' }]);
-    runner = new Runner(fake.spawnFn as never);
+    const files = recordingLogFiles();
+    runner = new Runner(fake.spawnFn as never, undefined, undefined, undefined, files.factory);
     const job = promptJob('prompt-reuse', { reuseSession: true });
     store.upsertJob(job);
     const run = store.insertRun(job.id);
@@ -565,11 +538,10 @@ describe('Runner', () => {
       sessionId: 'sess-abcdefgh',
       reuseSession: false,
     });
-    expect(store.getLogs(run.id).map((log) => log.chunk.toString('utf-8')).join('')).toContain('captured session id');
-    // The captured-session-id line is a crontick-side lifecycle event: it must
-    // live on the `crontick` stream, never on the engine (stdout/stderr) streams.
-    expect(store.getLogs(run.id, 'crontick').map((log) => log.chunk.toString('utf-8')).join('')).toContain('captured session id');
-    expect(store.getLogs(run.id, 'engine').map((log) => log.chunk.toString('utf-8')).join('')).not.toContain('captured session id');
+    // The captured-session-id line is a crontick-side event: it lives in the
+    // crontick log file, never in the stored engine output.
+    expect(files.text()).toContain('captured session id');
+    expect(store.getRunOutput(run.id)?.result ?? '').not.toContain('captured session id');
   });
 
   it('prompt: captures a session id from the rolling transcript tail after long output', async () => {
@@ -605,7 +577,10 @@ describe('Runner', () => {
 
     await runner.run(job, run.id, store);
 
-    expect(store.getRun(run.id)?.status).toBe('success');
+    // Deleting a job removes its runs; the late write-back must not resurrect
+    // the job, the run row or orphan output.
+    expect(store.getRun(run.id)).toBeUndefined();
+    expect(store.getRunOutput(run.id)).toBeUndefined();
     expect(store.getJob(job.id)).toBeUndefined();
   });
 
@@ -738,11 +713,10 @@ describe('Runner', () => {
       const updated = store.getRun(run.id)!;
       expect(updated.outputTruncated).toBe(true);
 
-      const logs = store.getLogs(run.id, 'engine');
-      const text = logs.map((l) => l.chunk.toString('utf-8')).join('');
+      const text = store.getRunOutput(run.id)?.result ?? '';
       expect(text).toContain(truncationMarker(cap).trim());
       // Captured payload before the marker must not exceed the cap.
-      const beforeMarker = text.split(truncationMarker(cap))[0];
+      const beforeMarker = text.split(truncationMarker(cap).trim())[0]!.trimEnd();
       expect(Buffer.byteLength(beforeMarker, 'utf-8')).toBeLessThanOrEqual(cap);
     });
 
@@ -792,8 +766,8 @@ describe('Runner', () => {
       await runner.run(job, run.id, store);
       expect(store.getRun(run.id)!.outputTruncated).toBe(true);
 
-      const text = store.getLogs(run.id, 'engine').map((l) => l.chunk.toString('utf-8')).join('');
-      const beforeMarker = text.split(truncationMarker(cap))[0];
+      const text = store.getRunOutput(run.id)?.result ?? '';
+      const beforeMarker = text.split(truncationMarker(cap).trim())[0]!.trimEnd();
       expect(beforeMarker).not.toContain('\uFFFD');
       expect(beforeMarker).toBe('ab');
     });
@@ -802,9 +776,9 @@ describe('Runner', () => {
   // ── Session-id capture on the run row + crontick log stream + per-job file ──
 
   describe('run session id + crontick log stream + per-job file logging', () => {
-    it('persists an extracted session id (Copilot --resume footer) onto the run row', async () => {
+    it('persists an extracted session id (generic session-id footer) onto the run row', async () => {
       const uuid = 'b4823c07-1617-489e-9fe4-820a42ba8677';
-      const fake = fakeSpawn([{ stderr: `Resume     copilot --resume=${uuid}\n` }]);
+      const fake = fakeSpawn([{ stderr: `session id: ${uuid}\n` }]);
       runner = new Runner(fake.spawnFn as never);
       const job = promptJob('run-sessionid-extracted', { reuseSession: true });
       store.upsertJob(job);
@@ -828,43 +802,21 @@ describe('Runner', () => {
       expect(store.getRun(run.id)?.sessionId).toBe('sess-explicit1');
     });
 
-    it('records crontick lifecycle events on the `crontick` stream, absent from the engine streams', async () => {
-      const job = execJob('crontick-stream', node, ['-e', 'process.stdout.write("engine-output")']);
+    it('writes only crontick-side events to the per-job log file; engine output is stored parsed, never raw', async () => {
+      const files = recordingLogFiles();
+      const job = execJob('file-sink', node, ['-e', 'process.stdout.write(["engine", "output"].join("-"))']);
+      runner = new Runner(undefined, undefined, undefined, undefined, files.factory);
       const run = store.insertRun(job.id);
       await runner.run(job, run.id, store);
 
-      const crontickText = store.getLogs(run.id, 'crontick').map((l) => l.chunk.toString('utf-8')).join('');
-      expect(crontickText).toContain('[crontick] run started');
-      expect(crontickText).toContain('[crontick] executing');
-      expect(crontickText).toContain('[crontick] run finished');
-
-      const engineText = store.getLogs(run.id, 'engine').map((l) => l.chunk.toString('utf-8')).join('');
-      expect(engineText).toBe('engine-output');
-      expect(engineText).not.toContain('[crontick]');
-
-      // 'all' returns both streams.
-      const allStreams = new Set(store.getLogs(run.id, 'all').map((l) => l.stream));
-      expect(allStreams.has('crontick')).toBe(true);
-      expect(allStreams.has('stdout')).toBe(true);
-    });
-
-    it('mirrors run output to the injectable per-job log-file sink (best-effort seam)', async () => {
-      const writes: Array<{ jobId: string; text: string }> = [];
-      const fakeFactory = {
-        open(jobId: string) {
-          return { write: (text: string) => { writes.push({ jobId, text }); } };
-        },
-      };
-      const job = execJob('file-sink', node, ['-e', 'process.stdout.write("hello-file")']);
-      runner = new Runner(undefined, undefined, undefined, undefined, fakeFactory);
-      const run = store.insertRun(job.id);
-      await runner.run(job, run.id, store);
-
-      const joined = writes.map((w) => w.text).join('');
-      expect(writes.every((w) => w.jobId === job.id)).toBe(true);
-      expect(joined).toContain('hello-file');
-      expect(joined).toContain('[crontick] run started');
-      expect(joined).toContain('[crontick] run finished');
+      const joined = files.text();
+      expect(files.writes.every((w) => w.jobId === job.id)).toBe(true);
+      expect(joined).toContain(`[run ${run.id}] run started`);
+      expect(joined).toContain('executing');
+      expect(joined).toContain('run finished');
+      expect(joined).not.toContain('engine-output');
+      expect(joined).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(store.getRunOutput(run.id)).toMatchObject({ format: 'text', result: 'engine-output' });
     });
 
     it('never fails a run when the per-job file sink throws (non-blocking)', async () => {
@@ -879,13 +831,41 @@ describe('Runner', () => {
       await runner.run(job, run.id, store);
 
       expect(store.getRun(run.id)?.status).toBe('success');
-      expect(store.getLogs(run.id, 'engine').map((l) => l.chunk.toString('utf-8')).join('')).toBe('still-ok');
+      expect(store.getRunOutput(run.id)?.result).toBe('still-ok');
     });
   });
 
   // ── L3/L4: adoptRun restores overlap invariants across a restart ─────────────
 
   describe('adoptRun', () => {
+    it('uses a Claude marker after an adopted process exits instead of the unknown-exit fallback', async () => {
+      const jobId = 'adopt-hook';
+      const child = nodeSpawn(node, ['-e', 'setTimeout(() => process.exit(0), 10000)']);
+      const adoptedRun = store.insertRun(jobId);
+      store.updateRun(adoptedRun.id, { status: 'running', pid: child.pid!, sessionId: 'claude-session' });
+      const markerDir = join(dir, 'runs');
+      mkdirSync(markerDir);
+      const priorHome = process.env['CRONTICK_HOME'];
+      process.env['CRONTICK_HOME'] = dir;
+      try {
+        writeFileSync(join(markerDir, `${adoptedRun.id}.claude-hook.json`),
+          JSON.stringify({ exitStatus: 7, sessionId: 'claude-session' }));
+        runner = new Runner(undefined, undefined, undefined, 50);
+        runner.adoptRun(jobId, adoptedRun.id, child.pid!, store);
+        child.kill();
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline && store.getRun(adoptedRun.id)!.status === 'running') {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        expect(store.getRun(adoptedRun.id)).toMatchObject({ status: 'failed', exitCode: 7 });
+        expect(store.getRun(adoptedRun.id)?.error).not.toBe(ADOPTED_RUN_EXITED_MESSAGE);
+      } finally {
+        child.kill();
+        if (priorHome === undefined) delete process.env['CRONTICK_HOME'];
+        else process.env['CRONTICK_HOME'] = priorHome;
+      }
+    }, 15_000);
+
     it('overlap=skip: a job with an adopted, still-alive run skips new ticks until the adopted process exits', async () => {
       const jobId = 'adopt-skip';
       const child = nodeSpawn(node, ['-e', 'setTimeout(() => process.exit(0), 10000)']);
@@ -899,7 +879,7 @@ describe('Runner', () => {
       const skippedRun = store.insertRun(jobId);
       await runner.run(job, skippedRun.id, store);
       expect(store.getRun(skippedRun.id)).toMatchObject({
-        status: 'canceled',
+        status: 'skipped',
         error: expect.stringContaining('overlap=skip'),
       });
 

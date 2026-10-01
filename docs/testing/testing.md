@@ -1,0 +1,377 @@
+# Testing
+
+## Test layers
+
+| Layer | Files | Guarantees |
+|-------|-------|------------|
+| Unit | `tests/unit/store.test.ts`, `tests/unit/scheduler.test.ts`, `tests/unit/runner.test.ts`, `tests/unit/config.test.ts`, `tests/unit/logging.test.ts`, `tests/unit/redact.test.ts`, `tests/unit/job-input.test.ts` | Core modules work in isolation with injectable deps |
+| Integration | `tests/unit/api.test.ts`, `tests/unit/cli.test.ts`, `tests/unit/mcp.test.ts`, `tests/unit/client.test.ts`, `tests/unit/integration.*.test.ts` | Real daemon processes, real HTTP, real MCP stdio |
+| Surface parity | `tests/unit/surface-drift.test.ts` | CLI, MCP, and library expose every `SURFACE_CAPABILITIES` entry |
+| Fuzz / Property | `tests/unit/fuzz.*.test.ts`, `tests/unit/property.*.test.ts` | Schema validation never panics; scheduler invariants hold for arbitrary inputs |
+| Packaging | `tests/unit/smoke.test.ts`, `tests/unit/build-sqlite.test.ts`, `tests/unit/rebrand.test.ts` | Package exports resolve; dist builds are valid |
+| **E2E (on-demand)** | `tests/integration/` | Real pack+install; drives CLI/API/MCP as a real user would; never part of `npm run validate` |
+
+## Running tests locally
+
+```powershell
+# Full suite (requires a prior build)
+npm run build
+npm test
+```
+
+```powershell
+# Single file
+npx vitest run tests/unit/cli.test.ts
+```
+
+```powershell
+# Single test by name pattern
+npx vitest run -t "creates a job"
+```
+
+```powershell
+# Watch mode (re-runs on file change)
+npm run test:watch
+```
+
+```powershell
+# With coverage (vitest built-in)
+npx vitest run --coverage
+```
+
+All test commands are cross-platform (Windows and Linux/macOS).
+
+## Running the E2E integration harness
+
+The on-demand E2E harness packs and installs the real package into `.e2e-scratch/` and drives
+CLI, API, and MCP surfaces as a real user would. It is never part of `npm run validate`.
+
+```powershell
+npm run e2e:smoke    # 6 smoke tests, <45s
+npm run e2e          # full Tier 1 (~47 tests)
+node tests/integration/run-harness.mjs --id CT-DAEMON-001   # single test
+```
+
+See [`docs/testing/e2e-testing.md`](e2e-testing.md) for all CLI flags, the isolation model, and log locations.
+For adding tests and check types, see [`tests/integration/README.md`](../../tests/integration/README.md).
+
+## Cleaning up after tests
+
+**What used to leak.** Several suites spawn real daemons (`api`, `mcp`, `health`,
+`integration.autofire`, `integration.daemon-lifecycle`). Their cleanup sent
+`SIGTERM` and immediately called `rmSync` without waiting for the daemon to exit, so
+a daemon still shutting down could recreate files (ENOTEMPTY, swallowed) or never
+exit at all. Failed `beforeAll` hooks, runs killed by OOM, and runs interrupted with
+Ctrl-C left daemons, their detached job children, and `/tmp/crontick-*` dirs behind.
+
+**What prevents it now.**
+
+1. `tests/helpers/cleanup.ts` (`teardownDaemon`, `stopProc`) stops the process,
+   waits for exit (escalating to `SIGKILL`), kills any daemon named in
+   `<dir>/daemon.pid`, then removes the dir with retries. Use it in every
+   `afterAll`/`afterEach` of a test that spawns a daemon.
+2. `tests/helpers/tmp-isolation.ts` (vitest `globalSetup`) points `TMPDIR`/`TMP`/`TEMP`
+   at one run-scoped root, `<os tmpdir>/crontick-vitest-XXXX`, so every temp dir and
+   daemon of a run lives under it. Its teardown kills every process tied to that root
+   (by `CRONTICK_HOME`, working directory, argv, or `daemon.pid`), removes the root, and
+   then verifies nothing remains. If a leak is found it prints `TEST LEAK` and sets a
+   non-zero exit code.
+3. Safety: only processes tied to a path inside the target `crontick-*` temp dirs are
+   ever killed. A real user daemon (data dir outside the OS temp dir) is never touched.
+   Regression coverage: `tests/unit/test-cleanup.test.ts`.
+
+**Manual cleanup** (after a crashed or interrupted run, or for old leftovers):
+
+```sh
+npm run clean:test   # kills leaked test daemons, removes <os tmpdir>/crontick-* dirs
+
+```sh
+npm run check:changesets   # fails if a pending changeset has a disallowed (major) bump while pre-1.0 (scripts/check-changeset-bumps.mjs)
+```
+```
+
+Verify with `ps aux | grep -E 'crontick|vitest'` and `ls /tmp | grep crontick-`.
+
+## Test layout
+
+```
+tests/
+  unit/                      All vitest tests (run by `npm test`)
+    api.test.ts              Integration: daemon HTTP API
+    cli.test.ts              Integration: CLI spawns, exit codes, output
+    mcp.test.ts              Integration: MCP server via SDK client
+    client.test.ts           CrontickClient against fake/real daemons
+    surface-drift.test.ts    Parity: all surfaces expose every capability
+    store.test.ts            Unit: SQLite store CRUD, schedule state, missed runs, run retention
+    scheduler.test.ts        Unit: cron/interval/one-shot scheduling
+    runner.test.ts           Unit: process spawning, overlap, timeout
+    config.test.ts           Unit: config load/write/engines, retention bounds
+    integration.*.test.ts    Integration scenarios (persistence, retry, overlap, timeout,
+                             one-shot end-to-end, live-daemon auto-fire, daemon shutdown/
+                             reload/fresh-install, prompt end-to-end)
+    fuzz.*.test.ts           Property-based fuzz (fast-check) for API, MCP, env-file, paths
+    property.*.test.ts       Property-based: cron preview, scheduler invariants, schema
+    security.test.ts         API auth/binding/traversal hardening
+    perf.test.ts             Advisory perf baselines (not gated)
+    smoke.test.ts            Package export sanity
+    autostart-removal.test.ts  Guard: removed autostart-registration strings do not reappear
+                                in shipped product files (src/plugin/scripts/README/package.json)
+    claude-adapter / raw-adapter / engine-registry .test.ts   Engine adapter framework
+    run-usage-*.test.ts, prompt-session.test.ts, prompt-resolution.test.ts   Run usage fields, session handling
+    ...
+  helpers/                   Shared fakes (fake-claude.ts, fake-engine.ts)
+  job-alias-recreate.test.ts Vitest test kept at the tests/ root
+  integration/               On-demand E2E harness (NOT run by `npm test`)
+    run-harness.mjs          Harness entry point (npm run e2e)
+    tests.json               Canonical test definitions
+    check-engine.mjs         Check-type executor
+    README.md                Full operator and contributor guide
+```
+
+As of this writing the vitest suite has 381 tests across 41 files (`npx vitest run`); treat this as a
+point-in-time count, not a value to keep manually in sync -- run the command above for the
+current number.
+
+Naming convention: `<module-or-layer>.<optional-qualifier>.test.ts`. Place new vitest tests in `tests/unit/`. Name regression tests after the bug: `tests/unit/<area>.<ticket-or-slug>.test.ts`.
+
+## Writing tests
+
+- Use `vitest` (`describe`/`it`/`expect`). No globals beyond vitest.
+- Use `vi.useFakeTimers()` for scheduler tests; call `vi.useRealTimers()` in `afterEach`.
+- Create a scratch state directory per test (helper pattern: `makeTmpDir()` under `os.tmpdir()`). Set `CRONTICK_HOME` to it. Clean up in `afterEach`/`finally`.
+- Tests must not depend on execution order.
+- Every bug fix must have a regression test that fails without the fix.
+- Use `fast-check` for property/fuzz tests (dev dependency).
+- Inject `spawn` into `Runner` for unit-level tests; use real processes for integration.
+- Never assert on wall-clock time. Use fake timers or generous timeouts.
+
+## Testing the three surfaces
+
+### Library API
+
+**Automated coverage:** `tests/unit/smoke.test.ts` (export sanity), `tests/unit/client.test.ts` (full CrontickClient against fake and real daemons).
+
+**Manual end-to-end:**
+
+```javascript
+// save as verify-lib.mjs and run: node verify-lib.mjs
+import { createClient } from './dist/index.js';
+
+const client = createClient({ verbose: true });
+const health = await client.health();
+console.log('health:', health);
+
+await client.createJob({
+  alias: 'lib-test',
+  schedule: { kind: 'interval', everySec: 5 },
+  action: { kind: 'prompt', prompt: 'say hello from lib' },
+});
+const jobs = await client.listJobs();
+console.log('jobs:', jobs);
+
+await client.deleteJob('lib-test');
+```
+
+Expected: `health` shows `{ status: 'ok', ... }`, job appears in list, then disappears after delete.
+
+### CLI
+
+**Automated coverage:** `tests/unit/cli.test.ts` (spawns `dist/cli/index.js` with temp home, covers CRUD, daemon lifecycle, schedule commands, error paths).
+
+**Manual end-to-end:**
+
+```powershell
+# Any daemon-backed command demand-starts the daemon
+crontick jobs list
+
+# Create a prompt job on a 5-second interval
+crontick jobs new --every 5 --prompt "say hello" --alias my-test
+
+# Verify it appears
+crontick jobs list
+crontick jobs get my-test
+
+# Wait >5s, check runs
+crontick runs list --job my-test
+
+# View logs for a run
+crontick runs get <run-id>
+
+# Clean up
+crontick jobs delete my-test
+crontick daemon stop
+```
+
+Expected: `list` shows the job enabled, `runs list` shows at least one `success` run after the interval fires, `logs` prints `hello`.
+
+### MCP server
+
+**Automated coverage:** `tests/unit/mcp.test.ts` (starts real daemon + MCP server, drives all 20 tools via `@modelcontextprotocol/sdk` client over stdio). `tests/unit/surface-drift.test.ts` verifies every tool is registered.
+
+**Launch command:**
+
+```powershell
+node dist/mcp/index.js
+```
+
+Or via the CLI:
+
+```powershell
+crontick mcp
+```
+
+The server speaks JSON-RPC 2.0 over stdio. To drive it interactively, use the MCP Inspector:
+
+```powershell
+npx @modelcontextprotocol/inspector node dist/mcp/index.js
+```
+
+**Raw stdio smoke test (paste into stdin):**
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"manual","version":"0.0.0"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"crontick_info","arguments":{}}}
+```
+
+Expected: `tools/list` returns all 20 `crontick_*` tools; `crontick_info` returns a JSON text content block.
+
+**Key tools to smoke-test:** `crontick_job_create`, `crontick_job_list`, `crontick_info`, `crontick_job_schedule`, `crontick_doctor`.
+
+## Surface parity checks
+
+The `SURFACE_CAPABILITIES` constant in `src/surface.ts` is the single source of truth mapping each capability to its `clientMethod`, `cliCommand`, and `mcpTool`.
+
+`tests/unit/surface-drift.test.ts` enforces:
+
+1. Every capability has a matching method on `CrontickClient.prototype`.
+2. Every `CrontickClient` public method is accounted for (in the table or in `NON_PARITY_CLIENT_METHODS`).
+3. Every CLI command responds to `--help` without error.
+4. Every MCP tool is registered and has a `verbose` input property.
+
+**When adding a new operation:** add it to `SURFACE_CAPABILITIES`, implement it in `CrontickClient`, expose via CLI and MCP, then run the drift test. It will fail if any surface is missing the new entry.
+
+## Continuous integration
+
+Workflow file: `.github/workflows/ci.yml`
+
+| OS | Node | Steps |
+|----|------|-------|
+| `windows-latest` | 22 | install, lockfile verify, typecheck, lint, build, test, audit signatures |
+| `windows-latest` | 24 | same |
+| `ubuntu-latest` | 22 | same |
+| `ubuntu-latest` | 24 | same |
+
+A second job `verify-package` (ubuntu-latest, Node 22) runs after the matrix, in this order:
+`npm run build` -> `npm run typecheck:examples:dist` (type-checks `docs/examples/` against the
+*built* `dist/index.d.ts`, not source — see [build-and-package.md](../implementation/build-and-package.md))
+-> `npm pack --dry-run` + `scripts/verify-tarball.mjs` (tarball contents) ->
+`npm run verify-package-install` (packs a real tarball, installs it into a scratch directory,
+imports it and checks every required public export, then runs `crontick --version` and starts
+`crontick-daemon`/`crontick-mcp` under a timeout to confirm each bin actually launches).
+
+Additional workflows:
+
+- `.github/workflows/release.yml` -- manual `workflow_dispatch` release (`mode: version` opens the Version Packages PR, `mode: publish` publishes to npm; neither runs on push) behind the `verify-package` job (build, typecheck examples against dist, test, tarball verify, and `verify-package-install`).
+- `.github/workflows/audit.yml` -- weekly `npm audit --production` + signature check.
+
+## Manual pre-release verification
+
+### Fresh install
+
+The tarball install-and-launch smoke test below is now also automated in CI via the
+`verify-package` job's `npm run verify-package-install` step (real tarball, real install, real
+launch of all three bins). The manual pass remains useful as a final human sanity check before
+publishing.
+
+- [ ] `npm run build` succeeds without warnings
+- [ ] `npm pack` produces a tarball
+- [ ] In a new empty directory, `npm install <path-to-tarball>` succeeds
+- [ ] `npx crontick --version` prints the expected version
+- [ ] `npx crontick-mcp` starts without crash (Ctrl+C to exit) -- note `crontick-mcp` (and
+      `crontick-daemon`) do not parse `--help` or any other argv flag; "starts and stays up" is
+      the only observable success signal, not help text
+
+### Job kinds
+
+- [ ] Create a `prompt` job from JSON: `crontick jobs new --file prompt-job.json`
+- [ ] Create a `prompt` job via flags: `crontick jobs new --every 60 --prompt "say hello" --alias p1` (requires a configured engine)
+- [ ] Each fires at least once and `crontick runs list` shows `success`
+
+### Schedule kinds
+
+- [ ] `cron`: `crontick jobs new --cron "* * * * *" --prompt "tick" --alias c1`
+- [ ] `interval`: verified above
+- [ ] `one-shot`: `crontick jobs new --at "<30-seconds-from-now-ISO>" --prompt "once" --alias o1` fires exactly once
+
+### Daemon lifecycle
+
+- [ ] `crontick jobs list` demand-starts the daemon, and `crontick info` shows it running
+- [ ] `crontick daemon stop` stops it; status confirms
+- [ ] `crontick daemon stop`, then any daemon-backed command returns it to running
+- [ ] Kill daemon process externally, then run any command: daemon demand-starts
+- [ ] Create a job while daemon is down; run any daemon-backed command to start it; job fires at next scheduled time
+
+### State directory
+
+- [ ] Delete `CRONTICK_HOME` entirely; `crontick jobs list` recreates it via demand-start
+- [ ] With an existing populated state directory, reinstall/upgrade to a new 1.x patch or minor version; jobs and runs survive (a `runs.db` from before 1.0.0 is not a supported input -- see ADR 0001)
+
+### Three surfaces
+
+- [ ] CLI: run through the manual CLI steps above
+- [ ] Library: run `verify-lib.mjs` snippet above
+- [ ] MCP: launch `crontick mcp`, send `initialize` + `tools/list` via inspector or raw JSON
+
+### Cross-platform (Windows-specific)
+
+- [ ] On Windows, a prompt engine command resolving to PowerShell is spawned attached and still captures output (check run output)
+- [ ] Path separators in `CRONTICK_HOME` work with backslashes
+- [ ] Long command lines for prompt jobs do not exceed 30,000-char Windows limit (validated by `prompt-runtime.ts`)
+
+### Error paths
+
+- [ ] Invalid cron expression on `crontick jobs new --cron bad --prompt test --alias bad-cron` returns error
+- [ ] A prompt job whose engine command is missing from PATH fails the run with an actionable error
+
+### Docs / examples
+
+- [ ] README quick-start commands still work
+- [ ] `docs/reference/cli.md` matches `crontick --help` output
+
+## Release checklist
+
+1. Create a changeset: `npx changeset` (follow prompts for semver bump and summary).
+2. Run validation:
+   ```powershell
+   npm run validate
+   ```
+   (`validate` chains lint, typecheck, source example type-checking, a build, the full test
+   suite, and dist example type-checking; `verify-package-install` is CI-only and not part of
+   `validate` -- see step 4.)
+3. Review tarball contents: `npm pack --dry-run` (expect `dist/`, `src/skill/SKILL.md`, `README.md`, `LICENSE`).
+4. The tarball install-and-launch smoke test (installing the packed tarball and exercising
+   `crontick --version`, `crontick-daemon`, and `crontick-mcp`) now runs automatically in the
+   `verify-package` CI job (`npm run verify-package-install`); optionally repeat it locally:
+   ```powershell
+   npm pack
+   mkdir scratch && cd scratch
+   npm init -y && npm install ../crontick-<version>.tgz
+   npx crontick --version
+   ```
+5. Commit the changeset file and push to `main`.
+6. Manually run the `Release` workflow (Actions -> Release -> Run workflow) with `mode: version`; it opens a version PR via `changesets/action`. Merge it.
+7. Manually run the `Release` workflow with `mode: publish`; it publishes to npm with provenance and pushes the release tag. Nothing publishes automatically on merge.
+
+See [../../RELEASING.md](../../RELEASING.md) and [../../CONTRIBUTING.md](../../CONTRIBUTING.md) for full details.
+
+## Troubleshooting tests
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `Cannot find module 'node:sqlite'` | Vite strips `node:` prefix | Handled by `nodeSqlitePlugin` in `vitest.config.ts`; ensure Node >= 22.5 |
+| Tests hang or timeout | Daemon process leaked from prior run | Kill orphan `crontick-daemon` processes; delete `daemon.pid` in temp dirs |
+| `EADDRINUSE` in parallel runs | Port conflict between test daemon instances | Each test uses its own temp `CRONTICK_HOME`; ensure cleanup in `afterEach` |
+| Surface-drift test fails | New capability added without updating all three surfaces | Add entry to `SURFACE_CAPABILITIES`, implement in client, CLI, and MCP |
+| `npm test` fails on Windows but not Linux | Path separator or shell differences | Check `shell: "auto"` resolves to `pwsh`; use `path.join()` not string concat |
+| Flaky fuzz tests | `fast-check` seed-dependent | Re-run with `--reporter=verbose`; set `seed` in property config to reproduce |
