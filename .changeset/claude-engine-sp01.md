@@ -8,8 +8,8 @@ default. Add configurable job defaults for overlap, timeout, and retry.
 
 **Breaking (pre-1.0):** the built-in Copilot engine is removed. A config that
 still selects Copilot must define it explicitly; jobs needing that engine
-must use a custom raw engine entry. The job CLI uses `--name` and `--runner`
-in place of `--alias` and `--engine`.
+must use a custom raw engine entry. The job CLI uses `--runner` in place
+of `--engine` (`--alias`/`-a` names the job).
 
 Claude runs pre-assign session IDs, parse structured results, and expose cost,
 turns, redacted usage, transcript path, and engine status through library,

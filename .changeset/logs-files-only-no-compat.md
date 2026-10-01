@@ -5,10 +5,10 @@
 crontick now stores only its own logs. The engine's raw stdout/stderr is no longer
 written to the database (the `run_logs` table, the `/api/runs/:id/logs` and
 `/logs/stream` routes and the SSE stream are gone); only the parsed output (final
-answer, assistant text, stderr tail) is kept with each run. crontick-side lifecycle
+answer, error, capped stderr) is kept with each run. crontick-side lifecycle
 events go to one per-job log file, and `runs get`, the dashboard run detail and
-`GET /api/runs/:id/output` show only that file's absolute path (`logFile`; the
-dashboard links it and never inlines contents; `rawLogPath` is renamed `logFile`).
+`GET /api/runs/:id/output` show only that file's absolute path (`logFile`;
+the dashboard links it and never inlines contents).
 
 Total run counts are removed from `stats summary`, `stats job` and the dashboard
 (`totalRuns`).
