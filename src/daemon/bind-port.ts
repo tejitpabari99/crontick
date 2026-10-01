@@ -34,6 +34,16 @@ export function preferredDaemonPort(env: NodeJS.ProcessEnv = process.env): numbe
   return Number.isInteger(n) && n >= 0 && n <= 65535 ? n : DEFAULT_DAEMON_PORT;
 }
 
+/**
+ * Note for a daemon bound to a port other than the preferred one (`null` when it is the preferred port).
+ * Shown by `daemon start`/`restart`, `daemon status`, `info`, and `doctor`.
+ */
+export function describeDaemonPort(port: number | undefined, env: NodeJS.ProcessEnv = process.env): string | null {
+  const preferred = preferredDaemonPort(env);
+  if (port === undefined || preferred === 0 || port === preferred) return null;
+  return `started on fallback port ${port}; default ${preferred} is in use`;
+}
+
 /** Human-readable notice for a taken preferred port. */
 export function formatPortFallbackMessage(preferred: number, occupant: PortOccupant): string {
   if (occupant.kind === 'crontick') {

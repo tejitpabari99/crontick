@@ -9,7 +9,7 @@ Source of truth: docs/agent_files/users-tejitpabari-claude-engine-20260927-2325/
 | # | Task | Depends on | Status |
 |---|---|---|---|
 | 1 | Fixed default daemon port with fallback | - | done |
-| 2 | Surface the daemon port (ensure, status, info, doctor) | 1 | todo |
+| 2 | Surface the daemon port (ensure, status, info, doctor) | 1 | done |
 | 3 | Assistant-text-only run output contract | - | todo |
 | 4 | Raw-log daemon route and `rawLogPath` | SP05 T1 | todo |
 | 5 | Dashboard UI: theme icons, action alignment, run modal | 3, 4 | todo |

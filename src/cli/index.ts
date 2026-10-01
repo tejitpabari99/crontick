@@ -605,6 +605,7 @@ const info = program.command('info')
       stdout(result.daemon.running
         ? `daemon     running (pid ${String(result.daemon.pid ?? '?')}, port ${String(result.daemon.port ?? '?')})`
         : 'daemon     stopped (starts automatically on first use, or run: crontick daemon start)');
+      if (result.daemon.portNote) stdout(`           ${result.daemon.portNote}`);
       stdout(`config     ${result.configPath}${result.configExists ? '' : ' (not created yet - built-in defaults in use)'}`);
       stdout(result.dashboardUrl
         ? `dashboard  ${result.dashboardUrl}${result.daemon.running ? '' : ' (available once the daemon is running; it starts automatically on first use)'}`
@@ -648,6 +649,7 @@ daemon.command('start')
       stdout(result.started
         ? `Daemon started (pid ${String(result.pid ?? '?')}, ${result.baseUrl})`
         : `Daemon already running (pid ${String(result.pid ?? '?')}, ${result.baseUrl})`);
+      if (result.portNote) stdout(`Note: ${result.portNote}`);
     } catch (err) { handleError(err); }
   });
 daemon.command('stop').description('Stop the daemon').action(async () => {
@@ -660,6 +662,7 @@ daemon.command('restart').description('Stop the daemon and start it again').acti
   try {
     const result = await client().daemonRestart();
     stdout(`Daemon restarted (pid ${String(result.pid ?? '?')}, ${result.baseUrl})`);
+    if (result.portNote) stdout(`Note: ${result.portNote}`);
   } catch (err) { handleError(err); }
 });
 daemon.command('status').description('Show whether the daemon is running').action(async () => {

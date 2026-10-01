@@ -176,6 +176,10 @@ export interface DaemonStatus {
   version: string;
   port: number;
   baseUrl: string;
+  /** Dashboard URL served by this daemon. */
+  dashboardUrl: string;
+  /** `started on fallback port N; default 47615 is in use` when the daemon is not on the preferred port, else null. */
+  portNote: string | null;
   uptimeSec: number;
   jobs: number;
   missedFires: DaemonMissedFiresSummary;
@@ -199,7 +203,7 @@ export interface CrontickInfo {
   /** Whether the config file exists on disk. When false, built-in defaults are in use (create it with initConfig). */
   configExists: boolean;
   paths: CrontickInfoPaths;
-  daemon: { running: boolean; pid?: number; port?: number };
+  daemon: { running: boolean; pid?: number; port?: number; portNote?: string | null };
   /**
    * URL of the daemon-served dashboard, or null when it cannot be resolved
    * (no running daemon and no readable port file). The dashboard is always
@@ -522,7 +526,7 @@ export class CrontickClient {
     let dashboardUrl: string | null = null;
     try {
       const status = await this.request<DaemonStatus>('GET', '/api/daemon/status', undefined, { ensure: false });
-      daemon = { running: true, pid: status.pid, port: status.port };
+      daemon = { running: true, pid: status.pid, port: status.port, portNote: status.portNote ?? null };
       dashboardUrl = status.port ? `http://127.0.0.1:${String(status.port)}/dashboard` : null;
     } catch {
       daemon = { running: false };

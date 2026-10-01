@@ -7,6 +7,7 @@ import { pidFilePath, portFilePath } from '../paths.js';
 import { ensureDaemon, resolveDaemonBaseUrl, type DaemonInfo, type EnsureDaemonOptions } from './ensure.js';
 import { nullLogger, type Logger } from '../logger.js';
 import { POLL_MS } from '../constants/daemon.js';
+import { describeDaemonPort } from './bind-port.js';
 import { sleep } from '../utils/sleep.js';
 
 export interface DaemonLifecycleOptions extends EnsureDaemonOptions {
@@ -15,6 +16,8 @@ export interface DaemonLifecycleOptions extends EnsureDaemonOptions {
 
 export interface DaemonStartResult extends DaemonInfo {
   ok: true;
+  /** `started on fallback port N; default 47615 is in use` when the daemon is on a fallback port, else absent. */
+  portNote?: string;
   foregroundExitCode?: number | null;
 }
 
@@ -39,6 +42,8 @@ export interface DaemonStopResult {
 
 export interface DaemonRestartResult extends DaemonInfo {
   ok: true;
+  /** See {@link DaemonStartResult.portNote}. */
+  portNote?: string;
   stopped: boolean;
   previousPid?: number;
 }
@@ -65,7 +70,8 @@ export async function startDaemon(options: DaemonLifecycleOptions = {}): Promise
 
   logger.debug('Ensuring background daemon');
   const info = await ensureDaemon({ ...options, startDaemon: true });
-  return { ok: true, ...info };
+  const portNote = describeDaemonPort(info.port, { ...process.env, ...(options.env ?? {}) });
+  return { ok: true, ...info, ...(portNote ? { portNote } : {}) };
 }
 
 /** How long to wait for the initial HTTP response from POST /api/daemon/stop before falling back to SIGTERM. */
@@ -235,7 +241,8 @@ async function tryGracefulHttpStop(env: NodeJS.ProcessEnv, logger: Logger): Prom
 export async function restartDaemon(options: EnsureDaemonOptions = {}): Promise<DaemonRestartResult> {
   const stopped = await stopDaemon({ env: options.env, logger: options.logger });
   const info = await ensureDaemon({ ...options, startDaemon: true });
-  return { ok: true, ...info, stopped: stopped.stopped, previousPid: stopped.pid };
+  const portNote = describeDaemonPort(info.port, { ...process.env, ...(options.env ?? {}) });
+  return { ok: true, ...info, ...(portNote ? { portNote } : {}), stopped: stopped.stopped, previousPid: stopped.pid };
 }
 
 /** Read the PID file and verify the process is alive. Returns undefined if stale or absent. */

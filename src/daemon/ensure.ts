@@ -336,7 +336,7 @@ function normalizeBaseUrl(url: string): string {
   return url.replace(/\/+$/, '');
 }
 
-function readPortFile(env: NodeJS.ProcessEnv = process.env): number | undefined {
+export function readPortFile(env: NodeJS.ProcessEnv = process.env): number | undefined {
   try {
     const port = parseInt(readFileSync(portFilePath(env), 'utf-8').trim(), 10);
     return Number.isInteger(port) && port > 0 ? port : undefined;

@@ -6,7 +6,9 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dataDir, ensureDirs, portFilePath } from './paths.js';
 import { configFilePath } from './config.js';
-import { resolveDaemonBaseUrl } from './daemon/ensure.js';
+import net from 'node:net';
+import { probeHealth, readPortFile, resolveDaemonBaseUrl } from './daemon/ensure.js';
+import { describeDaemonPort, preferredDaemonPort } from './daemon/bind-port.js';
 
 export interface DoctorCheck {
   name: string;
@@ -66,13 +68,17 @@ export async function runDoctorChecks(options: DoctorOptions = {}): Promise<Doct
   checks.push({ name: 'port file readable', ok: portFileExists, note: portFileExists ? portPath : 'not found' });
 
   let baseUrl: string | undefined;
+  let daemonReachable = false;
   try {
     baseUrl = await resolveDaemonBaseUrl({ daemonUrl: options.daemonUrl, env });
     const res = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(2_000) });
+    daemonReachable = res.ok;
     checks.push({ name: 'daemon reachable', ok: res.ok, note: res.ok ? 'ok' : `HTTP ${res.status}` });
   } catch {
     checks.push({ name: 'daemon reachable', ok: false, note: 'not running' });
   }
+
+  checks.push(await daemonPortCheck(env, portFileExists, daemonReachable));
 
   if (baseUrl) {
     try {
@@ -108,4 +114,33 @@ export async function runDoctorChecks(options: DoctorOptions = {}): Promise<Doct
   }
 
   return { ok: checks.every((check) => check.ok), checks };
+}
+
+/** "daemon port" check: default vs fallback port, and a foreign listener on the default port when no daemon runs. */
+async function daemonPortCheck(env: NodeJS.ProcessEnv, portFileExists: boolean, daemonReachable: boolean): Promise<DoctorCheck> {
+  const preferred = preferredDaemonPort(env);
+  const port = readPortFile(env);
+  if (port !== undefined) {
+    const note = describeDaemonPort(port, env);
+    return { name: 'daemon port', ok: true, note: note ? `${port} (${note})` : preferred === 0 ? String(port) : `${port} (default)` };
+  }
+  if (!portFileExists && !daemonReachable && preferred > 0) {
+    // No daemon: is something else squatting on the preferred port?
+    const probe = await probeHealth(`http://127.0.0.1:${preferred}`, 1_000);
+    if (!probe.ok && (await isPortListening(preferred))) {
+      return { name: 'daemon port', ok: true, note: `default ${preferred} is held by another process; the daemon will start on a free port` };
+    }
+    return { name: 'daemon port', ok: true, note: `no daemon running; default ${preferred} is free` };
+  }
+  return { name: 'daemon port', ok: true, note: 'unknown (port file unreadable)' };
+}
+
+function isPortListening(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ port, host: '127.0.0.1' });
+    const done = (result: boolean): void => { socket.destroy(); resolve(result); };
+    socket.setTimeout(1_000, () => done(false));
+    socket.once('connect', () => done(true));
+    socket.once('error', () => done(false));
+  });
 }

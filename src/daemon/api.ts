@@ -26,6 +26,7 @@ import { nullLogger, redactValue, type Logger } from '../logger.js';
 import { readEnvFileForAction } from './env-file.js';
 import { SSE_POLL_MS } from '../constants/daemon.js';
 import { resolveJobLogPath } from './job-log-file.js';
+import { describeDaemonPort } from './bind-port.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -393,6 +394,8 @@ async function handleRequest(
         version: VERSION,
         port: ctx.port,
         baseUrl: `http://127.0.0.1:${ctx.port}`,
+        dashboardUrl: `http://127.0.0.1:${ctx.port}/dashboard`,
+        portNote: describeDaemonPort(ctx.port),
         uptimeSec: Math.floor((Date.now() - ctx.startedAt.getTime()) / 1000),
         jobs: ctx.store.listJobs().length,
         // L2: report-only missed-fire summary computed once at startup.
