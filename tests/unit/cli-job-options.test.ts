@@ -107,14 +107,14 @@ describe('cron fires in machine local time', () => {
   });
 });
 
-describe('legacy stored schedule.tz', () => {
-  it('is ignored and warned about once per job file at load', () => {
+describe('stored schedule.tz', () => {
+  it('is silently ignored at load: nothing is warned, logged or published', () => {
     const dir = newHome();
     mkdirSync(join(dir, 'jobs'), { recursive: true });
     const id = '11111111-1111-4111-8111-111111111111';
     writeFileSync(join(dir, 'jobs', `${id}.json`), JSON.stringify({
       id,
-      alias: 'legacy-tz',
+      alias: 'stored-tz',
       enabled: true,
       schedule: { kind: 'cron', cron: '0 9 * * *', tz: 'Europe/London' },
       action: { kind: 'prompt', prompt: 'x', args: [], reuseSession: false },
@@ -125,9 +125,8 @@ describe('legacy stored schedule.tz', () => {
     try {
       store.loadJobsFromDisk();
       expect(store.getJob(id)?.schedule).toEqual({ kind: 'cron', cron: '0 9 * * *' });
-      const warnings = events.filter((e) => e.level === 'warn' && e.message.includes('legacy schedule.tz'));
-      expect(warnings).toHaveLength(1);
-      expect(warnings[0]!.data).toMatchObject({ jobId: id, tz: 'Europe/London' });
+      expect(events.filter((e) => /tz|timezone/i.test(`${e.message} ${JSON.stringify(e.data ?? {})}`))).toEqual([]);
+      expect(events.filter((e) => e.level === 'warn' || e.level === 'error')).toEqual([]);
     } finally {
       store.close();
     }

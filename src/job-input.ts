@@ -161,16 +161,15 @@ export interface JobCreateCliOptions {
 export type JobPatchCliOptions = JobCreateCliOptions;
 
 /**
- * Cron schedules fire in the machine local timezone; the `tz` field was removed.
+ * Cron schedules fire in the machine local timezone and have no `tz` field.
  * Rejecting it on new input beats silently stripping a timezone the caller
- * expected to apply. (Legacy stored jobs that still carry `tz` are tolerated:
- * their `tz` is ignored and the daemon warns once per job at startup.)
+ * expected to apply. (A `tz` in an already-stored job file is ignored.)
  */
 function assertNoScheduleTimezone(schedule: unknown): void {
   if (isRecord(schedule) && 'tz' in schedule && schedule['tz'] !== undefined) {
     throw new CrontickError(
       'VALIDATION_ERROR',
-      'schedule.tz is no longer supported: cron schedules fire in the machine local timezone. Remove tz from the schedule.',
+      'schedule.tz is not supported: cron schedules fire in the machine local timezone. Remove tz from the schedule.',
     );
   }
 }
@@ -380,7 +379,7 @@ function withEngineDefaultForNewPromptAction(
 /**
  * Resolves the effective args for prompt actions from the two
  * mutually exclusive CLI sources: explicit repeatable `--arg <value>` flags
- * (always correct, shim-independent) and legacy `--` positional args (a
+ * (always correct, shim-independent) and `--` positional args (a
  * convenience that only survives intact on invocations where the shell/shim
  * doesn't mangle it). Combining both in
  * the same command is rejected rather than silently picking one, since that

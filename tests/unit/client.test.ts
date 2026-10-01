@@ -121,7 +121,7 @@ const server = http.createServer(async (req, res) => {
     }
     return json(res, 200, runs.get(runId) ?? { id: runId, status: 'queued' });
   }
-  if (req.method === 'GET' && url.pathname === '/api/stats/summary') return json(res, 200, { totalJobs: jobs.size, enabledJobs: [...jobs.values()].filter(j => j.enabled !== false).length, succeeded: 0, failed: 0, avgDurationMs: null });
+  if (req.method === 'GET' && url.pathname === '/api/stats/summary') return json(res, 200, { totalJobs: jobs.size, enabledJobs: [...jobs.values()].filter(j => j.enabled !== false).length, succeeded: 0, failed: 0 });
   const statsMatch = url.pathname.match(/^\\/api\\/stats\\/jobs\\/([^/]+)$/);
   if (req.method === 'GET' && statsMatch) return json(res, 200, { jobId: decodeURIComponent(statsMatch[1]), succeeded: 0, failed: 0, lastStatus: null, lastRunAt: null });
   if (req.method === 'GET' && url.pathname === '/api/dashboard/status') {
@@ -132,7 +132,7 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, {
       generatedAt: Date.now(),
       health: { ok: true, product: 'crontick', version: 'test', uptimeSec: 1, pid: process.pid, port: 0, node: process.versions.node, platform: process.platform, jobs: { total: jobs.size, enabled: jobs.size }, runs: { last24h: runs.size, failures24h: 0 } },
-      stats: { totalJobs: jobs.size, enabledJobs: jobs.size, succeeded: 0, failed: 0, avgDurationMs: null },
+      stats: { totalJobs: jobs.size, enabledJobs: jobs.size, succeeded: 0, failed: 0 },
       jobs: [...jobs.values()].map((job) => ({ id: job.id, description: job.description ?? null, enabled: job.enabled !== false, scheduleLabel: job.schedule?.cron ?? 'schedule', actionKind: job.action?.kind ?? 'exec', lastStatus: null, lastRunAt: null, nextRunAt: null, job })),
       runs: [...runs.values()].map((run) => ({ ...run, endedAt: null, durationMs: null, exitCode: null, error: null })),
     });
@@ -353,7 +353,7 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     const withTz = { kind: 'cron', cron: '0 1 * * *', tz: 'UTC' } as unknown as { kind: 'cron'; cron: string };
     await expect(client.updateJob('client-cron-tz-update-job', { schedule: withTz })).rejects.toMatchObject({
       code: 'VALIDATION_ERROR',
-      message: expect.stringContaining('schedule.tz is no longer supported'),
+      message: expect.stringContaining('schedule.tz is not supported'),
     });
     await expect(client.createJob({
       alias: 'client-cron-tz-create-job',

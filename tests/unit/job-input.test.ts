@@ -530,8 +530,8 @@ describe('buildJobPatchFromUpdateOptions - no update flag silently no-ops', () =
 
   it('rejects the removed schedule.tz on create and patch input', () => {
     const withTz = { kind: 'cron', cron: '0 9 * * *', tz: 'UTC' } as unknown as JobCreateInput['schedule'];
-    expect(() => normalizeJobInput({ schedule: withTz, action: { kind: 'prompt', prompt: 'x' } })).toThrow(/schedule\.tz is no longer supported/);
-    expect(() => normalizeJobPatch('job-1', existingJob({ kind: 'prompt', prompt: 'x', args: [] }), { schedule: withTz })).toThrow(/schedule\.tz is no longer supported/);
+    expect(() => normalizeJobInput({ schedule: withTz, action: { kind: 'prompt', prompt: 'x' } })).toThrow(/schedule\.tz is not supported/);
+    expect(() => normalizeJobPatch('job-1', existingJob({ kind: 'prompt', prompt: 'x', args: [] }), { schedule: withTz })).toThrow(/schedule\.tz is not supported/);
   });
 
   it('resolves --enable/--disable flags in core and rejects passing both together', () => {
