@@ -41,10 +41,10 @@ describe('formatRunDetail', () => {
 
 describe('formatJobStats', () => {
   it('converts lastRunAt to local ISO and labels totalTurns', () => {
-    const out = formatJobStats({ jobId: 'j', totalRuns: 1, succeeded: 1, failed: 0, canceled: 0, skipped: 0, lastStatus: 'success', lastRunAt: run.startedAt, avgDurationSec: 1, totalCostUsd: 0, totalTurns: 6 });
+    const out = formatJobStats({ jobId: 'j', succeeded: 1, failed: 0, canceled: 0, skipped: 0, lastStatus: 'success', lastRunAt: run.startedAt, avgDurationSec: 1, totalCostUsd: 0, totalTurns: 6 });
     expect(out['lastRunAt']).toBe(formatLocalIso(run.startedAt));
     expect(out['totalTurns (agent turns, summed over runs)']).toBe(6);
-    expect(formatJobStats({ jobId: 'j', totalRuns: 0, succeeded: 0, failed: 0, canceled: 0, skipped: 0, lastStatus: null, lastRunAt: null, avgDurationSec: null, totalCostUsd: 0, totalTurns: 0 })['lastRunAt']).toBeNull();
+    expect(formatJobStats({ jobId: 'j', succeeded: 0, failed: 0, canceled: 0, skipped: 0, lastStatus: null, lastRunAt: null, avgDurationSec: null, totalCostUsd: 0, totalTurns: 0 })['lastRunAt']).toBeNull();
   });
 });
 
@@ -62,7 +62,8 @@ describe('GET /api/stats/jobs/:id', () => {
       h.store.updateRun(r.id, { status: 'success', turns: 2 });
     }
     const stats = await h.call('GET', '/api/stats/jobs/many-runs');
-    expect(stats.data).toMatchObject({ totalRuns: 130, succeeded: 130, totalTurns: 260, lastRunAt: 1_129 });
+    expect(stats.data).not.toHaveProperty('totalRuns');
+    expect(stats.data).toMatchObject({ succeeded: 130, totalTurns: 260, lastRunAt: 1_129 });
   });
 });
 

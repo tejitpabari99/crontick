@@ -113,7 +113,6 @@ export interface ImportResult {
 export interface StatsSummary {
   totalJobs: number;
   enabledJobs: number;
-  totalRuns: number;
   succeeded: number;
   failed: number;
   canceled: number;
@@ -151,7 +150,6 @@ export interface RunRecord {
 
 export interface JobStats {
   jobId: string;
-  totalRuns: number;
   succeeded: number;
   failed: number;
   canceled: number;

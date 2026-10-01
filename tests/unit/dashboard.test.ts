@@ -102,7 +102,7 @@ describe('core dashboard data model', () => {
     const data = buildDashboardData({ store, scheduler, startedAt: new Date(Date.now() - 5000), port: 12345, pid: 6789 }, { runsLimit: 10 });
 
     expect(data.health).toMatchObject({ ok: true, product: 'crontick', port: 12345, pid: 6789 });
-    expect(data.stats).toMatchObject({ totalJobs: 1, enabledJobs: 1, totalRuns: 1, succeeded: 1, failed: 0 });
+    expect(data.stats).toMatchObject({ totalJobs: 1, enabledJobs: 1, succeeded: 1, failed: 0 });
     expect(data.jobs[0]).toMatchObject({ id: job.id, scheduleLabel: 'every 60s', actionKind: 'prompt', lastStatus: 'success' });
     expect(data.jobs[0].nextRunAt).toEqual(expect.any(String));
     expect(data.runs[0]).toMatchObject({ id: run.id, jobId: job.id, status: 'success', durationMs: 25, exitCode: 0 });
@@ -202,7 +202,7 @@ describe('core dashboard data model', () => {
     // (50 + 150) / 2 = 100 — not dragged toward 0 by the 23 non-executed rows.
     expect(data.stats.avgDurationMs).toBe(100);
     expect(data.stats.avgDurationSec).toBe(0.1);
-    expect(data.stats.totalRuns).toBe(26);
+    expect(data.stats).not.toHaveProperty('totalRuns');
     expect(data.stats).toMatchObject({ canceled: 1, skipped: 1 });
   });
 });

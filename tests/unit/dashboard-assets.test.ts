@@ -43,6 +43,11 @@ describe('dashboard labels and run modal', () => {
     expect(js).toContain('target="_blank" rel="noopener"');
   });
 
+  it('does not display a total run count', () => {
+    expect(js).not.toContain('totalRuns');
+    expect(js).not.toMatch(/<span>runs<\/span>/);
+  });
+
   it('uses the Alias term and the full job id', () => {
     expect(js).toContain("kv('Alias'");
     expect(js).toContain("kv('Working directory'");

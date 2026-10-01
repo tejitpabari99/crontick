@@ -15,7 +15,6 @@ const HOME = resolve('.crontick', 'stats-excludes-deleted-job-runs-ctd-014');
 type StatsSummary = {
   totalJobs: number;
   enabledJobs: number;
-  totalRuns: number;
   succeeded: number;
   failed: number;
   avgDurationMs: number | null;
@@ -175,7 +174,7 @@ describe('deleted-job aggregates', () => {
     await waitForTerminalRun(deletedRunId);
 
     const beforeDelete = await client.statsSummary();
-    expect(beforeDelete).toMatchObject({ totalJobs: 2, enabledJobs: 2, totalRuns: 2, succeeded: 2, failed: 0 });
+    expect(beforeDelete).toMatchObject({ totalJobs: 2, enabledJobs: 2, succeeded: 2, failed: 0 });
 
     const deletion = await client.deleteJob(deletedJobId);
     expect(deletion).toMatchObject({ ok: true, deletedRuns: 1 });
@@ -184,7 +183,6 @@ describe('deleted-job aggregates', () => {
     expect(summary).toEqual({
       totalJobs: 1,
       enabledJobs: 1,
-      totalRuns: 1,
       succeeded: 1,
       failed: 0,
       canceled: 0,

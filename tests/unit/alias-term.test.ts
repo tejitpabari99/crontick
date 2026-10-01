@@ -92,7 +92,7 @@ describe('DELETE /api/jobs/:id removes the job history (SP03 task 4)', () => {
     expect(calls).toEqual(['cancel']);
     expect((await h.call('GET', '/api/runs')).data).toEqual([]);
     expect((await h.call('GET', `/api/runs?jobId=${id}`)).data).toEqual([]);
-    expect((await h.call('GET', '/api/stats/summary')).data.totalRuns).toBe(0);
+    expect((await h.call('GET', '/api/stats/summary')).data).not.toHaveProperty('totalRuns');
   });
 });
 

@@ -49,7 +49,6 @@ export interface DashboardHealth {
 export interface DashboardStats {
   totalJobs: number;
   enabledJobs: number;
-  totalRuns: number;
   succeeded: number;
   failed: number;
   canceled: number;
@@ -206,7 +205,6 @@ export function buildDashboardStats(jobs: Job[], runs: Run[]): DashboardStats {
   return {
     totalJobs: jobs.length,
     enabledJobs: jobs.filter((job) => job.enabled).length,
-    totalRuns: runs.length,
     succeeded,
     failed,
     canceled: runs.filter((run) => run.status === 'canceled').length,

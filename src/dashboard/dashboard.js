@@ -127,7 +127,6 @@ function renderHealth(health) {
 function renderSummary(stats) {
   document.getElementById('summary').innerHTML = `
     <div class="card"><strong>${escHtml(stats.enabledJobs)}/${escHtml(stats.totalJobs)}</strong><span>jobs enabled</span></div>
-    <div class="card"><strong>${escHtml(stats.totalRuns)}</strong><span>runs</span></div>
     <div class="card"><strong>${escHtml(stats.failed)}</strong><span>failed</span></div>
     <div class="card"><strong>${escHtml(formatSeconds(stats.avgDurationSec))}</strong><span>avg duration</span></div>
   `;
@@ -415,7 +414,8 @@ async function renderDrawer(jobId, opts = {}) {
     fetch(`/api/runs?jobId=${encodeURIComponent(jobId)}&limit=10`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
   ]);
   if (drawerJobId !== jobId || document.getElementById('job-drawer').hidden) return;
-  const successRate = stats && stats.totalRuns > 0 ? `${Math.round((stats.succeeded / stats.totalRuns) * 100)}%` : '—';
+  const finished = stats ? stats.succeeded + stats.failed + stats.canceled + stats.skipped : 0;
+  const successRate = finished > 0 ? `${Math.round((stats.succeeded / finished) * 100)}%` : '—';
   const timeouts = [action.timeoutSec != null ? `${action.timeoutSec} s` : null].filter(Boolean).join(', ') || '—';
   const retry = job.retry ? `max ${job.retry.max}, backoff ${job.retry.backoffSec} s` : '—';
   const focusedAction = document.activeElement?.dataset?.drawerAction;
@@ -445,7 +445,6 @@ async function renderDrawer(jobId, opts = {}) {
     <pre class="log-pane">${escHtml(action.prompt ?? action.command ?? JSON.stringify(action, null, 2))}</pre>
     <h4>Stats</h4>
     <div class="summary drawer-stats">
-      <div class="card"><strong>${escHtml(stats ? stats.totalRuns : '—')}</strong><span>runs</span></div>
       <div class="card"><strong>${escHtml(successRate)}</strong><span>success rate</span></div>
       <div class="card"><strong>${escHtml(formatSeconds(stats?.avgDurationSec))}</strong><span>avg duration</span></div>
     </div>

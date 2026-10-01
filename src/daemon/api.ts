@@ -376,7 +376,6 @@ async function handleRequest(
       const runs = ctx.store.listRuns({ jobId: job.id });
       return sendJson(res, 200, {
         jobId: job.id,
-        totalRuns: runs.length,
         succeeded: runs.filter((r) => r.status === 'success').length,
         failed: runs.filter((r) => r.status === 'failed').length,
         canceled: runs.filter((r) => r.status === 'canceled').length,

@@ -97,7 +97,7 @@ export function formatRunDetail(run: RunRecord, out: RunDetailOutput): string {
 
 /** `crontick stats job` presentation: local-ISO `lastRunAt` and a self-explanatory turns label. Pure. */
 export function formatJobStats(stats: {
-  jobId: string; totalRuns: number; succeeded: number; failed: number; canceled: number; skipped: number;
+  jobId: string; succeeded: number; failed: number; canceled: number; skipped: number;
   lastStatus: string | null; lastRunAt: number | null; avgDurationSec: number | null; totalCostUsd: number; totalTurns: number;
 }): Record<string, unknown> {
   const { totalTurns, lastRunAt, ...rest } = stats;
