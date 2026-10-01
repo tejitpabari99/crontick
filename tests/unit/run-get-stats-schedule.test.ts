@@ -17,7 +17,7 @@ const run: RunRecord = {
 
 describe('formatRunDetail', () => {
   it('prints labeled fields, transcript then log file, a blank line, then the cleaned result; Status once', () => {
-    const text = formatRunDetail(run, { error: null, result: 'the answer', output: 'transcript', stderr: 'warn' });
+    const text = formatRunDetail(run, { error: null, result: 'the answer', stderr: 'warn' });
     const lines = text.split('\n');
     expect(lines).toContain(`Started: ${formatLocalIso(run.startedAt)}`);
     expect(lines).toContain('Runner Session ID: sess-1');
@@ -31,7 +31,7 @@ describe('formatRunDetail', () => {
   });
 
   it('shows the error instead of stderr, falls back to the readable output, and notes disabled file logging', () => {
-    const text = formatRunDetail({ ...run, logFile: null }, { error: 'boom', result: null, output: 'readable', stderr: 'noise' });
+    const text = formatRunDetail({ ...run, logFile: null }, { error: 'boom', result: 'readable', stderr: 'noise' });
     expect(text).toContain('Log file: (file logging is disabled)');
     expect(text).toContain('Error: boom');
     expect(text).toContain('readable');

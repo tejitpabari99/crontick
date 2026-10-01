@@ -121,7 +121,7 @@ describe('core dashboard data model', () => {
     store.updateRun(rb.id, { status: 'failed', durationMs: 20, error: '100% broken_thing' });
     const rc = store.insertRun(c.id, Date.now() - 1000);
     store.updateRun(rc.id, { status: 'success', durationMs: 30 });
-    store.setRunOutput(rc.id, { format: 'text', result: 'needle-in-the-haystack', engineError: null, output: 'needle-in-the-haystack', stderr: '', truncated: false });
+    store.setRunOutput(rc.id, { format: 'text', result: 'needle-in-the-haystack', engineError: null, stderr: '' });
     const ctx = { store, scheduler, startedAt: new Date(), port: 1 };
     const ids = (opts: Parameters<typeof buildDashboardData>[1]) => buildDashboardData(ctx, opts).runs.map((r) => r.id).sort();
 

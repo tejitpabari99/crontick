@@ -6,7 +6,8 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { spawn as nodeSpawn } from 'node:child_process';
-import { Runner, truncationMarker, ADOPTED_RUN_EXITED_MESSAGE, truncateToUtf8Boundary } from '../../src/daemon/runner.js';
+import { Runner, ADOPTED_RUN_EXITED_MESSAGE } from '../../src/daemon/runner.js';
+import { truncationMarker, truncateToUtf8Boundary } from '../../src/daemon/output-collector.js';
 import { DEFAULT_MAX_OUTPUT_BYTES_PER_RUN } from '../../src/constants/retention.js';
 import { isProcessAlive } from '../../src/process-liveness.js';
 import { Store } from '../../src/daemon/store.js';
@@ -178,7 +179,7 @@ describe('Runner', () => {
     const job = execJob('log', node, ['-e', 'process.stdout.write("hello world\\n")']);
     const run = store.insertRun(job.id);
     await runner.run(job, run.id, store);
-    expect(store.getRunOutput(run.id)?.output).toContain('hello world');
+    expect(store.getRunOutput(run.id)?.result).toContain('hello world');
   });
 
   it('exec: stderr logs are captured', async () => {
@@ -503,7 +504,7 @@ describe('Runner', () => {
 
     expect(files.text()).toContain('reuseSession was ignored');
     expect(files.text()).toContain(`[run ${run.id}]`);
-    expect(store.getRunOutput(run.id)?.output ?? '').not.toContain('reuseSession was ignored');
+    expect(store.getRunOutput(run.id)?.result ?? '').not.toContain('reuseSession was ignored');
   });
 
   it('prompt: captures and persists a reusable session id after first successful run', async () => {
@@ -526,7 +527,7 @@ describe('Runner', () => {
     // The captured-session-id line is a crontick-side event: it lives in the
     // crontick log file, never in the stored engine output.
     expect(files.text()).toContain('captured session id');
-    expect(store.getRunOutput(run.id)?.output ?? '').not.toContain('captured session id');
+    expect(store.getRunOutput(run.id)?.result ?? '').not.toContain('captured session id');
   });
 
   it('prompt: captures a session id from the rolling transcript tail after long output', async () => {
@@ -698,7 +699,7 @@ describe('Runner', () => {
       const updated = store.getRun(run.id)!;
       expect(updated.outputTruncated).toBe(true);
 
-      const text = store.getRunOutput(run.id)?.output ?? '';
+      const text = store.getRunOutput(run.id)?.result ?? '';
       expect(text).toContain(truncationMarker(cap).trim());
       // Captured payload before the marker must not exceed the cap.
       const beforeMarker = text.split(truncationMarker(cap).trim())[0]!.trimEnd();
@@ -751,7 +752,7 @@ describe('Runner', () => {
       await runner.run(job, run.id, store);
       expect(store.getRun(run.id)!.outputTruncated).toBe(true);
 
-      const text = store.getRunOutput(run.id)?.output ?? '';
+      const text = store.getRunOutput(run.id)?.result ?? '';
       const beforeMarker = text.split(truncationMarker(cap).trim())[0]!.trimEnd();
       expect(beforeMarker).not.toContain('\uFFFD');
       expect(beforeMarker).toBe('ab');
@@ -801,7 +802,7 @@ describe('Runner', () => {
       expect(joined).toContain('run finished');
       expect(joined).not.toContain('engine-output');
       expect(joined).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-      expect(store.getRunOutput(run.id)).toMatchObject({ format: 'text', result: 'engine-output', output: 'engine-output' });
+      expect(store.getRunOutput(run.id)).toMatchObject({ format: 'text', result: 'engine-output' });
     });
 
     it('never fails a run when the per-job file sink throws (non-blocking)', async () => {
@@ -816,7 +817,7 @@ describe('Runner', () => {
       await runner.run(job, run.id, store);
 
       expect(store.getRun(run.id)?.status).toBe('success');
-      expect(store.getRunOutput(run.id)?.output).toBe('still-ok');
+      expect(store.getRunOutput(run.id)?.result).toBe('still-ok');
     });
   });
 

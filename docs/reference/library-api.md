@@ -414,23 +414,22 @@ interface RunOutput {
   runId: string;
   status: string;
   format: 'claude-stream-json' | 'text'; // how engine stdout was parsed
-  result: string | null;   // the engine's final answer (Claude `result` text, else last assistant text, else plain stdout)
+  result: string | null;   // the engine's final answer (Claude `result` event text, else plain stdout for text engines)
   error: string | null;    // run.error, else an error reported in the engine output
-  output: string;          // assistant text only; segments split by tool calls are joined with "---"
   logFile?: string | null; // per-job file of crontick-side events (all runs of the job), null when file logging is off; set by the daemon route
-  stderr: string;          // engine stderr, redacted, last 4000 chars
+  stderr: string;          // full engine stderr, redacted (no size cap)
   sessionId: string | null;
   costUsd: number | null;
   turns: number | null;
   durationMs: number | null;
   usage: NormalizedUsage | null; // display-only token counts parsed from usageJson; null when none
-  truncated: boolean;      // captured output hit the retention cap, or this view was capped
+  truncated: boolean;      // a text engine's stdout hit the retention cap
 }
 ```
 
 `NormalizedUsage` is `{ inputTokens?, outputTokens?, cacheReadTokens?, cacheCreationTokens?, thinkingTokens? }`; fields are `undefined` when missing or non-numeric. It reads the run-total counters of Claude's usage block and ignores `iterations[]`. Cost (`costUsd`) is Claude-reported `total_cost_usd`, not computed by crontick.
 
-The view drops Claude `thinking` blocks (and their opaque `signature`), hook/system events, tool results, and base64 hook payloads, and applies secret redaction. crontick does not store the engine's raw logs: the runner keeps its own transcript (`transcriptPath`), and `logFile` holds only crontick's own events.
+Only the final `result` event and stderr are kept (tool calls, interim assistant text, thinking and system events are discarded as the stream arrives), with secret redaction applied. crontick does not store the engine's raw logs: the runner keeps its own transcript (`transcriptPath`), and `logFile` holds only crontick's own events.
 
 ### DashboardStats
 

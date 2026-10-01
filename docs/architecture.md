@@ -142,7 +142,7 @@ limit and cap per-transaction lock time.
 403. **Arbitrary command execution**: job actions run engine binaries as the same OS user running
 the daemon, with no sandboxing or allowlist -- prompt-engine `command`/`args` are trusted as
 configured (a malicious engine config can execute arbitrary code). **Secrets**: job JSON files are
-plain-text; `safeRedact()`/`redactText()`/`redactValue()` strip common secret patterns from
+plain-text; `redactText()`/`redactValue()` strip common secret patterns from
 captured output and config reads before persistence -- see
 [reference/errors.md](reference/errors.md) and [implementation/storage.md](implementation/storage.md).
 **File permissions**: job files and `config.json` are written `0o600` (best-effort; a no-op on

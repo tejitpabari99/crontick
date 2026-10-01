@@ -78,7 +78,8 @@ Crontick assigns a UUID before each fresh Claude spawn and persists it on the
 run, including when `reuseSession` is false. It never scrapes Claude output
 for the initial ID. Before `--resume`, preflight confirms an earlier completed
 Claude result for this job and a transcript at
-`~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`; the absolute cwd is
+`<base>/projects/<encoded-cwd>/<sessionId>.jsonl`, where `<base>` is
+`$CLAUDE_CONFIG_DIR` when set, else `~/.claude`; the absolute cwd is
 encoded by replacing every `/`, `\\`, `:`, and `.` with `-` (so a Windows
 `C:\\Users\\me` cwd maps to `C--Users-me`). A missing eligible run or
 transcript fails with `SESSION_NOT_FOUND` before spawn. There is no fallback

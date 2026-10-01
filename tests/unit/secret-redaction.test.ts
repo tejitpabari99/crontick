@@ -350,18 +350,18 @@ function fakeSpawnWithOutput(text: string) {
   return fakeSpawnWithWrites([{ stream: 'stdout', chunk: text }]);
 }
 
-/** The persisted parsed engine output of a run (assistant text plus stderr tail). */
+/** The persisted parsed engine output of a run (final result plus stderr). */
 function logText(store: Store, runId: string): string {
   const out = store.getRunOutput(runId);
-  return out ? `${out.output}${out.stderr}` : '';
+  return out ? `${out.result ?? ''}${out.stderr}` : '';
 }
 
 function persistedLogBytes(dir: string, runId: string): Buffer {
   const db = new DatabaseSync(join(dir, 'runs.db'));
   try {
-    const rows = db.prepare('SELECT output, stderr FROM run_outputs WHERE run_id = ?')
-      .all(runId) as Array<{ output: string; stderr: string }>;
-    return Buffer.concat(rows.map((row) => Buffer.from(`${row.output}${row.stderr}`, 'utf-8')));
+    const rows = db.prepare('SELECT result, stderr FROM run_outputs WHERE run_id = ?')
+      .all(runId) as Array<{ result: string | null; stderr: string }>;
+    return Buffer.concat(rows.map((row) => Buffer.from(`${row.result ?? ''}${row.stderr}`, 'utf-8')));
   } finally {
     db.close();
   }
@@ -416,11 +416,11 @@ async function createFixture(prefix: string) {
     store,
     client,
     scheduler,
-    /** Engine output (assistant text, then stderr) via the daemon's GET /api/runs/:id/output route. */
+    /** Engine output (final result, then stderr) via the daemon's GET /api/runs/:id/output route. */
     async getLogs(runId: string): Promise<{ lines: Array<{ data: string }> }> {
       const res = await fetch(`http://127.0.0.1:${ctx.port}/api/runs/${runId}/output`);
-      const view = (await res.json()) as { output: string; stderr: string };
-      return { lines: [{ data: view.output }, { data: view.stderr }] };
+      const view = (await res.json()) as { result: string | null; stderr: string };
+      return { lines: [{ data: view.result ?? '' }, { data: view.stderr }] };
     },
     async close(): Promise<void> {
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
@@ -476,7 +476,7 @@ describe('shared secret redaction', () => {
           exitCode: 1,
           error: `failure ${entry.runtimeText}`,
         });
-        fixture.store.setRunOutput(readRun.id, { format: 'text', result: null, engineError: null, output: '', stderr: entry.runtimeText, truncated: false });
+        fixture.store.setRunOutput(readRun.id, { format: 'text', result: null, engineError: null, stderr: entry.runtimeText });
         dashboardRunIds.set(entry.name, readRun.id);
 
         const run = await fixture.client.getRun(readRun.id) as { error?: string };
@@ -831,7 +831,7 @@ describe('shared secret redaction', () => {
         exitCode: 1,
         error: `failure ${BENIGN_RUNTIME_TEXT}`,
       });
-      fixture.store.setRunOutput(readRun.id, { format: 'text', result: null, engineError: null, output: '', stderr: BENIGN_RUNTIME_TEXT, truncated: false });
+      fixture.store.setRunOutput(readRun.id, { format: 'text', result: null, engineError: null, stderr: BENIGN_RUNTIME_TEXT });
 
       const run = await fixture.client.getRun(readRun.id) as { error?: string };
       expect(run.error).toBe(`failure ${BENIGN_RUNTIME_TEXT}`);
@@ -905,7 +905,7 @@ describe('shared secret redaction', () => {
       expect(persisted, 'CTD-025 guard: basic token leaked').not.toContain(nonBearerSecret);
 
       // Verify on the logs-tail (getLogs) surface too.
-      fixture.store.setRunOutput(captureRun.id, { format: 'text', result: null, engineError: null, output: `${bearerLine}\n${nonBearerLine}\n`, stderr: '', truncated: false });
+      fixture.store.setRunOutput(captureRun.id, { format: 'text', result: `${bearerLine}\n${nonBearerLine}\n`, engineError: null, stderr: '' });
       const logs = await fixture.getLogs(captureRun.id);
       const tailed = logs.lines.map((line) => line.data).join('');
       expect(tailed, 'CTD-025: Bearer token leaked on logs-tail path').not.toContain(bearerToken);

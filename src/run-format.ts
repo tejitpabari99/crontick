@@ -55,7 +55,6 @@ export function formatRunsTable(runs: readonly RunRecord[]): string {
 export interface RunDetailOutput {
   error: string | null;
   result: string | null;
-  output: string;
   stderr: string;
 }
 
@@ -89,7 +88,7 @@ export function formatRunDetail(run: RunRecord, out: RunDetailOutput): string {
   field('Log file', run.logFile === undefined ? undefined : (run.logFile ?? '(file logging is disabled)'));
   const body: string[] = [];
   if (out.error) body.push(`Error: ${out.error}`);
-  const text = out.result || out.output;
+  const text = out.result;
   if (text) body.push('', text);
   if (out.stderr && out.error === null) body.push('', `[stderr] ${out.stderr}`);
   return [...lines, ...(body.length > 0 ? ['', ...body.filter((line, i) => !(i === 0 && line === ''))] : [])].join('\n');

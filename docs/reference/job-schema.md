@@ -89,7 +89,7 @@ Schema is `.strict()` — no extra fields allowed. Executed with `shell: false`.
 
 When `reuseSession` is `true`, the job's resolved `overlap` must be `skip`. Omitting `overlap` uses the configured default, which is `skip` unless changed. `queue` and `cancel-previous` fail job validation so an in-flight reused session cannot receive another turn or be canceled by an overlapping fire.
 
-For a Claude engine, `sessionId` must also match a completed prior run for the same job whose Claude result was parsed. A missing eligible run or transcript fails with `SESSION_NOT_FOUND` before the CLI starts. The transcript path is `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`, where every `/` and `.` in the absolute working directory becomes `-`. Prompt jobs run with stdin ignored.
+For a Claude engine, `sessionId` must also match a completed prior run for the same job whose Claude result was parsed. A missing eligible run or transcript fails with `SESSION_NOT_FOUND` before the CLI starts. The transcript path is `<base>/projects/<encoded-cwd>/<sessionId>.jsonl` (`<base>` is `$CLAUDE_CONFIG_DIR` when set, else `~/.claude`), where every `/` and `.` in the absolute working directory becomes `-`. Prompt jobs run with stdin ignored.
 
 ---
 

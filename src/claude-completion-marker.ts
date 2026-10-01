@@ -34,6 +34,31 @@ export function readClaudeCompletionMarker(
   }
 }
 
+/**
+ * The transcript path Claude reported to the SessionEnd hook for this run's
+ * session. Independent of `exitStatus`: Claude's SessionEnd input carries
+ * `transcript_path` but no exit status, so the marker's `exitStatus` is
+ * normally null and {@link readClaudeCompletionMarker} ignores it.
+ */
+export function readClaudeHookTranscriptPath(
+  dataDir: string,
+  runId: string,
+  expectedSessionId: string | undefined,
+  readFile: (path: string) => string = (path) => readFileSync(path, 'utf8'),
+): string | undefined {
+  if (!expectedSessionId) return undefined;
+  try {
+    const value: unknown = JSON.parse(readFile(claudeCompletionMarkerPath(dataDir, runId)));
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+    const marker = value as Record<string, unknown>;
+    if (marker['sessionId'] !== expectedSessionId) return undefined;
+    const transcriptPath = marker['transcriptPath'];
+    return typeof transcriptPath === 'string' && transcriptPath !== '' ? transcriptPath : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Normal runs have a definitive parseResult outcome, so discard their hook. */
 export function removeClaudeCompletionMarker(
   dataDir: string,
@@ -49,7 +74,8 @@ export function removeClaudeCompletionMarker(
 
 /**
  * Fixed-content SessionEnd hook helper. It embeds no paths: the marker path is
- * argv[2]. Reads the hook JSON from stdin and writes `{ exitStatus, sessionId }`.
+ * argv[2]. Reads the hook JSON from stdin and writes `{ exitStatus, sessionId, transcriptPath }`
+ * (`transcriptPath` is Claude's `transcript_path` hook input, or null).
  * Best-effort: every error is swallowed so Claude's outcome is never affected.
  */
 export const CLAUDE_HOOK_HELPER_SOURCE = `'use strict';
@@ -64,8 +90,10 @@ try {
   const exitStatus = Number.isInteger(raw) && raw >= 0 && raw <= 255 ? raw : null;
   const sessionId = typeof input.session_id === 'string' ? input.session_id :
     (typeof input.sessionId === 'string' ? input.sessionId : null);
+  const transcriptPath = typeof input.transcript_path === 'string' && input.transcript_path !== '' ? input.transcript_path :
+    (typeof input.transcriptPath === 'string' && input.transcriptPath !== '' ? input.transcriptPath : null);
   fs.mkdirSync(path.dirname(markerPath), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(markerPath, JSON.stringify({ exitStatus, sessionId }), { mode: 0o600 });
+  fs.writeFileSync(markerPath, JSON.stringify({ exitStatus, sessionId, transcriptPath }), { mode: 0o600 });
 } catch { /* A best-effort hook must not change Claude's outcome. */ }
 `;
 

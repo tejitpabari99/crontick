@@ -159,6 +159,6 @@ describe('--cwd / -C on the CLI', () => {
       status = (await client.getRun(runId)).status;
     }
     expect(status).toBe('success');
-    expect((await client.getOutput(runId)).output).toContain(chosen);
+    expect((await client.getOutput(runId)).result).toContain(chosen);
   }, 60_000);
 });

@@ -37,7 +37,7 @@ PRAGMA foreign_keys=ON;` are set on every `open()`.
 |-------|-------------|
 | `jobs` | `id` (PK GUID), `alias` (nullable, unique via `idx_jobs_alias`), `json`, `updated_at` |
 | `runs` | `id` (PK UUID), `job_id`, `started_at`, `ended_at`, `status`, `exit_code`, `error`, `duration_ms`, `pid` (nullable, absent for `missed`), `output_truncated`, `session_id`, `command`, `claude_result_completed` (internal resume-eligibility flag), `cost_usd`, `turns`, `usage_json`, `transcript_path`, `engine_status` |
-| `run_outputs` | `run_id` (PK), `format` (`claude-stream-json`/`text`), `result`, `engine_error`, `output`, `stderr`, `truncated` -- the parsed engine output written when a run finishes. The engine's raw stdout/stderr is never stored |
+| `run_outputs` | `run_id` (PK), `format` (`claude-stream-json`/`text`), `result`, `engine_error`, `stderr` -- the parsed engine output written when a run finishes. The engine's raw stdout/stderr is never stored |
 | `job_schedule_state` | `job_id` (PK), `last_tick_at`, `updated_at` -- one row per job that has ticked live at least once |
 
 Indexes: `idx_runs_job_id_started_at` (composite, also serves single-`job_id` lookups so a

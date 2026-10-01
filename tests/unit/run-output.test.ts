@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { buildRunOutput, cleanOutputText, normalizeUsage, parseEngineOutput, type RunOutputSource } from '../../src/run-output.js';
+import { buildRunOutput, cleanOutputText, normalizeUsage, type RunOutputSource } from '../../src/run-output.js';
+import { EngineOutputCollector } from '../../src/daemon/output-collector.js';
 
-/** Parse captured engine chunks (only stdout/stderr are engine output) and build the run's output view. */
+/** Feed captured engine chunks through the streaming collector and build the run's output view. */
 function build(run: RunOutputSource, chunks: Array<{ stream: string; data: string }>) {
-  const join = (stream: string): string => chunks.filter((c) => c.stream === stream).map((c) => c.data).join('');
-  return buildRunOutput(run, parseEngineOutput(join('stdout'), join('stderr')));
+  const collector = new EngineOutputCollector(1_000_000);
+  for (const c of chunks) {
+    if (c.stream === 'stdout') collector.pushStdout(Buffer.from(c.data));
+    else if (c.stream === 'stderr') collector.pushStderr(Buffer.from(c.data));
+  }
+  collector.end();
+  return buildRunOutput(run, collector.toEngineOutput());
 }
 
 const line = (value: unknown): string => `${JSON.stringify(value)}\n`;
@@ -15,46 +21,79 @@ const hookEvent = {
   command: `"node" -e "eval(Buffer.from('${b64}','base64').toString('utf8'))"`,
 };
 const thinking = { type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'let me think', signature: 'SIG'.repeat(200) }] } };
-const answer = { type: 'assistant', message: { content: [{ type: 'text', text: 'The answer is 42.' }, { type: 'tool_use', name: 'Bash', input: { command: 'ls' } }] } };
+const answer = { type: 'assistant', message: { content: [{ type: 'text', text: 'interim text' }, { type: 'tool_use', name: 'Bash', input: { command: 'ls' } }] } };
 const toolResult = { type: 'user', message: { content: [{ type: 'tool_result', content: 'file-a\nfile-b' }] } };
 
 const baseRun = { id: 'r1', status: 'success', sessionId: 's1', costUsd: 0.01, turns: 2, durationMs: 1500 };
 
-const asst = (...blocks: unknown[]) => line({ type: 'assistant', message: { content: blocks } });
-const text = (t: string) => ({ type: 'text', text: t });
-const tool = (name: string) => ({ type: 'tool_use', name, input: {} });
-
-describe('run output assistant-text-only output', () => {
-  it('joins text segments split by tool calls with ---, and never emits [tool] lines', () => {
-    const stdout = asst(text('A')) + asst(tool('Bash')) + asst(tool('Read')) + line(toolResult) + asst(text('B'));
-    const out = build(baseRun, [{ stream: 'stdout', data: stdout }]);
-    expect(out.output).toBe('A\n\n---\n\nB');
-    expect(out.output).not.toContain('[tool]');
+describe('EngineOutputCollector stream trimming', () => {
+  it('keeps only the final result event and discards every other event immediately', () => {
+    const c = new EngineOutputCollector(1000);
+    const lines: string[] = [];
+    const tracked = new EngineOutputCollector(1000, (l) => lines.push(l));
+    for (const ev of [hookEvent, thinking, answer, toolResult]) {
+      tracked.pushStdout(Buffer.from(line(ev)));
+      c.pushStdout(Buffer.from(line(ev)));
+    }
+    expect(lines).toHaveLength(4); // onLine still sees each line (terminal-error detection) ...
+    expect(c.parseSource().stdout).toBe(''); // ... but nothing is retained
+    expect(c.toEngineOutput()).toMatchObject({ format: 'claude-stream-json', result: null });
+    c.pushStdout(Buffer.from(line({ type: 'result', subtype: 'success', is_error: false, result: 'final', usage: { input_tokens: 1 } })));
+    const source = c.parseSource();
+    expect(JSON.parse(source.stdout)).toMatchObject({ type: 'result', usage: { input_tokens: 1 } });
+    expect(source.stdout).not.toContain('interim text');
   });
 
-  it('keeps consecutive texts (no tool between) in one segment without a separator', () => {
-    const stdout = asst(text('A')) + asst(text('B')) + asst(text('C'), tool('Bash'), text('D'));
-    expect(build(baseRun, [{ stream: 'stdout', data: stdout }]).output).toBe('A\n\nB\n\nC\n\n---\n\nD');
+  it('does not grow with stream length: a million discarded events leave only the result', () => {
+    const c = new EngineOutputCollector(1000);
+    const event = Buffer.from(line({ type: 'assistant', message: { content: [{ type: 'text', text: 'x'.repeat(1000) }] } }));
+    for (let i = 0; i < 2000; i++) c.pushStdout(event);
+    c.pushStdout(Buffer.from(line({ type: 'result', is_error: false, result: 'done' })));
+    c.end();
+    expect(c.parseSource().stdout.length).toBeLessThan(200);
+    expect(c.toEngineOutput()?.result).toBe('done');
   });
 
-  it('never emits leading or trailing separators and returns empty when there is no text', () => {
-    const toolsOnly = asst(tool('Bash')) + line(toolResult) + asst(tool('Read'));
-    expect(build(baseRun, [{ stream: 'stdout', data: toolsOnly }]).output).toBe('');
-    const edge = asst(tool('Bash')) + asst(text('only')) + asst(tool('Read'));
-    expect(build(baseRun, [{ stream: 'stdout', data: edge }]).output).toBe('only');
+  it('has no line-size limit: a multi-megabyte result line split across chunks is kept whole', () => {
+    const big = 'word '.repeat(1024 * 1024);
+    const full = line({ type: 'result', is_error: false, result: big });
+    const c = new EngineOutputCollector(1000);
+    for (let i = 0; i < full.length; i += 65536) c.pushStdout(Buffer.from(full.slice(i, i + 65536)));
+    c.end();
+    expect(c.toEngineOutput()?.result?.length).toBe(big.length);
   });
 
-  it('excludes thinking blocks, hook events, and tool results', () => {
-    const stdout = line(hookEvent) + line(thinking) + line(toolResult) + asst(text('visible'));
-    const out = build(baseRun, [{ stream: 'stdout', data: stdout }]);
-    expect(out.output).toBe('visible');
+  it('keeps a final result line with no trailing newline and multibyte characters split across chunks', () => {
+    const bytes = Buffer.from(JSON.stringify({ type: 'result', is_error: false, result: 'h\u00e9llo \u{1F600}' }));
+    const c = new EngineOutputCollector(1000);
+    c.pushStdout(bytes.subarray(0, 40));
+    c.pushStdout(bytes.subarray(40));
+    c.end();
+    expect(c.toEngineOutput()?.result).toBe('h\u00e9llo \u{1F600}');
   });
 
-  it('redacts secrets per segment', () => {
-    const stdout = asst(text('key sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789ABCD')) + asst(tool('Bash')) + asst(text('ok'));
-    const out = build(baseRun, [{ stream: 'stdout', data: stdout }]);
-    expect(out.output).not.toContain('abcdefghijklmnop');
-    expect(out.output).toContain('---');
+  it('keeps stderr in full (no size cap) and redacts secrets', () => {
+    const c = new EngineOutputCollector(10);
+    c.pushStderr(Buffer.from('err '.repeat(20_000) + ' sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789ABCD'));
+    c.end();
+    const out = c.toEngineOutput();
+    expect(out?.stderr.length).toBeGreaterThan(50_000);
+    expect(out?.stderr).not.toContain('abcdefghijklmnop');
+  });
+
+  it('caps plain stdout with a marker and reports truncation', () => {
+    const c = new EngineOutputCollector(20);
+    c.pushStdout(Buffer.from('0123456789\n0123456789\nnever stored\n'));
+    expect(c.truncated).toBe(true);
+    const text = c.toEngineOutput()?.result ?? '';
+    expect(text).toContain('output truncated');
+    expect(text).not.toContain('never stored');
+  });
+
+  it('stores no assistant text segments on the output view', () => {
+    const out = build(baseRun, [{ stream: 'stdout', data: line(answer) + line({ type: 'result', is_error: false, result: 'R' }) }]);
+    expect(out).not.toHaveProperty('output');
+    expect(JSON.stringify(out)).not.toContain('interim text');
   });
 });
 
@@ -66,8 +105,6 @@ describe('buildRunOutput', () => {
     expect(out.format).toBe('claude-stream-json');
     expect(out.result).toBe('The answer is 42.');
     expect(out.error).toBeNull();
-    expect(out.output).toBe('The answer is 42.');
-    expect(out.output).not.toContain('[tool]');
     expect(JSON.stringify(out)).not.toContain('SIGSIG');
     expect(JSON.stringify(out)).not.toContain(b64);
     expect(out).toMatchObject({ sessionId: 's1', costUsd: 0.01, turns: 2, durationMs: 1500, truncated: false });
@@ -85,7 +122,7 @@ describe('buildRunOutput', () => {
       + line({ type: 'result', subtype: 'success', is_error: true, result: message });
     const out = build({ ...baseRun, status: 'failed' }, [{ stream: 'stdout', data: stdout }]);
     expect(out.error).toBe(message);
-    expect(out.result).toBe(message); // falls back to the last assistant text
+    expect(out.result).toBeNull(); // an error result is not an answer
     const withRunError = build({ ...baseRun, status: 'failed', error: 'recorded error' }, [{ stream: 'stdout', data: stdout }]);
     expect(withRunError.error).toBe('recorded error');
   });
@@ -98,19 +135,17 @@ describe('buildRunOutput', () => {
     ]);
     expect(out.format).toBe('text');
     expect(out.result).toBe('hello\nworld');
-    expect(out.output).toBe('hello\nworld');
     expect(out.stderr).toBe('warning: something');
-    expect(out.output).not.toContain('crontick');
   });
 
   it('returns nulls for a run with no output and propagates outputTruncated', () => {
     const out = build({ ...baseRun, outputTruncated: true, sessionId: undefined }, []);
-    expect(out).toMatchObject({ result: null, error: null, output: '', sessionId: null, truncated: true });
+    expect(out).toMatchObject({ result: null, error: null, sessionId: null, truncated: true });
   });
 
   it('builds a null-output view when the run never produced engine output', () => {
     const out = buildRunOutput({ ...baseRun, status: 'skipped', error: 'overlap=skip' });
-    expect(out).toMatchObject({ format: 'text', result: null, output: '', stderr: '', error: 'overlap=skip' });
+    expect(out).toMatchObject({ format: 'text', result: null, stderr: '', error: 'overlap=skip' });
   });
 
   it('cleanOutputText strips hook eval payloads and long base64 blobs', () => {

@@ -286,7 +286,7 @@ export function createMcpServer(): McpServer {
     'crontick_run_get',
     {
       description:
-        'Get run details and status, including Claude cost, turns, redacted usage, transcript path, engine status, the Runner Session ID (sessionId), logFile (absolute path of the per-job file of crontick-side events; the engine\'s own transcript is kept by the runner, see transcriptPath), and the cleaned output: the engine\'s final answer (result), any error, and the assistant text only (output; tool calls end a segment and segments are joined by a --- line; thinking blocks, tool lines, hook payloads and base64 are removed).',
+        'Get run details and status, including Claude cost, turns, redacted usage, transcript path, engine status, the Runner Session ID (sessionId), logFile (absolute path of the per-job file of crontick-side events; the engine\'s own transcript is kept by the runner, see transcriptPath), and the cleaned output: the engine\'s final answer (result), any error, and the full engine stderr.',
       inputSchema: withVerbose({ id: z.string().describe('Run id') }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },

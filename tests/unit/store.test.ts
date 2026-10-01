@@ -160,10 +160,10 @@ describe('Store', () => {
     store.upsertJob(execJob('bulk-a'));
     store.upsertJob(execJob('bulk-b'));
     const runA = store.insertRun('bulk-a');
-    store.setRunOutput(runA.id, { format: 'text', result: 'x', engineError: null, output: 'x', stderr: '', truncated: false });
+    store.setRunOutput(runA.id, { format: 'text', result: 'x', engineError: null, stderr: '' });
     store.recordTick('bulk-a', 1000);
     const runB = store.insertRun('bulk-b');
-    store.setRunOutput(runB.id, { format: 'text', result: 'x', engineError: null, output: 'x', stderr: '', truncated: false });
+    store.setRunOutput(runB.id, { format: 'text', result: 'x', engineError: null, stderr: '' });
 
     expect(store.listJobs()).toHaveLength(2);
 
@@ -191,7 +191,7 @@ describe('Store', () => {
     store.upsertJob(execJob('unlink-fail-a'));
     store.upsertJob(execJob('unlink-fail-b'));
     const runA = store.insertRun('unlink-fail-a');
-    store.setRunOutput(runA.id, { format: 'text', result: 'x', engineError: null, output: 'x', stderr: '', truncated: false });
+    store.setRunOutput(runA.id, { format: 'text', result: 'x', engineError: null, stderr: '' });
 
     const jobFile = join(dir, 'jobs', 'unlink-fail-a.json');
     rmSync(jobFile, { force: true });
@@ -428,10 +428,10 @@ describe('Store', () => {
   it('setRunOutput/getRunOutput round-trips the parsed engine output and replaces on rewrite', () => {
     const run = store.insertRun('output-job');
     expect(store.getRunOutput(run.id)).toBeUndefined();
-    store.setRunOutput(run.id, { format: 'claude-stream-json', result: 'done', engineError: null, output: 'hello', stderr: 'warn', truncated: true });
-    expect(store.getRunOutput(run.id)).toEqual({ format: 'claude-stream-json', result: 'done', engineError: null, output: 'hello', stderr: 'warn', truncated: true });
-    store.setRunOutput(run.id, { format: 'text', result: null, engineError: 'bad', output: '', stderr: '', truncated: false });
-    expect(store.getRunOutput(run.id)).toEqual({ format: 'text', result: null, engineError: 'bad', output: '', stderr: '', truncated: false });
+    store.setRunOutput(run.id, { format: 'claude-stream-json', result: 'done', engineError: null, stderr: 'warn' });
+    expect(store.getRunOutput(run.id)).toEqual({ format: 'claude-stream-json', result: 'done', engineError: null, stderr: 'warn' });
+    store.setRunOutput(run.id, { format: 'text', result: null, engineError: 'bad', stderr: '' });
+    expect(store.getRunOutput(run.id)).toEqual({ format: 'text', result: null, engineError: 'bad', stderr: '' });
   });
 
   it('has no table or API that stores raw engine logs', () => {
@@ -631,7 +631,7 @@ describe('Store', () => {
 
   it('removes run_outputs for evicted runs (no orphaned output rows)', () => {
     const run = store.insertRun('job-c', 0);
-    store.setRunOutput(run.id, { format: 'text', result: 'x', engineError: null, output: 'x', stderr: '', truncated: false });
+    store.setRunOutput(run.id, { format: 'text', result: 'x', engineError: null, stderr: '' });
     store.updateRun(run.id, { status: 'success' });
 
     for (let i = 0; i < 100; i++) {
@@ -767,8 +767,8 @@ describe('deleting a job removes its history (SP03 task 4)', () => {
     store.upsertJob(execJob('kept'));
     const goneRun = store.insertRun('gone');
     const keptRun = store.insertRun('kept');
-    store.setRunOutput(goneRun.id, { format: 'text', result: 'x', engineError: null, output: 'x', stderr: '', truncated: false });
-    store.setRunOutput(keptRun.id, { format: 'text', result: 'x', engineError: null, output: 'x', stderr: '', truncated: false });
+    store.setRunOutput(goneRun.id, { format: 'text', result: 'x', engineError: null, stderr: '' });
+    store.setRunOutput(keptRun.id, { format: 'text', result: 'x', engineError: null, stderr: '' });
     store.recordTick('gone', 1000);
     store.recordTick('kept', 1000);
 
@@ -788,7 +788,7 @@ describe('deleting a job removes its history (SP03 task 4)', () => {
     store.upsertJob(execJob('inflight'));
     const run = store.insertRun('inflight');
     store.deleteJob('inflight');
-    store.setRunOutput(run.id, { format: 'text', result: 'x', engineError: null, output: 'x', stderr: '', truncated: false });
+    store.setRunOutput(run.id, { format: 'text', result: 'x', engineError: null, stderr: '' });
     expect(store.getRunOutput(run.id)).toBeUndefined();
   });
 

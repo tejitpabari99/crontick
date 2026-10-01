@@ -43,9 +43,9 @@ wins): `action.env` > `envFile` variables > engine-config `env` > `process.env`.
 ## Output and the log file
 
 crontick does not store the engine's raw stdout/stderr; the engine keeps its own transcript. The
-runner captures the engine's output chunk by chunk through `safeRedact()` (secrets are redacted in
-valid UTF-8 text; binary is not redacted), holds it in memory, and when the run finishes stores only
-the parsed result (final answer, assistant text, stderr tail) with the run. crontick's own lifecycle
+runner parses stdout line by line as it arrives and keeps only the final `result` event and the
+full stderr (everything else is discarded immediately, so memory does not grow with stream length);
+when the run finishes it stores the redacted result (final answer, error, stderr) with the run. crontick's own lifecycle
 events -- run started, executing, run finished, overlap skips, retry backoffs, session capture -- go
 to a per-job file at `<dataDir>/logs/<jobId>.log`, one timestamped line per event tagged with the run
 id (see [configuration reference](../reference/configuration.md#loggingconfig)). `runs get` shows the

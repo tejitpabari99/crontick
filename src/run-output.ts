@@ -2,15 +2,11 @@
  * Cleaned, human-readable "output" view of a run, built from the engine's stdout/stderr.
  *
  * crontick does not store the engine's raw logs: the runner (e.g. Claude) keeps its own
- * transcript. While a run executes, the daemon holds the engine's redacted stdout/stderr in
- * memory only, parses it with {@link parseEngineOutput} when the run finishes, and persists
- * just the parsed result (final answer, assistant text, stderr tail) in the `run_outputs`
- * table. For a Claude engine, stdout is `stream-json`: one JSON event per line (system/hook
- * events, assistant messages with `thinking` blocks carrying opaque `signature` blobs, tool
- * calls/results, and a final `result`). That is faithful but unreadable, so this module parses
- * it into the final answer plus the assistant's text (segments separated by `---`), dropping
- * thinking blocks, tool calls/results, hook plumbing and base64 payloads. Pure and
- * dependency-light so every layer (daemon, tests) can use it.
+ * transcript. While a run executes, the daemon parses the engine's stdout line by line as it
+ * arrives (see `src/daemon/output-collector.ts`) and keeps only the final `result` event and
+ * the full stderr; everything else (tool calls, interim assistant text, system events) is
+ * discarded immediately. This module holds the persisted/returned shapes and the pure helpers
+ * shared by every layer (daemon, tests).
  */
 import { redactText } from './logger.js';
 
@@ -73,18 +69,14 @@ export function normalizeUsageJson(usageJson: string | undefined): NormalizedUsa
 
 /** The parsed engine output persisted per run (see `Store.setRunOutput`). */
 export interface EngineOutput {
-  /** `claude-stream-json` when engine stdout was parsed as Claude stream-json events; `text` for plain engine output. */
+  /** `claude-stream-json` when engine stdout was Claude stream-json events; `text` for plain engine output. */
   format: 'claude-stream-json' | 'text';
-  /** The engine's final answer (Claude `result` text, else the last assistant text, else plain stdout); `null` when there is none. */
+  /** The engine's final answer (Claude `result` event text; plain stdout for text engines); `null` when there is none. */
   result: string | null;
-  /** Error reported inside the engine output (if any); `null` otherwise. */
+  /** Error reported by the engine's final `result` event (`is_error`); `null` otherwise. */
   engineError: string | null;
-  /** Assistant text only (see {@link RunOutput.output}). */
-  output: string;
-  /** Engine stderr (redacted, last {@link STDERR_MAX} characters). */
+  /** Full engine stderr (redacted, no size cap). */
   stderr: string;
-  /** True when the output view was itself capped at {@link OUTPUT_MAX}. */
-  truncated: boolean;
 }
 
 /** Parsed output view returned by `getOutput` / `GET /api/runs/:id/output`. */
@@ -97,13 +89,7 @@ export interface RunOutput {
   result: string | null;
   /** Error message, if any: the run's recorded error, else an error reported in the engine output. `null` when there is none. */
   error: string | null;
-  /**
-   * Assistant text only: consecutive text blocks form one segment, a tool call between texts ends a segment, and
-   * segments are joined by a `---` line. No tool markers, thinking, hooks or tool results.
-   * Plain-text engines keep their stdout lines as-is. `''` when there is no text.
-   */
-  output: string;
-  /** Engine stderr (redacted, last {@link STDERR_MAX} characters), for diagnosing failures. */
+  /** Full engine stderr (redacted), for diagnosing failures. */
   stderr: string;
   sessionId: string | null;
   costUsd: number | null;
@@ -113,12 +99,9 @@ export interface RunOutput {
   usage: NormalizedUsage | null;
   /** Absolute path of the per-job crontick log file (crontick-side events only); `null` when file logging is disabled. Added by the daemon route, not by `buildRunOutput`. */
   logFile?: string | null;
-  /** True when the run's captured output hit `retention.maxOutputBytesPerRun` (the transcript may be incomplete) or this view was itself capped. */
+  /** True when a text engine's stdout hit `retention.maxOutputBytesPerRun` and was cut. */
   truncated: boolean;
 }
-
-export const OUTPUT_MAX = 200_000;
-export const STDERR_MAX = 4_000;
 
 const BASE64_RUN = /[A-Za-z0-9+/]{120,}={0,2}/g;
 const HOOK_EVAL = /eval\(Buffer\.from\((['"])[A-Za-z0-9+/=]+\1\s*,\s*(['"])base64\2\)[^)]*\)\)?/g;
@@ -128,119 +111,11 @@ export function cleanOutputText(text: string): string {
   return redactText(text.replace(HOOK_EVAL, 'eval(<hook payload omitted>)').replace(BASE64_RUN, '<base64 omitted>'));
 }
 
-interface ParsedStdout {
-  sawEvents: boolean;
-  /** Assistant text segments; a `tool_use` between texts ends a segment. */
-  segments: string[];
-  plain: string[];
-  lastAssistantText: string | undefined;
-  resultText: string | undefined;
-  resultIsError: boolean;
-  assistantError: string | undefined;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
+export function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
-function parseStdout(stdout: string): ParsedStdout {
-  const parsed: ParsedStdout = {
-    sawEvents: false, segments: [], plain: [], lastAssistantText: undefined,
-    resultText: undefined, resultIsError: false, assistantError: undefined,
-  };
-  let current: string[] = [];
-  const flush = (): void => {
-    if (current.length > 0) parsed.segments.push(current.join('\n\n'));
-    current = [];
-  };
-  for (const line of stdout.split(/\r?\n/)) {
-    if (line.trim() === '') continue;
-    let event: Record<string, unknown> | undefined;
-    if (line.trimStart().startsWith('{')) {
-      try {
-        event = asRecord(JSON.parse(line));
-      } catch {
-        event = undefined;
-      }
-    }
-    if (!event || typeof event['type'] !== 'string') {
-      parsed.plain.push(line);
-      continue;
-    }
-    parsed.sawEvents = true;
-    const type = event['type'];
-    if (type === 'assistant') {
-      const content = asRecord(event['message'])?.['content'];
-      const texts: string[] = [];
-      if (Array.isArray(content)) {
-        for (const raw of content) {
-          const block = asRecord(raw);
-          if (!block) continue;
-          if (block['type'] === 'text' && typeof block['text'] === 'string' && block['text'].trim() !== '') {
-            texts.push(block['text']);
-            current.push(block['text'].trim());
-          } else if (block['type'] === 'tool_use') {
-            flush();
-          }
-          // `thinking` / `redacted_thinking` blocks (and their `signature`) are intentionally dropped.
-        }
-      }
-      if (texts.length > 0) parsed.lastAssistantText = texts.join('\n');
-      if (typeof event['error'] === 'string' && texts.length > 0) parsed.assistantError = texts.join('\n');
-    } else if (type === 'result') {
-      if (typeof event['result'] === 'string') parsed.resultText = event['result'];
-      parsed.resultIsError = event['is_error'] === true;
-    }
-    // system (hooks, init), user (tool results), stream_event and unknown types carry no reader-facing output.
-  }
-  flush();
-  return parsed;
-}
-
-/** Separator between assistant text segments that a tool call interrupted. */
-export const SEGMENT_SEPARATOR = '\n\n---\n\n';
-
-/** Join assistant text segments with {@link SEGMENT_SEPARATOR} (no leading/trailing separator; `''` when empty). Each segment is redacted. */
-export function joinSegments(segments: readonly string[]): string {
-  return segments.map((seg) => cleanOutputText(seg.trim())).filter((seg) => seg !== '').join(SEGMENT_SEPARATOR);
-}
-
-/** Parse captured engine stdout/stderr (already redacted) into the persisted {@link EngineOutput}. */
-export function parseEngineOutput(stdout: string, stderr: string): EngineOutput {
-  const p = parseStdout(stdout);
-  const format: EngineOutput['format'] = p.sawEvents ? 'claude-stream-json' : 'text';
-  const plainText = p.plain.join('\n').trim();
-  let result: string | undefined;
-  if (format === 'claude-stream-json') {
-    result = !p.resultIsError && p.resultText !== undefined && p.resultText !== '' ? p.resultText : p.lastAssistantText;
-  } else {
-    result = plainText === '' ? undefined : plainText;
-  }
-  const engineError = p.resultIsError ? p.resultText : p.assistantError;
-
-  let output = format === 'claude-stream-json' ? joinSegments(p.segments) : cleanOutputText(p.plain.join('\n').trim());
-  let truncated = false;
-  if (output.length > OUTPUT_MAX) {
-    output = `${output.slice(0, OUTPUT_MAX)}\n[output view truncated]`;
-    truncated = true;
-  }
-  let cleanResult = result === undefined ? null : cleanOutputText(result);
-  if (cleanResult !== null && cleanResult.length > OUTPUT_MAX) {
-    cleanResult = `${cleanResult.slice(0, OUTPUT_MAX)}\n[output view truncated]`;
-    truncated = true;
-  }
-  const cleanStderr = cleanOutputText(stderr.trim());
-  return {
-    format,
-    result: cleanResult,
-    engineError: engineError === undefined ? null : cleanOutputText(engineError),
-    output,
-    stderr: cleanStderr.length > STDERR_MAX ? cleanStderr.slice(-STDERR_MAX) : cleanStderr,
-    truncated,
-  };
-}
-
-const EMPTY_ENGINE_OUTPUT: EngineOutput = { format: 'text', result: null, engineError: null, output: '', stderr: '', truncated: false };
+const EMPTY_ENGINE_OUTPUT: EngineOutput = { format: 'text', result: null, engineError: null, stderr: '' };
 
 /** Build the output view for a run from its record and its persisted engine output (absent for runs that never spawned an engine). */
 export function buildRunOutput(run: RunOutputSource, engine: EngineOutput = EMPTY_ENGINE_OUTPUT): RunOutput {
@@ -251,13 +126,12 @@ export function buildRunOutput(run: RunOutputSource, engine: EngineOutput = EMPT
     format: engine.format,
     result: engine.result,
     error: error === null || error === undefined ? null : cleanOutputText(error),
-    output: engine.output,
     stderr: engine.stderr,
     sessionId: run.sessionId ?? null,
     costUsd: run.costUsd ?? null,
     turns: run.turns ?? null,
     durationMs: run.durationMs ?? null,
     usage: normalizeUsageJson(run.usageJson),
-    truncated: run.outputTruncated === true || engine.truncated,
+    truncated: run.outputTruncated === true,
   };
 }

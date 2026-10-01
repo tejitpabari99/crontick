@@ -78,13 +78,12 @@ The same guards cover timeouts and cancels (SIGTERM, then a forced tree kill, th
 ## Stream capture, redaction, and the output cap
 
 crontick never persists the engine's raw stdout/stderr (the runner keeps its own transcript).
-`RunLogWriter` holds each redacted engine chunk in memory (bounded by the output cap) so that, when
-the run is finalized, `parseEngineOutput()` can store only the parsed output (`store.setRunOutput()`,
+`RunLogWriter` feeds each chunk to an `EngineOutputCollector` (`src/daemon/output-collector.ts`) that parses stdout line by line and keeps only the final `result` line and the full stderr, so that, when
+the run is finalized, the parsed output is stored (`store.setRunOutput()`,
 the `run_outputs` table). Its other job is crontick's own events: `crontick()` appends one
 timestamped, run-id-tagged line per event to the per-job log file (`JobLogFileFactory`,
-injectable; sanitizes the job id and never blocks or fails a run on a write error). `safeRedact()` applies `redactText()` only to valid
-UTF-8 chunks; binary data is not redacted. Once a run's captured bytes would exceed
-`retention.maxOutputBytesPerRun`, the runner trims the final chunk to a UTF-8 character boundary
+injectable; sanitizes the job id and never blocks or fails a run on a write error). Redaction is applied to the stored result and stderr when the run finishes. Once a text engine's plain stdout would exceed
+`retention.maxOutputBytesPerRun`, the collector trims the final chunk to a UTF-8 character boundary
 (`truncateToUtf8Boundary()`, scanning back up to 4 bytes), appends one truncation marker, sets
 `outputTruncated`, and silently drops all further chunks -- the child process itself is never
 signaled or throttled by hitting the cap.

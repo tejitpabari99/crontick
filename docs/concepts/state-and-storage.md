@@ -70,7 +70,7 @@ Only the daemon process writes to `runs.db` and the `jobs/` directory at runtime
 crontick stores only its own logs. The engine (the child process) keeps its own transcript and raw logs -- for Claude, the session transcript named by `transcriptPath` -- and crontick does not copy them into the database or any file.
 
 - **crontick-side events** (run started, executing, retries, session capture, run finished, overlap skips) are appended, one timestamped line each tagged with the run id, to `<logsDir>/<jobGuid>.log`, one file per job shared by all of its runs. This is the `Log file:` path shown by `crontick runs get` and the link in the dashboard run detail. Nothing is rendered inline: surfaces only show the path.
-- **Run output** is parsed when a run finishes. While the engine runs, the runner holds its redacted stdout/stderr in memory only (bounded by `retention.maxOutputBytesPerRun`); when the run is finalized it parses them and stores just the result in the `run_outputs` table of `runs.db`. For a Claude engine, stdout is `--output-format stream-json`: one JSON event per line -- `system` (including hook lifecycle), `assistant` messages (with `thinking` blocks and their opaque `signature`, text, and tool calls), `user` tool results, and a final `result`. The **output view** (`crontick runs get`, `crontick_run_get`, `getOutput`, `GET /api/runs/:id/output`) is the parsed final answer, the error, and a readable transcript (assistant text only), with thinking signatures, hook payloads, and base64 stripped.
+- **Run output** is parsed when a run finishes. While the engine runs, the runner parses stdout line by line and keeps in memory only the final `result` event and the full stderr (plain stdout of non-stream engines is bounded by `retention.maxOutputBytesPerRun`); when the run is finalized it stores just the result in the `run_outputs` table of `runs.db`. For a Claude engine, stdout is `--output-format stream-json`: one JSON event per line -- `system` (including hook lifecycle), `assistant` messages (with `thinking` blocks and their opaque `signature`, text, and tool calls), `user` tool results, and a final `result`. The **output view** (`crontick runs get`, `crontick_run_get`, `getOutput`, `GET /api/runs/:id/output`) is the final answer, the error and the full stderr; tool calls, interim assistant text and system events are never kept. `transcriptPath` is the path Claude reported to its SessionEnd hook (known after the run ends), else the computed `<CLAUDE_CONFIG_DIR or ~/.claude>/projects/<encoded-cwd>/<sessionId>.jsonl`; crontick never reads the file.
 
 Nothing else is written per run except, for Claude runs, a tiny `<dataDir>/runs/<runId>.claude-hook.json` marker used only for restart recovery. The output of a run is available once it has finished.
 
@@ -85,7 +85,7 @@ years. Eviction is a hard delete with no undo, and exports (`crontick share expo
 [implementation/storage.md](../implementation/storage.md) for the eviction algorithm and
 [ADR 0001](../decisions/0001-architecture-and-runtime-model.md) for the rationale.
 
-A single run's own captured stdout/stderr is bounded separately by
+A text engine's captured stdout is bounded separately by
 `retention.maxOutputBytesPerRun` (default 2,000,000 bytes); once hit, further output is dropped
 and `outputTruncated` is set, but the run itself completes normally. See
 [execution.md](./execution.md#output-and-the-log-file).

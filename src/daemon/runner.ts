@@ -7,28 +7,23 @@ import { platform } from 'node:os';
 import { basename } from 'node:path';
 import type { Job, PromptAction } from '../schemas/job.js';
 import type { Store, RunStatus } from './store.js';
-import { parseEngineOutput, type EngineOutput } from '../run-output.js';
+import type { EngineOutput } from '../run-output.js';
+import { EngineOutputCollector } from './output-collector.js';
 import { CrontickError } from '../errors.js';
 import { resolvePromptRunCommand, loadConfig } from '../config.js';
 import { dataDir } from '../paths.js';
-import { createStreamingTextRedactor, nullLogger, redactText, redactValue, type Logger, type StreamingTextRedactor } from '../logger.js';
+import { nullLogger, redactText, redactValue, type Logger } from '../logger.js';
 import { isProcessAlive, isSameRunProcess } from '../process-liveness.js';
 import { readEnvFileForAction } from './env-file.js';
 import { createJobLogFileFactory, type JobLogFile, type JobLogFileFactory } from './job-log-file.js';
-import { readClaudeCompletionMarker, removeClaudeCompletionMarker } from '../claude-completion-marker.js';
+import { readClaudeCompletionMarker, readClaudeHookTranscriptPath, removeClaudeCompletionMarker } from '../claude-completion-marker.js';
 import { DEFAULT_MAX_OUTPUT_BYTES_PER_RUN } from '../constants/retention.js';
 import { ADOPTED_RUN_POLL_MS, EXIT_CLOSE_GRACE_MS, KILL_GRACE_MS, TERMINAL_ERROR_SETTLE_MS } from '../constants/daemon.js';
 import { killProcessTree, type TreeKiller } from './process-tree.js';
 import type { TerminalEngineError } from '../engines/types.js';
-import { StringDecoder } from 'node:string_decoder';
 import { sleep } from '../utils/sleep.js';
 
 // ── Output cap (L5) ───────────────────────────────────────────────────────────
-
-/** Marker line appended exactly once when a run's captured output hits the cap. */
-export function truncationMarker(maxBytes: number): string {
-  return `\n[crontick] output truncated: exceeded ${maxBytes} bytes (retention.maxOutputBytesPerRun); further output from this run is not stored\n`;
-}
 
 /** Reads retention.maxOutputBytesPerRun; falls back to the default if config loading itself fails. */
 function resolveMaxOutputBytesPerRun(): number {
@@ -96,59 +91,6 @@ function mergeUsageJson(previous: string | undefined, next: string | undefined):
 
 type QueueEntry = () => Promise<void>;
 
-interface SafeRedactResult {
-  chunk: Buffer;
-  textLike: boolean;
-}
-
-/**
- * Redact secrets from a chunk only when it is valid UTF-8 text.
- * Binary data (NUL bytes or lossy UTF-8 round-trip) is stored as-is.
- */
-function safeRedact(chunk: Buffer, redactor?: StreamingTextRedactor): SafeRedactResult {
-  // NUL byte → likely binary, skip redaction
-  if (chunk.includes(0)) return { chunk, textLike: false };
-  const str = chunk.toString('utf8');
-  // Lossy round-trip → binary or non-UTF-8, skip redaction
-  if (!Buffer.from(str, 'utf8').equals(chunk)) return { chunk, textLike: false };
-  const cleaned = redactor ? redactor.write(str) : redactText(str);
-  return { chunk: Buffer.from(cleaned, 'utf8'), textLike: true };
-}
-
-function flushSafeRedactor(redactor: StreamingTextRedactor): Buffer {
-  const cleaned = redactor.flush();
-  return cleaned.length === 0 ? Buffer.alloc(0) : Buffer.from(cleaned, 'utf8');
-}
-
-/**
- * Trims trailing bytes that would split a multi-byte UTF-8 character in two.
- * The output byte cap (captureChunk()) cuts a chunk at an arbitrary byte
- * offset; without this, the last stored bytes before the truncation marker
- * can be an incomplete UTF-8 sequence, corrupting whatever reads the log
- * back as text. Only ever removes bytes from the very end of `buf` (never
- * adds/reorders), so callers can safely pass the result straight to
- * safeRedact().
- */
-export function truncateToUtf8Boundary(buf: Buffer): Buffer {
-  const len = buf.length;
-  if (len === 0) return buf;
-  const scanStart = Math.max(0, len - 4); // longest UTF-8 sequence is 4 bytes
-  for (let i = len - 1; i >= scanStart; i--) {
-    const byte = buf[i]!;
-    if ((byte & 0xc0) === 0x80) continue; // continuation byte — keep scanning back for its lead byte
-    let seqLen: number;
-    if ((byte & 0x80) === 0x00) seqLen = 1;
-    else if ((byte & 0xe0) === 0xc0) seqLen = 2;
-    else if ((byte & 0xf0) === 0xe0) seqLen = 3;
-    else if ((byte & 0xf8) === 0xf0) seqLen = 4;
-    else return buf; // not a valid UTF-8 lead byte — not a boundary split, leave untouched
-    return i + seqLen <= len ? buf : buf.subarray(0, i);
-  }
-  // Ran out of scan window without finding a lead byte (>=4 trailing
-  // continuation bytes) — already-invalid input; leave untouched.
-  return buf;
-}
-
 const ACTION_CWD_INVALID_ERROR_CODE = 'ACTION_CWD_INVALID';
 
 function buildActionCwdError(
@@ -195,29 +137,30 @@ function transcriptFileExists(path: string): boolean {
 
 /**
  * Per-run output handling. crontick never persists the engine's raw output:
- * engine stdout/stderr chunks are held in memory (already redacted and capped
- * by `retention.maxOutputBytesPerRun`) only so the parsed result can be stored
- * when the run finishes (see `finish()`), and crontick's own scheduling and
- * execution events go to the per-job log file (one line per event, tagged with
- * the run id). File writes are best-effort and never block or fail a run.
+ * stdout is trimmed line by line as it arrives (only the final result event
+ * and the full stderr are kept, see `EngineOutputCollector`) so the parsed
+ * result can be stored when the run finishes (see `finish()`), and crontick's
+ * own scheduling and execution events go to the per-job log file (one line per
+ * event, tagged with the run id). File writes are best-effort and never block
+ * or fail a run.
  */
 class RunLogWriter {
-  private readonly captured: Record<'stdout' | 'stderr', string[]> = { stdout: [], stderr: [] };
+  private collector: EngineOutputCollector | undefined;
 
   constructor(
     private readonly file: JobLogFile,
     private readonly runId: string,
   ) {}
 
-  /** Hold an engine output chunk in memory (never written to disk or the database). */
-  capture(stream: 'stdout' | 'stderr', chunk: Buffer): void {
-    this.captured[stream].push(chunk.toString('utf-8'));
+  /** Start collecting a fresh attempt's engine output (retries each get their own). */
+  beginCapture(maxPlainBytes: number, onLine: (line: string) => void): EngineOutputCollector {
+    this.collector = new EngineOutputCollector(maxPlainBytes, onLine);
+    return this.collector;
   }
 
-  /** Parse the captured engine output into the view persisted for the run; undefined when the engine produced none. */
+  /** Parse the collected engine output into the view persisted for the run; undefined when the engine produced none. */
   parseCaptured(): EngineOutput | undefined {
-    if (this.captured.stdout.length === 0 && this.captured.stderr.length === 0) return undefined;
-    return parseEngineOutput(this.captured.stdout.join(''), this.captured.stderr.join(''));
+    return this.collector?.toEngineOutput();
   }
 
   /** Record a crontick-side event (redacted) in the per-job log file. */
@@ -317,9 +260,11 @@ export class Runner {
         const run = store.getRun(runId);
         if (run && run.status === 'running') {
           const marker = canceledByAbort ? undefined : readClaudeCompletionMarker(dataDir(), runId, run.sessionId);
+          const hookTranscriptPath = readClaudeHookTranscriptPath(dataDir(), runId, run.sessionId);
           store.updateRun(runId, {
             status: marker ? (marker.exitStatus === 0 ? 'success' : 'failed') : 'canceled',
             ...(marker ? { exitCode: marker.exitStatus } : {}),
+            ...(hookTranscriptPath ? { transcriptPath: hookTranscriptPath } : {}),
             error: canceledByAbort ? 'DAEMON_RESTART: adopted run was terminated'
               : marker ? (marker.exitStatus === 0 ? undefined : `CLAUDE_HOOK: SessionEnd reported exit status ${marker.exitStatus}`)
                 : ADOPTED_RUN_EXITED_MESSAGE,
@@ -519,7 +464,7 @@ export class Runner {
     this.appendDiagnosticLog(log, 'resolved prompt command', { engine: promptEngineBinary, command: cmd, args: displayArgs, envKeys: Object.keys(promptEnv) });
 
     if (sessionId) {
-      const transcriptPath = adapter.resumeTranscriptPath(action.cwd ?? process.cwd(), sessionId);
+      const transcriptPath = adapter.resumeTranscriptPath(action.cwd ?? process.cwd(), sessionId, { ...process.env, ...promptEnv, ...(action.env ?? {}) });
       if (transcriptPath && !store.hasCompletedClaudeSession(job.id, sessionId)) {
         throw new CrontickError(
           'SESSION_NOT_FOUND',
@@ -608,80 +553,31 @@ export class Runner {
     let timedOut = false;
     let timeoutHandle: NodeJS.Timeout | undefined;
 
-    // Adapter result parsing only needs the last ~128 KB of combined
-    // output. Rather than reallocating (concat + subarray) on every stdout
-    // chunk — O(n^2) for chatty prompts — we retain incoming chunks in an
-    // array and drop whole leading chunks once the buffered bytes still cover
-    // the cap without them. The exact last-maxTranscriptBytes tail is only
-    // materialized once, at process close (see readTranscriptTail).
-    const maxTranscriptBytes = 128 * 1024;
-    const transcriptChunks: Buffer[] = [];
-    let transcriptBytes = 0;
-    const appendTranscript = (chunk: Buffer) => {
-      transcriptChunks.push(chunk);
-      transcriptBytes += chunk.byteLength;
-      // Evict leading chunks while the remainder still fully covers the cap,
-      // so we never keep more than the last chunk beyond maxTranscriptBytes.
-      while (
-        transcriptChunks.length > 1 &&
-        transcriptBytes - transcriptChunks[0].byteLength >= maxTranscriptBytes
-      ) {
-        transcriptBytes -= transcriptChunks[0].byteLength;
-        transcriptChunks.shift();
-      }
-    };
-    const readTranscriptTail = (): string => {
-      const combined = transcriptChunks.length === 1 ? transcriptChunks[0] : Buffer.concat(transcriptChunks);
-      const tail =
-        combined.byteLength > maxTranscriptBytes
-          ? combined.subarray(combined.byteLength - maxTranscriptBytes)
-          : combined;
-      return tail.toString('utf-8');
-    };
-
-    // Byte cap on captured output (L5): re-read per run (not cached at Runner
-    // construction) so a config change via `crontick daemon reload` takes
-    // effect for new runs without a full restart, mirroring the
-    // maxRunsPerJob reload pattern. The child process itself is never
-    // killed or throttled here — only persistence of further chunks stops.
+    // Plain (non-event) stdout is capped per run (L5): re-read per run (not
+    // cached at Runner construction) so a config change via `crontick daemon
+    // reload` takes effect for new runs without a full restart. The child is
+    // never killed or throttled; only storage of further plain output stops.
+    // Stream-json events are trimmed as they arrive and need no cap (see
+    // EngineOutputCollector); stderr is kept in full.
     const maxOutputBytes = this.maxOutputBytesPerRunOverride ?? resolveMaxOutputBytesPerRun();
-    let capturedBytes = 0;
     let outputTruncated = false;
-    const streamRedactors: Record<'stdout' | 'stderr', StreamingTextRedactor> = {
-      stdout: createStreamingTextRedactor(),
-      stderr: createStreamingTextRedactor(),
-    };
-    const flushRedactor = (stream: 'stdout' | 'stderr'): void => {
-      const flushed = flushSafeRedactor(streamRedactors[stream]);
-      if (flushed.length > 0) log.capture(stream, flushed);
+    let collector: EngineOutputCollector;
+    const noteTruncation = (): void => {
+      if (!collector.truncated || outputTruncated) return;
+      outputTruncated = true;
+      try {
+        store.updateRun(runId, { outputTruncated: true });
+      } catch (err) {
+        this.logger.error('Failed to persist outputTruncated flag', { jobId: job.id, runId, error: String(err) });
+      }
     };
     const captureChunk = (stream: 'stdout' | 'stderr', chunk: Buffer): void => {
-      if (outputTruncated) return; // marker already emitted; drop silently, child keeps running
-      const redactor = streamRedactors[stream];
-      if (capturedBytes + chunk.length > maxOutputBytes) {
-        const room = Math.max(0, maxOutputBytes - capturedBytes);
-        // truncateToUtf8Boundary (L5 fix): the cap cuts at an arbitrary byte
-        // offset — trim back to a full character so the last stored bytes
-        // before the marker are never an invalid, split UTF-8 sequence.
-        if (room > 0) {
-          const redacted = safeRedact(truncateToUtf8Boundary(chunk.subarray(0, room)), redactor);
-          if (!redacted.textLike) flushRedactor(stream);
-          if (redacted.chunk.length > 0) log.capture(stream, redacted.chunk);
-        }
-        flushRedactor(stream);
-        log.capture(stream, Buffer.from(truncationMarker(maxOutputBytes), 'utf-8'));
-        try {
-          store.updateRun(runId, { outputTruncated: true });
-        } catch (err) {
-          this.logger.error('Failed to persist outputTruncated flag', { jobId: job.id, runId, error: String(err) });
-        }
-        outputTruncated = true;
+      if (stream === 'stderr') {
+        collector.pushStderr(chunk);
         return;
       }
-      capturedBytes += chunk.length;
-      const redacted = safeRedact(chunk, redactor);
-      if (!redacted.textLike) flushRedactor(stream);
-      if (redacted.chunk.length > 0) log.capture(stream, redacted.chunk);
+      collector.pushStdout(chunk);
+      noteTruncation();
     };
     const result = await new Promise<RunResult>((resolve) => {
       const timeoutMs = action.timeoutSec ? action.timeoutSec * 1000 : undefined;
@@ -692,7 +588,12 @@ export class Runner {
       // listeners, so even a process that emits immediately has a run id.
       if (runCommand.sessionId) {
         try {
-          store.updateRun(runId, { sessionId: runCommand.sessionId });
+          // While running, point at the computed transcript path; finish() prefers the hook-reported one.
+          const computedTranscript = adapter.resumeTranscriptPath(action.cwd ?? process.cwd(), runCommand.sessionId, spawnOpts.env);
+          store.updateRun(runId, {
+            sessionId: runCommand.sessionId,
+            ...(computedTranscript === undefined ? {} : { transcriptPath: computedTranscript }),
+          });
         } catch (err) {
           this.logger.error('Failed to persist run sessionId', { jobId: job.id, runId, error: String(err) });
         }
@@ -760,32 +661,18 @@ export class Runner {
         }
       };
 
-      // Structured engines (Claude stream-json) announce failure in-band. Scan
-      // complete stdout lines so a reported error ends the run immediately
-      // instead of waiting for the process to exit.
-      const stdoutDecoder = new StringDecoder('utf8');
-      let stdoutLineBuffer = '';
-      const scanStdout = (chunk: Buffer): void => {
+      // Structured engines (Claude stream-json) announce failure in-band. Every
+      // complete stdout line is checked as it arrives so a reported error ends
+      // the run immediately instead of waiting for the process to exit.
+      collector = log.beginCapture(maxOutputBytes, (line) => {
         if (settled) return;
-        stdoutLineBuffer += stdoutDecoder.write(chunk);
-        let newline = stdoutLineBuffer.indexOf('\n');
-        while (newline >= 0) {
-          const line = stdoutLineBuffer.slice(0, newline);
-          stdoutLineBuffer = stdoutLineBuffer.slice(newline + 1);
-          const detected = adapter.detectTerminalError(line);
-          if (detected) onTerminalError(detected);
-          if (settled) return;
-          newline = stdoutLineBuffer.indexOf('\n');
-        }
-        // A single unterminated line this large is not a stream-json event.
-        if (stdoutLineBuffer.length > 4 * 1024 * 1024) stdoutLineBuffer = '';
-      };
+        const detected = adapter.detectTerminalError(line);
+        if (detected) onTerminalError(detected);
+      });
 
       child.stdout?.on('data', (chunk: Buffer) => {
         try {
-          appendTranscript(chunk);
           captureChunk('stdout', chunk);
-          scanStdout(chunk);
         } catch (err) {
           failFromCallback(err);
         }
@@ -793,7 +680,6 @@ export class Runner {
 
       child.stderr?.on('data', (chunk: Buffer) => {
         try {
-          appendTranscript(chunk);
           captureChunk('stderr', chunk);
         } catch (err) {
           failFromCallback(err);
@@ -802,7 +688,10 @@ export class Runner {
 
       /** Parse the engine output captured so far into the run's final result and finish. */
       const settleFromOutput = (code: number | null): void => {
-        const parsed = adapter.parseResult(code, readTranscriptTail(), '');
+        collector.end();
+        noteTruncation();
+        const source = collector.parseSource();
+        const parsed = adapter.parseResult(code, source.stdout, source.stderr);
         const resumableSessionId = adapter.resumableSessionId(parsed);
         if (resumableSessionId) {
           try {
@@ -811,6 +700,12 @@ export class Runner {
             this.logger.error('Failed to mark Claude session as completed', { jobId: job.id, runId, error: String(err) });
           }
         }
+        // Prefer the transcript path Claude reported to the SessionEnd hook; fall
+        // back to the computed one (CLAUDE_CONFIG_DIR-aware) when it did not.
+        const transcriptSessionId = parsed.sessionId ?? runCommand.sessionId;
+        const hookTranscriptPath = transcriptSessionId === undefined
+          ? undefined
+          : readClaudeHookTranscriptPath(dataDir(), runId, transcriptSessionId);
         const result: RunResult = {
           status: parsed.status,
           exitCode: parsed.exitCode,
@@ -818,9 +713,9 @@ export class Runner {
           costUsd: parsed.costUsd,
           turns: parsed.turns,
           usageJson: parsed.usage === undefined ? undefined : JSON.stringify(redactValue(parsed.usage)),
-          transcriptPath: parsed.sessionId === undefined
+          transcriptPath: hookTranscriptPath ?? (transcriptSessionId === undefined
             ? undefined
-            : adapter.resumeTranscriptPath(action.cwd ?? process.cwd(), parsed.sessionId),
+            : adapter.resumeTranscriptPath(action.cwd ?? process.cwd(), transcriptSessionId, spawnOpts.env)),
           engineStatus: parsed.engineStatus,
         };
         if (terminalError) {
@@ -911,8 +806,8 @@ export class Runner {
         if (hardKillTimer) clearTimeout(hardKillTimer);
         if (exitTimer) clearTimeout(exitTimer);
         try {
-          flushRedactor('stdout');
-          flushRedactor('stderr');
+          collector.end();
+        noteTruncation();
         } catch (err) {
           finish({ status: 'failed', error: `RUNNER_CALLBACK_FAILED: ${errorMessage(err)}` });
           return;

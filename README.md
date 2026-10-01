@@ -154,7 +154,7 @@ See [docs/reference/configuration.md](docs/reference/configuration.md) for the f
 
 ## Observing runs
 
-crontick stores only its own logs: lifecycle events (start, timeout, retry, exit) go to one per-job log file, and the cleaned output (final answer and assistant text) is kept with the run. The engine's raw logs and transcript stay with the engine; crontick does not copy them. `runs get` prints the log file's path and the cleaned output.
+crontick stores only its own logs: lifecycle events (start, timeout, retry, exit) go to one per-job log file, and the cleaned output (final answer, error and stderr) is kept with the run. The engine's raw logs and transcript stay with the engine; crontick does not copy them. `runs get` prints the log file's path and the cleaned output.
 
 ```sh
 crontick runs list --job standup --status failed

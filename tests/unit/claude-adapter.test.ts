@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { spawn as nodeSpawn, spawnSync } from 'node:child_process';
 import { ClaudeAdapter } from '../../src/engines/claude-adapter.js';
 import {
-  CLAUDE_HOOK_HELPER_SOURCE, buildClaudeHookCommand, claudeHookHelperPath, ensureClaudeHookHelper,
+  CLAUDE_HOOK_HELPER_SOURCE, buildClaudeHookCommand, claudeHookHelperPath, ensureClaudeHookHelper, readClaudeHookTranscriptPath,
 } from '../../src/claude-completion-marker.js';
 import { redactSettingsArg } from '../../src/daemon/runner.js';
 import { isUnsafeSessionId, resolveTranscriptPath } from '../../src/engines/claude-transcript.js';
@@ -67,10 +67,27 @@ describe('Claude invocation', () => {
       });
       expect(result.status).toBe(0);
       expect(JSON.parse(readFileSync(join(dir, 'runs', 'run-1.claude-hook.json'), 'utf8')))
-        .toEqual({ exitStatus: 0, sessionId: invocation.sessionId });
+        .toEqual({ exitStatus: 0, sessionId: invocation.sessionId, transcriptPath: null });
+      // SessionEnd hook input carries transcript_path (verified against Claude Code 2.1.286): record it.
+      const transcript = '/home/u/.claude/projects/-w/abc.jsonl';
+      const withPath = spawnSync(hook!.command, {
+        shell: true,
+        input: JSON.stringify({ session_id: invocation.sessionId, transcript_path: transcript, hook_event_name: 'SessionEnd', reason: 'other' }),
+        encoding: 'utf8',
+      });
+      expect(withPath.status).toBe(0);
+      expect(JSON.parse(readFileSync(join(dir, 'runs', 'run-1.claude-hook.json'), 'utf8')).transcriptPath).toBe(transcript);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('readClaudeHookTranscriptPath returns a non-empty string path for the expected session regardless of exitStatus', () => {
+    const read = (marker: unknown, sid = 'sid') => readClaudeHookTranscriptPath('/d', 'run-1', sid, () => JSON.stringify(marker));
+    expect(read({ exitStatus: null, sessionId: 'sid', transcriptPath: '/t/x.jsonl' })).toBe('/t/x.jsonl');
+    expect(read({ exitStatus: null, sessionId: 'sid', transcriptPath: '/t/x.jsonl' }, 'other')).toBeUndefined();
+    for (const transcriptPath of [null, '', 5]) expect(read({ exitStatus: 0, sessionId: 'sid', transcriptPath })).toBeUndefined();
+    expect(readClaudeHookTranscriptPath('/d', 'run-1', 'sid', () => { throw new Error('missing'); })).toBeUndefined();
   });
 });
 
@@ -126,12 +143,29 @@ describe('SessionEnd hook helper', () => {
 });
 
 it('resolves Claude transcripts with slash and dot cwd encoding', () => {
-  expect(resolveTranscriptPath('/root/projects/crontick/.worktrees/claude-engine', 'session-1', '/home/tester'))
+  expect(resolveTranscriptPath('/root/projects/crontick/.worktrees/claude-engine', 'session-1', { env: {}, homedir: () => '/home/tester' }))
     .toBe('/home/tester/.claude/projects/-root-projects-crontick--worktrees-claude-engine/session-1.jsonl');
 });
 
+it('resolves Claude transcripts under CLAUDE_CONFIG_DIR when set, ignoring the home directory', () => {
+  expect(resolveTranscriptPath('/work/my.proj', 'sid-1', { env: { CLAUDE_CONFIG_DIR: '/custom/cfg' }, homedir: () => '/home/tester' }))
+    .toBe('/custom/cfg/projects/-work-my-proj/sid-1.jsonl');
+});
+
+it('falls back to ~/.claude when CLAUDE_CONFIG_DIR is unset or empty', () => {
+  for (const env of [{}, { CLAUDE_CONFIG_DIR: '' }]) {
+    expect(resolveTranscriptPath('/work/p', 'sid-1', { env, homedir: () => '/home/tester' }))
+      .toBe('/home/tester/.claude/projects/-work-p/sid-1.jsonl');
+  }
+});
+
+it('adapter.resumeTranscriptPath honors the supplied environment', () => {
+  expect(new ClaudeAdapter().resumeTranscriptPath('/work/p', 'sid-1', { CLAUDE_CONFIG_DIR: '/custom/cfg' }))
+    .toBe('/custom/cfg/projects/-work-p/sid-1.jsonl');
+});
+
 it('resolves Windows Claude transcripts using the drive and separators', () => {
-  const result = resolveTranscriptPath('C:\\Users\\tester\\my.project', 'session-1', '/home/tester');
+  const result = resolveTranscriptPath('C:\\Users\\tester\\my.project', 'session-1', { env: {}, homedir: () => '/home/tester' });
   expect(result.replaceAll('\\', '/')).toBe('/home/tester/.claude/projects/C--Users-tester-my-project/session-1.jsonl');
 });
 
@@ -259,7 +293,7 @@ describe('Claude resume safety', () => {
 
     const cwd = '/some/project';
     const homeDir = '/home/tester';
-    const path = resolveTranscriptPath(cwd, '../../../etc/passwd', homeDir);
+    const path = resolveTranscriptPath(cwd, '../../../etc/passwd', { env: {}, homedir: () => homeDir });
     expect(path.startsWith(join(homeDir, '.claude', 'projects'))).toBe(true);
     expect(path).not.toContain('..');
     expect(path).not.toContain('etc');

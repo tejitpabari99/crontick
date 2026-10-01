@@ -76,8 +76,8 @@ JSON line; exit 0 with `is_error !== true` is success, and a complete result con
 `costUsd`, `turns`, `usage`, and `engineStatus` (Claude's `subtype`). Without a complete line it
 falls back to exit-code status with no usage. `resumableSessionId`/`canCaptureSession` only
 return a value once a complete result was parsed -- this is what "resume eligible" means:
-`resumeTranscriptPath(cwd, sessionId)` resolves
-`~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl` (see `src/engines/claude-transcript.ts`),
+`resumeTranscriptPath(cwd, sessionId, env?)` resolves
+`<base>/projects/<encoded-cwd>/<sessionId>.jsonl` with `<base>` = `$CLAUDE_CONFIG_DIR` or `~/.claude` (see `src/engines/claude-transcript.ts`),
 and the runner's resume preflight (`SESSION_NOT_FOUND`) checks this before ever spawning with
 `--resume`.
 
@@ -85,7 +85,7 @@ and the runner's resume preflight (`SESSION_NOT_FOUND`) checks this before ever 
 hook. The hook is a plain helper script, `<dataDir>/hooks/session-end.cjs` (fixed content, no
 embedded paths, no `eval`), rewritten idempotently at daemon start and again by `buildInvocation`
 for real runs. The hook command is `"<node>" "<helper>" "<markerPath>"` (double quotes on Windows,
-single-quote escaping on POSIX). The helper reads `exit_status`/`session_id` from hook stdin and
+single-quote escaping on POSIX). The helper reads `exit_status`/`session_id`/`transcript_path` from hook stdin and
 writes `claudeCompletionMarkerPath(dataDir, runId)` -- a private file, never the user's own Claude
 settings. If the helper cannot be written, or the data dir contains `"`, `$`, a backtick or a
 newline, `--settings` is omitted entirely (the hook is best-effort and a run still proceeds).

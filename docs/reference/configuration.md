@@ -134,7 +134,7 @@ crontick daemon stop
 
 `maxRunsPerJob` retains at most that many runs per job. Oldest terminal runs (not `running`/`queued`) and their stored output are evicted best-effort.
 
-`maxOutputBytesPerRun` bounds a single run's captured engine stdout/stderr (held in memory while the run executes, then parsed into the stored output view). Once hit, further output is dropped at a UTF-8 character boundary, a truncation marker is appended, and the run's `outputTruncated` field is set.
+`maxOutputBytesPerRun` bounds the plain stdout captured from a text (non-stream-json) engine; Claude stream-json runs keep only the final result event and the full stderr and are not bounded by it. Once hit, further output is dropped at a UTF-8 character boundary, a truncation marker is appended, and the run's `outputTruncated` field is set.
 
 `maxLogFiles` bounds daily `daemon-YYYY-MM-DD.log` files under the daemon log directory; oldest files beyond the cap are deleted best-effort.
 

@@ -11,7 +11,7 @@ import { CrontickError, ORPHAN_RUN_ERROR_MESSAGE } from '../errors.js';
 import { jobJsonSchemaText } from '../schema-json.js';
 import { nullLogger, type Logger } from '../logger.js';
 import type { EngineOutput } from '../run-output.js';
-import { readClaudeCompletionMarker } from '../claude-completion-marker.js';
+import { readClaudeCompletionMarker, readClaudeHookTranscriptPath } from '../claude-completion-marker.js';
 import { loadConfig } from '../config.js';
 import { resolveJobLogPath } from './job-log-file.js';
 import { getEngineAdapter } from '../engines/registry.js';
@@ -181,17 +181,14 @@ export class Store {
         engine_status TEXT
       );
 
-      -- Parsed engine output (final answer, assistant text, stderr tail) for a
-      -- run. The engine's raw stdout/stderr is never stored: the runner keeps
+      -- Parsed engine output (final answer, error, full stderr) for a run. The engine's raw stdout/stderr is never stored: the runner keeps
       -- its own transcript, and crontick-side events go to a log file.
       CREATE TABLE IF NOT EXISTS run_outputs (
         run_id TEXT PRIMARY KEY,
         format TEXT NOT NULL,
         result TEXT,
         engine_error TEXT,
-        output TEXT NOT NULL,
-        stderr TEXT NOT NULL,
-        truncated INTEGER NOT NULL DEFAULT 0
+        stderr TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS job_schedule_state (
@@ -664,9 +661,9 @@ export class Store {
         OR runs.session_id LIKE ? ESCAPE '\\'
         OR runs.job_id LIKE ? ESCAPE '\\'
         OR runs.job_id IN (SELECT jobs.id FROM jobs WHERE jobs.alias LIKE ? ESCAPE '\\')
-        OR EXISTS (SELECT 1 FROM run_outputs WHERE run_outputs.run_id = runs.id AND (run_outputs.result LIKE ? ESCAPE '\\' OR run_outputs.output LIKE ? ESCAPE '\\'))
+        OR EXISTS (SELECT 1 FROM run_outputs WHERE run_outputs.run_id = runs.id AND run_outputs.result LIKE ? ESCAPE '\\')
       )`);
-      params.push(like, like, like, like, like, like, like, like);
+      params.push(like, like, like, like, like, like, like);
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -708,12 +705,12 @@ export class Store {
   setRunOutput(runId: string, out: EngineOutput): void {
     this.db
       .prepare(
-        `INSERT INTO run_outputs (run_id, format, result, engine_error, output, stderr, truncated)
-         SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM runs WHERE id = ?)
+        `INSERT INTO run_outputs (run_id, format, result, engine_error, stderr)
+         SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM runs WHERE id = ?)
          ON CONFLICT(run_id) DO UPDATE SET format=excluded.format, result=excluded.result, engine_error=excluded.engine_error,
-           output=excluded.output, stderr=excluded.stderr, truncated=excluded.truncated`,
+           stderr=excluded.stderr`,
       )
-      .run(runId, out.format, out.result, out.engineError, out.output, out.stderr, out.truncated ? 1 : 0, runId);
+      .run(runId, out.format, out.result, out.engineError, out.stderr, runId);
   }
 
   /** The parsed engine output stored for a run; undefined when the run never produced any (skipped, missed, still running). */
@@ -724,9 +721,7 @@ export class Store {
       format: row.format === 'claude-stream-json' ? 'claude-stream-json' : 'text',
       result: row.result,
       engineError: row.engine_error,
-      output: row.output,
       stderr: row.stderr,
-      truncated: row.truncated === 1,
     };
   }
 
@@ -792,10 +787,12 @@ export class Store {
       }
       if (row.status === 'running') {
         const marker = readClaudeCompletionMarker(dirname(this.dbPath), row.id, row.session_id ?? undefined);
+        const hookTranscriptPath = readClaudeHookTranscriptPath(dirname(this.dbPath), row.id, row.session_id ?? undefined);
         if (marker) {
           this.updateRun(row.id, {
             status: marker.exitStatus === 0 ? 'success' : 'failed',
             exitCode: marker.exitStatus,
+            ...(hookTranscriptPath ? { transcriptPath: hookTranscriptPath } : {}),
             ...(marker.exitStatus === 0 ? {} : { error: `CLAUDE_HOOK: SessionEnd reported exit status ${marker.exitStatus}` }),
             endedAt: Date.now(),
           });
@@ -960,9 +957,7 @@ interface DbOutputRow {
   format: string;
   result: string | null;
   engine_error: string | null;
-  output: string;
   stderr: string;
-  truncated: number;
 }
 
 interface DbScheduleStateRow {
