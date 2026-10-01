@@ -225,7 +225,7 @@ Get a run by ID.
 crontick runs get <runId>
 ```
 
-The output includes the resolved, redacted command, status/timing fields, and any captured `sessionId`. Claude runs with a complete result also include `costUsd`, `turns`, `usageJson` (a redacted JSON string), `transcriptPath` (a path pointer; crontick does not read the file for usage), and `engineStatus` (Claude's result subtype). Raw-engine runs omit these fields. After a daemon restart, a Claude run that finished while crontick was unavailable can recover its exit status from a matching `SessionEnd` marker; if that marker is absent or incomplete, the usual orphan/adopted-run fallback applies.
+The output includes the resolved, redacted command, status/timing fields, and any captured `sessionId`. The command shows `--settings <session-end-hook>` in place of the hook JSON, and `logFile` is the absolute path of the job's log file (all runs of the job; `null` when file logging is disabled; `runs logs <runId>` gives one run's raw stream). Claude runs with a complete result also include `costUsd`, `turns`, `usageJson` (a redacted JSON string), `transcriptPath` (a path pointer; crontick does not read the file for usage), and `engineStatus` (Claude's result subtype). Raw-engine runs omit these fields. After a daemon restart, a Claude run that finished while crontick was unavailable can recover its exit status from a matching `SessionEnd` marker; if that marker is absent or incomplete, the usual orphan/adopted-run fallback applies.
 
 ---
 

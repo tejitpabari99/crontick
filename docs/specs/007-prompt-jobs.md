@@ -71,7 +71,7 @@ The Claude adapter runs a non-interactive CLI process:
 
 ```text
 claude ...engine.args -p <prompt> --output-format stream-json --verbose
-  (--session-id <new-uuid> | --resume <existing-id>) ...action.args --settings <json>
+  (--session-id <new-uuid> | --resume <existing-id>) ...action.args [--settings <json>]
 ```
 
 Crontick assigns a UUID before each fresh Claude spawn and persists it on the
@@ -112,7 +112,8 @@ Crontick's `timeoutSec` and SIGTERM remain the run timeout. Jobs may pass
 Claude's `--max-budget-usd` through `action.args` to cap cost. The adapter
 does not grant elevated permissions by default; jobs opt in through engine
 arguments such as `--permission-mode`. It appends ephemeral `--settings`
-JSON with a `SessionEnd` hook that writes a completion marker for best-effort
+JSON with a `SessionEnd` hook (a plain helper script, no `eval`; shown as
+`--settings <session-end-hook>` in stored commands) that writes a completion marker for best-effort
 restart recovery. This marker never determines a normal run's result and does
 not make a session eligible for resume. Its live firing and payload still
 require validation; when absent, restart reconciliation uses the existing

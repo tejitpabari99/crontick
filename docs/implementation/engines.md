@@ -82,10 +82,24 @@ and the runner's resume preflight (`SESSION_NOT_FOUND`) checks this before ever 
 `--resume`.
 
 `buildInvocation` also appends an ephemeral `--settings` JSON registering a `SessionEnd` command
-hook. The hook is a small base64-encoded Node script (no shell interpolation of untrusted data)
-that reads `exit_status`/`session_id` from hook stdin and writes
-`claudeCompletionMarkerPath(dataDir, runId)` -- a private file, never the user's own Claude
-settings. This marker is a best-effort signal consumed only by restart reconciliation (see
+hook. The hook is a plain helper script, `<dataDir>/hooks/session-end.cjs` (fixed content, no
+embedded paths, no `eval`), rewritten idempotently at daemon start and again by `buildInvocation`
+for real runs. The hook command is `"<node>" "<helper>" "<markerPath>"` (double quotes on Windows,
+single-quote escaping on POSIX). The helper reads `exit_status`/`session_id` from hook stdin and
+writes `claudeCompletionMarkerPath(dataDir, runId)` -- a private file, never the user's own Claude
+settings. If the helper cannot be written, or the data dir contains `"`, `$`, a backtick or a
+newline, `--settings` is omitted entirely (the hook is best-effort and a run still proceeds).
+The stored and displayed command (run record, diagnostic logs) shows `--settings <session-end-hook>`
+instead of the JSON value.
+
+Observability notes: the raw log is the engine child's stdout/stderr, stored in SQLite `run_logs`
+(source of truth, per run) and mirrored best-effort to a per-**job** file (all runs appended; see
+`resolveJobLogPath` in `src/daemon/job-log-file.ts`, null when `logging.fileEnabled=false`). Cost,
+turns and usage are reported by Claude's final `result` event (`total_cost_usd`, `num_turns`,
+`usage`); crontick computes nothing per run, sums cost/turns and adds numeric usage counters across
+retry attempts, and measures `durationMs` itself as wall clock. `normalizeUsage` (`src/run-output.ts`)
+maps the raw usage block to display counts; storage keeps the raw `usageJson`. `totalTurns` in job
+stats is the sum of `turns` over the job's last 100 runs. This marker is a best-effort signal consumed only by restart reconciliation (see
 [prompt-execution.md](./prompt-execution.md#adopting-runs-across-a-restart) and
 [ADR 0002](../decisions/0002-prompt-only-jobs-and-engine-adapters.md)); a normal run's
 outcome always comes from `parseResult`, never the marker.

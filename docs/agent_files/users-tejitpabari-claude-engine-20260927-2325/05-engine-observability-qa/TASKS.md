@@ -11,7 +11,7 @@ Source of truth: docs/agent_files/users-tejitpabari-claude-engine-20260927-2325/
 | 1 | Job log path helper and `logFile` in run payload | - | done |
 | 2 | Display-only `normalizeUsage` | - | done |
 | 3 | Eval-free SessionEnd hook helper and shortened command | - | done |
-| 4 | Tests, docs, reference, specs, changeset | 1-3 | todo |
+| 4 | Tests, docs, reference, specs, changeset | 1-3 | done |
 
 ## Task 1 — Job log path helper and `logFile` in run payload
 What it is / what it means: No shared function returns the per-job log file location today; SP03 and SP04 both need it (Decision 1).

@@ -149,7 +149,7 @@ See [state-and-storage.md](../concepts/state-and-storage.md#run-history-retentio
 | `fileEnabled` | `boolean` | no | `true` | — |
 | `dir` | `string` | no | `<dataDir>/logs` | Non-empty when set |
 
-Every run's logs are stored in SQLite and can be read with `crontick runs logs`. When file logging is enabled, the same engine and crontick lifecycle streams are mirrored to `<dir>/<jobId>.log`. File logging is best-effort and never blocks or fails a run. Logging config is read per run, so edits apply automatically to new runs.
+Every run's logs are stored in SQLite and can be read with `crontick runs logs`. When file logging is enabled, the same engine and crontick lifecycle streams are mirrored to `<dir>/<jobId>.log` (one file per job, appended across runs with no run delimiter; `getRun` exposes its path as `logFile`). File logging is best-effort and never blocks or fails a run. Logging config is read per run, so edits apply automatically to new runs.
 
 ---
 

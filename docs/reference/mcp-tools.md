@@ -250,7 +250,7 @@ Get the details and current status of a run.
 | `id` | `string` | yes | — | Run ID |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
-**Result:** Run object, including resolved/redacted `command`, engine/status/timing fields, `pid` when spawned, `sessionId` when available, and `outputTruncated`. Claude runs with a complete result include `costUsd`, `turns`, redacted `usageJson` (JSON string), `transcriptPath`, and `engineStatus` (Claude result subtype). Raw-engine runs omit these fields.
+**Result:** Run object, including resolved/redacted `command`, engine/status/timing fields, `pid` when spawned, `sessionId` when available, `outputTruncated`, and `logFile` (absolute per-job log file path shared by all runs of the job, or `null` when file logging is off). Claude runs with a complete result include `costUsd`, `turns`, redacted `usageJson` (JSON string), `transcriptPath`, and `engineStatus` (Claude result subtype). Raw-engine runs omit these fields.
 
 ---
 

@@ -82,7 +82,7 @@ Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `drainNotices` | `(): string[]` | Accumulated notices | — |
 | `isVerbose` | `(): boolean` | Verbose flag | — |
 
-`RunRecord` includes optional `costUsd`, `turns`, `usageJson`, `transcriptPath`, and `engineStatus` for Claude runs with a complete result. `usageJson` is the redacted raw usage block serialized as JSON. Raw-engine runs omit these fields. Run status `skipped` means an overlap fire never started; `canceled` means a run was terminated. `StatsSummary` and `JobStats` include separate `canceled` and `skipped` counts, plus `totalCostUsd` and `totalTurns`, summing runs with recorded usage and treating missing values as zero.
+`RunRecord` includes optional `costUsd`, `turns`, `usageJson`, `transcriptPath`, and `engineStatus` for Claude runs with a complete result. `usageJson` is the redacted raw usage block serialized as JSON. `getRun` also returns `logFile`, the absolute path of the per-job log mirror (shared by all runs of the job; `null` when file logging is off); use `getLogs` for one run's exact raw stream. The stored `command` shows `--settings <session-end-hook>` rather than the hook JSON. Raw-engine runs omit these fields. Run status `skipped` means an overlap fire never started; `canceled` means a run was terminated. `StatsSummary` and `JobStats` include separate `canceled` and `skipped` counts, plus `totalCostUsd` and `totalTurns`, summing runs with recorded usage and treating missing values as zero.
 
 **Library-only methods (retained in the client but no longer part of `SURFACE_CAPABILITIES`, so they have no CLI/MCP equivalent):** `ensure`, `health`, `createJobFromCliOptions`, `jobJsonSchema`, `getConfig`, `drainNotices`, `isVerbose`, `daemonStart`, `daemonStatus`, `daemonRestart`, `configPath`, `validateSchedule`, `previewSchedule`, `dashboardStatus`, `dashboardData`, and the config/engine helpers (`getConfigValue`, `setConfigValue`, `removeConfigValue`, `listEngines`, `addEngine`, `updateEngine`, `removeEngine`, `initConfig`, `validateConfig`). These are intentionally excluded from the parity contract because they serve internal wiring, direct-use library scenarios, or launch infrastructure rather than proxying a daemon operation exposed on every surface. The `dashboard` command group and MCP tools were removed because the dashboard is always served by the daemon; `dashboardStart`/`dashboardStop` were removed entirely (they only made sense as commands), while `dashboardStatus`/`dashboardData` remain for direct library use.
 
@@ -255,6 +255,7 @@ interface RunRecord {
   costUsd?: number;          // Claude runs with a complete result
   turns?: number;
   usageJson?: string;        // redacted raw usage block, JSON string
+  logFile?: string | null;   // getRun() only: absolute per-JOB log file (all runs appended); null when logging.fileEnabled=false
   transcriptPath?: string;
   engineStatus?: string;     // Claude result subtype
 }
@@ -450,9 +451,12 @@ interface RunOutput {
   costUsd: number | null;
   turns: number | null;
   durationMs: number | null;
+  usage: NormalizedUsage | null; // display-only token counts parsed from usageJson; null when none
   truncated: boolean;      // captured output hit the retention cap, or this view was capped
 }
 ```
+
+`NormalizedUsage` is `{ inputTokens?, outputTokens?, cacheReadTokens?, cacheCreationTokens?, thinkingTokens? }`; fields are `undefined` when missing or non-numeric. It reads the run-total counters of Claude's usage block and ignores `iterations[]`. Cost (`costUsd`) is Claude-reported `total_cost_usd`, not computed by crontick.
 
 The view drops Claude `thinking` blocks (and their opaque `signature`), hook/system events, tool results, and base64 hook payloads, and applies secret redaction. The raw log is untouched and remains available from `getLogs`.
 
