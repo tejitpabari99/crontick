@@ -95,3 +95,12 @@ describe('DELETE /api/jobs/:id removes the job history (SP03 task 4)', () => {
     expect((await h.call('GET', '/api/stats/summary')).data.totalRuns).toBe(0);
   });
 });
+
+describe('alias wording in user-facing docs', () => {
+  it('does not describe --force as matching on "name"', async () => {
+    const { readFileSync } = await import('node:fs');
+    for (const file of ['README.md', 'src/skill/SKILL.md']) {
+      expect(readFileSync(file, 'utf-8')).not.toMatch(/same name/);
+    }
+  });
+});

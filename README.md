@@ -98,7 +98,7 @@ Preview the next fire times for any job:
 crontick jobs schedule standup -n 5
 ```
 
-Other create/update options: `--timeout <sec>`, `--overlap skip|queue|cancel-previous` (default `skip`), `--retry <max>`, `--force` (replace a job with the same name). Omitted policy values come from the `defaults` section of `config.json` (`overlap`, `timeoutSec`, `retry`); precedence is CLI flag > per-job JSON > `config.json` > built-in, and the resolved values are saved on the job. When an overlap `skip` job fires while its previous run is still active, the fire is recorded as a `skipped` run (never started), distinct from `canceled`.
+Other create/update options: `--timeout <sec>`, `--overlap skip|queue|cancel-previous` (default `skip`), `--retry <max>`, `--force` (replace a job with the same alias). Omitted policy values come from the `defaults` section of `config.json` (`overlap`, `timeoutSec`, `retry`); precedence is CLI flag > per-job JSON > `config.json` > built-in, and the resolved values are saved on the job. When an overlap `skip` job fires while its previous run is still active, the fire is recorded as a `skipped` run (never started), distinct from `canceled`.
 
 ---
 

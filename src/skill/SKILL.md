@@ -40,7 +40,7 @@ No `id` is needed — crontick assigns the GUID and auto-generates an `alias`. O
 - `--runner <name>` — pick a configured engine (default: `claude`).
 - `--prompt-file <path>` — read the prompt from a UTF-8 `.txt` file instead of `--prompt` (mutually exclusive with `--prompt`; contents are stored, not the path).
 - `--timeout <sec>`, `--overlap skip|queue|cancel-previous`, `--retry <max>` — defaults come from `config.json` `defaults` (built-in: no timeout, `skip`, `0`). Precedence: CLI flag > per-job JSON (`--file`) > `config.json` `defaults` > built-in; the resolved values are saved on the job.
-- `--force` — replace an existing job with the same name.
+- `--force` — replace an existing job with the same alias.
 - Unknown long flags are forwarded to the engine and stored in `action.args`, e.g. `crontick jobs new --cron "0 9 * * *" --prompt "…" --permission-mode acceptEdits`. Flags crontick manages itself (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, `-p`, `-r`) are rejected. The old `--alias` and `--engine` flags were renamed to `--name` and `--runner`.
 
 ### Step 2 — Inspect
