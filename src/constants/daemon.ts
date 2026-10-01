@@ -29,3 +29,11 @@ export const TERMINAL_ERROR_SETTLE_MS = 2_000;
 export const KILL_GRACE_MS = 5_000;
 /** After a process exits but its stdio pipes stay open (grandchildren inherited them), finalize the run after this long. */
 export const EXIT_CLOSE_GRACE_MS = 3_000;
+
+/**
+ * Preferred daemon HTTP port on loopback. Outside the Linux ephemeral range
+ * (32768-60999) and IANA-registered services. When taken, the daemon falls back
+ * to an OS-assigned free port; clients always discover the real port via `daemon.port`.
+ * Override with env `CRONTICK_DAEMON_PORT` (tests).
+ */
+export const DEFAULT_DAEMON_PORT = 47615;

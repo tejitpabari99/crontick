@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { CrontickError } from './errors.js';
 import { redactValue } from './logger.js';
 import { VERSION } from './version.js';
+import { dataDir } from './paths.js';
 import type { Job, Schedule } from './schemas/job.js';
 import type { Store, Run } from './daemon/store.js';
 import type { Scheduler } from './daemon/scheduler.js';
@@ -31,6 +32,8 @@ export interface DashboardHealth {
   uptimeSec: number;
   pid: number;
   port: number;
+  /** Data directory of this daemon (lets a second daemon name the holder of the preferred port). */
+  dataDir: string;
   node: string;
   platform: string;
   jobs: {
@@ -159,6 +162,7 @@ export function buildDashboardHealth(ctx: DashboardContext, jobs: Job[], runs24h
     uptimeSec: Math.floor((Date.now() - ctx.startedAt.getTime()) / 1000),
     pid: ctx.pid ?? process.pid,
     port: ctx.port,
+    dataDir: dataDir(),
     jobs: {
       total: jobs.length,
       enabled: jobs.filter((job) => job.enabled).length,

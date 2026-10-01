@@ -18,6 +18,8 @@ import { Store } from './store.js';
 import { Scheduler } from './scheduler.js';
 import { Runner } from './runner.js';
 import { createApiServer } from './api.js';
+import { bindPort, preferredDaemonPort } from './bind-port.js';
+import { probeHealth } from './ensure.js';
 import type { ApiContext } from './api.js';
 import { createLogger, isVerboseEnv, type LogEvent, type Logger } from '../logger.js';
 import { ensureConfigFile, loadConfig } from '../config.js';
@@ -344,19 +346,34 @@ if (needsSqliteShim) {
     const ctx: ApiContext = { store, scheduler, runner, startedAt, port: 0, reload, logger, missedFireSummary, shutdown: () => Promise.resolve() };
     const server = createApiServer(ctx);
 
-    // Bind to 127.0.0.1:0 — OS assigns an ephemeral port written to daemon.port
-    // for client discovery. Loopback-only binding is a security invariant.
-    await new Promise<void>((resolve, reject) => {
-      server.listen(0, '127.0.0.1', () => {
+    // Bind loopback only (security invariant). Prefer the stable default port;
+    // fall back to an OS-assigned port when it is taken. The real port is written
+    // to daemon.port for client discovery.
+    const listenOn = (port: number): Promise<number> => new Promise<number>((resolve, reject) => {
+      const onError = (err: Error): void => reject(err);
+      server.once('error', onError);
+      server.listen(port, '127.0.0.1', () => {
+        server.off('error', onError);
         const addr = server.address();
-        const port = typeof addr === 'object' && addr ? addr.port : 0;
-        ctx.port = port;
-        writeFileSync(portFilePath(), String(port), 'utf-8');
-        logger.info(`API listening on 127.0.0.1:${port}`);
-        resolve();
+        resolve(typeof addr === 'object' && addr ? addr.port : 0);
       });
-      server.on('error', reject);
     });
+    const bound = await bindPort(preferredDaemonPort(), {
+      listen: listenOn,
+      probe: async (port) => {
+        const healthy = await probeHealth(`http://127.0.0.1:${port}`, 1_000);
+        return healthy.ok
+          ? { kind: 'crontick', pid: healthy.info.pid, dataDir: healthy.info.dataDir }
+          : { kind: 'foreign' };
+      },
+      notify: (message) => {
+        writeStderr(`${message}\n`);
+        logger.warn(message);
+      },
+    });
+    ctx.port = bound.port;
+    writeFileSync(portFilePath(), String(bound.port), 'utf-8');
+    logger.info(`API listening on 127.0.0.1:${bound.port}`, bound.fellBack ? { fellBackFrom: bound.preferred } : undefined);
 
     // Graceful shutdown (L1): stop accepting new connections, unschedule all
     // timers, drain briefly, then close SQLite and remove discovery files.

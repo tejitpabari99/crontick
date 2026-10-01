@@ -39,6 +39,8 @@ export interface EnsureDaemonOptions {
 export interface DaemonInfo {
   baseUrl: string;
   port?: number;
+  /** Data directory reported by the daemon's /health (when known). */
+  dataDir?: string;
   pid?: number;
   started: boolean;
 }
@@ -278,7 +280,7 @@ async function probePortFile(
  * Rejects responses where the reported port doesn't match the URL (prevents
  * accidentally connecting to a different service on the same port).
  */
-async function probeHealth(
+export async function probeHealth(
   baseUrl: string,
   timeoutMs: number,
 ): Promise<{ ok: true; info: Omit<DaemonInfo, 'baseUrl' | 'started'> } | { ok: false }> {
@@ -291,6 +293,7 @@ async function probeHealth(
       name?: unknown;
       pid?: unknown;
       port?: unknown;
+      dataDir?: unknown;
     };
     const product = data.product ?? data.name;
     if (
@@ -314,6 +317,7 @@ async function probeHealth(
       info: {
         pid: data.pid,
         port: data.port,
+        ...(typeof data.dataDir === 'string' ? { dataDir: data.dataDir } : {}),
       },
     };
   } catch {
