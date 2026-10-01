@@ -24,7 +24,8 @@
  * point this script at a temp fixture directory.
  */
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const BUMP_RANK = { none: 0, patch: 1, minor: 2, major: 3 };
 
@@ -125,6 +126,6 @@ function main() {
   );
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main();
 }
