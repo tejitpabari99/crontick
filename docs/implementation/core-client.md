@@ -53,13 +53,13 @@ async createJob(input: Job | JobCreateInput, options?): Promise<Job>
 async listJobs(): Promise<Job[]>
 async getJob(id: string): Promise<Job>
 async updateJob(id: string, patch: JobPatchInput, options?): Promise<Job>
-async deleteJob(id?: string, options?: { all?: boolean; force?: boolean }): Promise<{ ok: true } | { ok: true; deleted: number }>
+async deleteJob(id?: string, options?: { all?: boolean; force?: boolean }): Promise<{ ok: true; canceledRun: boolean; deletedRuns: number } | { ok: true; deleted: number }>
 async enableJob(id: string): Promise<Job>
 async disableJob(id: string): Promise<Job>
 async runNow(id: string): Promise<{ runId: string }>
 async cancelRun(runId: string): Promise<{ ok: true; canceled: boolean }>
 async listRuns(options?: { jobId?; limit?; since? }): Promise<unknown[]>
-async getLogs(runId: string, options?: { lines? }): Promise<LogsResult>
+async getOutput(runId: string): Promise<RunOutput>   // library-only; getLogs was removed (raw log = getRun().logFile)
 async statsSummary(): Promise<StatsSummary>
 async daemonStart(options?: { foreground? }): Promise<DaemonStartResult>
 async daemonStop(): Promise<DaemonStopResult>

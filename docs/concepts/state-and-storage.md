@@ -70,7 +70,7 @@ Only the daemon process writes to `runs.db` and the `jobs/` directory at runtime
 
 Each job run is a child process (the prompt engine). The runner captures its stdout and stderr chunk by chunk, redacts secrets, and stores them in the `run_logs` table of `runs.db` (streams `stdout`, `stderr`, plus crontick's own lifecycle events on the `crontick` stream). The same text is mirrored, best effort, to `<logsDir>/<jobGuid>.log`. Nothing else is written per run except, for Claude runs, a tiny `<dataDir>/runs/<runId>.claude-hook.json` marker used only for restart recovery.
 
-For a Claude engine, stdout is `--output-format stream-json`: one JSON event per line -- `system` (including hook lifecycle), `assistant` messages (with `thinking` blocks and their opaque `signature`, text, and tool calls), `user` tool results, and a final `result`. That is what `crontick runs logs` (the raw log) shows. To read what a run produced, use the **output view** (`crontick runs output`, `getOutput`, `GET /api/runs/:id/output`): it parses the stream into the final answer, the error, and a readable transcript, and strips thinking signatures, hook payloads, and base64. Raw and cleaned views are computed from the same stored log; the raw log is never modified.
+For a Claude engine, stdout is `--output-format stream-json`: one JSON event per line -- `system` (including hook lifecycle), `assistant` messages (with `thinking` blocks and their opaque `signature`, text, and tool calls), `user` tool results, and a final `result`. That is what the per-job log file (the `Log file:` path of `crontick runs get`) contains. To read what a run produced, use the **output view** (`crontick runs get`, `crontick_run_get`, `getOutput`, `GET /api/runs/:id/output`): it parses the stream into the final answer, the error, and a readable transcript, and strips thinking signatures, hook payloads, and base64. Raw and cleaned views are computed from the same stored log; the raw log is never modified.
 
 ## Run history retention
 
@@ -79,8 +79,7 @@ Each job retains at most `retention.maxRunsPerJob` runs (default `100`, configur
 `run_logs` once the cap is exceeded, on every new run and in a startup sweep that catches a cap
 just lowered via `crontick daemon reload`. Pruning is best-effort and count-based only (no
 age limit): a job firing every minute keeps ~100 minutes of history, one firing monthly keeps
-years. Eviction is a hard delete with no undo -- back up first with `crontick share export
---include-runs` if you need history past the cap. See
+years. Eviction is a hard delete with no undo, and exports (`crontick share export`) are jobs-only, so run history cannot be backed up through crontick. See
 [implementation/storage.md](../implementation/storage.md) for the eviction algorithm and
 [ADR 0001](../decisions/0001-architecture-and-runtime-model.md) for the rationale.
 
@@ -114,8 +113,8 @@ cat <dataDir>/logs/daemon-$(date +%F).log | jq .
 1. **Stop the daemon first**: `crontick daemon stop`
 2. **Delete runs only**: remove `runs.db` (the daemon recreates it with a fresh schema on next start).
 3. **Delete everything**: remove the entire data directory. Jobs, runs, logs, and config will all be lost.
-4. **Delete one job**: `crontick jobs delete <id>` removes the JSON file, schema sidecar, and SQLite
-   row, and cancels the job's in-flight run if it has one -- see
+4. **Delete one job**: `crontick jobs delete <id|alias>` removes the JSON file, schema sidecar, SQLite
+   row, the job's runs, run logs and per-job log file, and cancels the job's in-flight run if it has one -- see
    [jobs.md](./jobs.md#lifecycle-create-update-remove).
 
 ## Further reading

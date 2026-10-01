@@ -41,7 +41,7 @@ or last status.
 A job also has an optional, user-editable `alias`, unique across all currently-defined
 (non-deleted) jobs, auto-generated from a built-in word list plus a random integer 1-1000 when
 omitted (retried on collision; word list and RNG are injectable for deterministic tests). The
-CLI sets this field with `--name`; the schema field remains `alias`. Every surface accepting a
+CLI sets this field with `--name`/`-n`; the schema field remains `alias`, and the user-facing term everywhere (help, MCP, errors, docs) is "alias". Auto-generation falls back to `<word>-<6 char base36>` after 50 numeric attempts, and a create race against the alias UNIQUE index regenerates an auto alias (max 3 retries) while an explicit alias reports `JOB_ALREADY_EXISTS`. Every surface accepting a
 job identifier (CLI positional, MCP `id` params, HTTP path segments) accepts either the GUID
 `id` or the `alias`: an exact GUID match wins, otherwise the value is looked up by alias. An
 unresolved identifier fails with `JOB_NOT_FOUND`.
@@ -65,7 +65,8 @@ unresolved identifier fails with `JOB_NOT_FOUND`.
 - **R-001-9b**: On the API and MCP surfaces, a partial action patch that omits `prompt` but includes only modifier fields (`envFile`, `timeoutSec`, `args`, `reuseSession`, `engine`, `sessionId`) MUST be accepted; the missing `prompt` is backfilled from the existing stored action by `mergeActionPatch`. The CLI reaches advanced action patches through `jobs update --file <patch.json>`.
 - **R-001-10**: Deleting a job MUST remove both the JSON file and the SQLite row; the scheduler MUST unschedule the job.
 - **R-001-13**: A `prompt` action MUST have a non-empty `prompt` string. `args` MUST default to `[]` and `reuseSession` MUST default to `false`.
-- **R-001-14**: The action MAY include `cwd`, `env`, `envFile`, and `timeoutSec` fields.
+- **R-001-14**: The action MAY include `cwd`, `env`, `envFile`, and `timeoutSec` fields. On create `cwd` defaults to the caller's directory and is stored as an absolute, existing path.
+- **R-001-14a**: Share files are `{ schema: 1, exportedAt?, crontickVersion?, jobs }` (jobs only, ids omitted on export). Import MUST validate the whole file first (a bare array, missing/other `schema` or invalid job: `VALIDATION_ERROR` naming the path, nothing imported), assign every job a new GUID, never overwrite (alias collisions become `<alias>-2`, `-3`, ... and report `renamedFrom`), and never import runs.
 - **R-001-15**: The action schema MUST be strict (no unknown keys allowed).
 - **R-001-16**: When a job is persisted, a JSON Schema sidecar (`<GUID id>.schema.json`) MUST be written alongside the job JSON file, keyed by the immutable GUID `id`.
 
@@ -94,7 +95,9 @@ unresolved identifier fails with `JOB_NOT_FOUND`.
 ## Edge cases and failure modes
 
 - Invalid alias (uppercase, spaces, dots): `VALIDATION_ERROR`.
-- Job identifier not resolvable on update/delete: `JOB_NOT_FOUND`.
+- Job identifier not resolvable on update/delete: `JOB_NOT_FOUND` ("Job X not found (id or alias)").
+- `action.cwd` missing or not a directory: `INVALID_CWD`; cwd change on a job with a session: `CWD_CHANGE_BREAKS_SESSION`; Claude folder not trusted: `TRUST_REQUIRED` (see spec 003 R-003-40).
+- `schedule.tz` in new input: `VALIDATION_ERROR` (removed field; see spec 002).
 - Missing required fields (`schedule`, `action`), or `kind: "script"`/`kind: "exec"`: `VALIDATION_ERROR`.
 - Duplicate create without explicit overwrite intent: `JOB_ALREADY_EXISTS`; prior definition unchanged.
 - Invalid schedule, or missing/unreadable `envFile`, on create/update: rejected before persistence.

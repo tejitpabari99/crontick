@@ -17,14 +17,16 @@ Short definitions of crontick terms.
 | **daemon** | A long-running background Node.js process that hosts the scheduler, runner, HTTP API, and SQLite store. Started on-demand. |
 | **demand-start** | The pattern where the daemon is started automatically when a client operation needs it, rather than requiring manual startup. |
 | **capability** | A named operation (e.g., `create-job`) that maps 1:1 across all three surfaces. Defined in `SURFACE_CAPABILITIES`. |
-| **alias** | Optional human-friendly kebab-case job name (`--name` on the CLI). The immutable GUID `id` is the primary key; either can identify a job. |
+| **alias** | The unique kebab-case job name; `--name`/`-n` sets it. The immutable GUID `id` is the primary key; every command and tool that takes a job accepts either an id or an alias. |
+| **Runner Session ID** | Display label for a run's or job's engine session id (`sessionId` in JSON). Shown by `runs get` and `jobs get`. |
+| **working directory (`cwd`)** | The folder a job runs in, stored as `action.cwd` (`--cwd`/`-C`). For Claude jobs it must be trusted in Claude's config; see the CLI reference. |
 | **overlap policy** | Controls behavior when a job fires while a previous run is still active: `skip` (drop the new tick), `queue` (wait), or `cancel-previous` (abort the running execution). |
 | **retry** | Automatic re-execution of a failed run up to `retry.max` times with `retry.backoffSec` delay between attempts. |
 | **data directory** | The filesystem root where crontick stores all state: jobs, runs database, config, logs, PID/port files. |
-| **config** | The `config.json` file in the data directory. Defines engines, `defaultEngine`, retention, logging, and job `defaults` (overlap, timeout, retry). Falls back to built-in defaults if absent. |
+| **config** | The `config.json` file in the data directory. Defines engines, `defaultEngine`, retention, logging, and job `defaults` (overlap, timeout, retry). Created automatically with the full defaults on first use and never overwritten afterwards. |
 | **client** | `CrontickClient` — the single core class through which all operations flow. Transport-agnostic. |
 | **one-shot** | A schedule kind that fires exactly once at a specified ISO-8601 time. |
-| **kebab-case** | The naming convention required for job aliases (`--name`): lowercase letters, digits, and hyphens (`my-job-1`). |
+| **kebab-case** | The naming convention required for job aliases (`--name`/`-n`): lowercase letters, digits, and hyphens (`my-job-1`). |
 | **WAL** | Write-Ahead Logging — the SQLite journal mode used by `runs.db` for concurrent read access while the daemon writes. |
 | **prompt job** | A job whose action kind is `prompt`: it invokes a configured engine (CLI tool) with a text prompt and optional session. |
 | **session** | An engine-side conversation context. `sessionId` fixes it; `reuseSession` captures and reuses the first successful one. |

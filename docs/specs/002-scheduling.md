@@ -35,11 +35,11 @@ correct behavior across regions.
 ### Functional requirements
 
 - **R-002-1**: The `schedule.kind` discriminator MUST be one of `cron`, `interval`, `one-shot`.
-- **R-002-2**: A `cron` schedule MUST have a non-empty `cron` string and MAY have a `tz` string.
+- **R-002-2**: A `cron` schedule MUST have a non-empty `cron` string and MUST NOT have a `tz` field: cron expressions fire in the machine local timezone. (`tz` was removed; new input containing it is rejected with `VALIDATION_ERROR`, and a legacy stored `tz` is ignored with one daemon warning per job file at load.)
 - **R-002-3**: An `interval` schedule MUST have a positive `everySec` number and MAY have a `startAt` ISO-8601 string.
 - **R-002-4**: A `one-shot` schedule MUST have a non-empty `runAt` ISO-8601 string. A date-time without an offset is interpreted in the machine's local timezone.
 - **R-002-4a**: A job MUST have exactly one schedule; supplying more than one of `--cron`, `--every`, `--at` MUST be rejected with `VALIDATION_ERROR`, and none with `MISSING_ARG`.
-- **R-002-5**: When `tz` is provided for a `cron` schedule, the scheduler MUST pass it to croner as `CronOptions.timezone`.
+- **R-002-5**: The scheduler MUST create cron entries without a timezone option so croner evaluates them in the machine local timezone.
 - **R-002-6**: The scheduler MUST NOT schedule a disabled job (enabled=false); calling `schedule()` on a disabled job MUST be a no-op.
 - **R-002-7**: `schedule()` MUST be idempotent; calling it on an already-scheduled job MUST first unschedule the previous entry.
 - **R-002-8**: A one-shot whose `runAt` is in the past MUST NOT fire; the entry MUST NOT be registered.
@@ -58,7 +58,7 @@ correct behavior across regions.
 
 ## Behavior
 
-**Cron**: A `Cron` instance from `croner` is created with the pattern and optional timezone.
+**Cron**: A `Cron` instance from `croner` is created with the pattern and no timezone option (machine local time).
 On each cron match, the callback emits a `tick` event with `plannedAt = new Date()`.
 
 **Interval**: An initial `safeSetTimeout` fires after the computed delay. On first fire,
@@ -74,7 +74,7 @@ removes the entry from the internal map. `unscheduleAll()` iterates all entries.
 
 **Input to `schedule()`**: A full `Job` object (uses `job.schedule` and `job.enabled`).
 **Output**: No return value; side-effect is a registered timer that emits `tick` events.
-**`previewNext()` input**: A `Schedule` object + optional `{ n, tz }`.
+**`previewNext()` input**: A `Schedule` object + optional `{ n }`.
 **`previewNext()` output**: `string[]` of ISO-8601 timestamps.
 **`validateSchedule()` input**: A `Schedule` object.
 **`validateSchedule()` output**: `{ ok: boolean; error?: string }`.

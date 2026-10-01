@@ -23,7 +23,7 @@ Drive crontick by running the `crontick` CLI in the shell. All commands below ar
 The prompt MUST be passed with `--prompt` (or `--prompt-file`). Positional text is treated as engine passthrough args, **not** the prompt, and the job will fail with no prompt. Pick exactly one schedule flag.
 
 ```sh
-# cron expression (quote it; add --tz for a timezone)
+# cron expression (quote it; fires in the machine's local timezone)
 crontick jobs new --desc "daily standup" --cron "0 9 * * *" --prompt "Summarize my open GitHub PRs"
 
 # fixed interval, in seconds
@@ -35,8 +35,8 @@ crontick jobs new --desc "release reminder" --at "2026-08-01T09:00:00" --prompt 
 
 No `id` is needed — crontick assigns the GUID and auto-generates an `alias`. Options:
 
-- `--name <name>` — set a memorable kebab-case alias instead of the generated one.
-- `--tz <tz>` — timezone for cron schedules (e.g. `America/Los_Angeles`).
+- `-n, --name <name>` — set a memorable kebab-case alias instead of the generated one.
+- `-C, --cwd <dir>` — folder the job runs in (default: the current directory). For Claude jobs an untrusted folder asks `Trust it? (y/N)`; pass `--trust-folder` to answer yes non-interactively.
 - `--runner <name>` — pick a configured engine (default: `claude`).
 - `--prompt-file <path>` — read the prompt from a UTF-8 `.txt` file instead of `--prompt` (mutually exclusive with `--prompt`; contents are stored, not the path).
 - `--timeout <sec>`, `--overlap skip|queue|cancel-previous`, `--retry <max>` — defaults come from `config.json` `defaults` (built-in: no timeout, `skip`, `0`). Precedence: CLI flag > per-job JSON (`--file`) > `config.json` `defaults` > built-in; the resolved values are saved on the job.
@@ -65,7 +65,7 @@ crontick runs get <runId>          # status, timing, Runner Session ID, transcri
 
 ```sh
 crontick jobs update <id|alias> --disable   # also --enable, or any create flag to change fields
-crontick jobs update <id|alias> --cron "0 8 * * *" --tz America/Los_Angeles
+crontick jobs update <id|alias> --cron "0 8 * * *"
 crontick jobs delete <id|alias>    # delete one job (confirm with the user first)
 crontick runs cancel <runId>       # cancel an in-progress run
 ```

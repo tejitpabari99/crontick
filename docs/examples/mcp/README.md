@@ -67,9 +67,7 @@ All tools accept an optional `verbose: boolean` parameter for diagnostics.
 | Tool | Parameters | Description |
 |------|------------|-------------|
 | `crontick_run_list` | `jobId?`, `limit?`, `since?`, `status?` | List run records |
-| `crontick_run_get` | `id` | Get a specific run |
-| `crontick_run_output` | `id` | Cleaned run output: final result, error, readable transcript |
-| `crontick_run_logs_tail` | `id`, `lines?` (default 50), `source?` (`all`, `engine`, `crontick`) | Tail run output logs |
+| `crontick_run_get` | `id` | Get a specific run, its `logFile` path and the cleaned output (final result, error, readable transcript) |
 
 `status` accepts one of `queued`, `running`, `success`, `failed`, `canceled`, `skipped`, `timeout`, `missed`. `skipped` marks a fire that never started because overlap `skip` found another run active; `missed` marks a schedule fire recorded but never executed because the daemon was down. `crontick_run_get` also returns `costUsd`, `turns`, `usageJson`, `transcriptPath`, and `engineStatus` for Claude runs.
 
@@ -100,8 +98,8 @@ All tools accept an optional `verbose: boolean` parameter for diagnostics.
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
-| `crontick_export` | `includeRuns?` | Export all jobs (optionally with run history) |
-| `crontick_import` | `jobs[]`, `runs?` | Import jobs (optionally restoring run history from an export) |
+| `crontick_export` | `onlyJobs?` | Export jobs (schema 1, jobs only; optionally only the given ids/aliases) |
+| `crontick_import` | `schema`, `jobs[]`, `trustFolder?` | Import jobs from an export file (new ids; alias collisions get `-2`, `-3`) |
 
 ### Doctor
 
@@ -182,18 +180,16 @@ Response:
 }
 ```
 
-### 4. Read run logs
+### 4. Read the run result
 
 ```json
 {
-  "name": "crontick_run_logs_tail",
-  "arguments": {
-    "id": "abc12345-...",
-    "lines": 10,
-    "source": "all"
-  }
+  "name": "crontick_run_get",
+  "arguments": { "id": "abc12345-..." }
 }
 ```
+
+The result holds the run record, `logFile` (the per-job log file) and `output` (the cleaned view).
 
 ### 5. Clean up
 

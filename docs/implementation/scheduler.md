@@ -38,7 +38,7 @@ class Scheduler extends EventEmitter {
 
 Uses `croner` v9 `new Cron(pattern, options, callback)`:
 
-- `CronOptions.timezone` is set when `schedule.tz` is present.
+- No timezone option is set: cron expressions fire in the machine's local timezone (the `tz` field was removed; a legacy stored `tz` is ignored and warned about once per job file at load).
 - Callback fires `this.fireTick(job.id, new Date())`.
 - Stopping: `cron.stop()`.
 
@@ -118,7 +118,7 @@ effects:
 - **Interval**: simple arithmetic from `now`.
 - **One-shot**: returns `[runAt]` if in the future, else empty.
 
-Helper: `cronNextN(pattern, tz, n)` (local to the module).
+Helper: `cronNextN(pattern, n)` (local to the module).
 
 ---
 

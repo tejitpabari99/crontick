@@ -123,5 +123,5 @@ failure resolves to `undefined` (inconclusive), never throws.
 ## Diagnostic logging
 
 When `logger.isDebugEnabled()`, the runner writes `[crontick:debug]` lines to the run's log via
-`appendDiagnosticLog()`, visible in `crontick runs logs <runId>` when verbose was active during
+`appendDiagnosticLog()`, visible in the per-job log file (`Log file:` in `crontick runs get <runId>`) when verbose was active during
 the run.

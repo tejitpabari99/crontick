@@ -158,7 +158,7 @@ Two aspects are sometimes mistaken for gaps; they are deliberate:
   [concepts/daemon-lifecycle.md](concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down)
   for the missed-fire mechanism that makes any downtime gap visible anyway.
 - **Run-history retention is a bounded cache, not an archive.** Each job keeps at most
-  `retention.maxRunsPerJob` runs (default 100); eviction is a hard delete. Export first with
-  `crontick share export --include-runs` if you need history past the cap. See
+  `retention.maxRunsPerJob` runs (default 100); eviction is a hard delete. Run history is never exported
+  (`crontick share export` is jobs-only), and deleting a job deletes its runs. See
   [concepts/state-and-storage.md](concepts/state-and-storage.md#run-history-retention) and
   [ADR 0001](decisions/0001-architecture-and-runtime-model.md).

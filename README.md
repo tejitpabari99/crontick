@@ -70,10 +70,7 @@ Watch what the agent did:
 
 ```sh
 crontick runs list                 # recent runs across all jobs
-crontick runs get <runId>          # resolved command, status, timing, session id
-crontick runs logs <runId>         # both streams; add "engine" or "crontick" to filter
-crontick runs logs <runId> engine  # just the AI engine's stdout/stderr
-crontick runs output <runId>        # cleaned output: final answer, error, readable transcript (no thinking/hook noise)
+crontick runs get <runId>          # status, timing, Runner Session ID, transcript + log file path, then the cleaned output (final answer, error, readable transcript; no thinking/hook noise)
 ```
 
 Prefer a UI? `crontick info` prints the dashboard URL (`http://127.0.0.1:<port>/dashboard`) where you can browse jobs (with details, search and run-once) in a light or dark theme, runs (multi-select filters, sortable columns, search across logs), and per-run output (a cleaned view, with the raw log on demand).
@@ -85,7 +82,7 @@ Prefer a UI? `crontick info` prints the dashboard URL (`http://127.0.0.1:<port>/
 Every job carries exactly one schedule. Pick the flag that matches:
 
 ```sh
-# cron expression (optionally with --tz)
+# cron expression (fires in the machine's local timezone)
 crontick jobs new --cron "0 9 * * *" --prompt "Summarize my open PRs" --name standup
 
 # fixed interval, in seconds or with an s/m/h/d suffix
@@ -157,19 +154,14 @@ See [docs/reference/configuration.md](docs/reference/configuration.md) for the f
 
 ## Observing runs
 
-Each run records two log streams and a per-job log file:
-
-- **engine** — the AI engine's stdout + stderr (what the agent produced).
-- **crontick** — scheduling/execution lifecycle events (start, timeout, retry, exit).
+Each run records the engine's stdout + stderr and crontick's lifecycle events (start, timeout, retry, exit) in one per-job log file. `runs get` prints the file's path and the cleaned output.
 
 ```sh
 crontick runs list --job standup --status failed
-crontick runs get <runId>            # captured session id; Claude runs also show cost, turns, usage
-crontick runs logs <runId>           # both streams
-crontick runs logs <runId> crontick  # lifecycle events only
+crontick runs get <runId>            # Runner Session ID, log file path and cleaned output; Claude runs also show cost, turns, usage
 ```
 
-When `logging.fileEnabled` is true (the default), every run is also mirrored to `<logsDir>/<jobGuid>.log`. Run `crontick info` for the exact `logsDir` and other storage paths, plus the **dashboard URL** — the dashboard offers job/run filters, search, and a per-run output view with an optional raw log. Output is redacted for common secret patterns before storage.
+When `logging.fileEnabled` is true (the default), every run is also mirrored to `<logsDir>/<jobGuid>.log` (one file per job, deleted with the job). Run `crontick info` for the exact `logsDir` and other storage paths, plus the **dashboard URL** — the dashboard offers job/run filters, search, and a per-run output view with an optional raw log. Output is redacted for common secret patterns before storage.
 
 ---
 
@@ -222,7 +214,7 @@ Full API in [docs/reference/library-api.md](docs/reference/library-api.md); runn
 | Group | Commands |
 |-------|----------|
 | **jobs** | `new` · `list` · `get` · `update` · `schedule` · `run-now` · `delete` |
-| **runs** | `list` · `get` · `logs` · `cancel` |
+| **runs** | `list` · `get` · `cancel` |
 | **share** | `export` · `import` |
 | **stats** | `summary` · `job` |
 | **info** | `info` (version, paths, daemon status, dashboard URL) |

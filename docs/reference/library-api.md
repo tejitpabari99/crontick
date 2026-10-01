@@ -31,31 +31,30 @@ class CrontickClient {
 
 #### Methods
 
-Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJob`, `enableJob`, `disableJob`, `runNow`, `statsJob`, the `jobId` filter on `listRuns`) accepts EITHER the job's immutable GUID `id` OR its human-friendly `alias` — an exact GUID match is tried first, falling back to an alias lookup. An identifier that resolves to neither throws `CrontickError('JOB_NOT_FOUND', ...)`. See [job-schema.md](job-schema.md#identity-guid-id--alias) for how `id`/`alias` are assigned.
+Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJob`, `enableJob`, `disableJob`, `runNow`, `statsJob`, the `jobId` filter on `listRuns`) accepts EITHER the job's immutable GUID `id` OR its **alias** (the unique kebab-case job name; CLI `--name`/`-n`) — an exact GUID match is tried first, falling back to an alias lookup. An identifier that resolves to neither throws `CrontickError('JOB_NOT_FOUND', 'Job X not found (id or alias)')`. See [job-schema.md](job-schema.md#identity-guid-id--alias) for how `id`/`alias` are assigned.
 
 | Method | Signature | Returns | Throws |
 |--------|-----------|---------|--------|
 | `ensure` | `(): Promise<DaemonInfo>` | `DaemonInfo` | `CrontickError` (`DAEMON_START_FAILED`, `DAEMON_TIMEOUT`, `DAEMON_START_LOCK_TIMEOUT`) |
 | `health` | `(options?: { ensure?: boolean }): Promise<unknown>` | Health response | `CrontickError` |
-| `createJob` | `(input: Job \| JobCreateInput, options?: CreateJobOptions): Promise<Job>` | Created `Job` | `CrontickError` (`VALIDATION_ERROR`, `JOB_ALREADY_EXISTS`, `ENV_FILE_ERROR`, `DAEMON_REQUEST_FAILED`) |
+| `createJob` | `(input: Job \| JobCreateInput, options?: CreateJobOptions): Promise<Job>` | Created `Job` | `CrontickError` (`VALIDATION_ERROR`, `INVALID_CWD`, `TRUST_REQUIRED`, `CLAUDE_CONFIG_UNREADABLE`, `JOB_ALREADY_EXISTS`, `ENV_FILE_ERROR`, `DAEMON_REQUEST_FAILED`) |
 | `createJobFromCliOptions` | `(input: JobCreateCliOptions): Promise<Job>` | Created `Job` | `CrontickError` |
 | `listJobs` | `(): Promise<Job[]>` | Array of `Job` | `CrontickError` |
 | `getJob` | `(id: string): Promise<Job>` | `Job` | `CrontickError` (`NOT_FOUND`) |
-| `updateJob` | `(id: string, patch: JobPatchInput, options?: NormalizeJobInputOptions): Promise<Job>` | Updated `Job` | `CrontickError` (`VALIDATION_ERROR`, `ENV_FILE_ERROR`, `NOT_FOUND`, `DAEMON_REQUEST_FAILED`) |
-| `deleteJob` | `(id?: string, options?: { all?: boolean; force?: boolean }): Promise<{ ok: true } \| { ok: true; deleted: number }>` | `{ ok: true }` for a single delete, or `{ ok: true, deleted }` when `all` is set (requires `force`) | `CrontickError` (`VALIDATION_ERROR`, `NOT_FOUND`) |
+| `updateJob` | `(id: string, patch: JobPatchInput, options?: UpdateJobOptions): Promise<Job>` | Updated `Job` | `CrontickError` (`VALIDATION_ERROR`, `INVALID_CWD`, `CWD_CHANGE_BREAKS_SESSION`, `TRUST_REQUIRED`, `ENV_FILE_ERROR`, `NOT_FOUND`, `DAEMON_REQUEST_FAILED`) |
+| `deleteJob` | `(id?: string, options?: { all?: boolean; force?: boolean }): Promise<{ ok: true; canceledRun: boolean; deletedRuns: number } \| { ok: true; deleted: number }>` | `{ ok, canceledRun, deletedRuns }` for a single delete (the job's runs, logs and schedule state are deleted with it), or `{ ok: true, deleted }` when `all` is set (requires `force`) | `CrontickError` (`VALIDATION_ERROR`, `NOT_FOUND`) |
 | `enableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
 | `disableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
 | `runNow` | `(id: string): Promise<{ runId: string }>` (runs once now, even if disabled; does not enable the job or alter the schedule) | `{ runId }` | `CrontickError` |
 | `cancelRun` | `(runId: string): Promise<{ ok: true; canceled: boolean }>` | Cancel result | `CrontickError` |
 | `getRun` | `(runId: string): Promise<RunRecord>` | Run object | `CrontickError` |
 | `listRuns` | `(options?: { jobId?: string; limit?: number; since?: number; status?: string }): Promise<RunRecord[]>` | Array of runs | `CrontickError` |
-| `getOutput` | `(runId: string): Promise<RunOutput>` (cleaned output view; raw log stays in `getLogs`) | `RunOutput` | `CrontickError` (`NOT_FOUND`) |
-| `getLogs` | `(runId: string, options?: { lines?: number; source?: 'all' \| 'engine' \| 'crontick' }): Promise<LogsResult>` | `LogsResult` | `CrontickError` (`VALIDATION_ERROR` on an invalid `source`) |
-| `exportJobs` | `(options?: { includeRuns?: boolean }): Promise<{ jobs: Job[]; runs?: unknown[] }>` | Export payload; `runs` present only when `includeRuns` is set | `CrontickError` |
-| `importJobs` | `(jobs: unknown[], options?: NormalizeJobInputOptions & { runs?: unknown[] }): Promise<unknown>` | Import result, including `runsImported`/`runsSkipped` when `options.runs` is passed | `CrontickError` |
+| `getOutput` | `(runId: string): Promise<RunOutput>` (cleaned output view; library-only, shown by `crontick runs get` and `crontick_run_get`; the raw log is the file at `getRun().logFile`) | `RunOutput` | `CrontickError` (`NOT_FOUND`) |
+| `exportJobs` | `(options?: { onlyJobs?: string[] }): Promise<ExportFile>` | Share file `{ schema: 1, exportedAt, crontickVersion, jobs }` (jobs only, ids omitted) | `CrontickError` (`JOB_NOT_FOUND` listing every unknown `onlyJobs` entry) |
+| `importJobs` | `(file: unknown, options?: NormalizeJobInputOptions & { trustFolder?: boolean }): Promise<ImportResult>` | `{ imported, results }`; each row `{ id, alias, ok, renamedFrom?, error? }`. Every job gets a new GUID, alias collisions get `-2`, `-3`, ... | `CrontickError` (`VALIDATION_ERROR` for a bad file or wrong `schema`, nothing imported; `TRUST_REQUIRED`) |
 | `validateSchedule` | `(schedule: Schedule): Promise<unknown>` | Validation result | `CrontickError` |
-| `previewSchedule` | `(input: { schedule: Schedule; n?: number; tz?: string }): Promise<unknown>` | Fire times | `CrontickError` |
-| `jobSchedule` | `(id: string, options?: { n?: number }): Promise<unknown>` | Upcoming fire times for an existing job (id or name); powers `crontick jobs schedule` and `crontick_job_schedule` | `CrontickError` (`NOT_FOUND`) |
+| `previewSchedule` | `(input: { schedule: Schedule; n?: number }): Promise<unknown>` | Fire times | `CrontickError` |
+| `jobSchedule` | `(id: string, options?: { n?: number }): Promise<unknown>` | Upcoming fire times for an existing job (id or alias); returns `{ jobId, alias, enabled, cwd, schedule, next }`; powers `crontick jobs schedule` and `crontick_job_schedule` | `CrontickError` (`NOT_FOUND`) |
 | `statsSummary` | `(): Promise<StatsSummary>` | `StatsSummary` | `CrontickError` |
 | `statsJob` | `(id: string): Promise<JobStats>` | `JobStats` | `CrontickError` |
 | `daemonStart` | `(options?: { foreground?: boolean }): Promise<DaemonStartResult>` | Start result (library-only after round-2 simplification) | `CrontickError` |
@@ -82,12 +81,12 @@ Every method above that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `drainNotices` | `(): string[]` | Accumulated notices | — |
 | `isVerbose` | `(): boolean` | Verbose flag | — |
 
-`RunRecord` includes optional `costUsd`, `turns`, `usageJson`, `transcriptPath`, and `engineStatus` for Claude runs with a complete result. `usageJson` is the redacted raw usage block serialized as JSON. `getRun` also returns `logFile`, the absolute path of the per-job log mirror (shared by all runs of the job; `null` when file logging is off); use `getLogs` for one run's exact raw stream. The stored `command` shows `--settings <session-end-hook>` rather than the hook JSON. Raw-engine runs omit these fields. Run status `skipped` means an overlap fire never started; `canceled` means a run was terminated. `StatsSummary` and `JobStats` include separate `canceled` and `skipped` counts, plus `totalCostUsd` and `totalTurns`, summing runs with recorded usage and treating missing values as zero.
+`RunRecord` includes optional `costUsd`, `turns`, `usageJson`, `transcriptPath`, and `engineStatus` for Claude runs with a complete result. `usageJson` is the redacted raw usage block serialized as JSON. `getRun` also returns `logFile`, the absolute path of the per-job log file (raw engine output and crontick events of all runs of the job, one file per job; `null` when file logging is off). `getLogs` and its types (`LogsResult`, `LogEntry`, `LogSource`, `LOG_SOURCES`) were removed; `crontick runs get` and `crontick_run_get` show the cleaned output and this path instead. `sessionId` is displayed as the Runner Session ID. The stored `command` shows `--settings <session-end-hook>` rather than the hook JSON. Raw-engine runs omit these fields. Run status `skipped` means an overlap fire never started; `canceled` means a run was terminated. `StatsSummary` and `JobStats` include separate `canceled` and `skipped` counts, plus `totalCostUsd` and `totalTurns`, summing runs with recorded usage and treating missing values as zero. `JobStats` covers every retained run of the job; `totalTurns` is the sum of `turns` (Claude `num_turns`, the agentic model round-trips of a run, accumulated across retries). `lastRunAt` stays epoch milliseconds (the CLI prints it as local ISO-8601).
 
 **Library-only methods (retained in the client but no longer part of `SURFACE_CAPABILITIES`, so they have no CLI/MCP equivalent):** `ensure`, `health`, `createJobFromCliOptions`, `jobJsonSchema`, `getConfig`, `drainNotices`, `isVerbose`, `daemonStart`, `daemonStatus`, `daemonRestart`, `configPath`, `validateSchedule`, `previewSchedule`, `dashboardStatus`, `dashboardData`, and the config/engine helpers (`getConfigValue`, `setConfigValue`, `removeConfigValue`, `listEngines`, `addEngine`, `updateEngine`, `removeEngine`, `initConfig`, `validateConfig`). These are intentionally excluded from the parity contract because they serve internal wiring, direct-use library scenarios, or launch infrastructure rather than proxying a daemon operation exposed on every surface. The `dashboard` command group and MCP tools were removed because the dashboard is always served by the daemon; `dashboardStart`/`dashboardStop` were removed entirely (they only made sense as commands), while `dashboardStatus`/`dashboardData` remain for direct library use.
 
 Read methods that surface config values or captured text (`getConfigValue`, `getRun`,
-`listRuns`, `getLogs`, and `dashboardData`) apply the shared redaction contract before
+`listRuns`, and `dashboardData`) apply the shared redaction contract before
 returning strings or structured text fields. Job-returning methods (`createJob`, `listJobs`,
 `getJob`, and `updateJob`) and config mutators (`setConfigValue`, `removeConfigValue`,
 `addEngine`, `updateEngine`, and `removeEngine`) also redact secret-like env/config values
@@ -102,9 +101,9 @@ the file is missing or unreadable, they reject with `ENV_FILE_ERROR`, resolve re
 paths against `action.cwd` when set (otherwise the caller's current working directory),
 and leave previously stored job state unchanged.
 
-`getLogs({ lines: N })` reconstructs newline-delimited text lines from the ordered
-stdout/stderr chunk rows returned by the daemon before applying the last-`N` slice, so
-chunk boundaries do not change the visible tail result.
+**Working directory and Claude trust.** A job runs in `action.cwd`, which `createJob`/`updateJob`/`importJobs` resolve to an absolute, existing directory (`INVALID_CWD` otherwise); an omitted cwd on create defaults to the client's `cwd` option, else `process.cwd()`. For Claude jobs the client checks Claude's trust config (`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`) before persisting anything and throws `TRUST_REQUIRED` (`details: { cwd, folders, engine }`) for an untrusted folder unless `trustFolder: true` is passed, in which case it records the trust first. Only the `hasTrustDialogAccepted` flag of that folder is written; all other keys are preserved and an unparsable file aborts with `CLAUDE_CONFIG_UNREADABLE`. `updateJob` checks only when the cwd or engine changes; engines without a trust concept (raw) are skipped. Changing the cwd of a job with a session throws `CWD_CHANGE_BREAKS_SESSION`. `claude -p` itself skips Claude's trust dialog, so this is a guardrail rather than a hard requirement.
+
+`schedule.tz` was removed: cron expressions fire in the machine's local timezone, and passing `tz` is rejected on create/update input (a legacy stored `tz` is ignored, with one daemon warning per job).
 
 ---
 
@@ -159,36 +158,6 @@ interface CrontickClientOptions {
   logger?: Logger;
 }
 ```
-
-### LogEntry
-
-```ts
-interface LogEntry {
-  runId?: string;
-  stream: string;
-  ts: number;
-  data: string;
-}
-```
-
-### LogsResult
-
-```ts
-interface LogsResult {
-  runId: string;
-  lines: LogEntry[];
-}
-```
-
-### LogSource / LOG_SOURCES
-
-```ts
-const LOG_SOURCES = ['all', 'engine', 'crontick'] as const;
-type LogSource = (typeof LOG_SOURCES)[number];
-```
-
-The canonical set of accepted `getLogs` / `runs logs` sources. `getLogs` validates its `source`
-argument against this set and throws `CrontickError` (`VALIDATION_ERROR`) for any other value.
 
 ### StatsSummary
 
@@ -280,6 +249,11 @@ interface NormalizeJobInputOptions {
 ```ts
 interface CreateJobOptions extends NormalizeJobInputOptions {
   force?: boolean;
+  trustFolder?: boolean; // trust the job's cwd in Claude when not trusted yet (else TRUST_REQUIRED)
+}
+
+interface UpdateJobOptions extends NormalizeJobInputOptions {
+  trustFolder?: boolean;
 }
 ```
 
@@ -300,7 +274,8 @@ interface JobCreateCliOptions {
   cron?: string;
   every?: number;
   at?: string;
-  tz?: string;
+  cwd?: string;
+  trustFolder?: boolean;
   prompt?: string;
   promptFile?: string;
   engine?: string;
@@ -436,7 +411,7 @@ interface DashboardHealth {
 
 ### RunOutput
 
-Returned by `getOutput`, `crontick runs output <runId> [--json]`, `crontick_run_output`, and `GET /api/runs/:id/output`.
+Returned by `getOutput`, shown by `crontick runs get <runId>` (`--json` prints `{ run, output }`) and `crontick_run_get`, and served at `GET /api/runs/:id/output`.
 
 ```ts
 interface RunOutput {
@@ -458,7 +433,7 @@ interface RunOutput {
 
 `NormalizedUsage` is `{ inputTokens?, outputTokens?, cacheReadTokens?, cacheCreationTokens?, thinkingTokens? }`; fields are `undefined` when missing or non-numeric. It reads the run-total counters of Claude's usage block and ignores `iterations[]`. Cost (`costUsd`) is Claude-reported `total_cost_usd`, not computed by crontick.
 
-The view drops Claude `thinking` blocks (and their opaque `signature`), hook/system events, tool results, and base64 hook payloads, and applies secret redaction. The raw log is untouched and remains available from `getLogs`.
+The view drops Claude `thinking` blocks (and their opaque `signature`), hook/system events, tool results, and base64 hook payloads, and applies secret redaction. The raw log is untouched and remains in the per-job log file (`getRun().logFile`).
 
 ### DashboardStats
 

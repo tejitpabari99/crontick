@@ -26,12 +26,12 @@ await new Promise((resolve) => setTimeout(resolve, 2000));
 const run = await client.getRun(runId);
 console.log('Run record:', JSON.stringify(run, null, 2));
 
-// Retrieve captured logs (last 20 lines).
-const logs = await client.getLogs(runId, { lines: 20 });
-console.log('Logs:');
-for (const line of logs.lines) {
-  console.log(`  [${line.stream}] ${line.data}`);
-}
+// The record carries the per-job log file path (raw engine output + crontick events); null when file logging is off.
+console.log('Log file:', run.logFile);
+
+// The cleaned view of what the run produced (final answer, error, readable transcript).
+const output = await client.getOutput(runId);
+console.log('Result:', output.result ?? output.output);
 
 // List recent runs for this job.
 const runs = await client.listRuns({ jobId: 'run-history-demo', limit: 5 });

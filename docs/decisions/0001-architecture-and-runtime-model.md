@@ -1,7 +1,7 @@
 # 0001: Architecture and runtime model
 
 - Status: Accepted
-- Date: 2026-09-28
+- Date: 2026-10-01 (amended; originally 2026-09-28)
 - Supersedes: former ADRs 0001, 0003, 0004, 0005, 0011 (surface-drift portion only; the
   vitest tooling choice moves to [ADR 0003](0003-toolchain-and-distribution.md)), 0012,
   0013, 0014, 0015, 0016, 0017, 0020 (the generic detached-spawn exception only; the
@@ -127,6 +127,18 @@ removed after it redacted a benign base64 payload in real output, exports, and t
 dashboard. crontick chooses precision over recall here deliberately: silently corrupting
 benign user data is itself a data-integrity bug, worse than occasionally leaving an
 unlabeled bare secret unredacted.
+
+### Amendment (2026-10-01): deleting a job deletes its history
+
+Deleting a job removes its runs, run logs, schedule state and per-job log file in one
+transaction instead of archiving the runs; orphans left by older versions are purged at
+daemon start. This keeps `runs list`, `runs get`, stats and the dashboard consistent (the
+earlier archive behavior only hid runs from some of them). Share files (`schema: 1`) carry
+job definitions only: no run history and no ids, so an import always mints new ids and
+suffixes alias collisions rather than overwriting. Cron schedules fire in machine local time
+(the per-job `tz` field was removed), and `config.json` is created with the full defaults on
+first use and never overwritten (trade-off: later built-in default changes do not reach
+users who already have the file).
 
 ## Consequences
 

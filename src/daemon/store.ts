@@ -61,7 +61,7 @@ export interface RunLog {
 export type LogStream = 'stdout' | 'stderr' | 'crontick';
 
 /**
- * Retrieval-side filter for getLogs(): `all` (default) returns every stream,
+ * Retrieval-side filter for Store.getLogs(): `all` (default) returns every stream,
  * `engine` returns only stdout+stderr, `crontick` returns only crontick-side
  * lifecycle events. Canonically defined in `src/log-source.ts` and re-exported
  * here for daemon consumers (api.ts).

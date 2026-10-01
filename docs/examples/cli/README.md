@@ -20,13 +20,13 @@ crontick jobs new --every 60 --prompt 'Say hello from crontick' --name hello-wor
 
 Expected: prints the created job with a generated GUID `id` and alias `hello-world`.
 
-### Cron prompt job with timezone
+### Cron prompt job
 
 ```sh
-crontick jobs new --cron '0 9 * * 1-5' --tz America/New_York --prompt 'Write a morning report' --runner claude --name morning-report
+crontick jobs new --cron '0 9 * * 1-5' -p 'Write a morning report' --runner claude -n morning-report
 ```
 
-Expected: job with `schedule.kind: "cron"`, `schedule.tz: "America/New_York"`, and `action.kind: "prompt"`.
+Expected: job with `schedule.kind: "cron"` (fires in the machine's local timezone), `action.kind: "prompt"`, and `action.cwd` set to the current directory. Use `-C <dir>` to run elsewhere; for Claude jobs an untrusted folder prompts `Trust it? (y/N)` (or pass `--trust-folder`).
 
 ### Prompt job via JSON file
 
@@ -152,15 +152,9 @@ crontick runs list --status skipped --limit 5
 crontick runs get <runId>
 ```
 
-Claude runs also show `costUsd`, `turns`, `usageJson`, `transcriptPath`, and `engineStatus`.
+Shows the run fields, the Runner Session ID, `Transcript:` and `Log file:` paths, then the cleaned output. Claude runs also show cost and turns. `--json` prints `{ run, output }`.
 
-### View logs
-
-```sh
-crontick runs logs <runId> --tail 20
-crontick runs logs <runId> engine --tail 20
-crontick runs logs <runId> crontick --tail 20
-```
+The raw log is the single per-job file named on the `Log file:` line (`tail -n 20 <path>`).
 
 ### Cancel a running run
 
@@ -193,12 +187,12 @@ crontick daemon stop
 ## Export / Import
 
 ```sh
-crontick share export --out jobs-backup.json
-crontick share export --out jobs-and-runs-backup.json --include-runs
+crontick share export --out jobs-backup            # writes jobs-backup.json
+crontick share export --only-jobs morning-report,hello-world --out two-jobs.json
 crontick share import jobs-backup.json
 ```
 
-`--include-runs` adds a `runs` array to the export; import restores it archivally when present.
+Exports are `{ "schema": 1, ... }` and jobs only (no run history, no ids). Import gives every job a new id; an alias already in use becomes `<alias>-2`, `-3`, ...
 
 ---
 

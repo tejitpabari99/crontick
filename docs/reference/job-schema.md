@@ -11,7 +11,7 @@ Top-level job object.
 | Field | Type | Required | Default | Constraints | Description |
 |-------|------|----------|---------|-------------|-------------|
 | `id` | `string` (GUID) | no (server-assigned) | `randomUUID()` | UUID format | Immutable identifier assigned automatically at creation; never user-supplied. Primary key used internally by the store, `run.jobId`, and the scheduler. |
-| `alias` | `string` | no | auto-generated (`<word>-<1-1000>`) | Regex: `^[a-z0-9]+(?:-[a-z0-9]+)*$` (kebab-case); unique among currently-defined (live) jobs | Optional, user-editable human-friendly name. Deleting a job frees its alias for reuse. |
+| `alias` | `string` | no | auto-generated (`<word>-<1-1000>`) | Regex: `^[a-z0-9]+(?:-[a-z0-9]+)*$` (kebab-case); unique among currently-defined (live) jobs | Optional, user-editable unique **alias** (the one user-facing name for a job; CLI `--name`/`-n`). Auto-generation regenerates on collision and falls back to a short random suffix. Deleting a job frees its alias for reuse. |
 | `description` | `string` | no | — | — | Human-readable description |
 | `enabled` | `boolean` | no | `true` | — | Whether the job runs on schedule |
 | `schedule` | `Schedule` | yes | — | Discriminated union on `kind` | When the job runs |
@@ -42,8 +42,9 @@ Discriminated union on `kind`.
 | Field | Type | Required | Default | Constraints | Description |
 |-------|------|----------|---------|-------------|-------------|
 | `kind` | `"cron"` | yes | — | Literal | Schedule discriminator |
-| `cron` | `string` | yes | — | Min length 1; parsed by croner v9 | Cron expression |
-| `tz` | `string` | no | — | IANA timezone | Timezone for evaluation |
+| `cron` | `string` | yes | — | Min length 1; parsed by croner v9 | Cron expression, evaluated in the machine's local timezone |
+
+The former `tz` field was removed (pre-1.0 breaking change). New input containing `tz` is rejected; a legacy stored `tz` is ignored and the daemon logs one warning per affected job at load.
 
 ### kind: `interval`
 
@@ -68,7 +69,7 @@ Discriminated union on `kind`. All action kinds share these common optional fiel
 
 | Field | Type | Required | Default | Constraints | Description |
 |-------|------|----------|---------|-------------|-------------|
-| `cwd` | `string` | no | — | — | Working directory for execution |
+| `cwd` | `string` | no | invoking directory on create | Resolved to an absolute, existing directory (`INVALID_CWD`) | Working directory for execution (CLI `--cwd`/`-C`). For Claude jobs the folder must be trusted in Claude (see [cli.md](cli.md#working-directory-and-claude-trust)) |
 | `env` | `Record<string, string>` | no | — | — | Additional environment variables |
 | `envFile` | `string` | no | — | — | Path to `.env` file for extra env vars |
 | `timeoutSec` | `number` | no | `config.json` `defaults.timeoutSec`, then unset | Positive | Kill the process after this many seconds |
@@ -135,8 +136,7 @@ See [jobs.md](../concepts/jobs.md) for the conceptual explanation and [cli.md](c
   "enabled": true,
   "schedule": {
     "kind": "cron",
-    "cron": "0 9 * * 1-5",
-    "tz": "America/Los_Angeles"
+    "cron": "0 9 * * 1-5"
   },
   "action": {
     "kind": "prompt",

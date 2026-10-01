@@ -10,7 +10,7 @@ is the normative contract; for the design rationale see
 
 ## Summary
 
-Every user-facing capability in crontick MUST be available on all three parity surfaces: CLI, MCP server, and library API (`CrontickClient`). A canonical table (`SURFACE_CAPABILITIES` in `src/surface.ts`) encodes this mapping and an automated drift test enforces it. The current table contains 22 capabilities.
+Every user-facing capability in crontick MUST be available on all three parity surfaces: CLI, MCP server, and library API (`CrontickClient`). A canonical table (`SURFACE_CAPABILITIES` in `src/surface.ts`) encodes this mapping and an automated drift test enforces it. The current table contains 20 capabilities.
 
 When a change extends an existing capability rather than adding a new one (for example the `create-job` capability's `force` option), the same table MAY annotate the parity-coupled option names.
 
@@ -67,8 +67,6 @@ The command-tree reorganization intentionally narrowed some exposure without rem
 | `cancel-run` | `cancelRun` | `crontick runs cancel` | `crontick_job_cancel_run` |
 | `list-runs` | `listRuns` | `crontick runs list` | `crontick_run_list` |
 | `get-run` | `getRun` | `crontick runs get` | `crontick_run_get` |
-| `logs` | `getLogs` | `crontick runs logs` | `crontick_run_logs_tail` |
-| `run-output` | `getOutput` | `crontick runs output` | `crontick_run_output` |
 | `stats-summary` | `statsSummary` | `crontick stats summary` | `crontick_stats_summary` |
 | `stats-job` | `statsJob` | `crontick stats job` | `crontick_stats_job` |
 | `export` | `exportJobs` | `crontick share export` | `crontick_export` |
@@ -78,7 +76,7 @@ The command-tree reorganization intentionally narrowed some exposure without rem
 | `doctor` | `doctor` | `crontick doctor` | `crontick_doctor` |
 | `info` | `info` | `crontick info` | `crontick_info` |
 
-Removed parity rows from the previous 37-capability surface include raw schedule validate/preview, dashboard data, dashboard start/status/stop, config get/set/unset/init/validate/engine management, `delete-run`, `config-path`, and the `daemon-start`/`daemon-status`/`daemon-restart` tools (the CLI keeps `crontick daemon start|status|restart` as CLI-only conveniences over the library-only client methods). The dashboard is always served by the daemon; `crontick info` (and `crontick_info`) surface `configPath`, daemon state, and `dashboardUrl`.
+Removed parity rows (including `logs` and `run-output`, folded into `get-run`; `getOutput` stays a library-only method) from the previous 37-capability surface include raw schedule validate/preview, dashboard data, dashboard start/status/stop, config get/set/unset/init/validate/engine management, `delete-run`, `config-path`, and the `daemon-start`/`daemon-status`/`daemon-restart` tools (the CLI keeps `crontick daemon start|status|restart` as CLI-only conveniences over the library-only client methods). The dashboard is always served by the daemon; `crontick info` (and `crontick_info`) surface `configPath`, daemon state, and `dashboardUrl`.
 
 ## Behavior
 
@@ -99,7 +97,7 @@ The drift test (`tests/unit/surface-drift.test.ts`) performs four checks:
 - New client method added without surface entry: Test 2 fails naming the method.
 - New parity-coupled option added on only one surface: behavioral parity drifts even though the capability count stays the same; document the option on the existing capability row and update all three surfaces together.
 - Surface spellings MAY intentionally differ when a host runtime reserves a token, but the mapping MUST be documented in `SURFACE_CAPABILITIES`.
-- Run-oriented MCP tools use `id` as their selector parameter. `crontick_job_cancel_run`, `crontick_run_get`, and `crontick_run_logs_tail` docs, schemas, and tests must stay aligned on that name.
+- Run-oriented MCP tools use `id` as their selector parameter. `crontick_job_cancel_run`, and `crontick_run_get` docs, schemas, and tests must stay aligned on that name.
 - New MCP tool added without surface entry: Test 4 reports unexpected tool.
 - CLI command fails to register (typo in command name): Test 3 fails with non-zero exit.
 - MCP server fails to start (build broken): Test 4 times out or errors on connect.

@@ -12,7 +12,7 @@ Every job has exactly one schedule, discriminated by `kind`:
 
 | Kind | Fields | Behavior |
 |------|--------|----------|
-| `cron` | `cron`, `tz?` | Fires at times matching a cron expression |
+| `cron` | `cron` | Fires at times matching a cron expression |
 | `interval` | `everySec`, `startAt?` | Fires repeatedly at a fixed interval |
 | `one-shot` | `runAt` | Fires once at a specific ISO-8601 timestamp |
 
@@ -27,7 +27,7 @@ Standard cron features (ranges, steps, lists, `L`, `W`, `#`) are supported as de
 
 ## Timezone handling
 
-The optional `tz` field on a `cron` schedule is passed directly to croner as `CronOptions.timezone`. When omitted, the daemon's local system timezone applies. There is no global timezone setting; each job owns its own.
+Cron expressions always fire in the machine's local timezone (the daemon's system timezone). The former per-job `tz` field and the CLI `--tz` flag were removed; a legacy stored `tz` is ignored and the daemon logs one warning per affected job.
 
 Interval schedules are timezone-agnostic. A one-shot `runAt` is an ISO-8601 string parsed with JavaScript `Date`: with an explicit offset (`Z`, `+02:00`) it is that exact instant; a date-time without an offset (`2026-10-01T09:00`) is interpreted in the machine's local timezone; a date-only value (`2026-10-01`) is UTC midnight. A job has exactly one schedule (`cron`, `interval`, or `one-shot`); the CLI rejects combining `--cron`, `--every`, and `--at`.
 

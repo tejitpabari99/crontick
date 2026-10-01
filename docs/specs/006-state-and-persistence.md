@@ -44,7 +44,7 @@ human-editability of jobs and efficient querying of run history.
 - **R-006-4**: Job JSON files MUST be the source of truth; on daemon start, `loadJobsFromDisk()` MUST reload all `.json` files (excluding `.schema.json`) into the SQLite `jobs` table.
 - **R-006-5**: `upsertJob()` MUST write both the SQLite row and the JSON file atomically (write file, then upsert row).
 - **R-006-6**: `upsertJob()` MUST write a JSON Schema sidecar alongside the job file.
-- **R-006-7**: `deleteJob()` MUST remove the SQLite job row, the JSON file, and the schema sidecar. It MUST NOT cascade-delete `runs`/`run_logs`: deleted-job run history remains directly queryable by run id, but current-job aggregate views MUST exclude runs whose parent job row no longer exists.
+- **R-006-7**: `deleteJob()` MUST, in one transaction, remove the job's `run_logs`, `runs` and `job_schedule_state` rows and the SQLite job row, then best-effort unlink the JSON file, the schema sidecar and the per-job log file. Deleted jobs leave no run history on any surface. `purgeOrphans()` MUST remove runs, logs and schedule state whose job no longer exists and run at daemon start before orphan-run reconciliation; `appendLog()`/`updateRun()` MUST NOT create or resurrect rows for a run that no longer exists.
 - **R-006-8**: SQLite MUST use WAL journal mode with foreign keys enabled.
 - **R-006-9**: The `runs` table MUST store: `id`, `job_id`, `started_at`, `ended_at`, `status`, `exit_code`, `error`, `duration_ms`, `pid` (nullable, absent for `missed`), `output_truncated`, `session_id` (nullable), `command` (nullable), `cost_usd`, `turns`, `usage_json`, and `transcript_path` (all nullable, Claude-only). The `jobs` table MUST store `id`, `alias`, `json`, `updated_at`.
 - **R-006-10**: The `run_logs` table MUST store `id`, `run_id`, `stream`, `ts`, `chunk` (BLOB).
@@ -61,8 +61,8 @@ human-editability of jobs and efficient querying of run history.
 - **R-006-24**: A `job_schedule_state` table MUST exist, keyed by `job_id`, storing `last_tick_at` and `updated_at`. `recordTick(jobId, tickAtMs)` MUST upsert this row on every live tick.
 - **R-006-25**: `getScheduleState(jobId)` MUST return the stored `last_tick_at`, or `undefined` if never ticked while a daemon was running.
 - **R-006-26**: `recordMissedRun(jobId, firedAtMs)` MUST insert a terminal `missed` run with no `pid` and `error: MISSED_RUN_ERROR_MESSAGE`, subject to the same retention cap as any other run.
-- **R-006-27**: `importRuns(runs)` MUST bulk-insert exported run rows as archival data only. Each row MUST be validated individually against `RunImportSchema`; an invalid row or one whose `job_id` does not exist MUST be skipped (recorded in `skipped`) without aborting the batch. It MUST be idempotent on `id` (`INSERT OR IGNORE`), returning `{ imported, skipped }`, then run `pruneRunsForJob()` once per affected job.
-- **R-006-27a**: Imported run rows MUST NOT restore the internal Claude completion marker. An imported Claude job with a session ID lacking an independently trusted local completed run MUST have the ID cleared and start a fresh session; raw-engine jobs retain their stored session ID.
+- **R-006-27**: Run history MUST NOT be importable: `importRuns` and `RunImportSchema` do not exist and `share import` ignores any `runs` payload.
+- **R-006-27a**: An imported Claude job with a session ID lacking an independently trusted local completed run MUST have the ID cleared and start a fresh session; raw-engine jobs retain their stored session ID.
 - **R-006-28**: Read surfaces serializing config values, run rows, run logs, or dashboard payloads MUST apply the shared redaction contract defensively at read time as well.
 - **R-006-29**: Library config read helpers MUST redact returned secret-like values without mutating `config.json` on disk, using high-confidence normalized suffix matching for key hints.
 
@@ -94,7 +94,7 @@ human-editability of jobs and efficient querying of run history.
 
 **Store lifecycle**: `open()` (WAL + FK pragmas, idempotent schema pass) -> `loadJobsFromDisk()`
 -> runtime CRUD (`upsertJob`, `deleteJob`, `insertRun`, `updateRun`, `appendLog`, `listRuns`,
-`recordTick`, `recordMissedRun`, `importRuns`, `reconcileOrphanRuns`,
+`recordTick`, `recordMissedRun`, `purgeOrphans`, `reconcileOrphanRuns`,
 `pruneRunsForJob`/`pruneAllJobsRunHistory`/`setRunRetentionCap`) -> `close()`. There is no
 `ALTER TABLE` upgrade step; every column is declared directly in its `CREATE TABLE`.
 
@@ -111,8 +111,7 @@ human-editability of jobs and efficient querying of run history.
 - `runs.db` from a pre-1.0.0 crontick: unsupported; not detected or auto-upgraded.
 - Job JSON file empty, invalid, or schema-invalid: silently skipped on load.
 - Concurrent writes to `runs.db`: WAL mode allows a single writer; only one daemon runs.
-- Deleting a job with historical runs: direct `getRun`/`getLogs` by run id still works; aggregate views exclude the archived rows.
-- `importRuns()` given a run whose `job_id` no longer exists: that row is skipped and reported.
+- Deleting a job with historical runs: its runs and logs are deleted with it; `getRun` by a deleted run id returns `NOT_FOUND`.
 - `reconcileOrphanRuns()`'s liveness check throws or is inconclusive: the run is adopted rather than canceled.
 - Secret-like text already present in persisted logs or config: read surfaces still redact it defensively.
 
@@ -121,7 +120,7 @@ human-editability of jobs and efficient querying of run history.
 - [x] Jobs loaded from disk on daemon start; malformed job files skipped (test file: `tests/unit/store.test.ts`)
 - [x] Orphan runs reconciled with liveness-checked adopt/cancel (test file: `tests/unit/store.test.ts`; `tests/unit/integration.persistence.test.ts`)
 - [x] upsertJob writes both JSON file and SQLite; schema sidecar written (test file: `tests/unit/store.test.ts`)
-- [x] deleteJob removes the job file/row while preserving deleted-job run history for direct reads and excluding it from aggregate views (test files: `tests/unit/store.test.ts`, `tests/unit/stats-excludes-deleted-job-runs.test.ts`)
+- [x] deleteJob removes the job file/row together with its runs, logs, schedule state and log file, and purgeOrphans cleans legacy leftovers (test files: `tests/unit/store.test.ts`, `tests/unit/stats-excludes-deleted-job-runs.test.ts`)
 - [x] Schema created in one idempotent pass; re-opening the store does not error or duplicate schema objects (test file: `tests/unit/store.test.ts`)
 - [x] listRuns filters by jobId, since, status, and orders correctly (test files: `tests/unit/store.test.ts`, `tests/unit/cli.test.ts`)
 - [x] Config atomic write; BOM-prefixed JSON accepted; structured parse diagnostics on malformed JSON (test file: `tests/unit/config.test.ts`)
@@ -129,7 +128,7 @@ human-editability of jobs and efficient querying of run history.
 - [x] Retention/purge policy enforced via `pruneRunsForJob()`/`pruneAllJobsRunHistory()`, reload-applicable via `setRunRetentionCap()` (test files: `tests/unit/store.test.ts`, `tests/unit/integration.persistence.test.ts`, `tests/unit/config.test.ts`)
 - [x] `job_schedule_state`: `recordTick`/`getScheduleState` seed and advance a job's watermark (test file: `tests/unit/store.test.ts`)
 - [x] `recordMissedRun` inserts a terminal `missed` run with no pid, subject to the same retention cap (test file: `tests/unit/store.test.ts`)
-- [x] `importRuns` validates each row individually, skips malformed rows without aborting, is idempotent on `id`, and prunes affected jobs afterward (test file: `tests/unit/store.test.ts`; `tests/unit/cli.test.ts`; `tests/unit/mcp.test.ts`)
+- [x] Share import validates the whole file, assigns new ids, suffixes alias collisions and never imports runs (test files: `tests/unit/api.test.ts`; `tests/unit/cli.test.ts`; `tests/unit/mcp.test.ts`)
 - [x] Read-time redaction applies consistently across config, run, log, and dashboard read surfaces (test file: `tests/unit/secret-redaction.test.ts`)
 
 ## Out of scope

@@ -56,12 +56,13 @@ class Store {
   constructor(dbPath?: string, jobsPath?: string, logger?: Logger, runRetentionCap?: number);
   open(): void; close(): void;
   upsertJob(job: Job): void; getJob(id): Job | undefined; deleteJob(id): boolean;
+  deleteJobAndRuns(id): { jobId; deletedRuns } | undefined;  // one transaction: run_logs, runs, schedule state, job
+  purgeOrphans(): { runs; logs; scheduleState };              // daemon start: data of jobs that no longer exist
   loadJobsFromDisk(): void; tryCapturePromptSession(jobId, expectedAction, sessionId): boolean;
   insertRun(jobId, startedAt?): Run;        // also prunes the job's history to the cap
   updateRun(id, update): void;              // pid, outputTruncated, status incl. 'missed'
   listRuns(opts?): Run[];                   // opts.status filters to one RunStatus
   recordMissedRun(jobId, firedAt): Run;
-  importRuns(runs: unknown[]): { imported: number; skipped: Array<{ id; error }> };
   appendLog(runId, stream, chunk): void; getLogs(runId, source?): RunLog[];
   recordTick(jobId, tickAt): void; getScheduleState(jobId): { lastTickAt } | undefined;
   reconcileOrphanRuns(check?): { canceled: number; adopted: number };
@@ -115,14 +116,15 @@ sweeps every job at startup to catch a cap lowered while the daemon was down;
 (`node:sqlite`'s ~32766 bound-parameter ceiling). Both paths are best-effort -- logged on failure,
 never fail a run or block startup. See [ADR 0001](../decisions/0001-architecture-and-runtime-model.md).
 
-## Run import
+## Job deletion
 
-`importRuns(runs)` bulk-restores exported rows as archival data only (no execution, no scheduler
-interaction). Each row is validated individually against `RunImportSchema`; a malformed row or one
-whose `job_id` doesn't exist is skipped and reported (`skipped: [{ id, error }]`) without aborting
-the batch. Each insert is `INSERT OR IGNORE` (idempotent on `id`) in its own try/catch, so one
-row's failure can't take down the others; there is no surrounding transaction. After the loop,
-`pruneRunsForJob()` runs once per affected job so a large restore can't leave a job over its cap.
+`deleteJobAndRuns()` deletes a job's `run_logs`, `runs`, `job_schedule_state` row and the job row in
+one transaction, then unlinks the job JSON files and the per-job log file (`resolveJobLogPath`)
+best-effort. Run history is not archived and there is no run import (`importRuns`/`RunImportSchema`
+were removed with `share export --include-runs`). `appendLog()` only inserts for runs that still
+exist and `updateRun()` ignores a vanished run, so a run that is still in flight when its job is
+deleted cannot leave orphan rows. `purgeOrphans()` runs at daemon start (before orphan-run
+reconciliation) to clean up data left by older versions that archived runs.
 
 ## JSON job file format
 

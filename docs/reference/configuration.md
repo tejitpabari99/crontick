@@ -13,7 +13,7 @@ The data directory is resolved by (in order):
 1. `CRONTICK_HOME` environment variable (if set)
 2. `env-paths('crontick', { suffix: '' }).data` (platform default)
 
-`crontick info` prints the resolved config path (`configPath`) and daemon state. There are no config get/set/unset/init/validate or engine-management CLI/MCP commands; edit `config.json` by hand. If the file does not exist, crontick uses the built-in default config.
+`crontick info` prints the resolved config path (`configPath`) and daemon state. There are no config get/set/unset/init/validate or engine-management CLI/MCP commands; edit `config.json` by hand. The daemon (and the first daemon-backed command) creates the file automatically with the full explicit built-in config (`defaultEngine`, `engines.claude`, `retention`, `logging.fileEnabled`, `defaults.overlap/retry`; `timeoutSec` is omitted because it is unset), mode 0600, using an exclusive create so an existing file is never touched. `crontick info` stays read-only and reports `not created yet` until then. Trade-off: because the file lists every default explicitly, a default that changes in a later crontick version does not reach users who already have the file; delete a key (or the file) to follow the new built-in default.
 
 ### Resolved Config File Paths by OS
 
@@ -149,7 +149,7 @@ See [state-and-storage.md](../concepts/state-and-storage.md#run-history-retentio
 | `fileEnabled` | `boolean` | no | `true` | — |
 | `dir` | `string` | no | `<dataDir>/logs` | Non-empty when set |
 
-Every run's logs are stored in SQLite and can be read with `crontick runs logs`. When file logging is enabled, the same engine and crontick lifecycle streams are mirrored to `<dir>/<jobId>.log` (one file per job, appended across runs with no run delimiter; `getRun` exposes its path as `logFile`). File logging is best-effort and never blocks or fails a run. Logging config is read per run, so edits apply automatically to new runs.
+Every run's logs are stored in SQLite and surfaced as cleaned output by `crontick runs get`. When file logging is enabled, the same engine and crontick lifecycle streams are mirrored to a single per-job file `<dir>/<jobId>.log` (appended across all runs of the job with no run delimiter; `crontick runs get` prints its path and `getRun` exposes it as `logFile`). Deleting the job deletes this file. File logging is best-effort and never blocks or fails a run. Logging config is read per run, so edits apply automatically to new runs.
 
 ---
 

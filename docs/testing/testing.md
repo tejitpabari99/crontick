@@ -158,7 +158,7 @@ crontick jobs get my-test
 crontick runs list --job my-test
 
 # View logs for a run
-crontick runs logs <run-id>
+crontick runs get <run-id>
 
 # Clean up
 crontick jobs delete my-test
@@ -169,7 +169,7 @@ Expected: `list` shows the job enabled, `runs list` shows at least one `success`
 
 ### MCP server
 
-**Automated coverage:** `tests/unit/mcp.test.ts` (starts real daemon + MCP server, drives all 22 tools via `@modelcontextprotocol/sdk` client over stdio). `tests/unit/surface-drift.test.ts` verifies every tool is registered.
+**Automated coverage:** `tests/unit/mcp.test.ts` (starts real daemon + MCP server, drives all 20 tools via `@modelcontextprotocol/sdk` client over stdio). `tests/unit/surface-drift.test.ts` verifies every tool is registered.
 
 **Launch command:**
 

@@ -126,11 +126,11 @@ Check `crontick info` and inspect the latest daemon log in the crontick data dir
 
 ### A run keeps failing
 
-- `crontick runs logs <run-id> --tail 100`
+- `crontick runs get <run-id>` (the `Log file:` line is the raw log; `tail -n 100` it)
 - `crontick jobs get <job-id>`
 - `crontick doctor`
 
-For MCP workflows, load the run via `crontick_run_get` and `crontick_run_logs_tail`.
+For MCP workflows, load the run via `crontick_run_get` (record, `logFile` path and cleaned output).
 
 ### Schedule seems wrong
 
@@ -187,7 +187,7 @@ and timestamps. **Job definitions are not affected**: jobs are the JSON files un
 `<dataDir>/jobs/`, a separate store from `runs.db`, and are untouched by this recovery.
 
 **Confirm recovery:** `crontick doctor` should report the daemon and dashboard reachable again,
-and `crontick jobs list` should show your jobs unchanged with empty run history (`crontick runs logs
+and `crontick jobs list` should show your jobs unchanged with empty run history (`crontick runs list --job
 <job-id>` returns no runs until the job fires again). See
 [implementation/storage.md](implementation/storage.md) for the on-disk schema and
 [state-and-storage.md](concepts/state-and-storage.md) for the persistence model.
@@ -212,8 +212,7 @@ is a per-job **count** cap only: a job that fires every minute keeps far less ca
 than a job that fires monthly under the same cap. If you need to keep more history, raise
 `retention.maxRunsPerJob` in `config.json` and run `crontick daemon reload` (existing runs beyond
 the old cap that were already pruned cannot be recovered after the fact). To avoid losing history
-in the first place, back it up before it is evicted: `crontick share export --include-runs` captures
-every job's run history, and `crontick share import` restores it — see
+in the first place, note that `crontick share export` backs up job definitions only (schema 1: no run history) — see
 [cli.md](reference/cli.md#crontick-share-export). See
 [state-and-storage.md](concepts/state-and-storage.md#run-history-retention) and
 [configuration.md](reference/configuration.md).
