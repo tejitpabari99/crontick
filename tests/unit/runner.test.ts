@@ -499,7 +499,7 @@ describe('Runner', () => {
     expect(files.text()).not.toContain('captured session id');
   });
 
-  it('prompt: reuseSession-ignored notice goes to the crontick log file, never the stored engine output', async () => {
+  it('prompt: explicit sessionId wins over reuseSession silently (no notice, no capture)', async () => {
     const fake = fakeSpawn([{ stdout: 'ok\n' }]);
     const files = recordingLogFiles();
     runner = new Runner(fake.spawnFn as never, undefined, undefined, undefined, files.factory);
@@ -516,9 +516,8 @@ describe('Runner', () => {
 
     await runner.run(job, run.id, store);
 
-    expect(files.text()).toContain('reuseSession was ignored');
-    expect(files.text()).toContain(`[run ${run.id}]`);
-    expect(store.getRunOutput(run.id)?.result ?? '').not.toContain('reuseSession was ignored');
+    expect(files.text()).not.toContain('reuseSession was ignored');
+    expect(store.getRun(run.id)?.sessionId).toBe('sess-12345678');
   });
 
   it('prompt: captures and persists a reusable session id after first successful run', async () => {

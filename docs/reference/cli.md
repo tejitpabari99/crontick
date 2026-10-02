@@ -81,8 +81,8 @@ crontick jobs new [engineArgs...]
 | `-C`, `--cwd <dir>` | string | the current directory | Working directory the job runs in; stored as `action.cwd`. Must be an existing directory (`INVALID_CWD`). See [Working directory and Claude trust](#working-directory-and-claude-trust) |
 | `--trust-folder` | boolean | `false` | Trust the working directory in Claude without asking when it is not trusted yet |
 | `--runner <runner>` | string | config `defaultEngine` | Configured prompt engine name; saved as `action.engine` |
-| `--session-id <id>` | string | — | Run it on a given session ID (resumed on every run of the job; shown as the Runner Session ID) |
-| `--reuse-session` | boolean | `false` | Start session and resume on succeeding runs (alternative to `--session-id`); resolved overlap must be `skip` |
+| `--session-id <id>` | string | — | Resume an existing session ID (may be one you started yourself) on every run; implies reuse and requires overlap `skip`; shown as the Runner Session ID |
+| `--reuse-session` | boolean | `false` | Start a new session on the first run and resume it on succeeding runs (alternative to `--session-id`); resolved overlap must be `skip` |
 | `--file <path>` | string | — | Create the job from a full prompt-job JSON file |
 | `--timeout <sec>` | integer | config `defaults.timeoutSec` (unset by default) | Per-run timeout in seconds |
 | `--overlap <policy>` | `skip` \| `queue` \| `cancel-previous` | `skip` (config `defaults.overlap`) | Overlap policy: skip\|queue\|cancel-previous (default: skip). On `jobs update`, omitting it leaves the job's policy unchanged |
@@ -117,7 +117,7 @@ crontick jobs update <id|alias> [engineArgs...]
 | `--enable` | boolean | — | Enable the job |
 | `--disable` | boolean | — | Disable the job |
 
-Omitted options leave the existing job unchanged. `--enable` and `--disable` are mutually exclusive.
+Omitted options leave the existing job unchanged. `--enable` and `--disable` are mutually exclusive. A job that failed 3 consecutive runs is auto-disabled (see [execution concepts](../concepts/execution.md#auto-disable-after-consecutive-failures)); `--enable` re-enables it and resets the failure count.
 Unknown long flags use the same argument passthrough as `jobs new`; include `--prompt` or `--prompt-file` when updating the runner or engine arguments.
 
 ```bash

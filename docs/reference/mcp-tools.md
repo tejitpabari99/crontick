@@ -94,7 +94,7 @@ Create and schedule a new job.
 
 **Result:** The created `Job` object, with secret-like `action.env` values redacted.
 
-If `action.reuseSession` is `true`, resolved `overlap` must be `skip`. Other overlap values return `VALIDATION_ERROR`.
+If `action.reuseSession` is `true` or `action.sessionId` is set (resumes an existing session, including one created outside crontick, on every run), resolved `overlap` must be `skip`. Other overlap values return `VALIDATION_ERROR`.
 
 **Working directory:** the job runs in `action.cwd`. Always pass the absolute path of the project folder: MCP hosts often start the server in an unrelated directory such as `/`, which would otherwise be stored as the default (the server process's directory). A nonexistent folder fails with `INVALID_CWD`. For Claude jobs the folder must be trusted in Claude's config; otherwise the call fails with `TRUST_REQUIRED` and nothing is saved. Ask the user, then call again with `trustFolder: true`. Cron schedules fire in the machine's local timezone (there is no `tz` field).
 

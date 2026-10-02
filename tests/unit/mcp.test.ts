@@ -571,7 +571,7 @@ describe('MCP server — full contract', () => {
     });
   });
 
-  it('crontick_job_create reports session precedence notices from core', async () => {
+  it('crontick_job_create stores reuseSession=false silently when an explicit sessionId is given', async () => {
     const { json, isError } = await callTool(client, 'crontick_job_create', {
       alias: 'mcp-session-precedence-job',
       description: 'MCP prompt session precedence job',
@@ -580,15 +580,13 @@ describe('MCP server — full contract', () => {
     });
     expect(isError).toBe(false);
     expect(json).toMatchObject({
-      result: {
-        action: {
-          kind: 'prompt',
-          sessionId: 'sess-mcpprec1',
-          reuseSession: false,
-        },
+      action: {
+        kind: 'prompt',
+        sessionId: 'sess-mcpprec1',
+        reuseSession: false,
       },
-      notices: [expect.stringContaining('reuseSession was ignored')],
     });
+    expect(json).not.toHaveProperty('notices');
   });
 
   it('crontick_job_create accepts promptFile through the shared client schema', async () => {

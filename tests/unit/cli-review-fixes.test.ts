@@ -39,8 +39,8 @@ describe('jobs new help and schedule errors', () => {
     expect(help).toContain('Schedule (exactly one of --cron/--every/--at)');
     expect(help).toContain('-a, --alias <alias> Unique kebab-case job alias (auto-generated when omitted)');
     expect(help).toContain('-p, --prompt <text>');
-    expect(help).toContain('--session-id <id> Run it on a given session ID');
-    expect(help).toContain('--reuse-session Start session and resume on succeeding runs.');
+    expect(help).toContain('--session-id <id> Resume an existing session ID on every run (implies reuse)');
+    expect(help).toContain('--reuse-session Start a new session and resume it on succeeding runs.');
     expect(help).toContain('--overlap <policy> Overlap policy: skip|queue|cancel-previous (default: skip)');
     expect(help).toMatch(/same alias/i);
   }));

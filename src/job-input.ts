@@ -4,7 +4,8 @@
  * canonical persisted Job shape. Key transformations:
  * - `promptFile` is read from disk and becomes `prompt` (never persisted as path)
  * - Engine defaults are resolved from config when not specified
- * - `reuseSession` is cleared when an explicit `sessionId` is already set
+ * - `reuseSession` is cleared (silently) when an explicit `sessionId` is set: an explicit
+ *   `sessionId` already implies reuse, so every run resumes that session
  * - Prompt runtime validation (Windows cmd-line length, reserved args) is applied
  */
 import { randomUUID } from 'node:crypto';
@@ -506,9 +507,6 @@ function normalizeActionInput(action: ActionInput, options: NormalizeJobInputOpt
       // propagates it to the merged job even when the existing job has reuseSession:true
       // (the invariant: a job cannot have both sessionId and reuseSession:true).
       if (result['reuseSession'] !== false) {
-        options.onNotice?.(
-          'reuseSession was ignored because an explicit sessionId was provided; crontick will reuse the explicit session id.',
-        );
         result = { ...result, reuseSession: false };
       }
     }
@@ -542,10 +540,9 @@ function normalizeActionInput(action: ActionInput, options: NormalizeJobInputOpt
       engine: effectiveConfig!.defaultEngine,
     };
   }
+  // An explicit sessionId already implies reuse (every run resumes it), so a
+  // redundant reuseSession is dropped silently to keep stored data one-or-the-other.
   if (typeof normalized.sessionId === 'string' && normalized.reuseSession === true) {
-    options.onNotice?.(
-      'reuseSession was ignored because an explicit sessionId was provided; crontick will reuse the explicit session id.',
-    );
     normalized = {
       ...normalized,
       reuseSession: false,

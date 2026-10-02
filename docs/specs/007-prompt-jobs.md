@@ -30,7 +30,7 @@ engines without a `type` use the generic `raw` adapter.
   `{ max: 0, backoffSec: 30 }`. Explicit job input takes precedence over
   config defaults; CLI flags take precedence over job JSON. Values are resolved
   at creation and stored in the job. An update that omits a value preserves it.
-- `reuseSession: true` requires `overlap: "skip"`. `queue` and
+- `reuseSession: true` or an explicit `sessionId` requires `overlap: "skip"`. `queue` and
   `cancel-previous` fail validation. Every overlap skip records a terminal
   `skipped` run, distinct from a run that started and was `canceled`.
 - Prompt jobs spawn directly with `shell: false`, stdin ignored, and
@@ -141,9 +141,9 @@ args. Library and MCP callers pass `action.args` directly. See the
 | Unknown engine name | `CONFIG_ENGINE_NOT_FOUND` before spawn. |
 | Reserved args or excessive Windows command length | Job validation error. |
 | Raw reuse with no captured ID | Failed run with `SESSION_ID_NOT_FOUND`. |
-| Claude resume with no eligible result or transcript | Failed run with `SESSION_NOT_FOUND` before spawn. |
+| Claude resume with a missing transcript | Failed run with `SESSION_NOT_FOUND` before spawn. An externally created session needs no prior crontick run. |
 | Overlap while active with `overlap: "skip"` | Terminal `skipped` run; active run continues. |
-| Explicit `sessionId` with `reuseSession: true` | Notice in crontick log; no session capture. |
+| Explicit `sessionId` with `reuseSession: true` | `reuseSession` stored as `false`, no notice; explicit session resumed every run, no capture. |
 | Concurrent job edit during capture | Compare-and-swap declines the job mutation. |
 
 ## Acceptance criteria

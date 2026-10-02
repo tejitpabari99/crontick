@@ -219,8 +219,8 @@ function commonJobOptions(command: Command): Command {
     .option('-C, --cwd <dir>', 'Working directory the job runs in (default: the current directory)')
     .option('--trust-folder', 'Trust the working directory in Claude without asking (when it is not trusted yet)')
     .option('--runner <runner>', 'Configured prompt engine name (default: config defaultEngine)')
-    .option('--session-id <id>', 'Run it on a given session ID')
-    .option('--reuse-session', 'Start session and resume on succeeding runs.')
+    .option('--session-id <id>', 'Resume an existing session ID on every run (implies reuse)')
+    .option('--reuse-session', 'Start a new session and resume it on succeeding runs.')
     .option('--file <path>', 'Create the job from a full job-definition JSON file (advanced)')
     // No hardcoded default here (unlike most flags): a Commander default would
     // be indistinguishable from the user explicitly typing the same value,

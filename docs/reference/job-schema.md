@@ -82,14 +82,14 @@ Discriminated union on `kind`. All action kinds share these common optional fiel
 | `prompt` | `string` | yes | — | Min length 1 | Prompt text sent to the engine |
 | `engine` | `string` | no | config `defaultEngine` | Regex: `^[A-Za-z0-9_.-]+$` | Engine name from config |
 | `args` | `string[]` | no | `[]` | — | Extra arguments passed to the engine |
-| `sessionId` | `string` | no | — | Min length 1 | Fixed session ID to reuse across runs; Claude requires its transcript file to exist before resuming |
+| `sessionId` | `string` | no | — | Min length 1; requires `overlap: "skip"` | Existing session ID resumed on every run (implies reuse). May be a session created outside crontick; Claude requires its transcript file to exist before resuming |
 | `reuseSession` | `boolean` | no | `false` | Requires `overlap: "skip"` | Capture a reusable session ID (Claude requires a completed result line) |
 
 Schema is `.strict()` — no extra fields allowed. Executed with `shell: false`. Subject to `promptRuntimeValidationMessage` refinement (Windows cmd-line length check, reserved arg detection). Reserved `action.args` flags include `-p`, `-r`, `--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, and `--settings`; long `--flag=value` forms are also rejected.
 
-When `reuseSession` is `true`, the job's resolved `overlap` must be `skip`. Omitting `overlap` uses the configured default, which is `skip` unless changed. `queue` and `cancel-previous` fail job validation so an in-flight reused session cannot receive another turn or be canceled by an overlapping fire.
+When `reuseSession` is `true` or an explicit `sessionId` is set, the job's resolved `overlap` must be `skip`. Omitting `overlap` uses the configured default, which is `skip` unless changed. `queue` and `cancel-previous` fail job validation so an in-flight reused session cannot receive another turn or be canceled by an overlapping fire.
 
-For a Claude engine, `sessionId` must also match a completed prior run for the same job whose Claude result was parsed. A missing eligible run or transcript fails with `SESSION_NOT_FOUND` before the CLI starts. The transcript path is `<base>/projects/<encoded-cwd>/<sessionId>.jsonl` (`<base>` is `$CLAUDE_CONFIG_DIR` when set, else `~/.claude`), where every `/` and `.` in the absolute working directory becomes `-`. Prompt jobs run with stdin ignored.
+For a Claude engine, an explicit `sessionId` may be any existing Claude session, including one started outside crontick; no prior crontick run is required. Resuming relies on the transcript existing on disk: a missing (or path-unsafe) transcript fails with `SESSION_NOT_FOUND` before the CLI starts. Passing both `sessionId` and `reuseSession: true` stores `reuseSession: false` (the explicit `sessionId` already implies reuse). The transcript path is `<base>/projects/<encoded-cwd>/<sessionId>.jsonl` (`<base>` is `$CLAUDE_CONFIG_DIR` when set, else `~/.claude`), where every `/` and `.` in the absolute working directory becomes `-`. Prompt jobs run with stdin ignored.
 
 ---
 

@@ -118,13 +118,14 @@ export const JobBaseSchema = z.object({
   retry: RetrySchema.default({ max: 0, backoffSec: 30 }),
 });
 
-/** A reused session may have only one in-flight turn. */
+/** A reused session (captured via reuseSession, or fixed via explicit sessionId) may have only one in-flight turn. */
 export const JobSchema = JobBaseSchema.superRefine((job, ctx) => {
-  if (job.action.reuseSession && job.overlap !== 'skip') {
+  const reusesSession = job.action.kind === 'prompt' && (job.action.reuseSession || job.action.sessionId !== undefined);
+  if (reusesSession && job.overlap !== 'skip') {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['overlap'],
-      message: 'reuseSession requires overlap: skip',
+      message: 'reuseSession or an explicit sessionId requires overlap: skip',
     });
   }
 });

@@ -509,7 +509,7 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
       sessionId: 'sess-client1',
       reuseSession: false,
     });
-    expect(client.drainNotices()).toEqual([expect.stringContaining('reuseSession was ignored')]);
+    expect(client.drainNotices()).toEqual([]);
   });
 
   it('writes the core-generated per-job schema sidecar through the public client', async () => {

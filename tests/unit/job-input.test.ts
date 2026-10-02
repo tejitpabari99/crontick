@@ -333,7 +333,7 @@ describe('normalizeJobInput', () => {
       { onNotice: (message) => notices.push(message) },
     );
     expect(job.action).toMatchObject({ kind: 'prompt', sessionId: 'sess-12345678', reuseSession: false });
-    expect(notices.join('\n')).toContain('reuseSession was ignored');
+    expect(notices).toEqual([]);
   });
 
   it('rejects the removed script and exec action kinds (crontick is prompt-only)', () => {
@@ -728,7 +728,7 @@ describe('normalizeJobPatch — sessionId-only prompt patch clears reuseSession 
     const result = normalizeJobPatch('job-1', existing, patch, { onNotice: (m) => notices.push(m) });
     expect((result.action as Record<string, unknown>).reuseSession, 'reuseSession must be cleared').toBe(false);
     expect((result.action as Record<string, unknown>).sessionId).toBe('sess-12345678');
-    expect(notices.join('\n')).toContain('reuseSession was ignored');
+    expect(notices).toEqual([]);
   });
 
   it('leaves reuseSession unchanged when sessionId is not in the patch', () => {

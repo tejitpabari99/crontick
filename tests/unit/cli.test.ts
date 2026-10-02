@@ -337,7 +337,7 @@ describe('CLI e2e with daemon', () => {
 
     r = cli(['jobs', 'new', '--alias', 'prompt-session-cli-job', '--cron', '0 11 * * *', '--prompt', 'hello', '--session-id', 'sess-12345678', '--reuse-session'], env());
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stderr).toContain('reuseSession was ignored');
+    expect(r.stderr).not.toContain('reuseSession was ignored');
     expect(parseCliObject(r.stdout).action).toMatchObject({ sessionId: 'sess-12345678', reuseSession: false });
   });
 

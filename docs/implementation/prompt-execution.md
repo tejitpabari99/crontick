@@ -94,9 +94,10 @@ When `reuseSession && !sessionId` and the run finishes, the adapter's `canCaptur
 decides eligibility (raw: any success; Claude: only a parsed complete result). On success,
 `adapter.resolveSessionId()` supplies the id, which is persisted onto the run record and, via
 `store.tryCapturePromptSession()`, onto the job definition for future runs. Failure to resolve an
-id fails the run with `SESSION_ID_NOT_FOUND`. For Claude, `adapter.resumeTranscriptPath()` plus
-`store.hasCompletedClaudeSession()` gate an explicit `sessionId` before spawn --
-`SESSION_NOT_FOUND` if either check fails. See [engines.md](./engines.md) for adapter details.
+id fails the run with `SESSION_ID_NOT_FOUND`. For Claude, `adapter.resumeTranscriptPath()` gates an explicit `sessionId` before spawn --
+`SESSION_NOT_FOUND` if the transcript is missing. No prior crontick run is required, so sessions
+created outside crontick resume directly (`hasCompletedClaudeSession()` is now used only for
+import provenance). See [engines.md](./engines.md) for adapter details.
 
 ## Adopting runs across a restart
 
