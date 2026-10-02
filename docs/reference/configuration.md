@@ -45,6 +45,7 @@ The data directory is resolved by (in order):
     "fileEnabled": true,
     "dir": "<optional-override-dir>"
   },
+  "maxConsecutiveFailures": 3,
   "defaults": {
     "overlap": "skip",
     "timeoutSec": 3600,
@@ -59,6 +60,7 @@ The data directory is resolved by (in order):
 | `engines` | `Record<string, EngineConfig>` | no | built-in `claude` engine | At least one engine must be defined |
 | `retention` | `RetentionConfig` | no | `{ maxRunsPerJob: 100, maxOutputBytesPerRun: 2000000, maxLogFiles: 30 }` | See below |
 | `logging` | `LoggingConfig` | no | `{ fileEnabled: true }` | See below |
+| `maxConsecutiveFailures` | `integer` | no | `3` | Positive integer; a job is auto-disabled after this many consecutive `failed`/`timeout` runs. Read when each run finishes; applies without a reload |
 | `defaults` | `JobDefaultsConfig` | no | `{ overlap: "skip", retry: { max: 0, backoffSec: 30 } }` | See below; `timeoutSec` is unset by default |
 
 ### Built-in Default (no file needed)
@@ -77,6 +79,7 @@ The data directory is resolved by (in order):
   "logging": {
     "fileEnabled": true
   },
+  "maxConsecutiveFailures": 3,
   "defaults": {
     "overlap": "skip",
     "retry": { "max": 0, "backoffSec": 30 }
@@ -107,6 +110,7 @@ Most config is read fresh for each run and applies automatically on the **next r
 - the resolved prompt command built by `buildPromptRunCommand()`
 - logging settings (`logging.fileEnabled`, `logging.dir`)
 - per-run output retention (`retention.maxOutputBytesPerRun`)
+- the auto-disable threshold (`maxConsecutiveFailures`), read when each run finishes
 - daemon log-file retention (`retention.maxLogFiles`) the next time log retention is applied
 
 `defaultEngine` and `defaults.overlap`, `defaults.timeoutSec`, and

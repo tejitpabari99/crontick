@@ -265,6 +265,9 @@ if (needsSqliteShim) {
     if (reconciliation.canceled > 0) {
       logger.warn(`Reconciled ${reconciliation.canceled} orphaned run(s) from previous daemon session`);
     }
+    for (const f of reconciliation.finalized) {
+      runner.recordRunOutcome(f.jobId, f.runId, { status: f.status, error: f.error }, store);
+    }
     for (const { jobId, runId, pid } of reconciliation.adopted) {
       runner.adoptRun(jobId, runId, pid, store);
     }

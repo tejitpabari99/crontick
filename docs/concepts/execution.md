@@ -90,7 +90,7 @@ seconds between them, stopping early on `success`, `canceled`, or `timeout`.
 
 ## Auto-disable after consecutive failures
 
-After `MAX_CONSECUTIVE_FAILURES` (3, `src/constants/daemon.ts`) consecutive runs ending `failed` or `timeout` (after retries), the Runner sets the job `enabled: false`, so the scheduler stops firing it. The count is kept in the `job_failure_state` table. A `success` resets it; `canceled` and `skipped` runs leave it unchanged. The run that tripped the limit gets an `AUTO_DISABLED: ...` suffix on its `error`, the per-job log gets a `job auto-disabled after consecutive failures` line, and the daemon log a warning. Re-enabling the job (`jobs update --enable`, `crontick_job_enable`, `POST /api/jobs/:id/enable`) resets the count. Manual `run` runs count too.
+After `maxConsecutiveFailures` (config, default 3; see [configuration](../reference/configuration.md)) consecutive runs ending `failed` or `timeout` (after retries), the Runner sets the job `enabled: false`, so the scheduler stops firing it. The count is kept in the `job_failure_state` table. A `success` resets it; `canceled` and `skipped` runs leave it unchanged. The run that tripped the limit gets an `AUTO_DISABLED: ...` suffix on its `error`, the per-job log gets a `job auto-disabled after consecutive failures` line, and the daemon log a warning. Re-enabling the job (`jobs update --enable`, `crontick_job_enable`, `POST /api/jobs/:id/enable`) resets the count. Manual `run` runs count too, as do adopted runs and runs finalized by restart reconciliation (every terminal outcome goes through the same recorder). Re-enable with `crontick jobs update <id|alias> --enable`.
 
 ## How prompt jobs differ
 

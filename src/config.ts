@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { CrontickError } from './errors.js';
 import { configPath as defaultConfigPath, ensureDirs } from './paths.js';
 import { readJsonFile } from './json-file.js';
+import { DEFAULT_MAX_CONSECUTIVE_FAILURES } from './constants/daemon.js';
 import {
   DEFAULT_MAX_LOG_FILES,
   DEFAULT_MAX_OUTPUT_BYTES_PER_RUN,
@@ -81,6 +82,7 @@ export const BUILT_IN_CONFIG: CrontickConfig = Object.freeze({
     maxLogFiles: DEFAULT_MAX_LOG_FILES,
   }),
   logging: Object.freeze({ fileEnabled: true }),
+  maxConsecutiveFailures: DEFAULT_MAX_CONSECUTIVE_FAILURES,
   defaults: Object.freeze({ overlap: 'skip', retry: Object.freeze({ max: 0, backoffSec: 30 }), timeoutSec: undefined }),
 });
 

@@ -318,7 +318,7 @@ an unrelated, run-scoped vocabulary; do not conflate the two.
 | `RUNNER_CALLBACK_FAILED: ...` | `src/daemon/runner.ts` | A user-supplied run callback threw. |
 | `SESSION_ID_NOT_FOUND: ...` | `src/daemon/runner.ts` | `reuseSession` capture found no session id in prompt engine output. |
 | `SESSION_NOT_FOUND: ...` | `src/daemon/runner.ts` | Claude resume was rejected before spawn because no transcript exists for the session (or the session id is path-unsafe). Thrown as a `CrontickError` internally and recorded on the failed run. |
-| `AUTO_DISABLED: job disabled after <n> consecutive failed runs; ...` | `Runner` (`src/daemon/runner.ts`) | Appended to the error of the run that reached `MAX_CONSECUTIVE_FAILURES` (3) consecutive `failed`/`timeout` runs; the job was set `enabled: false`. Re-enable it to resume (resets the count). |
+| `AUTO_DISABLED: job disabled after <n> consecutive failed runs; ...` | `Runner` (`src/daemon/runner.ts`) | Appended to the error of the run that reached `maxConsecutiveFailures` (config, default 3) consecutive `failed`/`timeout` runs (including adopted and restart-reconciled runs); the job was set `enabled: false`. Re-enable with `crontick jobs update <id|alias> --enable` to resume (resets the count). |
 | `ACTION_CWD_INVALID: ...` | `src/daemon/runner.ts` | The job's `action.cwd` does not exist or is not a directory; the run fails before spawn. |
 | `SESSION_PERSIST_FAILED: ...` | `src/daemon/runner.ts` | Persisting a captured session id back to the job file failed. |
 

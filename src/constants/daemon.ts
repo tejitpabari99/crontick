@@ -40,5 +40,5 @@ export const EXIT_CLOSE_GRACE_MS = 3_000;
  */
 export const DEFAULT_DAEMON_PORT = 47615;
 
-/** After this many consecutive failed runs a job is auto-disabled (see `Runner` and `Store.recordRunOutcome()`). A success resets the count; re-enabling the job resets it too. */
-export const MAX_CONSECUTIVE_FAILURES = 3;
+/** Default `maxConsecutiveFailures`: after this many consecutive failed runs a job is auto-disabled (see `Runner.recordRunOutcome()`). A success resets the count; re-enabling the job resets it too. */
+export const DEFAULT_MAX_CONSECUTIVE_FAILURES = 3;

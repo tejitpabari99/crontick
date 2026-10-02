@@ -18,7 +18,7 @@ import { readEnvFileForAction } from './env-file.js';
 import { createJobLogFileFactory, type JobLogFile, type JobLogFileFactory } from './job-log-file.js';
 import { readClaudeCompletionMarker, readClaudeHookTranscriptPath, removeClaudeCompletionMarker } from '../claude-completion-marker.js';
 import { DEFAULT_MAX_OUTPUT_BYTES_PER_RUN } from '../constants/retention.js';
-import { ADOPTED_RUN_POLL_MS, EXIT_CLOSE_GRACE_MS, KILL_GRACE_MS, MAX_CONSECUTIVE_FAILURES, TERMINAL_ERROR_SETTLE_MS } from '../constants/daemon.js';
+import { ADOPTED_RUN_POLL_MS, EXIT_CLOSE_GRACE_MS, KILL_GRACE_MS, DEFAULT_MAX_CONSECUTIVE_FAILURES, TERMINAL_ERROR_SETTLE_MS } from '../constants/daemon.js';
 import { killProcessTree, type TreeKiller } from './process-tree.js';
 import type { TerminalEngineError } from '../engines/types.js';
 import { sleep } from '../utils/sleep.js';
@@ -31,6 +31,15 @@ function resolveMaxOutputBytesPerRun(): number {
     return loadConfig().retention.maxOutputBytesPerRun;
   } catch {
     return DEFAULT_MAX_OUTPUT_BYTES_PER_RUN;
+  }
+}
+
+/** Reads maxConsecutiveFailures; falls back to the default if config loading itself fails. */
+function resolveMaxConsecutiveFailures(): number {
+  try {
+    return loadConfig().maxConsecutiveFailures;
+  } catch {
+    return DEFAULT_MAX_CONSECUTIVE_FAILURES;
   }
 }
 
@@ -203,6 +212,8 @@ export class Runner {
     private readonly transcriptExists: (path: string) => boolean = transcriptFileExists,
     /** Injectable process-tree killer (defaults to taskkill /T /F on Windows, process-group kill on POSIX). */
     private readonly killTree: TreeKiller = killProcessTree,
+    /** Injectable consecutive-failure limit (defaults to config `maxConsecutiveFailures`, read per terminal run). */
+    private readonly maxConsecutiveFailuresOverride?: number,
   ) {
     this.logger = logger.child('runner');
     this.jobLogFiles = jobLogFiles ?? createJobLogFileFactory(this.logger);
@@ -270,6 +281,8 @@ export class Runner {
                 : ADOPTED_RUN_EXITED_MESSAGE,
             endedAt: Date.now(),
           });
+          const finished = store.getRun(runId);
+          if (finished) this.recordRunOutcome(jobId, runId, { status: finished.status, error: finished.error }, store);
         }
       } catch (err) {
         this.logger.error('Failed to finalize adopted run after exit', { jobId, runId, error: String(err) });
@@ -416,35 +429,37 @@ export class Runner {
       turns: totalTurns,
       usageJson: combinedUsageJson,
     }, log);
-    this.trackConsecutiveFailures(job, runId, lastResult, store, log);
+    this.recordRunOutcome(job.id, runId, lastResult, store, log);
   }
 
   /**
-   * Auto-disable a job after MAX_CONSECUTIVE_FAILURES consecutive failed runs.
+   * Single recorder for every terminal run outcome (normal execution, adopted
+   * runs, and runs finalized by restart reconciliation).
+   * Auto-disable a job after `maxConsecutiveFailures` (config) consecutive failed runs.
    * `failed` and `timeout` count as failures; `success` resets the count;
    * `canceled`/`skipped` leave it unchanged. When the limit is reached on an
    * enabled job, it is persisted as `enabled: false` (the daemon's tick handler
    * then stops firing it) and the final run's error records why. Re-enabling
    * resets the count (see the /enable route in api.ts).
    */
-  private trackConsecutiveFailures(job: Job, runId: string, result: RunResult, store: Store, log: RunLogWriter): void {
+  recordRunOutcome(jobId: string, runId: string, result: { status: string; error?: string | undefined }, store: Store, log?: RunLogWriter): void {
     try {
       if (result.status === 'success') {
-        store.resetConsecutiveFailures(job.id);
+        store.resetConsecutiveFailures(jobId);
         return;
       }
       if (result.status !== 'failed' && result.status !== 'timeout') return;
-      const failures = store.incrementConsecutiveFailures(job.id);
-      if (failures < MAX_CONSECUTIVE_FAILURES) return;
-      const current = store.getJob(job.id);
+      const failures = store.incrementConsecutiveFailures(jobId);
+      if (failures < (this.maxConsecutiveFailuresOverride ?? resolveMaxConsecutiveFailures())) return;
+      const current = store.getJob(jobId);
       if (!current || !current.enabled) return;
       store.upsertJob({ ...current, enabled: false });
-      const note = `AUTO_DISABLED: job disabled after ${failures} consecutive failed runs; fix the cause, then re-enable it (crontick jobs enable)`;
+      const note = `AUTO_DISABLED: job disabled after ${failures} consecutive failed runs; fix the cause, then re-enable it (crontick jobs update <id|alias> --enable)`;
       store.updateRun(runId, { error: result.error ? `${result.error}\n${note}` : note });
-      log.crontick('job auto-disabled after consecutive failures', { jobId: job.id, consecutiveFailures: failures });
-      this.logger.warn('Job auto-disabled after consecutive failed runs', { jobId: job.id, runId, consecutiveFailures: failures });
+      log?.crontick('job auto-disabled after consecutive failures', { jobId, consecutiveFailures: failures });
+      this.logger.warn('Job auto-disabled after consecutive failed runs', { jobId, runId, consecutiveFailures: failures });
     } catch (err) {
-      this.logger.error('Failed to track consecutive failures', { jobId: job.id, runId, error: String(err) });
+      this.logger.error('Failed to track consecutive failures', { jobId, runId, error: String(err) });
     }
   }
 

@@ -4,6 +4,7 @@
  * that at least one engine exists.
  */
 import { z } from 'zod';
+import { DEFAULT_MAX_CONSECUTIVE_FAILURES } from '../constants/daemon.js';
 import {
   DEFAULT_MAX_LOG_FILES,
   DEFAULT_MAX_OUTPUT_BYTES_PER_RUN,
@@ -95,6 +96,7 @@ export const ConfigSchema = z.object({
     maxLogFiles: DEFAULT_MAX_LOG_FILES,
   }),
   logging: LoggingConfigSchema.default({ fileEnabled: true }),
+  maxConsecutiveFailures: z.number().int().positive().default(DEFAULT_MAX_CONSECUTIVE_FAILURES),
   defaults: JobDefaultsConfigSchema.default({ overlap: 'skip', retry: { max: 0, backoffSec: 30 } }),
 }).strict().superRefine((config, ctx) => {
   if (Object.keys(config.engines).length === 0) {
@@ -167,6 +169,7 @@ export const PersistedConfigSchema = z.object({
   engines: z.record(EngineNameSchema, PersistedEngineConfigSchema).optional(),
   retention: PersistedRetentionConfigSchema.optional(),
   logging: PersistedLoggingConfigSchema.optional(),
+  maxConsecutiveFailures: z.number().int().positive().optional(),
   defaults: PersistedJobDefaultsConfigSchema.optional(),
 }).strict();
 

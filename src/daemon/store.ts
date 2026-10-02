@@ -85,6 +85,8 @@ export interface OrphanReconciliationResult {
   canceled: number;
   /** Runs left as 'running' because they were confirmed (or inconclusively assumed) still alive. */
   adopted: Array<{ runId: string; jobId: string; pid: number }>;
+  /** Runs finalized here from a Claude completion marker (success/failed); callers must route these through the failure recorder (`Runner.recordRunOutcome()`). */
+  finalized: Array<{ runId: string; jobId: string; status: 'success' | 'failed'; error?: string }>;
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────────
@@ -197,7 +199,7 @@ export class Store {
         updated_at INTEGER NOT NULL
       );
 
-      -- Consecutive failed runs per job (auto-disable after MAX_CONSECUTIVE_FAILURES). Absent row = 0.
+      -- Consecutive failed runs per job (auto-disable after maxConsecutiveFailures). Absent row = 0.
       CREATE TABLE IF NOT EXISTS job_failure_state (
         job_id TEXT PRIMARY KEY,
         consecutive_failures INTEGER NOT NULL
@@ -804,6 +806,7 @@ export class Store {
       .all() as unknown as DbRunRow[];
 
     const adopted: OrphanReconciliationResult['adopted'] = [];
+    const finalized: OrphanReconciliationResult['finalized'] = [];
     const toCancel: string[] = [];
 
     for (const row of stuck) {
@@ -825,6 +828,12 @@ export class Store {
             ...(marker.exitStatus === 0 ? {} : { error: `CLAUDE_HOOK: SessionEnd reported exit status ${marker.exitStatus}` }),
             endedAt: Date.now(),
           });
+          finalized.push({
+            runId: row.id,
+            jobId: row.job_id,
+            status: marker.exitStatus === 0 ? 'success' : 'failed',
+            ...(marker.exitStatus === 0 ? {} : { error: `CLAUDE_HOOK: SessionEnd reported exit status ${marker.exitStatus}` }),
+          });
           continue;
         }
       }
@@ -845,7 +854,7 @@ export class Store {
     }
 
     this.logger.debug('Reconciled orphan runs', { canceled, adopted: adopted.length });
-    return { canceled, adopted };
+    return { canceled, adopted, finalized };
   }
 
   // ── Run retention ─────────────────────────────────────────────────────────────
