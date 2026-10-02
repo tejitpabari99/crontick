@@ -65,7 +65,7 @@ describe('dashboard css', () => {
     expect(rule).toContain('display: inline-flex');
     expect(rule).toContain('align-items: center');
     expect(rule).toContain('vertical-align: middle');
-    expect(rule).toMatch(/width: 26px/);
-    expect(rule).toMatch(/height: 26px/);
+    expect(rule).toMatch(/width: 32px/);
+    expect(rule).toMatch(/height: 32px/);
   });
 });

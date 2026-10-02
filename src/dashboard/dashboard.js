@@ -2,7 +2,7 @@
 
 const STATUSES = ['success', 'failed', 'running', 'canceled', 'timeout', 'queued', 'skipped', 'missed'];
 const REFRESH_KEY = 'crontick.dashboard.autoRefreshSec';
-const REFRESH_CHOICES = [0, 10, 15, 30, 60];
+const REFRESH_CHOICES = [0, 5, 10, 15, 30];
 const SEARCH_DEBOUNCE_MS = 300;
 
 let lastData = null;

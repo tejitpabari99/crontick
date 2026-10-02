@@ -403,8 +403,8 @@ job/run actions through the existing `/api/*` routes.
   sets `data-theme` on `<html>` and is persisted in `localStorage` (`crontick.theme`); choosing
   System clears it. An inline script in `<head>` applies the saved theme before first paint to
   avoid a flash of the wrong theme.
-- **Top bar** — Refresh button, the runs limit, and an **Auto-refresh** segmented control
-  (`Off`, `10s`, `15s`, `30s`, `60s`). The default is `Off`; the choice is persisted in
+- **Top bar** — runs limit, an **Auto-refresh** segmented control
+  (`Off`, `5s`, `10s`, `15s`, `30s`), and an icon-only refresh button (`↻`) at the far right. The default is `Off`; the choice is persisted in
   `localStorage` and the refresh timer honors it.
 - **Jobs table** — columns are `Alias` (falls back to `—`), `ID` (the full GUID, wrapping if needed, with a
   copy icon), `Description`, `Schedule`, `Action`, `Last status`,

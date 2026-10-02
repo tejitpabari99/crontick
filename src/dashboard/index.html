@@ -35,18 +35,18 @@
   </header>
   <main>
     <div class="toolbar">
-      <button id="btn-refresh" class="btn">↻ Refresh</button>
       <label>Runs: <input id="runs-limit" type="number" min="1" value="100"></label>
       <div class="auto-refresh" role="radiogroup" aria-label="Auto-refresh interval">
         <span class="auto-refresh-label" aria-hidden="true">Auto-refresh:</span>
         <div id="auto-refresh" class="segmented">
           <button type="button" role="radio" aria-checked="true" data-sec="0">Off</button>
+          <button type="button" role="radio" aria-checked="false" data-sec="5">5s</button>
           <button type="button" role="radio" aria-checked="false" data-sec="10">10s</button>
           <button type="button" role="radio" aria-checked="false" data-sec="15">15s</button>
           <button type="button" role="radio" aria-checked="false" data-sec="30">30s</button>
-          <button type="button" role="radio" aria-checked="false" data-sec="60">60s</button>
         </div>
       </div>
+      <button id="btn-refresh" class="btn btn-refresh" type="button" aria-label="Refresh" title="Refresh">↻</button>
     </div>
 
     <div id="inline-error" class="inline-error" hidden></div>

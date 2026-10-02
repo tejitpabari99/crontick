@@ -261,7 +261,10 @@ describe('Dashboard serving', () => {
     expect(html).toContain('data-sort="started"');
     expect(html).toContain('aria-sort="descending"');
     expect(html).toContain('id="auto-refresh"');
-    for (const sec of ['10', '15', '30', '60']) expect(html).toContain(`data-sec="${sec}"`);
+    for (const sec of ['5', '10', '15', '30']) expect(html).toContain(`data-sec="${sec}"`);
+    expect(html).not.toContain('data-sec="60"');
+    expect(html).toContain('id="btn-refresh" class="btn btn-refresh" type="button" aria-label="Refresh" title="Refresh">↻</button>');
+    expect(html.indexOf('id="btn-refresh"')).toBeGreaterThan(html.indexOf('id="auto-refresh"'));
     expect(js).toContain('/run-now');
     expect(js).toContain('/output');
     expect(js).toContain('avgDurationSec');
