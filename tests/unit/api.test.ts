@@ -220,6 +220,36 @@ describe('Daemon HTTP API', () => {
     expect((data as { enabled: boolean }).enabled).toBe(true);
   });
 
+  it('auto-disables a job after 3 consecutive failures and re-enabling restarts the count', async () => {
+    const created = await apiCall(port, 'POST', '/api/jobs', {
+      alias: 'auto-disable-api',
+      schedule: { kind: 'cron', cron: '0 0 1 1 *' },
+      action: { kind: 'prompt', prompt: 'process.exit(1)', engine: FAKE_ENGINE_NAME },
+    });
+    expect(created.status).toBe(201);
+    const runAndWait = async (): Promise<{ status: string; error?: string }> => {
+      const { data } = await apiCall(port, 'POST', '/api/jobs/auto-disable-api/run');
+      const runId = (data as { runId: string }).runId;
+      for (let i = 0; i < 100; i++) {
+        const r = (await apiCall(port, 'GET', `/api/runs/${runId}`)).data as { status: string; error?: string };
+        if (r.status !== 'queued' && r.status !== 'running') {
+          await new Promise((res) => setTimeout(res, 100));
+          return (await apiCall(port, 'GET', `/api/runs/${runId}`)).data as { status: string; error?: string };
+        }
+        await new Promise((res) => setTimeout(res, 100));
+      }
+      throw new Error('run did not finish');
+    };
+    for (let i = 0; i < 3; i++) await runAndWait();
+    const disabled = (await apiCall(port, 'GET', '/api/jobs/auto-disable-api')).data as { enabled: boolean };
+    expect(disabled.enabled).toBe(false);
+    const enabled = (await apiCall(port, 'POST', '/api/jobs/auto-disable-api/enable')).data as { enabled: boolean };
+    expect(enabled.enabled).toBe(true);
+    await runAndWait();
+    await runAndWait();
+    expect(((await apiCall(port, 'GET', '/api/jobs/auto-disable-api')).data as { enabled: boolean }).enabled).toBe(true);
+  }, TIMEOUT_MS);
+
   // ── Run job ────────────────────────────────────────────────────────────────────
 
   it('POST /api/jobs/:id/run returns runId', async () => {

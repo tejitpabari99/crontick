@@ -197,6 +197,12 @@ export class Store {
         updated_at INTEGER NOT NULL
       );
 
+      -- Consecutive failed runs per job (auto-disable after MAX_CONSECUTIVE_FAILURES). Absent row = 0.
+      CREATE TABLE IF NOT EXISTS job_failure_state (
+        job_id TEXT PRIMARY KEY,
+        consecutive_failures INTEGER NOT NULL
+      );
+
       -- idx_runs_job_id (a single-column index) is deliberately never created:
       -- idx_runs_job_id_started_at is a strict left-prefix superset of it, so
       -- every query it would have served is served at least as well by this
@@ -349,6 +355,7 @@ export class Store {
       this.db.prepare('DELETE FROM run_outputs WHERE run_id IN (SELECT id FROM runs WHERE job_id = ?)').run(job.id);
       deletedRuns = (this.db.prepare('DELETE FROM runs WHERE job_id = ?').run(job.id) as { changes: number }).changes;
       this.db.prepare('DELETE FROM job_schedule_state WHERE job_id = ?').run(job.id);
+      this.db.prepare('DELETE FROM job_failure_state WHERE job_id = ?').run(job.id);
       deleted = (this.db.prepare('DELETE FROM jobs WHERE id = ?').run(job.id) as { changes: number }).changes;
       this.db.exec('COMMIT;');
     } catch (err) {
@@ -387,6 +394,7 @@ export class Store {
       this.db.exec('DELETE FROM run_outputs;');
       this.db.exec('DELETE FROM runs;');
       this.db.exec('DELETE FROM job_schedule_state;');
+      this.db.exec('DELETE FROM job_failure_state;');
       deleted = (this.db.prepare('DELETE FROM jobs').run() as { changes: number }).changes;
       this.db.exec('COMMIT;');
     } catch (err) {
@@ -740,6 +748,27 @@ export class Store {
         'INSERT INTO job_schedule_state (job_id, last_tick_at, updated_at) VALUES (?, ?, ?) ON CONFLICT(job_id) DO UPDATE SET last_tick_at=excluded.last_tick_at, updated_at=excluded.updated_at',
       )
       .run(jobId, at, Date.now());
+  }
+
+  // ── Consecutive-failure state (auto-disable) ─────────────────────────────────
+
+  /** Current consecutive failed-run count for a job (0 when none recorded). */
+  getConsecutiveFailures(jobId: string): number {
+    const row = this.db.prepare('SELECT consecutive_failures AS n FROM job_failure_state WHERE job_id = ?').get(jobId) as { n: number } | undefined;
+    return row?.n ?? 0;
+  }
+
+  /** Increment the consecutive-failure count and return the new value. */
+  incrementConsecutiveFailures(jobId: string): number {
+    this.db
+      .prepare('INSERT INTO job_failure_state (job_id, consecutive_failures) VALUES (?, 1) ON CONFLICT(job_id) DO UPDATE SET consecutive_failures = consecutive_failures + 1')
+      .run(jobId);
+    return this.getConsecutiveFailures(jobId);
+  }
+
+  /** Reset the consecutive-failure count (successful run, or the job was re-enabled). */
+  resetConsecutiveFailures(jobId: string): void {
+    this.db.prepare('DELETE FROM job_failure_state WHERE job_id = ?').run(jobId);
   }
 
   /** Returns undefined for a job never observed live (no missed-fire computation is possible without a watermark). */

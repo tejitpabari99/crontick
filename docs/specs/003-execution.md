@@ -71,6 +71,8 @@ local cron daemon, with observability through parsed run output, a per-job log f
 - **R-003-39**: `crontick runs get <runId>` MUST print one `Label: value` line per run field (local ISO-8601 timestamps, `Runner Session ID`, `Status` exactly once), `Transcript:` with `Log file:` directly below it (full absolute paths, plain text, suffixed `(file not found)` when missing on disk), a blank line, then the cleaned output (`Error:`, the final answer, `[stderr]` only without an error); `--json` MUST print `{ run, output }`. `crontick_run_get` MUST return the run record plus `logFile` and `output`.
 - **R-003-40**: A job runs in `action.cwd` (default: the invoking directory on create, resolved absolute and existing, else `INVALID_CWD`). For engines with trust hooks (Claude) create/update (when cwd or engine changes)/import MUST throw `TRUST_REQUIRED` before persisting when the folder (or an ancestor) lacks `hasTrustDialogAccepted: true` in `$CLAUDE_CONFIG_DIR/.claude.json` (else `~/.claude.json`), unless `trustFolder` is set, in which case only that flag is written (other keys preserved; unparsable file: `CLAUDE_CONFIG_UNREADABLE`; stat-guarded atomic rename with up to 3 retries). Moving a job with a session to a different cwd MUST fail with `CWD_CHANGE_BREAKS_SESSION` unless a new `sessionId` or `reuseSession: true` is given.
 
+- **R-003-41**: After 3 (`MAX_CONSECUTIVE_FAILURES`) consecutive runs finishing `failed` or `timeout`, the runner MUST persist the job as `enabled: false` and append `AUTO_DISABLED: ...` to the last run's `error`. A `success` MUST reset the count; `canceled`/`skipped` MUST NOT change it. Transitioning a job to enabled (enable route or update) MUST reset the count. The daemon MUST NOT fire a disabled job.
+
 ### Non-functional requirements
 
 - **R-003-23**: The runner SHOULD NOT block the event loop; all I/O is async or delegated to the child process.
@@ -123,6 +125,7 @@ local cron daemon, with observability through parsed run output, a per-job log f
 - [x] Output byte cap truncates capture at a UTF-8 character boundary, sets `outputTruncated`, and never affects the child process (test file: `tests/unit/runner.test.ts`)
 - [x] `adoptRun` re-attaches overlap tracking for `skip` and `cancel-previous` across a restart (test file: `tests/unit/runner.test.ts`, `adoptRun` describe block)
 - [x] Claude adapter invocation, result parsing, and session resume preflight (test files: `tests/unit/claude-adapter.test.ts`, `tests/unit/integration.prompt-e2e.test.ts`)
+- [x] Job auto-disabled after 3 consecutive failures; success and re-enable reset the count (test files: `tests/unit/runner.auto-disable.test.ts`, `tests/unit/api.test.ts`)
 - [x] Raw adapter invocation and generic session extraction (test file: `tests/unit/raw-adapter.test.ts`)
 
 ## Out of scope

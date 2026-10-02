@@ -18,7 +18,7 @@ import { readEnvFileForAction } from './env-file.js';
 import { createJobLogFileFactory, type JobLogFile, type JobLogFileFactory } from './job-log-file.js';
 import { readClaudeCompletionMarker, readClaudeHookTranscriptPath, removeClaudeCompletionMarker } from '../claude-completion-marker.js';
 import { DEFAULT_MAX_OUTPUT_BYTES_PER_RUN } from '../constants/retention.js';
-import { ADOPTED_RUN_POLL_MS, EXIT_CLOSE_GRACE_MS, KILL_GRACE_MS, TERMINAL_ERROR_SETTLE_MS } from '../constants/daemon.js';
+import { ADOPTED_RUN_POLL_MS, EXIT_CLOSE_GRACE_MS, KILL_GRACE_MS, MAX_CONSECUTIVE_FAILURES, TERMINAL_ERROR_SETTLE_MS } from '../constants/daemon.js';
 import { killProcessTree, type TreeKiller } from './process-tree.js';
 import type { TerminalEngineError } from '../engines/types.js';
 import { sleep } from '../utils/sleep.js';
@@ -416,6 +416,36 @@ export class Runner {
       turns: totalTurns,
       usageJson: combinedUsageJson,
     }, log);
+    this.trackConsecutiveFailures(job, runId, lastResult, store, log);
+  }
+
+  /**
+   * Auto-disable a job after MAX_CONSECUTIVE_FAILURES consecutive failed runs.
+   * `failed` and `timeout` count as failures; `success` resets the count;
+   * `canceled`/`skipped` leave it unchanged. When the limit is reached on an
+   * enabled job, it is persisted as `enabled: false` (the daemon's tick handler
+   * then stops firing it) and the final run's error records why. Re-enabling
+   * resets the count (see the /enable route in api.ts).
+   */
+  private trackConsecutiveFailures(job: Job, runId: string, result: RunResult, store: Store, log: RunLogWriter): void {
+    try {
+      if (result.status === 'success') {
+        store.resetConsecutiveFailures(job.id);
+        return;
+      }
+      if (result.status !== 'failed' && result.status !== 'timeout') return;
+      const failures = store.incrementConsecutiveFailures(job.id);
+      if (failures < MAX_CONSECUTIVE_FAILURES) return;
+      const current = store.getJob(job.id);
+      if (!current || !current.enabled) return;
+      store.upsertJob({ ...current, enabled: false });
+      const note = `AUTO_DISABLED: job disabled after ${failures} consecutive failed runs; fix the cause, then re-enable it (crontick jobs enable)`;
+      store.updateRun(runId, { error: result.error ? `${result.error}\n${note}` : note });
+      log.crontick('job auto-disabled after consecutive failures', { jobId: job.id, consecutiveFailures: failures });
+      this.logger.warn('Job auto-disabled after consecutive failed runs', { jobId: job.id, runId, consecutiveFailures: failures });
+    } catch (err) {
+      this.logger.error('Failed to track consecutive failures', { jobId: job.id, runId, error: String(err) });
+    }
   }
 
   private async spawn(
@@ -437,9 +467,6 @@ export class Runner {
     const sessionId = latestAction.sessionId ?? action.sessionId;
     const capturePromptSession = latestAction.reuseSession && !sessionId;
     const promptCaptureAction: PromptAction | undefined = capturePromptSession ? latestAction : undefined;
-    if (sessionId && latestAction.reuseSession) {
-      log.crontick('notice: reuseSession was ignored because an explicit sessionId was provided');
-    }
     // Persist an explicitly-provided session id onto the run record now
     // (an extracted one is persisted from the close handler below).
     if (sessionId) {
@@ -465,12 +492,6 @@ export class Runner {
 
     if (sessionId) {
       const transcriptPath = adapter.resumeTranscriptPath(action.cwd ?? process.cwd(), sessionId, { ...process.env, ...promptEnv, ...(action.env ?? {}) });
-      if (transcriptPath && !store.hasCompletedClaudeSession(job.id, sessionId)) {
-        throw new CrontickError(
-          'SESSION_NOT_FOUND',
-          `SESSION_NOT_FOUND: session "${sessionId}" has no completed Claude run for this job. Start a new session before retrying.`,
-        );
-      }
       if (transcriptPath && !this.transcriptExists(transcriptPath)) {
         throw new CrontickError(
           'SESSION_NOT_FOUND',

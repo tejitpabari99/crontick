@@ -283,7 +283,11 @@ if (needsSqliteShim) {
     scheduler.on('tick', ({ jobId, plannedAt }) => {
       try {
         const job = store.getJob(jobId);
-        if (!job || !job.enabled) return;
+        if (!job || !job.enabled) {
+          // Disabled out-of-band (e.g. auto-disabled after consecutive failures): drop the timer.
+          scheduler.unschedule(jobId);
+          return;
+        }
         const run = store.insertRun(jobId, plannedAt.getTime());
         store.recordTick(jobId, plannedAt.getTime());
         runner.run(job, run.id, store).catch((err: unknown) => {

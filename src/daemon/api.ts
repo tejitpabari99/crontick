@@ -207,6 +207,7 @@ async function handleRequest(
         if (!validateJobSchedule(res, ctx.scheduler, updatedJob.schedule)) return;
         readEnvFileForAction(updatedJob.action);
         ctx.store.upsertJob(updatedJob);
+        if (updatedJob.enabled && !job.enabled) ctx.store.resetConsecutiveFailures(job.id);
         const stored = ctx.store.getJob(job.id) ?? updatedJob;
         ctx.scheduler.schedule(stored);
         // L2: same watermark seed as job creation — an update can re-enable a
@@ -235,6 +236,7 @@ async function handleRequest(
         if (!job) return sendJobNotFoundError(res, requestedId);
         const updated = { ...job, enabled: true };
         ctx.store.upsertJob(updated);
+        ctx.store.resetConsecutiveFailures(job.id);
         ctx.scheduler.schedule(updated);
         // L2: re-enabling starts a fresh watermark, same reasoning as create/update.
         ctx.store.recordTick(job.id);

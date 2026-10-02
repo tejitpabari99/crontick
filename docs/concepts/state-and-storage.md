@@ -47,7 +47,7 @@ full schema is created in one idempotent pass on open -- there are no migrations
 [ADR 0001](../decisions/0001-architecture-and-runtime-model.md)). Tables: `jobs` (cache,
 rebuilt from disk on start), `runs` (status, exit code, timing, spawned `pid`,
 output-truncation flag, and for engine runs `sessionId`, `costUsd`, `turns`, `usageJson`, `transcriptPath`, `engineStatus`), `run_outputs` (the parsed engine output of a finished run: final answer, error, capped stderr), and
-`job_schedule_state` (per-job "last observed ticking" watermark for missed-fire computation). See
+`job_failure_state` (per-job consecutive failed-run count for auto-disable), `job_schedule_state` (per-job "last observed ticking" watermark for missed-fire computation). See
 [implementation/storage.md](../implementation/storage.md) for exact columns and indexes.
 
 Run statuses: `queued`, `running`, `success`, `failed`, `canceled` (a started run that was
