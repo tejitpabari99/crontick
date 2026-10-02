@@ -102,8 +102,8 @@ At run time the `claude` adapter builds the full invocation (`claude -p "<prompt
 
 **Multi-turn continuity** (carry the AI session across runs) — use at most one:
 
-- `--session-id <id>` — reuse a fixed engine session id every run.
-- `--reuse-session` — capture the session id from the first completed run and reuse it thereafter. Requires `--overlap skip` (the default); other overlap policies are rejected. For Claude, resuming needs the session transcript on disk, otherwise the run fails with `SESSION_NOT_FOUND`.
+- `--session-id <id>` — resume an existing session id on every run. Any session works, including one you started yourself outside crontick; it implies reuse (no need to also pass `--reuse-session`) and requires `--overlap skip` (the default). For Claude the session transcript must exist on disk (under the job's `--cwd`), otherwise the run fails with `SESSION_NOT_FOUND`.
+- `--reuse-session` — start a new session and capture its id from the first completed run and reuse it thereafter. Requires `--overlap skip` (the default); other overlap policies are rejected. For Claude, resuming needs the session transcript on disk, otherwise the run fails with `SESSION_NOT_FOUND`.
 
 ```sh
 crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident queue" --reuse-session --alias triage
@@ -154,7 +154,7 @@ Under the hood a prompt job stores its behavior as JSON with `action.kind: "prom
 ```
 
 - `reuseSession: true` captures the engine `sessionId` from the first completed run and reuses it on every later run, so the AI carries context across runs (equivalent to `--reuse-session`). It requires `overlap: "skip"`.
-- The captured `sessionId` is visible in `crontick runs get <runId>`; a fixed id can be pinned instead via `--session-id`.
+- The captured `sessionId` is visible in `crontick runs get <runId>`; an existing id (even one created outside crontick) can be pinned instead via `--session-id`, which implies reuse.
 
 ## Example
 

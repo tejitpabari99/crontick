@@ -127,6 +127,7 @@ The Claude adapter invokes `claude -p "<your prompt>" --output-format stream-jso
   },
   "retention": { "maxRunsPerJob": 100, "maxOutputBytesPerRun": 2000000, "maxLogFiles": 30 },
   "logging": { "fileEnabled": true },
+  "maxConsecutiveFailures": 3,
   "defaults": { "overlap": "skip", "retry": { "max": 0, "backoffSec": 30 } }
 }
 ```

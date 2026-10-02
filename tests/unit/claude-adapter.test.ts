@@ -271,14 +271,27 @@ describe('Claude resume safety', () => {
     } finally { fixture.cleanup(); }
   });
 
-  it('rejects an explicit ID even when its transcript exists if no completed run captured it', async () => {
+  it('resumes an externally created session (transcript on disk, no prior crontick run for the job)', async () => {
     const fixture = await setup();
     try {
       const spawnSpy = vi.fn((command: string, args: readonly string[], opts: Parameters<typeof nodeSpawn>[2]) => nodeSpawn(command, args, opts));
       const transcriptExists = vi.fn(() => true);
+      expect(fixture.store.hasCompletedClaudeSession(fixture.job.id, 'session-1')).toBe(false);
       await new Runner(spawnSpy as unknown as typeof nodeSpawn, undefined, undefined, undefined, undefined, transcriptExists).run(fixture.job, fixture.run.id, fixture.store);
+      expect(transcriptExists).toHaveBeenCalledWith(resolveTranscriptPath(fixture.dir, 'session-1'));
+      expect(spawnSpy).toHaveBeenCalledOnce();
+      expect(spawnSpy.mock.calls[0]?.[1]).toEqual(expect.arrayContaining(['--resume', 'session-1']));
+      expect(fixture.store.getRun(fixture.run.id)?.error ?? '').not.toContain('SESSION_NOT_FOUND');
+    } finally { fixture.cleanup(); }
+  });
+
+  it('still fails with SESSION_NOT_FOUND when an external session transcript is missing', async () => {
+    const fixture = await setup();
+    try {
+      const spawnSpy = vi.fn((command: string, args: readonly string[], opts: Parameters<typeof nodeSpawn>[2]) => nodeSpawn(command, args, opts));
+      await new Runner(spawnSpy as unknown as typeof nodeSpawn, undefined, undefined, undefined, undefined, () => false).run(fixture.job, fixture.run.id, fixture.store);
       expect(spawnSpy).not.toHaveBeenCalled();
-      expect(fixture.store.getRun(fixture.run.id)).toMatchObject({ status: 'failed', error: expect.stringContaining('SESSION_NOT_FOUND') });
+      expect(fixture.store.getRun(fixture.run.id)).toMatchObject({ status: 'failed', error: expect.stringContaining('transcript is missing') });
     } finally { fixture.cleanup(); }
   });
 
@@ -458,19 +471,15 @@ describe('Claude run session assignment', () => {
         await new Runner(nodeSpawn).run(job, run.id, store);
         expect(store.getJob(job.id)?.action.sessionId !== undefined).toBe(expectCapture);
         expect(store.getRun(run.id)?.sessionId).toMatch(uuidPattern);
-        const priorSessionId = store.getRun(run.id)!.sessionId!;
-        const resumeJob: Job = expectCapture
-          ? store.getJob(job.id)!
-          : { ...job, action: { ...job.action, sessionId: priorSessionId, reuseSession: false } };
-        if (!expectCapture) store.upsertJob(resumeJob);
+        // A failed result is never captured onto the job; an explicit sessionId
+        // is no longer gated on crontick-side provenance (transcript existence is the check).
+        if (!expectCapture) return;
+        const resumeJob = store.getJob(job.id)!;
         const resumeRun = store.insertRun(job.id);
         const spawnSpy = vi.fn((command: string, args: readonly string[], opts: Parameters<typeof nodeSpawn>[2]) => nodeSpawn(command, args, opts));
         await new Runner(spawnSpy as unknown as typeof nodeSpawn, undefined, undefined, undefined, undefined, () => true)
           .run(resumeJob, resumeRun.id, store);
-        expect(spawnSpy).toHaveBeenCalledTimes(expectCapture ? 1 : 0);
-        if (!expectCapture) {
-          expect(store.getRun(resumeRun.id)).toMatchObject({ status: 'failed', error: expect.stringContaining('SESSION_NOT_FOUND') });
-        }
+        expect(spawnSpy).toHaveBeenCalledTimes(1);
       } finally {
         store.close();
         if (priorHome === undefined) delete process.env['CRONTICK_HOME'];

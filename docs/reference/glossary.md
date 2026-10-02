@@ -29,7 +29,7 @@ Short definitions of crontick terms.
 | **kebab-case** | The naming convention required for job aliases (`--alias`/`-a`): lowercase letters, digits, and hyphens (`my-job-1`). |
 | **WAL** | Write-Ahead Logging — the SQLite journal mode used by `runs.db` for concurrent read access while the daemon writes. |
 | **prompt job** | A job whose action kind is `prompt`: it invokes a configured engine (CLI tool) with a text prompt and optional session. |
-| **session** | An engine-side conversation context. `sessionId` fixes it; `reuseSession` captures and reuses the first successful one. |
+| **session** | An engine-side conversation context. `sessionId` pins an existing one (even created outside crontick) and resumes it every run; `reuseSession` captures and reuses the first successful one. |
 | **notice** | A non-fatal advisory message collected during an operation (e.g., "reuseSession was ignored because an explicit sessionId was provided"). |
 | **doctor** | A built-in health-check command that verifies Node.js version, SQLite, data directory, daemon, dashboard, and MCP server. |
 | **dashboard** | A browser-based status UI served by the daemon. Shows job list, run history, stats, and health. |

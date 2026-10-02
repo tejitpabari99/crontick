@@ -62,7 +62,7 @@ describe('jobs new / jobs update option parity', () => {
     for (const sub of ['new', 'update']) {
       const help = normalize(cli(['jobs', sub, '--help'], home).stdout);
       expect(help, sub).toContain('--overlap <policy> Overlap policy: skip|queue|cancel-previous (default: skip)');
-      expect(help, sub).toContain('--session-id <id> Run it on a given session ID');
+      expect(help, sub).toContain('--session-id <id> Resume an existing session ID on every run (implies reuse)');
     }
   });
 });

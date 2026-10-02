@@ -764,7 +764,7 @@ const BUILT_IN_CONFIG: CrontickConfig;
 ```
 
 ```json
-{ "defaultEngine": "claude", "engines": { "claude": { "command": "claude", "args": [], "env": {}, "type": "claude" } }, "retention": { "maxRunsPerJob": 100, "maxOutputBytesPerRun": 2000000, "maxLogFiles": 30 }, "logging": { "fileEnabled": true }, "defaults": { "overlap": "skip", "retry": { "max": 0, "backoffSec": 30 } } }
+{ "defaultEngine": "claude", "engines": { "claude": { "command": "claude", "args": [], "env": {}, "type": "claude" } }, "retention": { "maxRunsPerJob": 100, "maxOutputBytesPerRun": 2000000, "maxLogFiles": 30 }, "logging": { "fileEnabled": true }, "maxConsecutiveFailures": 3, "defaults": { "overlap": "skip", "retry": { "max": 0, "backoffSec": 30 } } }
 ```
 
 ### SURFACE_CAPABILITIES

@@ -28,7 +28,7 @@ human-editability of jobs and efficient querying of run history.
 |------|-----------|
 | Data directory | Platform-specific root for all crontick state; resolved by `env-paths`. |
 | Jobs directory | `<dataDir>/jobs/`; one JSON file per job. |
-| runs.db | SQLite database (WAL) containing `jobs` (cache), `runs`, `run_outputs`, and `job_schedule_state`. |
+| runs.db | SQLite database (WAL) containing `jobs` (cache), `runs`, `run_outputs`, `job_schedule_state`, and `job_failure_state`. |
 | Schema creation | The full schema is created in one idempotent `CREATE TABLE/INDEX IF NOT EXISTS` pass on `open()`. There are no migrations (see ADR 0001). |
 | Orphan run | A `queued` or `running` run left behind after a daemon crash or unclean shutdown; resolved on the next startup via a process-liveness check. |
 | Missed run | A terminal `missed`-status run recorded at daemon startup for a scheduled fire that occurred while no daemon was running; never executed (see spec 004 R-004-28). |
@@ -44,7 +44,7 @@ human-editability of jobs and efficient querying of run history.
 - **R-006-4**: Job JSON files MUST be the source of truth; on daemon start, `loadJobsFromDisk()` MUST reload all `.json` files (excluding `.schema.json`) into the SQLite `jobs` table.
 - **R-006-5**: `upsertJob()` MUST write both the SQLite row and the JSON file atomically (write file, then upsert row).
 - **R-006-6**: `upsertJob()` MUST write a JSON Schema sidecar alongside the job file.
-- **R-006-7**: `deleteJob()` MUST, in one transaction, remove the job's `run_outputs`, `runs` and `job_schedule_state` rows and the SQLite job row, then best-effort unlink the JSON file, the schema sidecar and the per-job log file. Deleted jobs leave no run history on any surface. `setRunOutput()`/`updateRun()` MUST NOT create or resurrect rows for a run that no longer exists.
+- **R-006-7**: `deleteJob()` MUST, in one transaction, remove the job's `run_outputs`, `runs`, `job_schedule_state` and `job_failure_state` rows and the SQLite job row, then best-effort unlink the JSON file, the schema sidecar and the per-job log file. Deleted jobs leave no run history on any surface. `setRunOutput()`/`updateRun()` MUST NOT create or resurrect rows for a run that no longer exists.
 - **R-006-8**: SQLite MUST use WAL journal mode with foreign keys enabled.
 - **R-006-9**: The `runs` table MUST store: `id`, `job_id`, `started_at`, `ended_at`, `status`, `exit_code`, `error`, `duration_ms`, `pid` (nullable, absent for `missed`), `output_truncated`, `session_id` (nullable), `command` (nullable), `cost_usd`, `turns`, `usage_json`, and `transcript_path` (all nullable, Claude-only). The `jobs` table MUST store `id`, `alias`, `json`, `updated_at`.
 - **R-006-10**: The `run_outputs` table MUST store `run_id` (primary key), `format`, `result`, `engine_error`, `stderr` -- the parsed engine output of a finished run (final answer, error, full stderr). No table MAY store the engine's raw stdout/stderr.

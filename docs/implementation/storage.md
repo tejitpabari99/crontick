@@ -38,6 +38,7 @@ PRAGMA foreign_keys=ON;` are set on every `open()`.
 | `jobs` | `id` (PK GUID), `alias` (nullable, unique via `idx_jobs_alias`), `json`, `updated_at` |
 | `runs` | `id` (PK UUID), `job_id`, `started_at`, `ended_at`, `status`, `exit_code`, `error`, `duration_ms`, `pid` (nullable, absent for `missed`), `output_truncated`, `session_id`, `command`, `claude_result_completed` (internal resume-eligibility flag), `cost_usd`, `turns`, `usage_json`, `transcript_path`, `engine_status` |
 | `run_outputs` | `run_id` (PK), `format` (`claude-stream-json`/`text`), `result`, `engine_error`, `stderr` -- the parsed engine output written when a run finishes. The engine's raw stdout/stderr is never stored |
+| `job_failure_state` | `job_id` (PK), `consecutive_failures` -- consecutive failed runs per job (absent = 0); drives auto-disable |
 | `job_schedule_state` | `job_id` (PK), `last_tick_at`, `updated_at` -- one row per job that has ticked live at least once |
 
 Indexes: `idx_runs_job_id_started_at` (composite, also serves single-`job_id` lookups so a
@@ -116,7 +117,7 @@ never fail a run or block startup. See [ADR 0001](../decisions/0001-architecture
 
 ## Job deletion
 
-`deleteJobAndRuns()` deletes a job's `run_outputs`, `runs`, `job_schedule_state` row and the job row in
+`deleteJobAndRuns()` deletes a job's `run_outputs`, `runs`, `job_schedule_state` and `job_failure_state` rows and the job row in
 one transaction, then unlinks the job JSON files and the per-job log file (`resolveJobLogPath`)
 best-effort. Run history is not archived and there is no run import (`importRuns`/`RunImportSchema`
 were removed with `share export --include-runs`). `setRunOutput()` only inserts for runs that still
