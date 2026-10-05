@@ -28,6 +28,21 @@ function killHomeDaemon(home: string): void {
   }
 }
 
+// On Windows the killed daemon's sqlite handles (runs.db*) can linger briefly after the
+// process is gone, so rmSync fails with EPERM/EBUSY; retry until they are released.
+async function removeDirWithRetry(dir: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      if (Date.now() >= deadline) throw err;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+    }
+  }
+}
+
 describe('library consumer exit', () => {
   it('lets createClient consumers call process.exit() immediately after a daemon-backed request without a native crash', async () => {
     const home = makeHome();
@@ -57,8 +72,7 @@ describe('library consumer exit', () => {
       }
     } finally {
       killHomeDaemon(home);
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
-      rmSync(home, { recursive: true, force: true });
+      await removeDirWithRetry(home);
     }
   }, 25_000);
 });

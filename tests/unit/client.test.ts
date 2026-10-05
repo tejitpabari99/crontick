@@ -189,6 +189,42 @@ async function closedPortUrl(): Promise<string> {
   return `http://127.0.0.1:${port}`;
 }
 
+function readHomeDaemonPid(home: string): number | undefined {
+  const pidPath = join(home, 'daemon.pid');
+  if (!existsSync(pidPath)) return undefined;
+  const pid = Number(readFileSync(pidPath, 'utf-8'));
+  return Number.isInteger(pid) && pid > 0 && pid !== process.pid ? pid : undefined;
+}
+
+async function waitForPidExit(pid: number | undefined, timeoutMs = 5_000): Promise<void> {
+  if (pid === undefined) return;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+  }
+}
+
+// On Windows the killed daemon's sqlite handles (runs.db*) can linger briefly after the
+// process is gone, so rmSync fails with EPERM/EBUSY; retry until they are released.
+// A persistent failure still throws after the timeout.
+async function removeDirWithRetry(dir: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      if (Date.now() >= deadline) throw err;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+    }
+  }
+}
+
 function killHomeDaemon(home: string): void {
   const pidPath = join(home, 'daemon.pid');
   if (!existsSync(pidPath)) return;
@@ -205,9 +241,10 @@ function killHomeDaemon(home: string): void {
 afterEach(async () => {
   for (const fn of cleanupFns.splice(0)) await fn();
   if (currentHome) {
+    const daemonPid = readHomeDaemonPid(currentHome);
     killHomeDaemon(currentHome);
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
-    rmSync(currentHome, { recursive: true, force: true });
+    await waitForPidExit(daemonPid);
+    await removeDirWithRetry(currentHome);
     currentHome = undefined;
   }
   if (previousHome === undefined) delete process.env['CRONTICK_HOME'];

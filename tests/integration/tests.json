@@ -3179,30 +3179,23 @@
       ],
       "setup": [
         {
-          "surface": "cli",
+          "surface": "api",
           "ref": "engine-add",
-          "command": [
-            "config",
-            "engines",
-            "add",
-            "qa-mock",
-            "--command",
-            "node",
-            "--arg",
-            "${MOCK_ENGINE_PATH}"
-          ]
+          "script": "const c = crontick.createClient(); c.addEngine('qa-mock', { command: 'node', args: [\"${MOCK_ENGINE_PATH}\"] }); return null;"
         },
         {
           "surface": "cli",
           "ref": "create",
           "command": [
+            "jobs",
             "new",
+            "-a",
             "ct-security-001",
             "--every",
             "3600",
             "--runner",
             "qa-mock",
-            "--prompt",
+            "-p",
             "Authorization: Bearer zzverifytoken998877"
           ]
         }
@@ -3212,6 +3205,7 @@
           "surface": "cli",
           "ref": "run",
           "command": [
+            "jobs",
             "run-now",
             "ct-security-001"
           ]
@@ -3252,19 +3246,15 @@
           "surface": "cli",
           "ref": "delete",
           "command": [
+            "jobs",
             "delete",
             "ct-security-001"
           ]
         },
         {
-          "surface": "cli",
+          "surface": "api",
           "ref": "engine-remove",
-          "command": [
-            "config",
-            "engines",
-            "remove",
-            "qa-mock"
-          ]
+          "script": "const c = crontick.createClient(); c.removeEngine('qa-mock'); return null;"
         }
       ]
     },
