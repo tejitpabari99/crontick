@@ -329,7 +329,8 @@ async function main() {
         SCRATCH_WORK: testWork,
         SCRATCH_ROOT: scratchDir,
         PACKAGE_VERSION: packageVersion,
-        MOCK_ENGINE_PATH: mockEnginePath,
+        // forward slashes: backslashes get mangled as JS escapes in api script bodies
+        MOCK_ENGINE_PATH: mockEnginePath.replaceAll('\\', '/'),
         REPO_ROOT: repoRoot,
       };
 
@@ -419,7 +420,8 @@ async function main() {
         SCRATCH_WORK: testWork,
         SCRATCH_ROOT: scratchDir,
         PACKAGE_VERSION: packageVersion,
-        MOCK_ENGINE_PATH: mockEnginePath,
+        // forward slashes: backslashes get mangled as JS escapes in api script bodies
+        MOCK_ENGINE_PATH: mockEnginePath.replaceAll('\\', '/'),
         REPO_ROOT: repoRoot,
       };
       for (const step of test.cleanup ?? []) {
