@@ -72,14 +72,16 @@ async function apiCall(port: number, method: string, path: string, body?: unknow
 
 interface RunSummary { id: string; jobId: string; status: string }
 
-/** Poll until at least `count` terminal runs for jobId are observed, or the deadline passes. */
+/** Poll until at least `count` terminal runs for jobId are observed, or the deadline passes. Returns only the terminal runs. */
 async function pollForTerminalRunCount(port: number, jobId: string, count: number, maxMs: number): Promise<RunSummary[]> {
   const deadline = Date.now() + maxMs;
   const terminal = new Set(['success', 'failed', 'canceled', 'timeout']);
   for (;;) {
     const { data } = await apiCall(port, 'GET', `/api/runs?jobId=${jobId}`);
-    const runs = data as RunSummary[];
-    if (runs.filter((r) => terminal.has(r.status)).length >= count) return runs;
+    // Only terminal runs are returned: a fast tick can leave a newer in-flight
+    // ('running') run at the head of the list, which must not be asserted on.
+    const runs = (data as RunSummary[]).filter((r) => terminal.has(r.status));
+    if (runs.length >= count) return runs;
     if (Date.now() >= deadline) return runs;
     await new Promise((r) => setTimeout(r, 200));
   }
