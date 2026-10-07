@@ -10,16 +10,16 @@ Source: [brainstorm.md](brainstorm.md) (approved). Deferred ideas: [docs/agent_f
 
 ## TL;DR
 
-Ten sub-projects: CLI polish, `daemon.port` + dashboard polish, config surfaces + Settings UI (+ API hardening), dashboard job editor, `--after` and `--webhook` triggers, opt-in autostart (Linux, macOS, Windows), opt-in catch-up. Biggest risks: SP07/08/09 interface mismatch (see Contradictions), SP09 launcher-survival unknown, SP06 HMAC-over-smee. ~66 OPEN lines remain; about 22 need an owner decision, rest are verify-during-implementation.
+Ten sub-projects: CLI polish, `daemon.port` + dashboard polish, config surfaces + Settings UI (+ API hardening), dashboard job editor, `--after` and `--webhook` triggers, opt-in autostart (Linux, macOS, Windows), opt-in catch-up. Biggest risks: SP07/08/09 interface mismatch (see Contradictions), SP09 launcher-survival unknown, SP06 HMAC-over-smee. ~50 OPEN lines remain; about 17 need an owner decision, rest are verify-during-implementation.
 
 ## Sub-projects
 
 | # | Folder | Scope | Depends on | Phase | OPEN |
 |---|---|---|---|---|---|
-| 01 | [01-cli-polish](01-cli-polish/PRD.md) | Schedule help + footer, `-d/--dir`, `resolveJobRef`, `runs delete` | none | 1 | 3 |
-| 02 | [02-port-and-dashboard-polish](02-port-and-dashboard-polish/PRD.md) | `daemon.port` config, drop env var, rem scale ~80%, trimmed header | none | 1 | 5 |
-| 03 | [03-config-surfaces-and-settings](03-config-surfaces-and-settings/PRD.md) | `config list/get/set/unset`, `/api/config`, Settings modal, **request guard on all mutating routes** | 02 | 2 | 7 |
-| 04 | [04-dashboard-job-editor](04-dashboard-job-editor/PRD.md) | "+" create / pencil edit, `job-prepare.ts`, `SCHEDULE_KINDS` | 03, 01 | 2 | 8 |
+| 01 | [01-cli-polish](01-cli-polish/PRD.md) | Schedule help + footer, `--dir`, `resolveJobRef`, `runs delete` | none | 1 | 1 |
+| 02 | [02-port-and-dashboard-polish](02-port-and-dashboard-polish/PRD.md) | `daemon.port` config, drop env var, rem scale ~80%, trimmed header | none | 1 | 1 |
+| 03 | [03-config-surfaces-and-settings](03-config-surfaces-and-settings/PRD.md) | `config list/get/set/unset`, `/api/config`, Settings modal, **request guard on all mutating routes** | 02 | 2 | 0 |
+| 04 | [04-dashboard-job-editor](04-dashboard-job-editor/PRD.md) | "+" create / pencil edit, `job-prepare.ts`, `SCHEDULE_KINDS` | 03, 01 | 2 | 5 |
 | 05 | [05-after-trigger](05-after-trigger/PRD.md) | `after` kind, `onRunComplete`, `TriggerDispatcher`, `trigger_json` | 01, 04 | 3 | 5 |
 | 06 | [06-webhook-trigger](06-webhook-trigger/PRD.md) | `webhook` kind, smee-style SSE relay, `jobs trigger` | 05, 01, 04, 03 | 3 | 7 |
 | 07 | [07-autostart-core-linux](07-autostart-core-linux/PRD.md) | `autostart enable/disable/status`, backend interface, systemd, guard rewrite | none | 3 | 6 |
@@ -56,7 +56,7 @@ Gate: resolve the SP07/08/09 interface deltas (below) BEFORE coding SP07; they c
 - One shared id-or-alias resolver; orphan `runs delete --job` falls back to raw id (global, item 6).
 - `daemon.port` config only, explicit busy port fails loudly, env var removed, read-only in config surfaces (item 1).
 - Dashboard ~80% via rem scale; header `v... · pid ...` + red error badge (items 2-3).
-- `-d, --dir` replaces `-C, --cwd`; stored field stays `cwd` (item 5).
+- `--dir` (no short flag) replaces `-C, --cwd`; stored field stays `cwd` (item 5).
 - **API hardening (item 10) MOVED from SP04 to SP03**: Host/Content-Type/Origin guard on ALL mutating daemon routes, because `PATCH /api/config` can set engine commands. SP04/05/06 consume it. Pending owner review.
 - No tokens/remote access; webhook via outbound SSE relay only; no inbound listener (item 12).
 - Autostart reintroduced, opt-in, no native deps/Run key/VBS/admin; rule-8 sign-off done in brainstorm, restated in PR (item 13).
@@ -81,7 +81,7 @@ Gate: resolve the SP07/08/09 interface deltas (below) BEFORE coding SP07; they c
 | C1 | 07 vs 08 | 07: `SuccessExitStatus=75` avoids crash loop. 08: launchd `KeepAlive{SuccessfulExit:false}` respawns on 75 every 30 s. 08 proposes `CRONTICK_SUPERVISED=1` in `spec.env` -> daemon exits 0 (core delta, drift compares it). | Owner picks: supervised-exit-0 for all platforms (07 reworked) or macOS drops KeepAlive |
 | C2 | 07 vs 09 | 07 D3 launches `daemon/index.js` directly; 09 launches `node cli/index.js daemon start` (launcher). Needs `AutostartSpec.cliScript` (delta A) and `backend.expectedCommand(spec)` (delta B) in 07. Brainstorm said "node.exe directly"; 09 still uses node.exe, only the entry script differs. | Add both to 07 before coding |
 | C3 | 07/08 | PATH snapshot: 07 says core env = `CRONTICK_HOME` only plus (Linux) PATH; 08 D9 claims "same as 07" and adds PATH in the macOS backend. | Move PATH snapshot into core `buildSpec` |
-| C4 | 09 | Task actions carry no env, so `CRONTICK_HOME` set at enable time is lost at logon. 09 suggests SP01 `-d/--dir`, but that flag is the job-cwd option and does not apply to `daemon start`. | Needs a decision (new `daemon start --home`? document limitation + drift) |
+| C4 | 09 | Task actions carry no env, so `CRONTICK_HOME` set at enable time is lost at logon. 09 suggests SP01 `--dir`, but that flag is the job-cwd option and does not apply to `daemon start`. | Needs a decision (new `daemon start --home`? document limitation + drift) |
 | C5 | 05 vs 06 | `trigger_json` owner: consistent (SP05 creates column + guarded `ALTER`, SP06 fills/renders). But SP05 OPEN leaves "who renders in `runs get`" open while SP06 R12 claims it. | Settle: SP06 renders; SP05 only stores `{kind, upstream}` |
 | C6 | 04 vs 05 | `job-prepare.ts` (04) has no `resolveJob` injection; 05 needs one (client = API lookup, daemon = `store.getJob`). | Add injected `resolveJob` in SP04 |
 | C7 | 05 vs 10 | Two time-agnostic dispatch paths: 05 `TriggerDispatcher` (no `recordTick`) vs 10 `dispatchTimeRun` (with `recordTick`). 10 also needs `RunContext` env from 05 though listed as soft. | Treat 05 as hard dep of 10; keep two functions, document why |
@@ -109,25 +109,25 @@ Legend: **O** = owner decision, **V** = verify during implementation.
 | SP | Item | Kind |
 |---|---|---|
 | 01 | Live job log keeps lines of deleted runs: accept vs rewrite file | O |
-| 01 | No global `-d` option elsewhere clashes with `-d, --dir` | V |
-| 01 | Single txn for large `runs delete --job` | V |
-| 02 | Test-isolation helper vs scan guard (OPEN-2) | V |
-| 02 | Windows EACCES on reserved port ranges (OPEN-3) | V |
-| 02 | Slow crontick shown as "not crontick" on probe timeout (OPEN-4) | V |
+| 01 | No global `-d` option elsewhere clashes with `--dir` — RESOLVED: no `-d` short flag; `--dir` only | V |
+| 01 | Single txn for large `runs delete --job` — RESOLVED: single txn bounded by retention.maxRunsPerJob | V |
+| 02 | Test-isolation helper vs scan guard (OPEN-2) — RESOLVED: helper only | V |
+| 02 | Windows EACCES on reserved port ranges (OPEN-3) — RESOLVED: accept, name port + config key | V |
+| 02 | Slow crontick shown as "not crontick" on probe timeout (OPEN-4) — RESOLVED: accepted | V |
 | 02 | Scale factor 0.8 vs narrower after screenshot (OPEN-5) | O |
-| 03 | Remove superseded public exports in `src/index.ts` (OPEN-2) | O |
-| 03 | Warn on removing engine used by jobs (OPEN-3) | O (leaning defer) |
-| 03 | Stale "config init --force" wording only (OPEN-4) | V |
-| 03 | Lock on odd FS / Windows EPERM retry (OPEN-5) | V |
-| 03 | `[REDACTED]` scrubbing inside args, no `--reveal` (OPEN-6) | O |
-| 03 | Reload while runs active is safe (OPEN-7) | V |
-| 03 | Bodyless mutating requests need JSON Content-Type (OPEN-8, new) | O |
+| 03 | Remove superseded public exports in `src/index.ts` (OPEN-2) — RESOLVED: remove exports + update library-api docs/examples | O |
+| 03 | Warn on removing engine used by jobs (OPEN-3) — RESOLVED: warn when daemon up, not block | O (leaning defer) |
+| 03 | Stale "config init --force" wording only (OPEN-4) — RESOLVED: wording fix only | V |
+| 03 | Lock on odd FS / Windows EPERM retry (OPEN-5) — RESOLVED: add retry-on-EPERM; Windows manual test | V |
+| 03 | `[REDACTED]` scrubbing inside args, no `--reveal` (OPEN-6) — RESOLVED: accepted | O |
+| 03 | Reload while runs active is safe (OPEN-7) — RESOLVED: integration spot-check | V |
+| 03 | Bodyless mutating requests need JSON Content-Type (OPEN-8, new) — RESOLVED: strict, all three required | O |
 | 04 | `prepare=1` flag vs always-normalize (OPEN-2) | V |
 | 04 | `null`-clears exposed on MCP/library too (OPEN-3) | O |
 | 04 | Dir path autocomplete endpoint (OPEN-4) | O (leaning defer) |
-| 04 | Expose `retry.backoffSec` as "advanced" (OPEN-5) | O |
+| 04 | Expose `retry.backoffSec` as "advanced" (OPEN-5) — RESOLVED: expose under advanced | O |
 | 04 | No warning when editing job with in-flight run/dependents (OPEN-6) | V |
-| 04 | `datetime-local` parsed as local like `--at` (OPEN-7); Windows cmd-line length (OPEN-8); no DOM harness for dashboard tests | V |
+| 04 | `datetime-local` parsed as local like `--at` (OPEN-7) — RESOLVED: local only, no tz selector; Windows cmd-line length (OPEN-8) — RESOLVED: accepted; no DOM harness for dashboard tests | V |
 | 05 | Where `runs get` renders `trigger_json`; migration pattern | V |
 | 05 | `skip` overlap drops triggers: docs recommend `queue` | V |
 | 05 | Stats output renders schedule? | V |

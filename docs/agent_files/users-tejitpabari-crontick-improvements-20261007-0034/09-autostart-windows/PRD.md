@@ -132,7 +132,7 @@ If a tool flags it anyway:
 - [OPEN] **5:** No OS-level user toggle (Settings > Startup apps) appears to cover tasks; `Settings/Enabled` is all we can detect. Confirm.
 - [OPEN] **Core delta A (SP07 sign-off):** `AutostartSpec` gains `cliScript: string` (absolute `dist/cli/index.js`), used only by this backend. Confirm it runs directly under `node.exe` (not via the bin shim).
 - [OPEN] **Core delta B:** drift compares `inspect().command` to `backend.expectedCommand(spec)` (new optional method, default `[daemonScript]`).
-- [OPEN] **CRONTICK_SUPERVISED / env:** Windows does not use it. Task actions have no env block, so `CRONTICK_HOME` set at enable time would be lost at logon. Options: pass via a CLI dir arg (SP01 `-d/--dir`, if it applies to `daemon start`), or document the limitation and flag drift. Needs decision.
+- [OPEN] **CRONTICK_SUPERVISED / env:** Windows does not use it. Task actions have no env block, so `CRONTICK_HOME` set at enable time would be lost at logon. Options: pass via a CLI dir arg (SP01 `--dir`, if it applies to `daemon start`), or document the limitation and flag drift. Needs decision.
 - [DEFERRED] S4U or boot start; GUI-subsystem launcher to remove the flash; deleting the empty folder; node.exe signature check as a status note.
 
 ## Acceptance Criteria

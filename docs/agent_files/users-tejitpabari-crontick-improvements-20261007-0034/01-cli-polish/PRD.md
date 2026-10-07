@@ -1,6 +1,6 @@
 ---
 status: draft
-summary: SP01 CLI polish - exact schedule help + footer, -C/--cwd becomes -d/--dir, one shared job id-or-alias resolver, new `runs delete` across client/CLI/MCP/API.
+summary: SP01 CLI polish - exact schedule help + footer, -C/--cwd becomes --dir, one shared job id-or-alias resolver, new `runs delete` across client/CLI/MCP/API.
 date: 2026-10-07
 ---
 
@@ -10,7 +10,7 @@ Repo/branch: `/root/projects/crontick-wt-improvements`, `users/tejitpabari/cront
 
 ## TL;DR
 
-Four changes. (1) Schedule flag help uses the brief's exact strings; `jobs new` gets a "How to schedule" footer built from a constant list so SP05/SP06 append one entry. (2) `-C, --cwd <dir>` becomes `-d, --dir <path>`; stored field, MCP and `--file` keep `cwd`. (3) Id-or-alias lookup moves into one pure function that `Store.getJob` and the new runs-delete path both call; audit shows every route already resolves alias, so this is consolidation, not a behavior fix. (4) `runs delete <runId...> | --job <id|alias>` with dry-run-backed confirm, active-run skip, orphan-safe cleanup.
+Four changes. (1) Schedule flag help uses the brief's exact strings; `jobs new` gets a "How to schedule" footer built from a constant list so SP05/SP06 append one entry. (2) `-C, --cwd <dir>` becomes `--dir <path>` (no short flag); stored field, MCP and `--file` keep `cwd`. (3) Id-or-alias lookup moves into one pure function that `Store.getJob` and the new runs-delete path both call; audit shows every route already resolves alias, so this is consolidation, not a behavior fix. (4) `runs delete <runId...> | --job <id|alias>` with dry-run-backed confirm, active-run skip, orphan-safe cleanup.
 
 ## Problem
 
@@ -36,7 +36,7 @@ Four changes. (1) Schedule flag help uses the brief's exact strings; `jobs new` 
 |---|---|
 | R1 | `--cron` "Schedule: cron expression, e.g. \"0 9 * * *\""; `--every` "Schedule: repeat every N seconds, or use an s/m/h/d suffix (e.g. 30m)"; `--at` "Schedule: one-shot run time, ISO-8601 (e.g. 2026-10-01T09:00)". In `commonJobOptions`, so also on `jobs update`. |
 | R2 | `jobs new` only: `addHelpText('after')` footer "How to schedule": "use exactly one of <flags>" (this SP: `--cron, --every, --at`). `jobs update --help` has no footer. |
-| R3 | `-d, --dir <path>` "Directory the job runs in (default: current directory)" replaces `-C, --cwd`. `-C`/`--cwd` become unknown options, including after `--` (update the crontick-flag rejection list in `splitPromptEngineArgs`). Short `-d` before `--` is crontick's; after `--` it passes to the engine. |
+| R3 | `--dir <path>` (long option only, no `-d` short flag) "Directory the job runs in (default: current directory)" replaces `-C, --cwd`. `-C`/`--cwd` become unknown options, including after `--` (update the crontick-flag rejection list in `splitPromptEngineArgs`). `-d` is not a crontick flag; it is never consumed (after `--` it passes to the engine as usual). |
 | R4 | One `resolveJobRef`; `Store.getJob` delegates; `runFilterParams`, export `onlyJobs`, `runs delete --job` all call it. No other lookup code remains. |
 | R5 | Alias `all` rejected in create/update/import validation (reserved by `jobs delete all`). |
 | R6 | `runs delete` on client, CLI, MCP, API, `SURFACE_CAPABILITIES` (`delete-runs`). |
@@ -100,8 +100,8 @@ export const SCHEDULE_FLAGS = ['--cron', '--every', '--at'] as const; // SP05/06
 ## Risks / Open Questions
 
 - [OPEN] A live job's per-job log file is append-only and shared, so lines tagged with deleted run ids remain. Proposed: accept and document; alternative is rewriting the file filtered by run id.
-- [OPEN] Confirm SP02/SP03 plan no global `-d` option (e.g. debug) that would clash with `-d, --dir` on `jobs new/update`.
-- [OPEN] `runs delete --job` on a large history in one txn; proposed: single txn (bounded by `retention.maxRunsPerJob`), revisit if slow.
+- [RESOLVED-2: no `-d` short flag at all; only `--dir` long option replaces `-C, --cwd`, so no clash with any future global `-d`]
+- [RESOLVED-3: single txn, bounded by `retention.maxRunsPerJob`; revisit if slow]
 - [RESOLVED: id wins on collision (D3)]
 - [RESOLVED: GUID-shaped alias already rejected on create/update, api.ts 120/202]
 - [DEFERRED] Dashboard run delete (brief non-goal).
@@ -109,7 +109,7 @@ export const SCHEDULE_FLAGS = ['--cron', '--every', '--at'] as const; // SP05/06
 ## Acceptance Criteria
 
 - `jobs new --help` shows the three exact strings plus a "How to schedule" footer listing `--cron, --every, --at`; `jobs update --help` has the same strings and no footer; a test derives the footer from `SCHEDULE_FLAGS`.
-- `-d/--dir` works on new/update (default = invoking dir, `INVALID_CWD`, trust flow); `-C`/`--cwd` error as unknown options; tests (`job-cwd`, `cli-job-options`, `claude-trust-flow`), README, SKILL.md, `docs/reference/cli.md`, `docs/examples/cli/README.md`, concepts/specs updated; stored field and MCP stay `cwd`.
+- `--dir` works on new/update (default = invoking dir, `INVALID_CWD`, trust flow); `-C`/`--cwd` error as unknown options; tests (`job-cwd`, `cli-job-options`, `claude-trust-flow`), README, SKILL.md, `docs/reference/cli.md`, `docs/examples/cli/README.md`, concepts/specs updated; stored field and MCP stay `cwd`.
 - Grep finds exactly one id/alias lookup implementation (`resolveJobRef`); a parametrized test hits each route in the audit table by alias and by id; alias `all` rejected.
 - `runs delete` works by ids, by `--job` alias, and by `--job` raw id of a deleted job (orphan); active runs skipped and listed; `run_outputs` gone; orphan job log removed, live job log kept; `--dry-run` and confirm counts correct; non-TTY without `--force` fails; `--force` deletes.
 - `surface-drift` green with `delete-runs` (`deleteRuns`, `['runs','delete']`, `crontick_run_delete`); `docs/reference/{cli,mcp-tools,library-api}.md` updated; changeset added; `npm run validate` passes.

@@ -6,7 +6,7 @@ date: 2026-10-07
 
 # PRD: Dashboard job editor
 
-Repo/branch: `/root/projects/crontick-wt-improvements`, `users/tejitpabari/crontick-improvements` · Depends on: SP03 (request guard on mutating routes, Settings modal pattern, rem scale from SP02), SP01 (`-d/--dir` naming in labels, `resolveJobRef`) · Owns: `src/dashboard/{index.html,dashboard.js,dashboard.css}` (editor modal, "+", pencil), `src/job-prepare.ts` (new: normalize + folder trust shared by client and daemon), `src/client.ts` (createJob/updateJob delegate to it; trust helpers move out), `src/daemon/api.ts` (`POST /api/jobs`, `PUT /api/jobs/:id` opt-in prepare mode, `GET /api/jobs/editor-meta`), `src/job-input.ts` (null-clears in patch schema), `tests/unit/dashboard-*.test.ts` + new `dashboard-job-editor`/`api-job-prepare` tests, `docs/reference/` (dashboard/API notes), `docs/specs/` (dashboard section), changeset.
+Repo/branch: `/root/projects/crontick-wt-improvements`, `users/tejitpabari/crontick-improvements` · Depends on: SP03 (request guard on mutating routes, Settings modal pattern, rem scale from SP02), SP01 (`--dir` naming in labels, `resolveJobRef`) · Owns: `src/dashboard/{index.html,dashboard.js,dashboard.css}` (editor modal, "+", pencil), `src/job-prepare.ts` (new: normalize + folder trust shared by client and daemon), `src/client.ts` (createJob/updateJob delegate to it; trust helpers move out), `src/daemon/api.ts` (`POST /api/jobs`, `PUT /api/jobs/:id` opt-in prepare mode, `GET /api/jobs/editor-meta`), `src/job-input.ts` (null-clears in patch schema), `tests/unit/dashboard-*.test.ts` + new `dashboard-job-editor`/`api-job-prepare` tests, `docs/reference/` (dashboard/API notes), `docs/specs/` (dashboard section), changeset.
 
 ## TL;DR
 
@@ -39,7 +39,7 @@ Header "+" opens a modal form to create a job; a pencil per table row opens the 
 | `-a, --alias` | text, kebab-case pattern hint | optional, placeholder "auto-generated" | prefilled; rename allowed; blank not allowed |
 | `-p, --prompt` / `--prompt-file` | textarea (file option N/A) | required | prefilled |
 | `--cron` / `--every` / `--at` | schedule kind select + per-kind inputs (registry) | required | prefilled by `schedule.kind` |
-| `-d, --dir` (SP01) | text input, label "Directory" | **required**, no default | prefilled from `action.cwd` |
+| `--dir` (SP01) | text input, label "Directory" | **required**, no default | prefilled from `action.cwd` |
 | `--trust-folder` | checkbox, shown only after `TRUST_REQUIRED` | n/a until needed | same |
 | `--runner` | select from engine names in `editor-meta` | defaults to `defaultEngine` | prefilled |
 | trailing engine args / `--` | args rows (add/remove, ordered, one string each) | optional | prefilled |
@@ -47,7 +47,7 @@ Header "+" opens a modal form to create a job; a pencil per table row opens the 
 | `--reuse-session` | checkbox | optional | prefilled |
 | `--timeout` | number (sec), blank = unbounded | optional | blank clears |
 | `--overlap` | select skip/queue/cancel-previous | preselected to effective default | prefilled |
-| `--retry` | number `retry.max`; plus `backoffSec` number (schema field, API-settable; CLI cannot) | defaults from config | prefilled |
+| `--retry` | number `retry.max`; plus `backoffSec` number under an "advanced" disclosure (schema field, API-settable; CLI cannot) | defaults from config | prefilled |
 | `--desc` | text | optional | prefilled; clearing = clear |
 | `--enable/--disable`, `--force`, `--file` | not in form (enable/disable stays in table; `--force` N/A) | new job created enabled | unchanged |
 
@@ -122,10 +122,10 @@ CLI / MCP / library ─► client.createJob ─► job-prepare.ts ◄───�
 - [OPEN-2] `prepare=1` flag vs making `POST /api/jobs` always normalize (client then stops pre-normalizing). Leaning flag (smaller blast radius); revisit after the client refactor lands.
 - [OPEN-3] `null`-clears widen the public patch type (`JobPatchInput`): acceptable under no-backward-compat, but needs `docs/reference/library-api.md`, `mcp-tools.md` notes and tests; confirm owner wants it on MCP too or dashboard-only (a daemon-only patch variant would break the one-schema rule).
 - [OPEN-4] Directory entry is free text; no browser file picker can return an absolute path. Is a daemon-backed path autocomplete (`GET /api/fs/dirs`) wanted? Leaning DEFERRED (new filesystem-reading endpoint).
-- [OPEN-5] `retry.backoffSec`: CLI has only `--retry <max>`. Expose backoff in the form (schema supports it) or strict CLI parity? Leaning expose, labeled "advanced".
+- [RESOLVED-5: expose `retry.backoffSec` in the form under "advanced"]
 - [OPEN-6] Editing a job with an in-flight run or `after`/`webhook` dependents (SP05/06): update semantics follow the existing PUT (applies to next run); no extra warning planned.
-- [OPEN-7] Windows paths and `datetime-local` timezone: form emits local time -> ISO without offset; confirm `ScheduleSchema` `runAt` parses it as local the same way `--at` does (unverified).
-- [OPEN-8] Prompt textarea vs `Windows cmd-line length` validation (`promptRuntimeValidationMessage`) surfaces as server error only; acceptable.
+- [RESOLVED-7: local timezone only; `datetime-local` value is interpreted as local time, same as `--at`; verify `runAt` parsing during implementation; no timezone selector]
+- [RESOLVED-8: accepted, server error surfaced in the modal] Prompt textarea vs `Windows cmd-line length` validation (`promptRuntimeValidationMessage`) surfaces as server error only; acceptable.
 - [DEFERRED] Duplicate-job action; env editing; path autocomplete.
 - [RESOLVED: env/envFile] not CLI-exposed; preserved by diff-only edits.
 - [RESOLVED: update merge] daemon `PUT` shallow merge is bypassed by prepare mode using `normalizeJobPatch`.
