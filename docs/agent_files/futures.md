@@ -1,12 +1,12 @@
 ---
 status: deferred
-summary: Deferred options for generating and rendering CLI/MCP reference docs from code, ranked with trade-offs.
-date: 2026-09-29
+summary: "Deferred ideas across crontick initiatives; owner removes items as implemented."
+date: 2026-10-07
 ---
 
 # Futures
 
-Deferred ideas for this initiative; not scheduled.
+Single repo-wide futures list (not per-branch): deferred ideas across crontick initiatives; not scheduled. Owner removes items as implemented.
 
 ## Docs update and rendering
 
@@ -38,3 +38,24 @@ Deferred ideas for this initiative; not scheduled.
 - https://github.com/PaloAltoNetworks/docusaurus-openapi-docs
 - https://github.com/vuejs/vitepress/issues/4133
 - https://github.com/oclif/oclif/blob/main/docs/readme.md
+
+## Additional triggers (from crontick-improvements brainstorm, 2026-10-07)
+
+- File/folder change trigger (fs.watch).
+- Command-change trigger: poll a cheap check command every N min, fire only when output changes. Conflicts with ADR 0002 exec removal; needs a decision.
+- On-daemon-start trigger (@reboot-style).
+- Job-failure notifications.
+
+## Config
+
+- "Apply new defaults to existing jobs" action (defaults are baked into jobs at create).
+
+## AutoStart
+
+- Apple Developer ID signing + notarized helper for a named Login Items entry.
+- Boot-before-login start (LaunchDaemon / Windows service; needs admin).
+
+## Webhooks
+
+- Event filtering (e.g. match header/JSON path before firing).
+- Public inbound listener with HMAC as an alternative to the relay.

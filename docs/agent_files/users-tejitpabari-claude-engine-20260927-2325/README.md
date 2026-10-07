@@ -58,4 +58,4 @@ SP02 documents SP01's shipped shape; it does not redesign `src/engines/`, `promp
 
 ---
 
-Next: SP01 to SP05 are implemented on this branch; remaining work is release (see `futures.md`).
+Next: SP01 to SP05 are implemented on this branch; remaining work is release (see `../futures.md`).
