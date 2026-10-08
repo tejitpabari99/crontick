@@ -1,6 +1,6 @@
 ---
 status: draft
-summary: SP03 - `crontick config list|get|set|unset` (client/CLI/MCP, file-direct so it works with the daemon down) plus `GET/PATCH /api/config` and a dashboard Settings modal; `daemon.port` read-only everywhere; secrets redacted on read with a restore-on-write rule; locked + revisioned writes; auto reload after save.
+summary: SP03 - `crontick config list|get|set|unset` (client/CLI/MCP, file-direct so it works with the daemon down) plus `GET/PATCH /api/config` and a dashboard Settings modal; `daemon.port` editable only by config-file edit with no daemon running (dashboard read-only); in-flight-run choice (stop vs wait) on config save; owns the daemon `pause`/`resume` state; secrets redacted on read with a restore-on-write rule; locked + revisioned writes; auto reload after save.
 date: 2026-10-07
 ---
 
@@ -39,7 +39,7 @@ Four capabilities (`config list|get|set|unset`) across client, CLI, MCP, `SURFAC
 | R2 | CLI: `config list [--json]` (effective values; flat `key = value` lines, keys absent from the file tagged `(default)`), `config get <key>`, `config set <key> <value> [--string]`, `config unset <key>`. Dotted keys per `ConfigKeySchema` (`defaults.timeoutSec`, `engines.claude.command`). |
 | R3 | Value parsing (CLI only): `JSON.parse(value)`, falling back to the raw string; `--string` forces a string (e.g. command `123`). Arrays/objects are JSON: `config set engines.x.args '["-p","--verbose"]'`. MCP/API take typed JSON, no parsing. Keys containing `.` inside a map (env var `A.B`) cannot be addressed by dotted path; set the parent `env` object instead. |
 | R4 | Engines: add/replace = `set engines.<name> '{"command":"...","type":"raw"}'` (validated by `PersistedEngineConfigSchema`); remove = `unset engines.<name>`. Post-write effective-config validation blocks removing the engine named by `defaultEngine` (existing `superRefine`) and the last engine. Removing a stored copy of built-in `claude` just reverts it to the built-in. Engines referenced by jobs: warn only when a daemon is up (see D5). |
-| R5 | `daemon.*` guard in core: any `set`/`unset` whose path is `daemon` or under it (and any PATCH op, or any value object, touching `daemon`) throws `CONFIG_KEY_READ_ONLY`: `daemon.port is read-only here: edit <configPath> by hand, then run "crontick daemon restart"`. Reads show it. |
+| R5 | `daemon.*` guard in core [amended by owner decision, see R16]: `daemon.port` is editable only by direct config-file edit (CLI/MCP/library `config set`) while NO daemon process is running; if a daemon is up, any `set`/`unset` whose path is `daemon` or under it (and any PATCH op, or any value object, touching `daemon`) throws `CONFIG_KEY_READ_ONLY`: `daemon.port can only be changed while the daemon is stopped: run "crontick daemon stop" first`. The API route (`PATCH /api/config`) and dashboard always treat it as read-only (the dashboard is down whenever port is editable). Reads show it. |
 | R6 | Atomicity: all ops validated against the effective schema on a clone first; the file is written only on success (tmp + rename). Invalid or unparsable-existing file: error names key + file, nothing written; `set`/`unset` refuse on an already-invalid file (hand-fix). |
 | R7 | Concurrency: write path = lock (`config.json.lock`, exclusive create, retry ≤2 s, break if older than 10 s) → re-read → apply → write → unlock. `GET /api/config` returns `revision` (sha256 of file bytes, or `absent`); `PATCH` may send `ifRevision`; mismatch → 409 `CONFIG_CONFLICT`. |
 | R8 | File mode: new file 0600; existing file keeps its current mode (stat before write, apply to tmp). No-op on Windows. |
@@ -50,6 +50,8 @@ Four capabilities (`config list|get|set|unset`) across client, CLI, MCP, `SURFAC
 | R13 | Parity: 4 new `SURFACE_CAPABILITIES` rows (`config-list/get/set/unset` → `configList/Get/Set/Unset`, `['config','list'…]`, `crontick_config_list/get/set/unset`). Remove superseded client methods (`getConfigValue`, `setConfigValue`, `removeConfigValue`, `listEngines`, `addEngine`, `updateEngine`, `removeEngine`); keep `getConfig`, `configPath` as non-parity. Also remove the superseded exports from `src/index.ts` (no back-compat); update `docs/reference/library-api.md` and examples accordingly. Fix stale "config init --force" messages to hand-edit guidance. |
 | R14 | Dashboard Settings: see Architecture. |
 | R15 | API request guard (`src/daemon/request-guard.ts`, applied to ALL mutating routes: POST/PUT/PATCH/DELETE under `/api`): `Host` must be `127.0.0.1`/`localhost`/`[::1]` (with the daemon port); `Content-Type: application/json` (strict: required on every mutating request, bodyless ones like `DELETE /api/jobs/:id`, `POST .../run-now`, `/enable` included); `Origin`, if present, must equal the daemon origin; else 4xx `REQUEST_REJECTED`, nothing executed. No tokens. Client/CLI/MCP/dashboard fetches always send the JSON header. SP04/05/06 rely on it and add no guard of their own. |
+| R16 | In-flight-run choice (owner decision "apply edits while runs are in flight"). (1) Confirmation happens at Save, never at Edit: an open edit form stops/pauses nothing. (2) Main-config save with in-flight runs: user picks (a) stop all in-flight runs, then apply (daemon cancels them and applies in one request), or (b) pause the daemon, wait for all in-flight runs to complete, apply, then resume automatically; or cancels the save. Stopped runs: status `canceled`, no retry, no `--after` dependents triggered; queued runs dropped. (3) Non-interactive: CLI prompts when stdin is a TTY, else flags `--stop-running` / `--wait-running`; MCP and library take `inFlight: 'stop' \| 'wait'`; in-flight runs and no choice given = error listing the in-flight runs. (4) `pause` vs `stop` are distinct: `pause` = daemon process stays up (HTTP API + dashboard reachable) but the scheduler starts no new runs; `resume` undoes it; `stop` = process exits (unchanged). Paused is an explicit state shown in daemon status and the dashboard. |
+| R17 | SP03 owns the pause state. `pause`/`resume` as a capability MUST follow surface parity: client methods, CLI, MCP tools, `SURFACE_CAPABILITIES` entries (and the `surface-drift` test). SP04 references it for the per-job variant of R16. |
 
 ## Architecture
 
@@ -66,7 +68,7 @@ Dashboard ──PATCH /api/config──► api.ts ──► config.ts applyOps()
 **Settings modal** (reuses `.modal-backdrop`, rem scale from SP02; no px sizes).
 - Gear icon button at far right of header (after theme toggle) opens it. A modal, not a drawer: form is long, needs focus-trap and a sticky footer; drawer already means "job details".
 - Read-only on open (inputs `disabled`). Top-right of modal body: **Edit** (hidden once editing). Footer: **Save** (disabled unless editing) and **Cancel** (always enabled).
-- Sections: General (`defaultEngine` select fed by engine names, `maxConsecutiveFailures`), Job defaults (`overlap` select, `timeoutSec` optional, `retry.max`, `retry.backoffSec`), Retention (3 numbers), Logging (`fileEnabled` checkbox, `dir`), Engines, Daemon (`port` shown read-only with "hand-edit config.json and run `crontick daemon restart`" - never enabled).
+- Sections: General (`defaultEngine` select fed by engine names, `maxConsecutiveFailures`), Job defaults (`overlap` select, `timeoutSec` optional, `retry.max`, `retry.backoffSec`), Retention (3 numbers), Logging (`fileEnabled` checkbox, `dir`), Engines, Daemon (`port` shown read-only with "stop the daemon, then `crontick config set daemon.port <n>` or hand-edit config.json" - never enabled in the dashboard).
 - Engines: one card per engine: name (fixed), `command`, `type` select, `args` as an ordered row list (add/remove), `env` as key/value rows (add/remove). "Add engine" appends an empty card with an editable name; "Remove" per card, disabled on the current `defaultEngine`. Optional fields left blank = unset (placeholder shows effective default).
 - Save computes a diff of form vs the loaded effective config and sends only changed leaves as `ops` (engine add/remove = whole-object `set`/`unset`), plus `ifRevision`. So untouched defaults are never baked into the file. Zero diff: no request, just leaves edit mode.
 - Errors: server `message` + `details.key` shown in a banner at the top of the modal, field outlined when the key maps to an input; modal stays in edit mode, nothing lost. 409: banner "Config changed on disk" with **Reload form** (discards edits).
@@ -103,13 +105,18 @@ Dashboard ──PATCH /api/config──► api.ts ──► config.ts applyOps()
 - [RESOLVED: daemon down] file-direct, no demand-start.
 - [RESOLVED: file mode] stat-and-reuse; default 0600.
 - [RESOLVED: unknown keys] strict rejection kept.
+- [RESOLVED: owner decision, in-flight edits] Stop vs wait at Save, daemon pause state, port editable only with no daemon running (replaces "read-only everywhere"). See R5, R16, R17.
+- [OPEN-9] Should `daemon pause` / `daemon resume` also be user-facing commands (CLI/MCP/dashboard button), or internal-only to the edit flow? Rec: user-facing, cheap once the state exists.
+- [OPEN-10] Fires that come due while paused: skip, or run once on resume? Rec: skip, recorded like overlap-skip `skipped`.
+- [OPEN-11] Does paused state persist across a daemon restart? Rec: no; restart comes up unpaused, and a pending wait-then-apply is lost/reported.
+- [OPEN-12] Timeout for "wait for runs to complete"? Rec: none by default; user can switch to stop.
 - [DEFERRED] Config change history/undo; env-var-named keys with dots in dotted paths.
 
 ## Acceptance Criteria
 
 - `crontick config set defaults.timeoutSec 600` writes `{"defaults":{"timeoutSec":600}}` only (no baked defaults); `unset` removes it; invalid (`retention.maxRunsPerJob 0`, unknown key, bad type) exits non-zero, file byte-identical.
 - `set engines.x '{"command":"echo","type":"raw"}'` adds; `unset engines.x` removes; `unset engines.<defaultEngine>` and `set defaultEngine nope` rejected.
-- `set/unset daemon.port` (and `daemon`, and PATCH op on it) → `CONFIG_KEY_READ_ONLY` on CLI, MCP, API; `config get daemon.port` works.
+- `set/unset daemon.port` (and `daemon`, and PATCH op on it) → `CONFIG_KEY_READ_ONLY` on API always, and on CLI/MCP/library while a daemon is running (allowed when none is); `config get daemon.port` works.
 - With daemon stopped: `config set` succeeds, reports `daemon-not-running`, and does not start a daemon. With daemon running: reports `reloaded`; changing `retention.maxRunsPerJob` takes effect without restart.
 - Two concurrent `config set` processes on different keys both persist; a PATCH with stale `ifRevision` → 409, file unchanged.
 - Existing file with mode 0640 keeps 0640 after set; new file is 0600 (POSIX).

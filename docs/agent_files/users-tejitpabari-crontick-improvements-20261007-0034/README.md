@@ -10,7 +10,7 @@ Source: [brainstorm.md](brainstorm.md) (approved). Deferred ideas: [docs/agent_f
 
 ## TL;DR
 
-Ten sub-projects: CLI polish, `daemon.port` + dashboard polish, config surfaces + Settings UI (+ API hardening), dashboard job editor, `--after` and `--webhook` triggers, opt-in autostart (Linux, macOS, Windows), opt-in catch-up. Biggest risks: SP07/08/09 interface mismatch (see Contradictions), SP09 launcher-survival unknown, SP06 HMAC-over-smee. ~50 OPEN lines remain; about 17 need an owner decision, rest are verify-during-implementation.
+Ten sub-projects: CLI polish, `daemon.port` + dashboard polish, config surfaces + Settings UI (+ API hardening), dashboard job editor, `--after` and `--webhook` triggers, opt-in autostart (Linux, macOS, Windows), opt-in catch-up. Biggest risks: SP07/08/09 interface mismatch (see Contradictions), SP09 launcher-survival unknown, SP06 HMAC-over-smee. ~53 OPEN lines remain; about 17 need an owner decision, rest are verify-during-implementation.
 
 ## Sub-projects
 
@@ -18,8 +18,8 @@ Ten sub-projects: CLI polish, `daemon.port` + dashboard polish, config surfaces 
 |---|---|---|---|---|---|
 | 01 | [01-cli-polish](01-cli-polish/PRD.md) | Schedule help + footer, `--dir`, `resolveJobRef`, `runs delete` | none | 1 | 1 |
 | 02 | [02-port-and-dashboard-polish](02-port-and-dashboard-polish/PRD.md) | `daemon.port` config, drop env var, rem scale ~80%, trimmed header | none | 1 | 1 |
-| 03 | [03-config-surfaces-and-settings](03-config-surfaces-and-settings/PRD.md) | `config list/get/set/unset`, `/api/config`, Settings modal, **request guard on all mutating routes** | 02 | 2 | 0 |
-| 04 | [04-dashboard-job-editor](04-dashboard-job-editor/PRD.md) | "+" create / pencil edit, `job-prepare.ts`, `SCHEDULE_KINDS` | 03, 01 | 2 | 5 |
+| 03 | [03-config-surfaces-and-settings](03-config-surfaces-and-settings/PRD.md) | `config list/get/set/unset`, `/api/config`, Settings modal, **request guard on all mutating routes**, **daemon pause/resume + stop-vs-wait on in-flight edits** | 02 | 2 | 4 |
+| 04 | [04-dashboard-job-editor](04-dashboard-job-editor/PRD.md) | "+" create / pencil edit, `job-prepare.ts`, `SCHEDULE_KINDS` | 03, 01 | 2 | 4 |
 | 05 | [05-after-trigger](05-after-trigger/PRD.md) | `after` kind, `onRunComplete`, `TriggerDispatcher`, `trigger_json` | 01, 04 | 3 | 5 |
 | 06 | [06-webhook-trigger](06-webhook-trigger/PRD.md) | `webhook` kind, smee-style SSE relay, `jobs trigger` | 05, 01, 04, 03 | 3 | 7 |
 | 07 | [07-autostart-core-linux](07-autostart-core-linux/PRD.md) | `autostart enable/disable/status`, backend interface, systemd, guard rewrite | none | 3 | 6 |
@@ -54,7 +54,7 @@ Gate: resolve the SP07/08/09 interface deltas (below) BEFORE coding SP07; they c
 
 - No backward compat; remove outright, no aliases (global).
 - One shared id-or-alias resolver; orphan `runs delete --job` falls back to raw id (global, item 6).
-- `daemon.port` config only, explicit busy port fails loudly, env var removed, read-only in config surfaces (item 1).
+- `daemon.port` config only, explicit busy port fails loudly, env var removed, editable in config surfaces only by config-file edit with no daemon running, dashboard read-only (item 1; owner decision, SP03 R16).
 - Dashboard ~80% via rem scale; header `v... · pid ...` + red error badge (items 2-3).
 - `--dir` (no short flag) replaces `-C, --cwd`; stored field stays `cwd` (item 5).
 - **API hardening (item 10) MOVED from SP04 to SP03**: Host/Content-Type/Origin guard on ALL mutating daemon routes, because `PATCH /api/config` can set engine commands. SP04/05/06 consume it. Pending owner review.
@@ -126,7 +126,11 @@ Legend: **O** = owner decision, **V** = verify during implementation.
 | 04 | `null`-clears exposed on MCP/library too (OPEN-3) | O |
 | 04 | Dir path autocomplete endpoint (OPEN-4) | O (leaning defer) |
 | 04 | Expose `retry.backoffSec` as "advanced" (OPEN-5) — RESOLVED: expose under advanced | O |
-| 04 | No warning when editing job with in-flight run/dependents (OPEN-6) | V |
+| 04 | No warning when editing job with in-flight run/dependents (OPEN-6) — RESOLVED: confirm at Save; stop in-flight runs or wait (pause job, apply, auto-resume) | V |
+| 03 | `daemon pause`/`resume` user-facing (CLI/MCP/dashboard) or internal-only (OPEN-9, new; rec: user-facing) | O |
+| 03 | Fires due while paused: skip vs run once on resume (OPEN-10, new; rec: skip, recorded `skipped`) | O |
+| 03 | Paused state persists across daemon restart (OPEN-11, new; rec: no) | O |
+| 03 | Timeout for "wait for runs to complete" (OPEN-12, new; rec: none by default) | O |
 | 04 | `datetime-local` parsed as local like `--at` (OPEN-7) — RESOLVED: local only, no tz selector; Windows cmd-line length (OPEN-8) — RESOLVED: accepted; no DOM harness for dashboard tests | V |
 | 05 | Where `runs get` renders `trigger_json`; migration pattern | V |
 | 05 | `skip` overlap drops triggers: docs recommend `queue` | V |
