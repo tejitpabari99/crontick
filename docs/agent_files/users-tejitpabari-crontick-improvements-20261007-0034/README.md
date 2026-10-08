@@ -10,7 +10,7 @@ Source: [brainstorm.md](brainstorm.md) (approved). Deferred ideas: [docs/agent_f
 
 ## TL;DR
 
-Ten sub-projects: CLI polish, `daemon.port` + dashboard polish, config surfaces + Settings UI (+ API hardening), dashboard job editor, `--after` and `--webhook` triggers, opt-in autostart (Linux, macOS, Windows), opt-in catch-up. Biggest risks: SP09 launcher-survival unknown, SP06 HMAC-over-smee (the SP07/08/09 interface mismatch is resolved, see Contradictions). 21 OPEN items remain: 1 needs an owner decision (SP05 import with an unresolved upstream ref, clarification pending), 20 are verify-during-implementation.
+Ten sub-projects: CLI polish, `daemon.port` + dashboard polish, config surfaces + Settings UI (+ API hardening), dashboard job editor, `--after` and `--webhook` triggers, opt-in autostart (Linux, macOS, Windows), opt-in catch-up. Biggest risks: SP09 launcher-survival unknown, SP06 HMAC-over-smee (the SP07/08/09 interface mismatch is resolved, see Contradictions). 20 OPEN items remain: 0 need an owner decision, 20 are verify-during-implementation.
 
 ## Sub-projects
 
@@ -107,7 +107,7 @@ Assigned: 0034 autostart (07-09), 0035 trigger dispatch (05), 0036 webhook relay
 
 ## Consolidated [OPEN] questions
 
-Legend: **O** = owner decision, **V** = verify during implementation. Status: RESOLVED / DEFERRED / OPEN (remaining). Remaining open: 21 (1 O, 20 V).
+Legend: **O** = owner decision, **V** = verify during implementation. Status: RESOLVED / DEFERRED / OPEN (remaining). Remaining open: 20 (0 O, 20 V).
 
 | SP | Item | Kind | Status |
 |---|---|---|---|
@@ -140,7 +140,7 @@ Legend: **O** = owner decision, **V** = verify during implementation. Status: RE
 | 05 | `trigger_json` migration pattern (additive, guarded `ALTER`) | V | OPEN |
 | 05 | `skip` overlap drops triggers: docs recommend `queue` | V | OPEN |
 | 05 | Stats output renders schedule? | V | OPEN |
-| 05 | Import with unresolved upstream: fail vs import disabled (owner clarification pending) | O | OPEN |
+| 05 | Import with unresolved upstream: import the job disabled with `AFTER_UPSTREAM_NOT_FOUND` error; rest of import succeeds | O | RESOLVED |
 | 05 | Delete with dependents: refuse, naming `--force` | O | RESOLVED |
 | 06 | HMAC over smee-parsed body may not match GitHub signature; test real delivery | V | OPEN |
 | 06 | smee.io availability/limits: accept smee.io default; document self-hosting a smee server | O | RESOLVED |
@@ -191,4 +191,4 @@ Legend: **O** = owner decision, **V** = verify during implementation. Status: RE
 
 ## Next step
 
-Owner answers recorded. Remaining owner decision: SP05 import with an unresolved upstream ref (clarification pending). V items resolve during implementation. Then run `dev-tasks` to generate TASKS.md per SP.
+Owner answers recorded. No owner decisions remain (SP05 import with unresolved upstream: import disabled). V items resolve during implementation. Then run `dev-tasks` to generate TASKS.md per SP.

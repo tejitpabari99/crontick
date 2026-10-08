@@ -59,3 +59,11 @@ Single repo-wide futures list (not per-branch): deferred ideas across crontick i
 
 - Event filtering (e.g. match header/JSON path before firing).
 - Public inbound listener with HMAC as an alternative to the relay.
+
+## Catch-up max-age (stale prompt guard)
+
+**Problem:** SP10 opt-in catch-up (`10-catch-up/PRD.md`) runs the latest missed fire on daemon startup regardless of age; a fire days old still runs a prompt that may be stale. Prompt authors can currently only read `CRONTICK_CATCHUP_MISSED`.
+
+**Idea:** Optional per-job (and/or global config) max-age; a missed fire older than it is recorded as missed, not run. Must cover all surfaces (client/CLI/MCP/`SURFACE_CAPABILITIES`, dashboard).
+
+**Source:** Deferred from SP10 PRD (Open Questions, DEFERRED item).

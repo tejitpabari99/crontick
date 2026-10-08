@@ -83,7 +83,7 @@ Edge cases:
 
 - [OPEN] Sleep/wake: does croner/`setTimeout` fire once late, skip, or drift after suspend (Linux monotonic clock excludes suspend)? Cheapest test: manual `rtcwake`/VM suspend with a 1-minute cron job. Outcome may justify a follow-up, not SP10.
 - [DEFERRED] Login storm: many `catchUp` jobs start simultaneously at autostart. No global concurrency cap exists `[unverified]`. Stagger / concurrency cap deferred (owner decision).
-- [DEFERRED] Prompt staleness: a fire days old still runs. Max-age option deferred to `futures.md`; prompt authors can read `CRONTICK_CATCHUP_MISSED`.
+- [DEFERRED] Prompt staleness: a fire days old still runs. Max-age option deferred to `futures.md` (see 'Catch-up max-age'); prompt authors can read `CRONTICK_CATCHUP_MISSED`.
 - [OPEN] Does enable/`recordTick` change belong here or SP05's enable guard path (shared `api.ts` enable route)? Coordinate at coding.
 - [RESOLVED: SP05 is a hard dependency (C7)] SP10 needs SP05's `RunContext` env and `isTimeSchedule`. Two dispatch functions stay: SP05 `TriggerDispatcher.dispatch` (no `recordTick`) vs SP10 `dispatchTimeRun` (with `recordTick`), because the watermark is time-only.
 - [RESOLVED: ADR "0015"] No standalone file; it is a section in `0001-architecture-and-runtime-model.md` with an index row mapping 0015 -> 0001. Amend in place and move its "revisit when" bullet to "revisited by SP10".

@@ -28,7 +28,7 @@ Jobs can only fire on time. Users want "run B when A finishes" (build then deplo
 | R1 | Schema `after` joins `ScheduleSchema`; `jobId` is a GUID, never an alias (aliases are user-editable; `Store.getJob` resolves id-then-alias `[verified: schemas/job.ts alias docs]`). Inputs accept id-or-alias; resolved to GUID before storage. |
 | R2 | CLI `--after <id\|alias>`, `--after-status <success\|failure\|any>` (default `success`) in `commonJobOptions` (new + update); exactly one of `--cron/--every/--at/--after/--webhook`; `--after-status` without an after schedule (new, or update of a non-after job) errors. Append `--after` to `SCHEDULE_FLAGS` (SP01). |
 | R3 | Trigger set: terminal upstream run of any origin (scheduled, run-now, webhook), after retries. `success` -> `success`; `failure` -> `failed` or `timeout`; `any` -> either. `canceled`/`skipped`/`missed` never trigger. |
-| R4 | Cycles (incl. self) rejected on create, update, enable, import, reload. Dangling upstream rejected on create/update/enable. Codes: `AFTER_CYCLE`, `AFTER_UPSTREAM_NOT_FOUND`. |
+| R4 | Cycles (incl. self) rejected on create, update, enable, import, reload. Dangling upstream rejected on create/update/enable; on import a dangling upstream imports the job disabled with an `AFTER_UPSTREAM_NOT_FOUND` error recorded on the job (rest of batch proceeds); cycles on import still rejected. Codes: `AFTER_CYCLE`, `AFTER_UPSTREAM_NOT_FOUND`. |
 | R5 | Delete of a job with dependents -> `JOB_HAS_DEPENDENTS` (lists aliases) unless `force`; force disables dependents (they keep the dangling ref, inert until re-pointed). `force` added to single delete on client/CLI/MCP/API. |
 | R6 | Downstream env: `CRONTICK_TRIGGER=after`, `CRONTICK_UPSTREAM_RUN_ID`, `CRONTICK_UPSTREAM_STATUS` (`success\|failed\|timeout`), `CRONTICK_UPSTREAM_JOB_ID`, `CRONTICK_UPSTREAM_JOB_ALIAS` (omitted if no alias). Highest merge priority (above `action.env`). |
 | R7 | Display: wherever next-run shows a time, an after job shows `after <alias> (on success)` (alias resolved at read time; `after <id8> (missing)` if dangling). |
@@ -60,13 +60,13 @@ export class TriggerDispatcher {
 
 **Scheduler / startup.** Add an `isTimeSchedule(s)` guard next to the schema; `Scheduler.schedule` no-ops (debug log) for non-time kinds, `previewNext`/`enumerateFiresBetween` return `[]` via an exhaustive switch (compile error on future kinds). Startup missed-fire loop `continue`s for non-time kinds. SP06 inherits these guards.
 
-**Graph validation.** `Store.listDependents(id)` and `validateAfterGraph(job, jobs)`: walk `jobId` pointers from the proposed upstream; cycle iff the walk reaches `job.id` (one upstream per node => O(depth); a visited-set guards corrupt data). Called by `POST /api/jobs`, `PUT`, `/enable`, and import (checked on the merged batch+store graph; per-job failures reported, after-jobs in a failing graph not applied). **Reload / file edit:** `loadJobsFromDisk` still loads schema-valid jobs, but a post-pass flags dangling/cyclic after-jobs: warn log, not eligible to fire, `jobs list` shows `(broken: upstream missing)`, `doctor` reports; the dispatcher also re-checks the upstream at event time.
+**Graph validation.** `Store.listDependents(id)` and `validateAfterGraph(job, jobs)`: walk `jobId` pointers from the proposed upstream; cycle iff the walk reaches `job.id` (one upstream per node => O(depth); a visited-set guards corrupt data). Called by `POST /api/jobs`, `PUT`, `/enable`, and import (checked on the merged batch+store graph; cycles: per-job failures reported, after-jobs in a failing graph not applied; dangling upstream: job imported disabled with `AFTER_UPSTREAM_NOT_FOUND` recorded on the job and reported, rest of batch proceeds). **Reload / file edit:** `loadJobsFromDisk` still loads schema-valid jobs, but a post-pass flags dangling/cyclic after-jobs: warn log, not eligible to fire, `jobs list` shows `(broken: upstream missing)`, `doctor` reports; the dispatcher also re-checks the upstream at event time.
 
 **Display.** New `describeSchedule(schedule, lookup)` in `src/utils/schedule-label.ts` used by CLI list/get, `jobSchedule` (prints `triggered after <alias> on success; no scheduled fire times`), and the dashboard payload (`dashboard.ts:310` yields `nextRunAt: null` plus `scheduleLabel`) for table and drawer. `/api/schedules/preview` returns `{fires: [], trigger: {...}}` for after. `/api/schedules/validate` for after checks the upstream exists (+ optional `?jobId=` for the cycle check on update).
 
 **Dashboard.** One `SCHEDULE_KINDS` entry `after` (upstream `<select>` from jobs minus self, status select, `toSchedule`/`fromSchedule`) per SP04 D7. Resolution/cycle errors flow through SP04 prepare mode: `job-prepare.ts` takes an injected `resolveJob` (provided by SP04; client passes an API lookup, daemon passes `store.getJob`); client/shims hold no cycle logic, the daemon API is authoritative.
 
-**Export/import.** References are GUIDs and exports carry job ids (import upserts by id), so intra-export chains survive; alias is display only. Importing a lone downstream elsewhere fails R4 with a clear error.
+**Export/import.** References are GUIDs and exports carry job ids (import upserts by id), so intra-export chains survive; alias is display only. Importing a lone downstream elsewhere imports it disabled with an `AFTER_UPSTREAM_NOT_FOUND` error (R4).
 
 ## Decisions
 
@@ -88,7 +88,7 @@ export class TriggerDispatcher {
 - [OPEN] `runs.trigger_json`: confirm the store's additive-migration pattern. [RESOLVED: rendering in `runs get`/dashboard belongs to SP06 (its R12); SP05 only stores `{kind, upstream}`]
 - [OPEN] Fast upstream + slow downstream with `skip` drops triggers (visible as `skipped`); proposed: docs recommend `overlap: queue`, no code.
 - [OPEN] Does any `stats` output render schedule/next-run? Not verified; if so use `describeSchedule`.
-- [OPEN] Import with an unresolved ref: fail that job (proposed) vs import it disabled.
+- [RESOLVED: owner decision, import the job disabled with an `AFTER_UPSTREAM_NOT_FOUND` error on the job; rest of the import succeeds] Import with an unresolved ref: fail vs import disabled. (R4)
 - [RESOLVED: CLI delete with dependents refuses, naming `--force`; no interactive prompt] (R5)
 - [RESOLVED: dependents fire on adopted-run exit, not on startup reconcile] see Architecture.
 - [RESOLVED: single-upstream cycle detection is a pointer walk] no DFS needed.
@@ -103,7 +103,7 @@ export class TriggerDispatcher {
 - Run-now (and SP06 webhook) upstream runs fire dependents; chain A->B->C fires in order.
 - Downstream overlap `skip|queue|cancel-previous` each behave; queued run keeps env; disabled downstream does not run.
 - Env test with a fake engine: all five vars present, alias var omitted when none, `action.env` cannot override.
-- Cycles (self, 2-node, 3-node) rejected on create/update/enable/import; dangling rejected; file-edit reload leaves a broken job inert with warning and `doctor` entry; delete refused with dependents, `--force` disables them.
+- Cycles (self, 2-node, 3-node) rejected on create/update/enable/import; dangling rejected on create/update/enable; dangling on import imports the job disabled with `AFTER_UPSTREAM_NOT_FOUND` and the rest of the batch succeeds; file-edit reload leaves a broken job inert with warning and `doctor` entry; delete refused with dependents, `--force` disables them.
 - `enumerateFiresBetween`/`previewNext` return `[]` for `after`; startup records no missed runs for after jobs.
 - CLI list/get/schedule, dashboard table+drawer and preview endpoint show `after <alias>`; `--help` footer lists `--after`; `surface-drift` and `npm run validate` green.
 - Docs updated: `docs/concepts/scheduling.md`, `docs/specs/002-scheduling.md` + `001-job-definition.md`, `docs/reference/{cli,mcp,library}`, ADR 0035 (trigger dispatch + no-replay), changeset.
