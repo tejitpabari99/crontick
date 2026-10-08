@@ -1,6 +1,6 @@
 ---
 status: draft
-summary: SP07 - opt-in `crontick autostart enable|disable|status` (client, CLI, MCP, no daemon route), shared platform-backend interface, Linux systemd --user backend, and a proper reversal of the removal guards.
+summary: SP07 - opt-in `crontick autostart enable|disable|status` (client and CLI; MCP status only; no daemon route), shared platform-backend interface, Linux systemd --user backend, and a proper reversal of the removal guards.
 date: 2026-10-07
 ---
 
@@ -8,7 +8,7 @@ date: 2026-10-07
 
 **Repo/branch:** /root/projects/crontick-wt-improvements, `users/tejitpabari/crontick-improvements`
 **Depends on:** none (SP08 macOS and SP09 Windows plug into this)
-**Owns:** `src/autostart/{types,index,service,systemd,unit}.ts` (new), `src/client.ts` (3 methods), `src/cli/index.ts` (`autostart` group), `src/mcp/index.ts` (3 tools), `src/surface.ts`, `src/index.ts` (types), `src/constants/daemon.ts` (exit code), `tests/unit/autostart-removal.test.ts`, `tests/unit/autostart-*.test.ts`, `docs/reference/{cli,mcp,library}.md`, ADR 0034 + README index row, ADR 0001 section, `docs/tech/mission.md`, `docs/concepts/daemon-lifecycle.md`, `docs/specs/004-daemon.md`, changeset.
+**Owns:** `src/autostart/{types,index,service,systemd,unit}.ts` (new), `src/client.ts` (3 methods), `src/cli/index.ts` (`autostart` group), `src/mcp/index.ts` (1 tool: status), `src/surface.ts`, `src/index.ts` (types), `src/constants/daemon.ts` (`CRONTICK_SUPERVISED` name), `src/daemon/index.ts` (already-running exit 0 when supervised), `daemon start --home` option, `tests/unit/autostart-removal.test.ts`, `tests/unit/autostart-*.test.ts`, `docs/reference/{cli,mcp,library}.md`, ADR 0034 + README index row, ADR 0001 section, `docs/tech/mission.md`, `docs/concepts/daemon-lifecycle.md`, `docs/specs/004-daemon.md`, changeset.
 
 ## TL;DR
 
@@ -29,13 +29,14 @@ Reintroduce autostart as an explicit opt-in: `crontick autostart enable` registe
 
 | # | Requirement |
 |---|---|
-| R1 | `client.autostartEnable()`, `autostartDisable()`, `autostartStatus()`; CLI `crontick autostart enable\|disable\|status`; MCP `crontick_autostart_enable\|disable\|status`; three `SURFACE_CAPABILITIES` entries (`cliCommand: ['autostart','enable']` etc.). |
+| R1 | `client.autostartEnable()`, `autostartDisable()`, `autostartStatus()`; CLI `crontick autostart enable\|disable\|status`; MCP `crontick_autostart_status` ONLY (deliberate surface-parity exception, owner decision: an agent must not create login persistence, so enable/disable are not exposed over MCP); three `SURFACE_CAPABILITIES` entries (`cliCommand: ['autostart','enable']` etc.) of which enable/disable carry an explicit MCP exemption, and `tests/unit/surface-drift.test.ts` must encode that exception (it must still fail on any other missing surface). |
 | R2 | Enable is idempotent: rewrites the definition, reloads the manager, ensures enabled. Disable is idempotent: nothing registered returns `{removed:false}`, not an error. |
 | R3 | Status returns `AutostartStatus` (below) on every platform; on unsupported platforms `supported:false` with a reason (never throws). Enable/disable on unsupported throw `CrontickError('AUTOSTART_UNSUPPORTED', ...)` with an actionable message. |
 | R4 | Status reports drift (`stale:true` + reasons) when the registered command differs from what `enable` would write now (node path, daemon script path, `CRONTICK_HOME`). Fix is re-running `enable`. |
 | R5 | `daemon start` stays a manual one-off and MUST NOT register anything; only `autostart enable` registers (reworded R-004-35). |
 | R6 | All fs/exec/platform/homedir access injected; unit tests never touch real systemd. |
-| R7 | `enable` refuses with a clear error when the daemon script does not exist (unbuilt/dev checkout) and warns when the path looks ephemeral (`_npx`). |
+| R7 | `enable` refuses with a clear error when the daemon script does not exist (unbuilt/dev checkout) and also refuses when the path looks ephemeral (`_npx`; owner decision). |
+| R8 | New `crontick daemon start --home <dir>` option (core, owned here; used by SP09 task arguments): sets `CRONTICK_HOME` for the daemon it starts, so the data dir survives where the registration cannot carry env (Windows). Shim passes it to the client; no logic in the CLI. |
 
 ## Architecture
 
@@ -44,7 +45,7 @@ Reintroduce autostart as an explicit opt-in: `crontick autostart enable` registe
 **Backend interface** (`src/autostart/types.ts`; types exported via `src/index.ts`):
 
 ```ts
-interface AutostartSpec { nodePath: string; daemonScript: string; env: Record<string,string> } // absolute paths
+interface AutostartSpec { nodePath: string; daemonScript: string; cliScript: string /* absolute dist/cli/index.js; used only by SP09 */; env: Record<string,string> } // absolute paths
 interface AutostartDeps { platform: NodeJS.Platform; env: NodeJS.ProcessEnv; homedir: string;
   exec(file: string, args: string[]): Promise<{code:number; stdout:string; stderr:string}>;
   fs: { readFile; writeFile; mkdir; rm }  /* promise fs subset */ }
@@ -54,7 +55,8 @@ interface AutostartBackend { readonly mechanism: 'systemd-user'|'launchd'|'schta
   available(): Promise<{ok:true}|{ok:false; reason:string}>;
   install(spec: AutostartSpec): Promise<{definitionPath:string}>;   // idempotent
   uninstall(): Promise<{removed:boolean}>;                          // idempotent
-  inspect(): Promise<BackendInspection>; }                          // read-only; "not registered" is a value, not a throw
+  inspect(): Promise<BackendInspection>;                            // read-only; "not registered" is a value, not a throw
+  expectedCommand?(spec: AutostartSpec): string[]; }                // optional; what drift compares inspect().command against; default [spec.daemonScript]
 ```
 
 `createAutostartBackend(deps)` in `index.ts` switches on `deps.platform` (`linux` -> systemd; SP08/09 add `darwin`, `win32`; else `undefined`). `AutostartService` (core, shared) builds the spec, calls `available()` first, maps failures to `CrontickError`, and computes status:
@@ -65,11 +67,13 @@ interface AutostartStatus { supported: boolean; enabled: boolean; mechanism?: st
   stale: boolean; staleReasons: string[]; reason?: string; hints: string[] }
 ```
 
-Drift = deep-compare `inspect().command` with `buildSpec()`; backends only report what they find, they never compare. SP08/09 implement `AutostartBackend` (install, uninstall, inspect parsing) and add one factory case; no other shared file changes.
+Drift = deep-compare `inspect().command` with `backend.expectedCommand?.(spec) ?? [spec.daemonScript]` and `buildSpec()` (env keys are compared only when `inspect()` reports an env); backends only report what they find, they never compare. SP08/09 implement `AutostartBackend` (install, uninstall, inspect parsing) and add one factory case; no other shared file changes.
 
-**What is registered.** `nodePath = process.execPath`, `daemonScript = defaultDaemonScript()` (`dist/daemon/index.js`), env = `CRONTICK_HOME` only if set at enable time, plus (Linux) a `PATH` snapshot. The daemon script takes no argv and always runs in the foreground; `ensureDaemon` detaches it itself `[verified: ensure.ts spawn detached; client.ts defaultDaemonScript]`, so service managers launch the script directly with no `--foreground` flag. SP02's `daemon.port` is read from config at daemon start, nothing to capture.
+**What is registered.** `nodePath = process.execPath`, `daemonScript = defaultDaemonScript()` (`dist/daemon/index.js`), env = `CRONTICK_SUPERVISED=1` (always, all platforms), `CRONTICK_HOME` only if set at enable time, and a `PATH` snapshot. The `PATH` snapshot is built here, in core `buildSpec`, for all platforms; SP08/SP09 backends do not add PATH themselves, and a backend that cannot carry env (Windows task actions) ignores it. `cliScript` is `dist/cli/index.js`, only used by the SP09 backend. The daemon script takes no argv and always runs in the foreground; `ensureDaemon` detaches it itself `[verified: ensure.ts spawn detached; client.ts defaultDaemonScript]`, so service managers launch the script directly with no `--foreground` flag. SP02's `daemon.port` is read from config at daemon start, nothing to capture.
 
-**Interaction with demand-start.** Single-instance is a PID-file liveness check; a second daemon logs "Daemon already running" and exits non-zero `[verified: daemon/index.ts:115-130]`. Under systemd that would crash-loop if the user demand-started first. So the daemon exits with a dedicated code (`EXIT_ALREADY_RUNNING` = 75, in `src/constants/daemon.ts`) and the unit declares it a success / no-restart status.
+**Interaction with demand-start.** Single-instance is a PID-file liveness check; a second daemon logs "Daemon already running" and exits non-zero `[verified: daemon/index.ts:115-130]`. Under a supervisor that restarts on non-zero exit (systemd `Restart=on-failure`, launchd `KeepAlive{SuccessfulExit:false}`) that would crash-loop if the user demand-started first. So when `CRONTICK_SUPERVISED=1` is set (core puts it in `spec.env` on all platforms; name constant in `src/constants/daemon.ts`) the already-running branch logs and exits 0; an unsupervised manual start keeps the non-zero exit. SP08 uses the same contract with no extra backend code; the Windows launcher already gets exit 0 from `daemon start`.
+
+**`daemon start --home <dir>` (R8).** Task Scheduler actions carry no env, so SP09 passes `CRONTICK_HOME` as `--home` in the task arguments; the option sets `CRONTICK_HOME` for the daemon `daemon start` spawns. Linux/macOS keep using `Environment=`/`EnvironmentVariables` and do not need it.
 
 **Linux backend** (`systemd.ts` + pure `unit.ts` renderer/parser):
 
@@ -79,12 +83,11 @@ Description=crontick daemon
 [Service]
 Type=simple
 ExecStart="/abs/node" "/abs/dist/daemon/index.js"
+Environment="CRONTICK_SUPERVISED=1"
 Environment="CRONTICK_HOME=..."   # only if set
 Environment="PATH=..."            # snapshot at enable
 Restart=on-failure
 RestartSec=5
-SuccessExitStatus=75
-RestartPreventExitStatus=75
 KillMode=process
 [Install]
 WantedBy=default.target
@@ -111,11 +114,11 @@ WantedBy=default.target
 |---|---|---|---|---|
 | D1 | Daemon API route | None; client calls core directly | `/api/autostart` | Must work with daemon down; no persistence via HTTP |
 | D2 | Where drift is computed | Core service compares `inspect()` vs `buildSpec()` | Per-backend | Tested once; 08/09 only parse |
-| D3 | Process launched | `node daemon/index.js` directly | `crontick daemon start --foreground` (needs CLI path too) | Fewer moving paths; script already foreground |
-| D4 | Already-running exit | Dedicated exit code + `SuccessExitStatus` | `Restart=always`; stop daemon before enable | Avoids crash loop, no disruption |
-| D5 | Env captured | `CRONTICK_HOME` + `PATH` snapshot | Whole env; login-shell PATH | Engines (claude) need PATH; no secrets in a unit file |
+| D3 | Process launched | `node daemon/index.js` directly on Linux/macOS (SP09 launches `cliScript daemon start` via `expectedCommand`) | `crontick daemon start --foreground` (needs CLI path too) | Fewer moving paths; script already foreground |
+| D4 | Already-running exit | `CRONTICK_SUPERVISED=1` in `spec.env` -> exit 0 | Dedicated exit 75 + `SuccessExitStatus` (launchd cannot express it); `Restart=always`; stop daemon before enable | One contract for systemd and launchd; avoids crash loop, no disruption |
+| D5 | Env captured | `CRONTICK_SUPERVISED` + `CRONTICK_HOME` + `PATH` snapshot (built in core) | Whole env; login-shell PATH | Engines (claude) need PATH; no secrets in a unit file |
 | D6 | `KillMode` | `process` | default control-group | Preserves detached runs/adoption |
-| D7 | MCP exposure | enable/disable/status all three | status only | Parity rule; descriptions state login-behaviour change |
+| D7 | MCP exposure | status only; enable/disable not exposed over MCP | all three (parity) | Owner decision: an agent must not create login persistence. Deliberate surface-parity exception, encoded in `SURFACE_CAPABILITIES` and `surface-drift.test.ts`; CLI and library keep all three |
 | D8 | ADR | New 0034 (README index row, body as section in 0001) | New standalone file | Matches consolidated ADR layout `[verified: decisions/README.md]` |
 | D9 | Unsupported platform | status ok, enable throws | silent no-op | Never lie about registration |
 
@@ -127,19 +130,19 @@ WantedBy=default.target
 ## Risks / Open Questions
 
 - [OPEN] Daemon exit code on SIGTERM must be 0 so graceful stop is not restarted; verify shutdown path in `daemon/index.ts`, add test.
-- [OPEN] `PATH` snapshot goes stale when engines are installed later; default accept + "re-run enable" hint.
-- [OPEN] MCP `enable` lets an agent create login persistence; accepted with explicit tool description, owner may prefer status-only.
-- [OPEN] ADR 0034 number may collide with other SPs' ADRs; coordinate at merge.
-- [OPEN] Confirm `SuccessExitStatus` + `RestartPreventExitStatus` for code 75 behaves as intended on current systemd (man page / real host) before implementing.
-- [OPEN] Ephemeral path policy (`_npx`): warn vs refuse.
+- [RESOLVED: accept; status/enable output shows a "re-run `crontick autostart enable`" hint] `PATH` snapshot goes stale when engines are installed later.
+- [RESOLVED: MCP exposes autostart status only; no enable/disable via MCP. Deliberate surface-parity exception, see R1/D7; `SURFACE_CAPABILITIES` and `surface-drift.test.ts` encode it] MCP `enable` would let an agent create login persistence.
+- [RESOLVED: numbers assigned up front: 0034 autostart (SP07-09), 0035 trigger dispatch (SP05), 0036 webhook relay (SP06)] ADR 0034 number collision.
+- [RESOLVED: superseded by `CRONTICK_SUPERVISED=1` exit 0; exit 75 and `SuccessExitStatus`/`RestartPreventExitStatus` are no longer used (C1)]
+- [RESOLVED: refuse enable on an ephemeral (`_npx`) path] Ephemeral path policy.
 - [DEFERRED] Linger management; multiple data dirs (second unit name); `systemd-analyze verify` in CI.
 - [RESOLVED: no route] Daemon API route not needed (D1).
 
 ## Acceptance Criteria
 
-1. `crontick autostart enable|disable|status` and the three MCP tools exist; `surface-drift.test.ts` green.
+1. `crontick autostart enable|disable|status` and the MCP `crontick_autostart_status` tool exist; enable/disable are absent from MCP by design and `surface-drift.test.ts` encodes that exception (still green, still fails on any other drift).
 2. Unit tests (fake exec/fs) cover: unit rendering/escaping, install/uninstall idempotency, unavailable systemd, drift on node/script/CRONTICK_HOME change, unsupported platform status vs enable error.
 3. Rewritten guard test passes, and fails on a planted `registry-js`/`reg.exe`/Run key/`.vbs`.
-4. A second daemon start exits with `EXIT_ALREADY_RUNNING`; regression test.
+4. With `CRONTICK_SUPERVISED=1` a second daemon start exits 0 (non-zero without it); regression test. `daemon start --home <dir>` sets `CRONTICK_HOME` for the spawned daemon; test.
 5. Docs/ADR/spec/mission/lifecycle updated; R-004-35 says `daemon start` does not register, `autostart enable` does.
 6. `npm run validate` passes; changeset added; manual Linux login test recorded.

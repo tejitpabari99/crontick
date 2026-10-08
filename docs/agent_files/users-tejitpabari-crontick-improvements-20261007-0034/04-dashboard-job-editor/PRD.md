@@ -60,7 +60,7 @@ Mutual exclusion rules the form enforces mirror the server: explicit `sessionId`
 
 ### Business logic location (decision D1)
 
-New `src/job-prepare.ts` exports `prepareCreate(input, {env, cwd, trustFolder})` and `prepareUpdate(existing, patch, {env, trustFolder})`: these wrap `normalizeJobInput` / `normalizeJobPatch` plus the trust logic extracted from `CrontickClient` (`trustTarget`, `ensureFoldersTrusted`). The client calls them (behavior unchanged for CLI/MCP/library). The daemon calls the same functions when the request opts in:
+New `src/job-prepare.ts` exports `prepareCreate(input, {env, cwd, trustFolder, resolveJob})` and `prepareUpdate(existing, patch, {env, trustFolder, resolveJob})` (`resolveJob(idOrAlias) => Job | undefined` is injected: client passes an API lookup, daemon passes `store.getJob`; unused by SP04 itself, consumed by SP05 `after` resolution): these wrap `normalizeJobInput` / `normalizeJobPatch` plus the trust logic extracted from `CrontickClient` (`trustTarget`, `ensureFoldersTrusted`). The client calls them (behavior unchanged for CLI/MCP/library). The daemon calls the same functions when the request opts in:
 
 - `POST /api/jobs?prepare=1[&trustFolder=1]` body = `JobCreateInput` (no `id`, optional alias, `action.cwd` required). Runs `prepareCreate`, then the existing alias autogen/collision/persist path.
 - `PUT /api/jobs/:id?prepare=1[&trustFolder=1]` body = `JobPatchInput`. Runs `prepareUpdate(existing, patch)` (field-wise merge, cwd-session rule) instead of the shallow spread.
@@ -119,9 +119,9 @@ CLI / MCP / library ─► client.createJob ─► job-prepare.ts ◄───�
 ## Risks / Open Questions
 
 - [RESOLVED: guard owned by SP03] **Guard dependency.** Editor POST/PUT can set `cwd`/`args` (arbitrary command args to a configured engine) and `--trust-folder`; relies on SP03's Host/Content-Type/Origin guard covering all mutating routes, not only `/api/config`. Confirm SP03 applies it globally (brief item 10). If not, SP04 must not ship.
-- [OPEN-2] `prepare=1` flag vs making `POST /api/jobs` always normalize (client then stops pre-normalizing). Leaning flag (smaller blast radius); revisit after the client refactor lands.
-- [OPEN-3] `null`-clears widen the public patch type (`JobPatchInput`): acceptable under no-backward-compat, but needs `docs/reference/library-api.md`, `mcp-tools.md` notes and tests; confirm owner wants it on MCP too or dashboard-only (a daemon-only patch variant would break the one-schema rule).
-- [OPEN-4] Directory entry is free text; no browser file picker can return an absolute path. Is a daemon-backed path autocomplete (`GET /api/fs/dirs`) wanted? Leaning DEFERRED (new filesystem-reading endpoint).
+- [RESOLVED-2: `?prepare=1` flag on create/update; default routes unchanged (D1)] `prepare=1` flag vs making `POST /api/jobs` always normalize.
+- [RESOLVED-3: `null`-clears accepted on all surfaces (CLI/MCP/library/dashboard) through one shared schema; `docs/reference/library-api.md` and `mcp-tools.md` notes + tests required (see Acceptance Criteria)] `null`-clears widen the public patch type (`JobPatchInput`). Note: CLI gains no new flag in this SP (non-goal); the schema is the single contract.
+- [DEFERRED-4: no directory autocomplete endpoint (`GET /api/fs/dirs`); directory entry stays free text] No browser file picker can return an absolute path.
 - [RESOLVED-5: expose `retry.backoffSec` in the form under "advanced"]
 - [RESOLVED-6: owner decision, confirm at Save not at Edit; stop vs wait] Editing a job with in-flight runs: on Save, user chooses (a) stop in-flight runs, then apply (daemon cancels them and applies in one request), or (b) wait for runs to complete, then apply: the job is paused (no new fires/queued starts for it), the change applies once its in-flight runs finish, then the job resumes automatically; or cancels the save. Stopped runs: status `canceled`, no retry, do not trigger `--after` dependents; queued runs for that job are dropped. Non-interactive: CLI prompts on a TTY else `--stop-running` / `--wait-running`; MCP/library `inFlight: 'stop' | 'wait'`; no choice with runs in flight = error listing them. Pause state and its surface parity are owned by SP03 (R16/R17); open follow-ups are SP03 OPEN-9..12.
 - [RESOLVED-7: local timezone only; `datetime-local` value is interpreted as local time, same as `--at`; verify `runAt` parsing during implementation; no timezone selector]
@@ -139,4 +139,4 @@ CLI / MCP / library ─► client.createJob ─► job-prepare.ts ◄───�
 - `client.createJob/updateJob` unchanged in behavior (existing tests pass) while trust/normalize code exists once in `job-prepare.ts`.
 - Dashboard asset tests: "+" button, per-row pencil, editor modal, registry (`SCHEDULE_KINDS`), no px font sizes, all fetches set `Content-Type: application/json`; dirty-cancel uses the SP03 confirm string. Jsdom or string-level tests for body building (form values -> JSON) if a DOM harness is available [OPEN: current dashboard tests are string/HTTP only].
 - Manual/screenshot: create a cron job, edit it to every-30m, see preview; server error banner keeps edits; enable/disable/delete/run-now unchanged.
-- Docs: `docs/reference/` job editor/API routes + null-clear, spec dashboard section, changeset; `npm run validate` green; `surface-drift` green (no new capability).
+- Docs: `docs/reference/` job editor/API routes + null-clear (`library-api.md` and `mcp-tools.md` notes; library/MCP null-clear tests), spec dashboard section, changeset; `npm run validate` green; `surface-drift` green (no new capability).

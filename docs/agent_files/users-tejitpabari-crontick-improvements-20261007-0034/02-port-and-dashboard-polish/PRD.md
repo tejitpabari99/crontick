@@ -80,7 +80,7 @@ export async function bindPort(pref: PreferredPort, deps: BindPortDeps): Promise
 - [RESOLVED: same-data-dir daemon on explicit port] not an error; ensureDaemon connects, single-instance check blocks a second daemon.
 - [RESOLVED: running daemon after config edit] no live rebind; restart required, status shows mismatch.
 - [RESOLVED: CHANGELOG mentions] historical entries left as is.
-- [OPEN-5] Exact scale factor after eyeballing (0.8 vs narrower table text); one-variable change so cheap. Needs owner glance at a screenshot.
+- [RESOLVED-5: ship scale 0.8; adjust at screenshot review if needed (one-variable change)] Exact scale factor after eyeballing (0.8 vs narrower table text).
 
 ## Acceptance Criteria
 

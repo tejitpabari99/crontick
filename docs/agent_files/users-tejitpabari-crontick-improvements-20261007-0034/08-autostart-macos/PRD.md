@@ -1,6 +1,6 @@
 ---
 status: draft
-summary: SP08 - macOS autostart backend for the SP07 interface - user LaunchAgent (launchctl bootstrap gui/$UID, login-only, unsigned), idempotency rules, disabled-by-user detection, no-macOS-CI test strategy, and one proposed core delta (already-running exit code vs launchd KeepAlive).
+summary: SP08 - macOS autostart backend for the SP07 interface - user LaunchAgent (launchctl bootstrap gui/$UID, login-only, unsigned), idempotency rules, disabled-by-user detection, no-macOS-CI test strategy, and the agreed core delta (`CRONTICK_SUPERVISED=1` makes an already-running daemon exit 0).
 date: 2026-10-07
 ---
 
@@ -19,7 +19,7 @@ Implement `AutostartBackend` for `mechanism: 'launchd'`. `install` writes `~/Lib
 - SP07 ships Linux only; `createAutostartBackend` returns `undefined` for darwin, so `autostart enable` throws `AUTOSTART_UNSUPPORTED` on macOS.
 - Old darwin stub only sketched `com.crontick.daemon.plist` + legacy `launchctl load/unload` + `launchctl list` `[verified: git show f24ae58:src/autostart/darwin.ts]`. Legacy verbs always exit 0 except misuse, so they cannot signal failure `[https://keith.github.io/xcode-man-pages/launchctl.1.html]`.
 - Since macOS 13, every third-party plist surfaces in Login Items and fires a "Background Items Added" notification; unsigned items show as "unidentified developer" with generic names and are hard to identify `[https://eclecticlight.co/2023/02/15/controlling-login-and-background-items-in-ventura/]`.
-- launchd has no equivalent of systemd `SuccessExitStatus=75`, which SP07 uses to avoid a crash loop when a demand-started daemon already holds the PID file `[verified: SP07 PRD; launchd.plist(5) KeepAlive]`.
+- launchd has no equivalent of systemd `SuccessExitStatus`, so SP07 makes the daemon exit 0 when `CRONTICK_SUPERVISED=1` (instead of a special exit code) to avoid a respawn loop when a demand-started daemon already holds the PID file `[verified: SP07 PRD; launchd.plist(5) KeepAlive]`.
 
 ## Goals / Non-Goals
 
@@ -40,7 +40,7 @@ Implement `AutostartBackend` for `mechanism: 'launchd'`. `install` writes `~/Lib
 
 ## Architecture
 
-**Label and path.** Label `dev.crontick.daemon` `[OPEN: confirm a domain the owner controls; launchd only needs uniqueness]`; file `~/Library/LaunchAgents/dev.crontick.daemon.plist`. Domain target `gui/$(id -u)` (per-user GUI session) `[https://keith.github.io/xcode-man-pages/launchctl.1.html]`.
+**Label and path.** Label `dev.crontick.daemon` `[RESOLVED: owner accepted `dev.crontick.daemon`]`; file `~/Library/LaunchAgents/dev.crontick.daemon.plist`. Domain target `gui/$(id -u)` (per-user GUI session) `[https://keith.github.io/xcode-man-pages/launchctl.1.html]`.
 
 **Plist keys** (verified against launchd.plist(5) `[https://keith.github.io/xcode-man-pages/launchd.plist.5.html]` unless tagged):
 
@@ -48,7 +48,7 @@ Implement `AutostartBackend` for `mechanism: 'launchd'`. `install` writes `~/Lib
 |---|---|---|
 | `Label` | `dev.crontick.daemon` | unique id |
 | `ProgramArguments` | `[nodePath, daemonScript]` | absolute, from `AutostartSpec`; script is foreground, takes no argv (SP07 D3) |
-| `EnvironmentVariables` | `spec.env` (`CRONTICK_HOME` if set, `PATH` snapshot) | launchd agents get a minimal PATH, so engines like `claude` need the snapshot; matches SP07 D5. macOS backend adds the PATH snapshot itself if `spec.env` lacks it `[inferred: man page gives no default PATH]` |
+| `EnvironmentVariables` | `spec.env` (`CRONTICK_SUPERVISED=1`, `CRONTICK_HOME` if set, `PATH` snapshot; all built by SP07 core `buildSpec`, this backend adds nothing) | launchd agents get a minimal PATH, so engines like `claude` need the snapshot; matches SP07 D5 `[inferred: man page gives no default PATH]` |
 | `RunAtLoad` | `true` | start at login (agents load at login) |
 | `KeepAlive` | `{SuccessfulExit: false}` | restart only after non-zero/crash; exit 0 (graceful `daemon stop`) stays down. Semantics: restart if exit status is non-zero. Implies RunAtLoad |
 | `ThrottleInterval` | `30` | default is 10 s; slower to bound any respawn loop |
@@ -94,7 +94,7 @@ Idempotency: re-bootstrapping a loaded service fails with an opaque "5: Input/ou
 | D6 | Logs | `<logsDir>/launchd.{out,err}.log` | `/dev/null`, `~/Library/Logs` | Single data dir, owner can inspect; reuses `logsDir` |
 | D7 | Disabled detection | `print-disabled` + `print`; note, no `sfltool` | `sfltool dumpbtm` | Needs sudo, undocumented |
 | D8 | Signing | None; document optional owner route | Ad-hoc/Developer ID | Out of scope per brainstorm |
-| D9 | PATH | Snapshot at enable | Login-shell PATH | Same as Linux (SP07 D5) |
+| D9 | PATH | Snapshot at enable, built in core `buildSpec` | Login-shell PATH; backend-specific PATH | Same as Linux (SP07 D5); backend does not add PATH |
 
 ## Manual steps (owner-only)
 
@@ -106,9 +106,9 @@ Idempotency: re-bootstrapping a loaded service fails with an opaque "5: Input/ou
 
 ## Risks / Open Questions
 
-- [OPEN] **Interface delta (needs SP07 sign-off):** exit 75 is non-zero, so `SuccessfulExit:false` respawns the daemon every 30 s when the user demand-started first (each spawn logs "already running" and exits 75). Proposed fix: when the already-running condition is hit and env `CRONTICK_SUPERVISED=1` is set (core adds it to `spec.env` on all platforms, drift compares it), the daemon exits 0; systemd keeps 75 semantics or also moves to 0 (`Restart=on-failure` ignores 0). Fallback with no core change: drop `KeepAlive` on macOS (no crash restart, no loop).
+- [RESOLVED: owner accepted `CRONTICK_SUPERVISED=1` in `spec.env` on all platforms; the daemon exits 0 when already running and supervised (SP07 reworked; no exit 75). `KeepAlive{SuccessfulExit:false}` stays (C1)] Interface delta: with exit 75, `SuccessfulExit:false` would have respawned the daemon every 30 s when the user demand-started first.
 - [OPEN] No other delta needed: `logsDir` derivable from `spec.env.CRONTICK_HOME` via `src/paths.ts`; `inspect()` fits `BackendInspection`.
-- [OPEN] Label domain `dev.crontick.*`; old stub used `com.crontick.daemon`.
+- [RESOLVED: label `dev.crontick.daemon`] Label domain `dev.crontick.*`; old stub used `com.crontick.daemon`.
 - [OPEN] Does BTM toggle-off show in `print-disabled`? Does disabling in Login Items block `bootstrap` (error 5) on re-enable? Real-Mac only.
 - [OPEN] `AbandonProcessGroup` covers detached children across `bootout`, and the responsible-process attribution of children (TCC) after daemon restart.
 - [OPEN] Claude engine "Not logged in" under launchd (see Architecture).

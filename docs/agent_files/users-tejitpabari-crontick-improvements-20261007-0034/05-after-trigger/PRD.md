@@ -6,7 +6,7 @@ date: 2026-10-07
 
 # PRD: `--after` job trigger
 
-Repo/branch: `/root/projects/crontick-wt-improvements`, `users/tejitpabari/crontick-improvements` · Depends on: SP01 (`resolveJobRef`, `SCHEDULE_FLAGS`), SP04 (`src/job-prepare.ts`, dashboard `SCHEDULE_KINDS`) · Owns: `src/schemas/job.ts` (+`AfterScheduleSchema`), `src/daemon/trigger.ts` (new), `src/daemon/runner.ts` (completion hook, `RunContext`), `src/daemon/index.ts` (wiring, startup skip), `src/daemon/scheduler.ts` (non-time no-ops), `src/daemon/store.ts` (`listDependents`, graph validation, `trigger_json`), `src/daemon/api.ts` (create/update/enable/delete guards, validate/preview), `src/job-prepare.ts` + `src/job-input.ts`, `src/utils/schedule-label.ts` (new), `src/client.ts`, `src/cli/`, `src/mcp/`, `src/surface.ts`, `src/dashboard*`, `src/share.ts`, docs, changeset, ADR.
+Repo/branch: `/root/projects/crontick-wt-improvements`, `users/tejitpabari/crontick-improvements` · Depends on: SP01 (`resolveJobRef`, `SCHEDULE_FLAGS`), SP04 (`src/job-prepare.ts`, dashboard `SCHEDULE_KINDS`) · Owns: `src/schemas/job.ts` (+`AfterScheduleSchema`), `src/daemon/trigger.ts` (new), `src/daemon/runner.ts` (completion hook, `RunContext`), `src/daemon/index.ts` (wiring, startup skip), `src/daemon/scheduler.ts` (non-time no-ops), `src/daemon/store.ts` (`listDependents`, graph validation, `trigger_json`), `src/daemon/api.ts` (create/update/enable/delete guards, validate/preview), `src/job-prepare.ts` + `src/job-input.ts`, `src/utils/schedule-label.ts` (new), `src/client.ts`, `src/cli/`, `src/mcp/`, `src/surface.ts`, `src/dashboard*`, `src/share.ts`, docs, changeset, ADR 0035.
 
 ## TL;DR
 
@@ -54,7 +54,7 @@ export class TriggerDispatcher {
     { runId: string } | { skipped: 'not-found' | 'disabled' | 'kind-mismatch' };
 }
 ```
-`dispatch`: re-read the job from the store (like tick), skip if disabled or `schedule.kind !== req.kind` (an edited job never fires on a stale event), `store.insertRun`, persist `trigger_json`, call `runner.run(job, runId, store, { env, promptSuffix })`. No `recordTick`: the watermark is time-only. `runner.run` gains an optional 4th `RunContext`, threaded through the `enqueue` closure so queued runs keep their env. The `after` listener: `store.listDependents(upstreamId)` (full scan of `listJobs()` per event; N is small and this avoids a cache that reload would invalidate) -> filter by status/enabled -> `dispatch`. A downstream completion re-enters the hook, so A->B->C works with no extra code. SP06's `jobs trigger`, `POST /api/jobs/:id/trigger` and relay SSE call `dispatch(jobId, {kind:'webhook', ...})`.
+`dispatch`: re-read the job from the store (like tick), skip if disabled or `schedule.kind !== req.kind` (an edited job never fires on a stale event), `store.insertRun`, persist `trigger_json`, call `runner.run(job, runId, store, { env, promptSuffix })`. No `recordTick`: the watermark is time-only. `runner.run` gains an optional 4th `RunContext`, threaded through the `enqueue` closure so queued runs keep their env. The `after` listener: `store.listDependents(upstreamId)` (full scan of `listJobs()` per event; N is small and this avoids a cache that reload would invalidate) -> filter by status/enabled -> `dispatch`. A downstream completion re-enters the hook, so A->B->C works with no extra code. SP06's `jobs trigger`, `POST /api/jobs/:id/trigger` and relay SSE call `dispatch(jobId, {kind:'webhook', ...})`. SP10 hard-depends on this SP (`RunContext`/`buildRunEnv`, `isTimeSchedule`, listener-after-reconcile ordering). Two dispatch functions are kept on purpose: `TriggerDispatcher.dispatch` (non-time events, no `recordTick`) and SP10 `dispatchTimeRun` (time fires, with `recordTick`); merging them would blur the time-only watermark rule.
 
 **Env injection.** Today env merges at two sites (`runner.ts:557` and `:571-577`: process.env < engine env < envFile < action.env) plus the transcript-path call `[verified: grep env runner.ts]`. Collapse to one `buildRunEnv(promptEnv, envFile, action.env, ctx.env)` helper with `ctx.env` last. Adapters are unchanged: they receive the same `spawnOpts.env`. Retries reuse the same context.
 
@@ -64,7 +64,7 @@ export class TriggerDispatcher {
 
 **Display.** New `describeSchedule(schedule, lookup)` in `src/utils/schedule-label.ts` used by CLI list/get, `jobSchedule` (prints `triggered after <alias> on success; no scheduled fire times`), and the dashboard payload (`dashboard.ts:310` yields `nextRunAt: null` plus `scheduleLabel`) for table and drawer. `/api/schedules/preview` returns `{fires: [], trigger: {...}}` for after. `/api/schedules/validate` for after checks the upstream exists (+ optional `?jobId=` for the cycle check on update).
 
-**Dashboard.** One `SCHEDULE_KINDS` entry `after` (upstream `<select>` from jobs minus self, status select, `toSchedule`/`fromSchedule`) per SP04 D7. Resolution/cycle errors flow through SP04 prepare mode: `job-prepare.ts` takes an injected `resolveJob` (client passes an API lookup, daemon passes `store.getJob`); client/shims hold no cycle logic, the daemon API is authoritative.
+**Dashboard.** One `SCHEDULE_KINDS` entry `after` (upstream `<select>` from jobs minus self, status select, `toSchedule`/`fromSchedule`) per SP04 D7. Resolution/cycle errors flow through SP04 prepare mode: `job-prepare.ts` takes an injected `resolveJob` (provided by SP04; client passes an API lookup, daemon passes `store.getJob`); client/shims hold no cycle logic, the daemon API is authoritative.
 
 **Export/import.** References are GUIDs and exports carry job ids (import upserts by id), so intra-export chains survive; alias is display only. Importing a lone downstream elsewhere fails R4 with a clear error.
 
@@ -81,15 +81,15 @@ export class TriggerDispatcher {
 | D7 | Overlap policy applies via `runner.run` | Bypass | `skip` records a visible `skipped` run; `queue`/`cancel-previous` as usual |
 | D8 | Shared `TriggerDispatcher` | After-specific path | SP06 needs identical re-read/insert/run/env steps |
 | D9 | Trigger env has top priority | Below `action.env` | `CRONTICK_*` must not be shadowed |
-| D10 | Add nullable `runs.trigger_json` | None | `runs get` shows "triggered by"; SP06 stores payload |
+| D10 | Add nullable `runs.trigger_json` | None | SP05 stores `{kind, upstream}`; SP06 renders it in `runs get`/dashboard and stores the webhook payload |
 
 ## Risks / Open Questions
 
-- [OPEN] `runs.trigger_json`: confirm the store's additive-migration pattern, and whether `runs get`/dashboard show it in this SP or SP06.
+- [OPEN] `runs.trigger_json`: confirm the store's additive-migration pattern. [RESOLVED: rendering in `runs get`/dashboard belongs to SP06 (its R12); SP05 only stores `{kind, upstream}`]
 - [OPEN] Fast upstream + slow downstream with `skip` drops triggers (visible as `skipped`); proposed: docs recommend `overlap: queue`, no code.
 - [OPEN] Does any `stats` output render schedule/next-run? Not verified; if so use `describeSchedule`.
 - [OPEN] Import with an unresolved ref: fail that job (proposed) vs import it disabled.
-- [OPEN] CLI delete with dependents: refuse naming `--force` (proposed) vs interactive prompt.
+- [RESOLVED: CLI delete with dependents refuses, naming `--force`; no interactive prompt] (R5)
 - [RESOLVED: dependents fire on adopted-run exit, not on startup reconcile] see Architecture.
 - [RESOLVED: single-upstream cycle detection is a pointer walk] no DFS needed.
 - [DEFERRED] Multi-upstream joins, upstream-output passing, chain depth cap (cycle-free, so finite).
@@ -106,4 +106,4 @@ export class TriggerDispatcher {
 - Cycles (self, 2-node, 3-node) rejected on create/update/enable/import; dangling rejected; file-edit reload leaves a broken job inert with warning and `doctor` entry; delete refused with dependents, `--force` disables them.
 - `enumerateFiresBetween`/`previewNext` return `[]` for `after`; startup records no missed runs for after jobs.
 - CLI list/get/schedule, dashboard table+drawer and preview endpoint show `after <alias>`; `--help` footer lists `--after`; `surface-drift` and `npm run validate` green.
-- Docs updated: `docs/concepts/scheduling.md`, `docs/specs/002-scheduling.md` + `001-job-definition.md`, `docs/reference/{cli,mcp,library}`, ADR (trigger dispatch + no-replay), changeset.
+- Docs updated: `docs/concepts/scheduling.md`, `docs/specs/002-scheduling.md` + `001-job-definition.md`, `docs/reference/{cli,mcp,library}`, ADR 0035 (trigger dispatch + no-replay), changeset.

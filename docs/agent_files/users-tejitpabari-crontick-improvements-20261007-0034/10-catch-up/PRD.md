@@ -6,7 +6,7 @@ date: 2026-10-07
 
 # PRD: Catch-up (SP10, Phase 4)
 
-Repo/branch: `/root/projects/crontick-wt-improvements`, `users/tejitpabari/crontick-improvements` · Depends on: SP05 (soft: `isTimeSchedule`, `RunContext`, listener-after-reconcile ordering), SP04 (soft: `job-prepare.ts`, `SCHEDULE_KINDS`), SP01 (`commonJobOptions`) · Owns: `src/schemas/job.ts`, `src/job-input.ts`, `src/daemon/index.ts` (startup reconcile), `src/daemon/scheduler.ts` (`latestFireBefore`, interval `startAt`), `src/daemon/store.ts` (`recordSkippedRun`), `src/client.ts`, `src/cli/`, `src/mcp/`, `src/surface.ts`, `src/dashboard/*` (one field), `docs/concepts/scheduling.md`, `docs/specs/{003,004,006}`, `docs/decisions/0001` (missed-fires section = "ADR 0015") + README row, `docs/reference/`, changeset.
+Repo/branch: `/root/projects/crontick-wt-improvements`, `users/tejitpabari/crontick-improvements` · Depends on: SP05 (hard: `isTimeSchedule`, `RunContext`/`buildRunEnv`, listener-after-reconcile ordering), SP04 (soft: `job-prepare.ts`, `SCHEDULE_KINDS`), SP01 (`commonJobOptions`) · Owns: `src/schemas/job.ts`, `src/job-input.ts`, `src/daemon/index.ts` (startup reconcile), `src/daemon/scheduler.ts` (`latestFireBefore`, interval `startAt`), `src/daemon/store.ts` (`recordSkippedRun`), `src/client.ts`, `src/cli/`, `src/mcp/`, `src/surface.ts`, `src/dashboard/*` (one field), `docs/concepts/scheduling.md`, `docs/specs/{003,004,006}`, `docs/decisions/0001` (missed-fires section = "ADR 0015") + README row, `docs/reference/`, changeset.
 
 ## TL;DR
 
@@ -82,9 +82,10 @@ Edge cases:
 ## Risks / Open Questions
 
 - [OPEN] Sleep/wake: does croner/`setTimeout` fire once late, skip, or drift after suspend (Linux monotonic clock excludes suspend)? Cheapest test: manual `rtcwake`/VM suspend with a 1-minute cron job. Outcome may justify a follow-up, not SP10.
-- [OPEN] Login storm: many `catchUp` jobs start simultaneously at autostart. No global concurrency cap exists `[unverified]`. Cheapest: count jobs in owner's setup; defer stagger.
-- [OPEN] Prompt staleness: a fire days old still runs. Max-age option [DEFERRED] to `futures.md`; prompt authors can read `CRONTICK_CATCHUP_MISSED`.
+- [DEFERRED] Login storm: many `catchUp` jobs start simultaneously at autostart. No global concurrency cap exists `[unverified]`. Stagger / concurrency cap deferred (owner decision).
+- [DEFERRED] Prompt staleness: a fire days old still runs. Max-age option deferred to `futures.md`; prompt authors can read `CRONTICK_CATCHUP_MISSED`.
 - [OPEN] Does enable/`recordTick` change belong here or SP05's enable guard path (shared `api.ts` enable route)? Coordinate at coding.
+- [RESOLVED: SP05 is a hard dependency (C7)] SP10 needs SP05's `RunContext` env and `isTimeSchedule`. Two dispatch functions stay: SP05 `TriggerDispatcher.dispatch` (no `recordTick`) vs SP10 `dispatchTimeRun` (with `recordTick`), because the watermark is time-only.
 - [RESOLVED: ADR "0015"] No standalone file; it is a section in `0001-architecture-and-runtime-model.md` with an index row mapping 0015 -> 0001. Amend in place and move its "revisit when" bullet to "revisited by SP10".
 
 ## Acceptance Criteria

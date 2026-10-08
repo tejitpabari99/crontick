@@ -46,8 +46,8 @@ Probed live `[verified: curl smee.io 2026-10-07]`: `GET https://smee.io/new` -> 
 | R8 | Dedupe: delivery id (`x-github-delivery`, else `x-request-id`, else sha256 of body+timestamp-less) kept in a per-job LRU (256 entries / 10 min); duplicate dropped (debug log). Local triggers are never deduped. |
 | R9 | Burst limit per job: token bucket default 10 runs / minute (constant in `src/constants/`), excess dropped and recorded as ONE `skipped` run per minute with `error: 'RATE_LIMITED (n dropped)'`. Overlap policy then applies via `runner.run` as in SP05 D7. |
 | R10 | Status: `getRelayStatus()` -> per relay `{urlRedacted, state: connecting\|connected\|backoff\|error, lastEventAt, lastError, eventCount}` surfaced in `jobs get`, dashboard drawer, `doctor` (`relay:` check, WARN on persistent error). Not stored in DB (in-memory). |
-| R11 | Redaction: channel path segment and `secret` are redacted (`https://smee.io/Uk…Sd`, `secret: set`) in logs, `jobs list`, MCP output (`redactForLlm`/`redactValue` extended), exports and `doctor`. Shown in full only in `jobs get` (CLI), dashboard copy button, and `jobs new --relay auto` output (owner needs it to configure GitHub). Export/import: `relay` and `secret` are stripped unless `--include-secrets` [OPEN: scope; default strip]. |
-| R12 | `runs get` and dashboard log modal show "Triggered by webhook (relay\|local) at <time>, delivery <id>" and a collapsible payload (from `trigger_json`). |
+| R11 | Redaction: channel path segment and `secret` are redacted (`https://smee.io/Uk…Sd`, `secret: set`) in logs, `jobs list`, MCP output (a separate `redactForLlm` branch for relay/secret; `redactValue` core unchanged, see SP03 OPEN-6), exports and `doctor`. Shown in full only in `jobs get` (CLI), dashboard copy button, and `jobs new --relay auto` output (owner needs it to configure GitHub). Export/import: `relay` and `secret` are stripped by default, unless `--include-secrets` [RESOLVED: default strip]. `relay` and `secret` are stored in plaintext in the jobs file (mode 0600) plus the redaction above; no OS keychain. |
+| R12 | `runs get` and dashboard log modal show "Triggered by webhook (relay\|local) at <time>, delivery <id>" and a collapsible payload (from `trigger_json`; SP06 owns rendering, SP05 stores only `{kind, upstream}` for `after`). |
 | R13 | Parity: `SURFACE_CAPABILITIES` entries for create/update schedule kind + `trigger`; `surface-drift` green. |
 
 ## Architecture
@@ -64,7 +64,7 @@ Probed live `[verified: curl smee.io 2026-10-07]`: `GET https://smee.io/new` -> 
 
 **Dashboard.** `SCHEDULE_KINDS.webhook`: fields = relay URL (text, "Create channel" button calls `POST /api/relay/new`, which does the `smee.io/new` redirect server-side to avoid CORS), secret (password input), read-only relay URL with Copy button in the drawer, status dot, "Trigger now" button (payload textarea). "How to schedule" footer gets a Webhook entry. `describeSchedule` -> `webhook (relay: smee.io/Uk…Sd)` / `webhook (local only)`; `nextRunAt: null`.
 
-**Docs.** `docs/concepts/scheduling.md` (+ new `webhooks.md`: GitHub setup, security), `docs/specs/001/002`, `docs/reference/{cli,mcp,library,api}`, ADR "outbound relay vs loopback-only" (daemon makes one new class of outbound connection, only when a webhook job with a relay exists, to a user-chosen URL; never listens beyond loopback), changeset.
+**Docs.** `docs/concepts/scheduling.md` (+ new `webhooks.md`: GitHub setup, security, self-hosting a smee server as the smee.io availability mitigation), `docs/specs/001/002`, `docs/reference/{cli,mcp,library,api}`, ADR 0036 "outbound relay vs loopback-only" (daemon makes one new class of outbound connection, only when a webhook job with a relay exists, to a user-chosen URL; never listens beyond loopback), changeset.
 
 ## Decisions
 
@@ -89,11 +89,11 @@ Probed live `[verified: curl smee.io 2026-10-07]`: `GET https://smee.io/new` -> 
 ## Risks / Open Questions
 
 - [OPEN] **HMAC over smee**: smee delivers `body` as parsed JSON, not raw bytes, so `JSON.stringify(body)` may differ from what GitHub signed (e.g. GitHub escapes `<`/`>`/`&` as `\u00xx`; key order/whitespace). Must be tested with a real GitHub delivery; if it fails, ship without `--webhook-secret` and record in futures (raw-body-capable relay).
-- [OPEN] smee.io availability/abuse limits/rate limiting unknown; no SLA. Mitigation = self-host; status + doctor visibility.
-- [OPEN] `secret`/`relay` stored in plaintext in the jobs file (file mode 0600?) vs OS keychain (no deps, so plaintext + redaction proposed).
-- [OPEN] Export/import secret handling (default strip proposed).
+- [RESOLVED: accept smee.io as the default; document self-hosting a smee server as the mitigation] smee.io availability/abuse limits/rate limiting unknown; no SLA. Status + doctor visibility remain.
+- [RESOLVED: plaintext in the jobs file (mode 0600) + redaction; no keychain] `secret`/`relay` storage.
+- [RESOLVED: export/import strips `relay` and `secret` by default] Export/import secret handling.
 - [OPEN] Default burst limit 10/min and dedupe window values are guesses.
-- [OPEN] Header allowlist for non-GitHub providers (Stripe `stripe-signature`, GitLab `x-gitlab-token`): GitHub-only HMAC in v1; others [DEFERRED].
+- [RESOLVED: GitHub-only HMAC in v1] Header allowlist for non-GitHub providers (Stripe `stripe-signature`, GitLab `x-gitlab-token`): [DEFERRED].
 - [RESOLVED: Last-Event-ID] not usable (counter ids, no replay).
 - [RESOLVED: keep-alive] ping ~30s observed; idle watchdog 90s.
 - [DEFERRED] Event filtering, replay, multi-relay per job, provider-specific verifiers.

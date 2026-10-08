@@ -12,7 +12,7 @@ date: 2026-10-07
 
 ## TL;DR
 
-Implement `AutostartBackend` with `mechanism: 'schtasks'`. `install` writes a Task Scheduler XML definition (UTF-16LE, temp file) and runs `schtasks /create /tn "\crontick\daemon" /xml <file> /f`; `uninstall` runs `schtasks /delete /tn "\crontick\daemon" /f`; `inspect` parses `schtasks /query /tn ... /xml` (locale-independent element names). Current user, `LeastPrivilege`, LogonTrigger only, no admin, no Run key/registry/VBS/`reg.exe`. The action is `node.exe <cli> daemon start` (a short-lived launcher that spawns the existing detached daemon), not the long-running daemon in a console: this avoids a permanent console window that the user could close (killing the daemon) and sidesteps the exit-75 problem. Whether Task Scheduler leaves that detached child alive is the one make-or-break unknown; a Windows-CI test decides it before anything else is built (see [OPEN] 1).
+Implement `AutostartBackend` with `mechanism: 'schtasks'`. `install` writes a Task Scheduler XML definition (UTF-16LE, temp file) and runs `schtasks /create /tn "\crontick\daemon" /xml <file> /f`; `uninstall` runs `schtasks /delete /tn "\crontick\daemon" /f`; `inspect` parses `schtasks /query /tn ... /xml` (locale-independent element names). Current user, `LeastPrivilege`, LogonTrigger only, no admin, no Run key/registry/VBS/`reg.exe`. The action is `node.exe <cli> daemon start` (a short-lived launcher that spawns the existing detached daemon), not the long-running daemon in a console: this avoids a permanent console window that the user could close (killing the daemon) and sidesteps the already-running exit-code problem. Whether Task Scheduler leaves that detached child alive is the one make-or-break unknown; a Windows-CI test decides it before anything else is built (see [OPEN] 1).
 
 ## Problem
 
@@ -72,15 +72,15 @@ Implement `AutostartBackend` with `mechanism: 'schtasks'`. `install` writes a Ta
 | Password logon type | None | Needs user password; reject |
 | **Interactive + launcher: `node.exe <cli> daemon start`** | Sub-second flash while the launcher runs; the daemon is the existing detached, console-less process `ensureDaemon` spawns `[verified: src/daemon/ensure.ts:190-196 detached, stdio to log file]` | **Recommend** |
 
-The launcher also makes a second start harmless: `daemon start` reports "Daemon already running" and exits 0 `[verified: src/cli/index.ts:639-653]`, so Windows needs neither exit 75 nor `CRONTICK_SUPERVISED`. Honest limitation: a sub-second console flash at logon (30 s after, from the trigger delay) cannot be removed without a GUI-subsystem binary, which we will not ship.
+The launcher also makes a second start harmless: `daemon start` reports "Daemon already running" and exits 0 `[verified: src/cli/index.ts:639-653]`, so Windows needs neither a special exit code nor `CRONTICK_SUPERVISED` (SP07 still puts it in `spec.env`; this backend ignores env because task actions carry none). Honest limitation: a sub-second console flash at logon (30 s after, from the trigger delay) cannot be removed without a GUI-subsystem binary, which we will not ship.
 
 **Job-object risk.** Ending a task ends the process it launched but does not reliably end descendants `[https://yomotherboard.com/?p=575749 (weak source)]`; what happens to a detached child when the launcher exits normally is undocumented. If the daemon dies with the task instance the design fails; fallback is the S4U direct-daemon action, or interactive foreground daemon with a visible console (both worse). AC4 settles this first.
 
-**Inspect and drift.** Core compares `inspect().command` to the spec. The Windows command is `[cliScript,'daemon','start']`, not `[daemonScript]`, so two deltas are needed (Risks).
+**Inspect and drift.** Core compares `inspect().command` to the spec. The Windows command is `[cliScript,'daemon','start']`, not `[daemonScript]`, so SP07 provides two agreed deltas (Risks): `AutostartSpec.cliScript` and `backend.expectedCommand(spec)`.
 
 **Idempotency / locale.** Create uses `/f`; delete uses `/f`; existence is decided from XML presence plus exit code, never from localized stderr. XML element names, SIDs and numeric result codes are locale-independent; the only localized text handled is the status cell, recorded only as a note.
 
-**Paths.** `<Command>` takes the raw path (no quotes), `<Arguments>` quotes each path; UTF-16 file avoids non-ASCII username breakage. [OPEN: real test with `C:\Users\Test User\` and a non-ASCII name.]
+**Paths.** `<Command>` takes the raw path (no quotes), `<Arguments>` quotes each path; when `CRONTICK_HOME` was set at enable time, `<Arguments>` ends with `--home "<dir>"` (SP07 core `daemon start --home`) and `expectedCommand(spec)` returns `[cliScript, 'daemon', 'start']` plus `'--home', dir` in that case; UTF-16 file avoids non-ASCII username breakage. [OPEN: real test with `C:\Users\Test User\` and a non-ASCII name.]
 
 **Testing.** Unit (every OS, injected `platform:'win32'`, fake exec/fs): XML snapshot (every setting above, nothing else), round-trip, argv sequences (fresh install, reinstall, uninstall absent/present), inspect against canned XML/CSV (localized status text, garbage, empty), `available()` failure, factory returns schtasks for win32. Integration (only `process.platform==='win32'` and CI, like the old gated registry test): enable, query, status non-stale, rerun enable, disable, absent; test-only task-name override so it never collides with a real install; `afterAll` delete. GitHub-hosted Windows runners run as admin, so this does not prove the non-admin claim `[inferred]`.
 
@@ -94,7 +94,7 @@ The launcher also makes a second start harmless: `daemon start` reports "Daemon 
 | Signed binary | `node.exe` from nodejs.org is Authenticode-signed by OpenJS Foundation `[third-party listing https://www.freefixer.com/library/file/node.exe-321126/ ; owner can confirm with Get-AuthenticodeSignature]`. crontick ships JS only: **nothing of ours to sign or submit** |
 | Honest metadata | `Author crontick`, plain `Description` stating origin and removal, `Hidden=false`, own `\crontick` folder, visible in `taskschd.msc` |
 | User scope | `LeastPrivilege`, current-user SID, no elevation, no SYSTEM, no HKLM/Run key, no registry writes |
-| No obfuscation | Plain-text args, no encoded commands; warn on `_npx`/temp paths (SP07 R7) |
+| No obfuscation | Plain-text args, no encoded commands; refuse `_npx`/temp paths (SP07 R7) |
 | Opt-in | Created only on explicit `enable` |
 
 If a tool flags it anyway:
@@ -121,23 +121,23 @@ If a tool flags it anyway:
 1. Real Windows 10/11 check as a **standard (non-admin) user**: `enable`; log off/on; `crontick status` shows daemon up; note the flash; `taskschd.msc` shows `\crontick\daemon` with author/description; demand-start first then `enable` causes no second daemon; `disable` removes it.
 2. Repeat on a Defender-for-Endpoint/corporate device if available; record any alert and the allowlist entry used.
 3. Non-English Windows and a profile path with space/non-ASCII: `status` sanity check.
-4. Sign off the core deltas below.
+4. (Done) Core deltas A/B and `daemon start --home` were signed off by the owner; recorded in SP07.
 
 ## Risks / Open Questions
 
 - [OPEN] **1 (blocking): does the detached daemon survive the task instance ending?** Windows-CI test (run task, wait for completion, assert daemon pid alive and API answers); fallback per Architecture.
-- [OPEN] **2: standard users creating the `\crontick\` folder/task.** No source found states it either way: ITaskFolder::CreateFolder docs list no privilege requirement, and "only Administrators can schedule tasks" in the schtasks docs sits under `/ru System` `[https://learn.microsoft.com/windows/win32/api/taskschd/nf-taskschd-itaskfolder-createfolder ; schtasks-create]`. Self-owned tasks are commonly created by standard users but this is untested here; CI runners are admin. If folder creation fails, fall back to root-level `\crontick-daemon` (changes a locked decision; owner sign-off).
+- [OPEN] **2: standard users creating the `\crontick\` folder/task.** No source found states it either way: ITaskFolder::CreateFolder docs list no privilege requirement, and "only Administrators can schedule tasks" in the schtasks docs sits under `/ru System` `[https://learn.microsoft.com/windows/win32/api/taskschd/nf-taskschd-itaskfolder-createfolder ; schtasks-create]`. Self-owned tasks are commonly created by standard users but this is untested here; CI runners are admin. If folder creation fails, fall back to root-level `\crontick-daemon` (changes a locked decision; owner pre-approved this fallback, so no further sign-off is needed; the verification itself is still required).
 - [OPEN] **3:** `/query /xml` stdout code page/BOM; tolerant parser, test on non-English host.
 - [OPEN] **4:** `/xml` with SID `UserId` for a non-admin registering for itself; `LogonTrigger` behaviour for domain/Azure AD accounts.
 - [OPEN] **5:** No OS-level user toggle (Settings > Startup apps) appears to cover tasks; `Settings/Enabled` is all we can detect. Confirm.
-- [OPEN] **Core delta A (SP07 sign-off):** `AutostartSpec` gains `cliScript: string` (absolute `dist/cli/index.js`), used only by this backend. Confirm it runs directly under `node.exe` (not via the bin shim).
-- [OPEN] **Core delta B:** drift compares `inspect().command` to `backend.expectedCommand(spec)` (new optional method, default `[daemonScript]`).
-- [OPEN] **CRONTICK_SUPERVISED / env:** Windows does not use it. Task actions have no env block, so `CRONTICK_HOME` set at enable time would be lost at logon. Options: pass via a CLI dir arg (SP01 `--dir`, if it applies to `daemon start`), or document the limitation and flag drift. Needs decision.
+- [RESOLVED: signed off, added to SP07 (C2)] **Core delta A:** `AutostartSpec` gains `cliScript: string` (absolute `dist/cli/index.js`), used only by this backend. It runs directly under `node.exe` (not via the bin shim); the Windows integration test covers it.
+- [RESOLVED: signed off, added to SP07 (C2)] **Core delta B:** drift compares `inspect().command` to `backend.expectedCommand(spec)` (new optional method, default `[daemonScript]`).
+- [RESOLVED: new `daemon start --home <dir>` flag, owned by SP07 core; task arguments carry `--home` when `CRONTICK_HOME` was set at enable (C4)] **CRONTICK_SUPERVISED / env:** Windows does not use `CRONTICK_SUPERVISED`. Task actions have no env block, so `CRONTICK_HOME` set at enable time would otherwise be lost at logon.
 - [DEFERRED] S4U or boot start; GUI-subsystem launcher to remove the flash; deleting the empty folder; node.exe signature check as a status note.
 
 ## Acceptance Criteria
 
-1. Factory returns the schtasks backend for `win32`; `crontick autostart enable|disable|status` work on Windows via SP07's service with only deltas A/B.
+1. Factory returns the schtasks backend for `win32`; `crontick autostart enable|disable|status` work on Windows via SP07's service with only deltas A/B and `daemon start --home`.
 2. XML snapshot contains exactly the settings above (`PT0S`, battery flags false, `IgnoreNew`, `LeastPrivilege`, SID-scoped `LogonTrigger`, `Hidden=false`).
 3. Unit tests (fake exec/fs) pass on ubuntu and windows CI per the Testing list; no code path calls `reg.exe`, PowerShell, `wscript` or `conhost`; rewritten guard test passes.
 4. Windows-only integration test: enable/disable round trip leaves no task, and a launcher-survival test proves [OPEN] 1 (or the fallback is chosen and this PRD re-specified).

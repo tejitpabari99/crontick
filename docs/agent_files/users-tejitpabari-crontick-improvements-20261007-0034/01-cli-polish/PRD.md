@@ -99,7 +99,7 @@ export const SCHEDULE_FLAGS = ['--cron', '--every', '--at'] as const; // SP05/06
 
 ## Risks / Open Questions
 
-- [OPEN] A live job's per-job log file is append-only and shared, so lines tagged with deleted run ids remain. Proposed: accept and document; alternative is rewriting the file filtered by run id.
+- [RESOLVED: owner decision] A live job's per-job log file is append-only and shared, so lines tagged with deleted run ids remain. `runs delete` leaves them; no documentation needed, no file rewrite.
 - [RESOLVED-2: no `-d` short flag at all; only `--dir` long option replaces `-C, --cwd`, so no clash with any future global `-d`]
 - [RESOLVED-3: single txn, bounded by `retention.maxRunsPerJob`; revisit if slow]
 - [RESOLVED: id wins on collision (D3)]
