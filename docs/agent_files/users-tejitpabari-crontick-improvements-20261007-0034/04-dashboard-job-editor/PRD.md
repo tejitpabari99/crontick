@@ -6,7 +6,7 @@ date: 2026-10-07
 
 # PRD: Dashboard job editor
 
-Repo/branch: `/root/projects/crontick-wt-improvements`, `users/tejitpabari/crontick-improvements` · Depends on: SP03 (request guard on mutating routes, Settings modal pattern, rem scale from SP02), SP01 (`--dir` naming in labels, `resolveJobRef`) · Owns: `src/dashboard/{index.html,dashboard.js,dashboard.css}` (editor modal, "+", pencil), `src/job-prepare.ts` (new: normalize + folder trust shared by client and daemon), `src/client.ts` (createJob/updateJob delegate to it; trust helpers move out), `src/daemon/api.ts` (`POST /api/jobs`, `PUT /api/jobs/:id` opt-in prepare mode, `GET /api/jobs/editor-meta`), `src/job-input.ts` (null-clears in patch schema), `tests/unit/dashboard-*.test.ts` + new `dashboard-job-editor`/`api-job-prepare` tests, `docs/reference/` (dashboard/API notes), `docs/specs/` (dashboard section), changeset.
+Repo/branch: `/root/projects/crontick-wt-improvements`, `users/tejitpabari/crontick-improvements` · Depends on: SP03 (request guard on mutating routes, Settings modal pattern, rem scale from SP02), SP01 (`--dir` naming in labels, `resolveJobRef`) · Owns: `src/dashboard/{index.html,dashboard.js,dashboard.css}` (editor modal, "+", pencil), `src/job-prepare.ts` (new: normalize + folder trust shared by client and daemon), `src/client.ts` (createJob/updateJob delegate to it; trust helpers move out), `src/daemon/api.ts` (`POST /api/jobs`, `PUT /api/jobs/:id` opt-in prepare mode, `GET /api/jobs/editor-meta`), `src/job-input.ts` (null-clears in patch schema), `src/cli/` (`jobs update --unset`), `tests/unit/dashboard-*.test.ts` + new `dashboard-job-editor`/`api-job-prepare` tests, `docs/reference/` (dashboard/API notes), `docs/specs/` (dashboard section), changeset.
 
 ## TL;DR
 
@@ -70,7 +70,7 @@ New `src/job-prepare.ts` exports `prepareCreate(input, {env, cwd, trustFolder, r
 
 ### Clearing optional fields (D2)
 
-`JobPatchInputSchema`/`PromptActionPatchSchema` accept `null` for `timeoutSec`, `sessionId`, `description` meaning "remove"; `mergeActionPatch` deletes keys whose patch value is `null`. Library/MCP gain this too (documented in `docs/reference/`), so no surface drift; CLI gets no new flag (non-goal) and `surface-drift` is unaffected because no capability is added. `cwd`, `engine`, `prompt`, `alias`, `schedule` are required-ish and cannot be nulled.
+`JobPatchInputSchema`/`PromptActionPatchSchema` accept `null` for `timeoutSec`, `sessionId`, `description` meaning "remove"; `mergeActionPatch` deletes keys whose patch value is `null`. Library/MCP gain this too (documented in `docs/reference/`), so no surface drift; the CLI gets one flag, `jobs update <job> --unset <field>` (repeatable and/or comma-separated; values `timeout`, `session-id`, `desc`, matching `--timeout`/`--session-id`/`--desc`), which the shim maps to `null` in the patch (no business logic); unknown field, or `--unset X` with the setter flag for X, is a usage error. `surface-drift` is unaffected because no capability is added. `cwd`, `engine`, `prompt`, `alias`, `schedule` are required-ish and cannot be nulled.
 
 ### Folder trust (D3)
 
@@ -103,7 +103,7 @@ CLI / MCP / library ─► client.createJob ─► job-prepare.ts ◄───�
 | # | Decision | Choice | Alternatives considered | Why |
 |---|---|---|---|---|
 | D1 | Where browser create/update logic lives | Shared `job-prepare.ts`, daemon routes opt in via `?prepare=1` | Re-implement in JS; change default `POST /api/jobs` to accept inputs; new `/api/jobs/normalize` that returns a Job for the browser to POST | One implementation (rule 7/9); opt-in keeps client contract and tests; normalize-then-POST is two round trips and races trust |
-| D2 | Clearing fields on update | `null` = remove in the patch schema for 3 fields | PUT full replace from the form; sentinel strings | Reuses merge path; keeps parity across surfaces; no hidden data loss on partial forms |
+| D2 | Clearing fields on update | `null` = remove in the patch schema for 3 fields; CLI via one `--unset <field>` flag | PUT full replace from the form; sentinel strings | Reuses merge path; keeps parity across surfaces; no hidden data loss on partial forms |
 | D3 | Trust UX | Reveal-on-`TRUST_REQUIRED` checkbox, default off | Always show checkbox; auto-trust; skip trust for dashboard | Mirrors CLI safety (explicit consent); engines without trust never see it |
 | D4 | Container | Modal | Drawer reuse | Long form + sticky footer; consistent with SP03 |
 | D5 | Dir on create | Required, empty by default | Prefill daemon cwd | Brief item 9: daemon cwd meaningless |
@@ -120,7 +120,7 @@ CLI / MCP / library ─► client.createJob ─► job-prepare.ts ◄───�
 
 - [RESOLVED: guard owned by SP03] **Guard dependency.** Editor POST/PUT can set `cwd`/`args` (arbitrary command args to a configured engine) and `--trust-folder`; relies on SP03's Host/Content-Type/Origin guard covering all mutating routes, not only `/api/config`. Confirm SP03 applies it globally (brief item 10). If not, SP04 must not ship.
 - [RESOLVED-2: `?prepare=1` flag on create/update; default routes unchanged (D1)] `prepare=1` flag vs making `POST /api/jobs` always normalize.
-- [RESOLVED-3: `null`-clears accepted on all surfaces (CLI/MCP/library/dashboard) through one shared schema; `docs/reference/library-api.md` and `mcp-tools.md` notes + tests required (see Acceptance Criteria)] `null`-clears widen the public patch type (`JobPatchInput`). Note: CLI gains no new flag in this SP (non-goal); the schema is the single contract.
+- [RESOLVED-3: `null`-clears accepted on all surfaces (CLI/MCP/library/dashboard) through one shared schema; `docs/reference/library-api.md` and `mcp-tools.md` notes + tests required (see Acceptance Criteria)] `null`-clears widen the public patch type (`JobPatchInput`). CLI exposes it via the single `jobs update --unset <field>` flag (owner decision, avoids flag sprawl); the schema is the single contract.
 - [DEFERRED-4: no directory autocomplete endpoint (`GET /api/fs/dirs`); directory entry stays free text] No browser file picker can return an absolute path.
 - [RESOLVED-5: expose `retry.backoffSec` in the form under "advanced"]
 - [RESOLVED-6: owner decision, confirm at Save not at Edit; stop vs wait] Editing a job with in-flight runs: on Save, user chooses (a) stop in-flight runs, then apply (daemon cancels them and applies in one request), or (b) wait for runs to complete, then apply: the job is paused (no new fires/queued starts for it), the change applies once its in-flight runs finish, then the job resumes automatically; or cancels the save. Stopped runs: status `canceled`, no retry, do not trigger `--after` dependents; queued runs for that job are dropped. Non-interactive: CLI prompts on a TTY else `--stop-running` / `--wait-running`; MCP/library `inFlight: 'stop' | 'wait'`; no choice with runs in flight = error listing them. Pause state and its surface parity are owned by SP03 (R16/R17); open follow-ups are SP03 OPEN-9..12.
@@ -135,6 +135,7 @@ CLI / MCP / library ─► client.createJob ─► job-prepare.ts ◄───�
 - Every row of the parity table has a control; a test enumerates `commonJobOptions` flags (minus the excluded set) against form field ids so a new CLI flag fails until mapped.
 - Create via `POST /api/jobs?prepare=1` applies config overlap/retry defaults, default engine, alias autogen, `INVALID_CWD` for missing dir, same result as `createJobFromCliOptions` (parametrized equivalence test).
 - Update via `PUT ...?prepare=1` merges field-wise (changing only prompt keeps args, reuseSession, env); `null` clears `timeoutSec`/`sessionId`/`description`; cwd change with a session returns `CWD_CHANGE_BREAKS_SESSION`.
+- `jobs update --unset timeout` removes the timeout (likewise `session-id`, `desc`); unknown field and `--unset X` with the setter flag for X are usage errors; CLI test added; `docs/reference/cli.md` documents `--unset`.
 - Untrusted dir with Claude engine returns `TRUST_REQUIRED` (details.folders); retry with `trustFolder=1` trusts and creates; non-trust engines never return it.
 - `client.createJob/updateJob` unchanged in behavior (existing tests pass) while trust/normalize code exists once in `job-prepare.ts`.
 - Dashboard asset tests: "+" button, per-row pencil, editor modal, registry (`SCHEDULE_KINDS`), no px font sizes, all fetches set `Content-Type: application/json`; dirty-cancel uses the SP03 confirm string. Jsdom or string-level tests for body building (form values -> JSON) if a DOM harness is available [OPEN: current dashboard tests are string/HTTP only].

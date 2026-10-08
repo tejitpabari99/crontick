@@ -130,7 +130,7 @@ Legend: **O** = owner decision, **V** = verify during implementation. Status: RE
 | 03 | Paused state across restart (OPEN-11): not persisted; restart comes up unpaused | O | RESOLVED |
 | 03 | Timeout for wait-for-runs (OPEN-12): none | O | RESOLVED |
 | 04 | `prepare=1` flag vs always-normalize (OPEN-2): `?prepare=1` flag on create/update | O | RESOLVED |
-| 04 | `null`-clears exposed on MCP/library too (OPEN-3): all surfaces, one schema; library-api.md + mcp-tools.md docs and tests required | O | RESOLVED |
+| 04 | `null`-clears exposed on MCP/library too (OPEN-3): all surfaces, one schema; CLI via single `jobs update --unset <field>` flag; library-api.md + mcp-tools.md + cli.md docs and tests required | O | RESOLVED |
 | 04 | Dir path autocomplete endpoint (OPEN-4): no endpoint | O | DEFERRED |
 | 04 | Expose `retry.backoffSec` as "advanced" (OPEN-5): expose under advanced | O | RESOLVED |
 | 04 | No warning when editing job with in-flight run/dependents (OPEN-6): confirm at Save; stop in-flight runs or wait | V | RESOLVED |
