@@ -10,7 +10,7 @@ Source: [brainstorm.md](brainstorm.md) (approved). Deferred ideas: [docs/agent_f
 
 ## TL;DR
 
-Ten sub-projects: CLI polish, `daemon.port` + dashboard polish, config surfaces + Settings UI (+ API hardening), dashboard job editor, `--after` and `--webhook` triggers, opt-in autostart (Linux, macOS, Windows), opt-in catch-up. Biggest risks: SP09 launcher-survival unknown, SP06 HMAC-over-smee (the SP07/08/09 interface mismatch is resolved, see Contradictions). 20 OPEN items remain: 0 need an owner decision, 20 are verify-during-implementation.
+Ten sub-projects: CLI polish, `daemon.port` + dashboard polish, config surfaces + Settings UI (+ API hardening), dashboard job editor, `--after` and `--webhook` triggers, opt-in autostart (Linux, macOS, Windows), opt-in catch-up. Biggest risks: SP09 launcher-survival unknown, SP06 HMAC-over-smee (the SP07/08/09 interface mismatch is resolved, see Contradictions). 1 OPEN item remains (SP04 DOM harness, verify-during-implementation); 0 need an owner decision. SP05-SP10 items are DEFERRED to implementation (owner, 2026-10-08).
 
 ## Sub-projects
 
@@ -20,12 +20,12 @@ Ten sub-projects: CLI polish, `daemon.port` + dashboard polish, config surfaces 
 | 02 | [02-port-and-dashboard-polish](02-port-and-dashboard-polish/PRD.md) | `daemon.port` config, drop env var, rem scale ~80%, trimmed header | none | 1 | 0 |
 | 03 | [03-config-surfaces-and-settings](03-config-surfaces-and-settings/PRD.md) | `config list/get/set/unset`, `/api/config`, Settings modal, **request guard on all mutating routes**, **daemon pause/resume + stop-vs-wait on in-flight edits** (pause/resume user-facing) | 02 | 2 | 0 |
 | 04 | [04-dashboard-job-editor](04-dashboard-job-editor/PRD.md) | "+" create / pencil edit, `job-prepare.ts`, `SCHEDULE_KINDS` | 03, 01 | 2 | 1 (V) |
-| 05 | [05-after-trigger](05-after-trigger/PRD.md) | `after` kind, `onRunComplete`, `TriggerDispatcher`, `trigger_json` | 01, 04 | 3 | 4 (1 O, 3 V) |
-| 06 | [06-webhook-trigger](06-webhook-trigger/PRD.md) | `webhook` kind, smee-style SSE relay, `jobs trigger` | 05, 01, 04, 03 | 3 | 2 (V) |
-| 07 | [07-autostart-core-linux](07-autostart-core-linux/PRD.md) | `autostart enable/disable/status`, backend interface, systemd, guard rewrite, `daemon start --home`; MCP status only | none | 3 | 1 (V) |
-| 08 | [08-autostart-macos](08-autostart-macos/PRD.md) | LaunchAgent backend | 07 | 3 | 5 (V, real Mac) |
-| 09 | [09-autostart-windows](09-autostart-windows/PRD.md) | schtasks logon-task backend | 07 (+08 alignment) | 4 | 6 (V) |
-| 10 | [10-catch-up](10-catch-up/PRD.md) | Job `catchUp` flag, run latest missed fire once | 05 (hard), 04 (soft), 01 | 4 | 2 (V) |
+| 05 | [05-after-trigger](05-after-trigger/PRD.md) | `after` kind, `onRunComplete`, `TriggerDispatcher`, `trigger_json` | 01, 04 | 3 | 0 |
+| 06 | [06-webhook-trigger](06-webhook-trigger/PRD.md) | `webhook` kind, smee-style SSE relay, `jobs trigger` | 05, 01, 04, 03 | 3 | 0 |
+| 07 | [07-autostart-core-linux](07-autostart-core-linux/PRD.md) | `autostart enable/disable/status`, backend interface, systemd, guard rewrite, `daemon start --home`; MCP status only | none | 3 | 0 |
+| 08 | [08-autostart-macos](08-autostart-macos/PRD.md) | LaunchAgent backend | 07 | 3 | 0 |
+| 09 | [09-autostart-windows](09-autostart-windows/PRD.md) | schtasks logon-task backend | 07 (+08 alignment) | 4 | 0 |
+| 10 | [10-catch-up](10-catch-up/PRD.md) | Job `catchUp` flag, run latest missed fire once | 05 (hard), 04 (soft), 01 | 4 | 0 |
 
 ## Execution order
 
@@ -57,7 +57,7 @@ Gate (cleared): the SP07/08/09 interface deltas (C1-C4 below) are resolved and f
 - `daemon.port` config only, explicit busy port fails loudly, env var removed, editable in config surfaces only by config-file edit with no daemon running, dashboard read-only (item 1; owner decision, SP03 R16).
 - Dashboard ~80% via rem scale; header `v... · pid ...` + red error badge (items 2-3).
 - `--dir` (no short flag) replaces `-C, --cwd`; stored field stays `cwd` (item 5).
-- **API hardening (item 10) MOVED from SP04 to SP03**: Host/Content-Type/Origin guard on ALL mutating daemon routes, because `PATCH /api/config` can set engine commands. SP04/05/06 consume it. Pending owner review.
+- **API hardening (item 10) MOVED from SP04 to SP03**: Host/Content-Type/Origin guard on ALL mutating daemon routes, because `PATCH /api/config` can set engine commands. SP04/05/06 consume it. Owner approved (2026-10-08).
 - No tokens/remote access; webhook via outbound SSE relay only; no inbound listener (item 12).
 - Autostart reintroduced, opt-in, no native deps/Run key/VBS/admin; rule-8 sign-off done in brainstorm, restated in PR (item 13). MCP exposes autostart status only: a deliberate surface-parity exception encoded in `SURFACE_CAPABILITIES` and `surface-drift.test.ts` (owner decision).
 - `daemon pause`/`resume` are user-facing (CLI, MCP, dashboard); fires due while paused are `skipped`; paused state is not persisted; no wait timeout (SP03, owner decision).
@@ -107,7 +107,7 @@ Assigned: 0034 autostart (07-09), 0035 trigger dispatch (05), 0036 webhook relay
 
 ## Consolidated [OPEN] questions
 
-Legend: **O** = owner decision, **V** = verify during implementation. Status: RESOLVED / DEFERRED / OPEN (remaining). Remaining open: 20 (0 O, 20 V).
+Legend: **O** = owner decision, **V** = verify during implementation. Status: RESOLVED / DEFERRED / OPEN (remaining). Remaining open: 1 (0 O, 1 V).
 
 | SP | Item | Kind | Status |
 |---|---|---|---|
@@ -137,18 +137,18 @@ Legend: **O** = owner decision, **V** = verify during implementation. Status: RE
 | 04 | `datetime-local` parsed as local like `--at` (OPEN-7); Windows cmd-line length (OPEN-8) | V | RESOLVED |
 | 04 | No DOM harness for dashboard tests (string/HTTP only) | V | OPEN |
 | 05 | Where `runs get` renders `trigger_json`: SP06 renders, SP05 stores `{kind, upstream}` | V | RESOLVED |
-| 05 | `trigger_json` migration pattern (additive, guarded `ALTER`) | V | OPEN |
-| 05 | `skip` overlap drops triggers: docs recommend `queue` | V | OPEN |
-| 05 | Stats output renders schedule? | V | OPEN |
+| 05 | `trigger_json` migration pattern (additive, guarded `ALTER`) | V | DEFERRED (verify in task) |
+| 05 | `skip` overlap drops triggers: docs recommend `queue` | V | DEFERRED (verify in task) |
+| 05 | Stats output renders schedule? | V | DEFERRED (verify in task) |
 | 05 | Import with unresolved upstream: import the job disabled with `AFTER_UPSTREAM_NOT_FOUND` error; rest of import succeeds | O | RESOLVED |
 | 05 | Delete with dependents: refuse, naming `--force` | O | RESOLVED |
-| 06 | HMAC over smee-parsed body may not match GitHub signature; test real delivery | V | OPEN |
+| 06 | HMAC over smee-parsed body may not match GitHub signature; test real delivery | V | DEFERRED (verify in task) |
 | 06 | smee.io availability/limits: accept smee.io default; document self-hosting a smee server | O | RESOLVED |
 | 06 | `relay`/`secret` storage: plaintext in jobs file (0600) + redaction; no keychain | O | RESOLVED |
 | 06 | Export/import: strip relay+secret by default | O | RESOLVED |
 | 06 | Non-GitHub header allowlist: GitHub-only HMAC in v1; Stripe/GitLab | V | DEFERRED |
-| 06 | Burst 10/min, dedupe window values | V | OPEN |
-| 07 | Daemon exit code on SIGTERM must be 0 (verify shutdown path, add test) | V | OPEN |
+| 06 | Burst 10/min, dedupe window values | V | DEFERRED (verify in task) |
+| 07 | Daemon exit code on SIGTERM must be 0 (verify shutdown path, add test) | V | DEFERRED (verify in task) |
 | 07 | `SuccessExitStatus`/`RestartPreventExitStatus` on 75 | V | RESOLVED (superseded by C1) |
 | 07 | PATH snapshot goes stale: accept, show "re-run enable" hint | V | RESOLVED |
 | 07 | MCP autostart: status only, no enable/disable (deliberate parity exception) | O | RESOLVED |
@@ -156,23 +156,23 @@ Legend: **O** = owner decision, **V** = verify during implementation. Status: RE
 | 07 | `_npx` ephemeral path: refuse enable | O | RESOLVED |
 | 08 | Interface delta (C1): `CRONTICK_SUPERVISED=1`, exit 0 | O | RESOLVED |
 | 08 | Label domain: `dev.crontick.daemon` | O | RESOLVED |
-| 08 | No other core delta needed (`logsDir` from `spec.env`, `inspect()` fits) | V | OPEN |
-| 08 | BTM toggle vs `print-disabled`; bootstrap error 5 after Login Items off | V (real Mac) | OPEN |
-| 08 | `AbandonProcessGroup`/TCC attribution | V (real Mac) | OPEN |
-| 08 | Claude "Not logged in" under launchd | V (real Mac) | OPEN |
-| 08 | `launchctl print` format drift | V (real Mac) | OPEN |
-| 09 | Detached daemon survives task instance ending (blocking) | V (Windows CI, first) | OPEN |
-| 09 | Standard user can create `\crontick\` folder; else root-level `\crontick-daemon` fallback pre-approved by owner | V | OPEN (verification only) |
-| 09 | `/query /xml` code page | V | OPEN |
-| 09 | SID `UserId` non-admin; domain/AAD logon trigger | V | OPEN |
-| 09 | No OS toggle for tasks | V | OPEN |
-| 09 | Paths with space / non-ASCII profile | V | OPEN |
+| 08 | No other core delta needed (`logsDir` from `spec.env`, `inspect()` fits) | V | DEFERRED (verify in task) |
+| 08 | BTM toggle vs `print-disabled`; bootstrap error 5 after Login Items off | V (real Mac) | DEFERRED (verify in task) |
+| 08 | `AbandonProcessGroup`/TCC attribution | V (real Mac) | DEFERRED (verify in task) |
+| 08 | Claude "Not logged in" under launchd | V (real Mac) | DEFERRED (verify in task) |
+| 08 | `launchctl print` format drift | V (real Mac) | DEFERRED (verify in task) |
+| 09 | Detached daemon survives task instance ending (blocking) | V (Windows CI, first) | DEFERRED (verify in task) |
+| 09 | Standard user can create `\crontick\` folder; else root-level `\crontick-daemon` fallback pre-approved by owner | V | DEFERRED (verify in task) |
+| 09 | `/query /xml` code page | V | DEFERRED (verify in task) |
+| 09 | SID `UserId` non-admin; domain/AAD logon trigger | V | DEFERRED (verify in task) |
+| 09 | No OS toggle for tasks | V | DEFERRED (verify in task) |
+| 09 | Paths with space / non-ASCII profile | V | DEFERRED (verify in task) |
 | 09 | Deltas A/B (`cliScript`, `expectedCommand`) (C2) | O | RESOLVED |
 | 09 | `CRONTICK_HOME` loss: `daemon start --home` (C4) | O | RESOLVED |
-| 10 | Sleep/wake behavior of timers (follow-up, not SP10) | V | OPEN |
+| 10 | Sleep/wake behavior of timers (follow-up, not SP10) | V | DEFERRED (verify in task) |
 | 10 | Login storm of many catch-up jobs; no global concurrency cap: stagger/cap | O | DEFERRED |
 | 10 | Stale-prompt max-age option (`futures.md`) | O | DEFERRED |
-| 10 | enable/`recordTick` change ownership vs SP05 enable guard | V | OPEN |
+| 10 | enable/`recordTick` change ownership vs SP05 enable guard | V | DEFERRED (verify in task) |
 
 ## Owner manual steps
 
@@ -191,4 +191,4 @@ Legend: **O** = owner decision, **V** = verify during implementation. Status: RE
 
 ## Next step
 
-Owner answers recorded. No owner decisions remain (SP05 import with unresolved upstream: import disabled). V items resolve during implementation. Then run `dev-tasks` to generate TASKS.md per SP.
+SP05-SP10 OPEN items deferred to implementation (owner, 2026-10-08); SP03 request guard approved. No owner decisions remain (SP05 import with unresolved upstream: import disabled). Next: run `dev-tasks` to generate TASKS.md for SP05-SP10.

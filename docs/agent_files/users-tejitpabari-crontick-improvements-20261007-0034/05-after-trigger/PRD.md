@@ -85,9 +85,9 @@ export class TriggerDispatcher {
 
 ## Risks / Open Questions
 
-- [OPEN] `runs.trigger_json`: confirm the store's additive-migration pattern. [RESOLVED: rendering in `runs get`/dashboard belongs to SP06 (its R12); SP05 only stores `{kind, upstream}`]
-- [OPEN] Fast upstream + slow downstream with `skip` drops triggers (visible as `skipped`); proposed: docs recommend `overlap: queue`, no code.
-- [OPEN] Does any `stats` output render schedule/next-run? Not verified; if so use `describeSchedule`.
+- [DEFERRED: verify during implementation] `runs.trigger_json`: confirm the store's additive-migration pattern. [RESOLVED: rendering in `runs get`/dashboard belongs to SP06 (its R12); SP05 only stores `{kind, upstream}`]
+- [DEFERRED: verify during implementation — docs recommend `overlap: queue`, no code] Fast upstream + slow downstream with `skip` drops triggers (visible as `skipped`); proposed: docs recommend `overlap: queue`, no code.
+- [DEFERRED: verify during implementation] Does any `stats` output render schedule/next-run? Not verified; if so use `describeSchedule`.
 - [RESOLVED: owner decision, import the job disabled with an `AFTER_UPSTREAM_NOT_FOUND` error on the job; rest of the import succeeds] Import with an unresolved ref: fail vs import disabled. (R4)
 - [RESOLVED: CLI delete with dependents refuses, naming `--force`; no interactive prompt] (R5)
 - [RESOLVED: dependents fire on adopted-run exit, not on startup reconcile] see Architecture.

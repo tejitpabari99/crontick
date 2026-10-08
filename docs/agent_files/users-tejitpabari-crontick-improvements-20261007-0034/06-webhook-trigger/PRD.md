@@ -88,11 +88,11 @@ Probed live `[verified: curl smee.io 2026-10-07]`: `GET https://smee.io/new` -> 
 
 ## Risks / Open Questions
 
-- [OPEN] **HMAC over smee**: smee delivers `body` as parsed JSON, not raw bytes, so `JSON.stringify(body)` may differ from what GitHub signed (e.g. GitHub escapes `<`/`>`/`&` as `\u00xx`; key order/whitespace). Must be tested with a real GitHub delivery; if it fails, ship without `--webhook-secret` and record in futures (raw-body-capable relay).
+- [DEFERRED: verify during implementation — if real GitHub delivery fails, ship without `--webhook-secret` and record raw-body relay in futures] **HMAC over smee**: smee delivers `body` as parsed JSON, not raw bytes, so `JSON.stringify(body)` may differ from what GitHub signed (e.g. GitHub escapes `<`/`>`/`&` as `\u00xx`; key order/whitespace). Must be tested with a real GitHub delivery; if it fails, ship without `--webhook-secret` and record in futures (raw-body-capable relay).
 - [RESOLVED: accept smee.io as the default; document self-hosting a smee server as the mitigation] smee.io availability/abuse limits/rate limiting unknown; no SLA. Status + doctor visibility remain.
 - [RESOLVED: plaintext in the jobs file (mode 0600) + redaction; no keychain] `secret`/`relay` storage.
 - [RESOLVED: export/import strips `relay` and `secret` by default] Export/import secret handling.
-- [OPEN] Default burst limit 10/min and dedupe window values are guesses.
+- [DEFERRED: verify during implementation — tune during implementation] Default burst limit 10/min and dedupe window values are guesses.
 - [RESOLVED: GitHub-only HMAC in v1] Header allowlist for non-GitHub providers (Stripe `stripe-signature`, GitLab `x-gitlab-token`): [DEFERRED].
 - [RESOLVED: Last-Event-ID] not usable (counter ids, no replay).
 - [RESOLVED: keep-alive] ping ~30s observed; idle watchdog 90s.

@@ -129,7 +129,7 @@ WantedBy=default.target
 
 ## Risks / Open Questions
 
-- [OPEN] Daemon exit code on SIGTERM must be 0 so graceful stop is not restarted; verify shutdown path in `daemon/index.ts`, add test.
+- [DEFERRED: verify during implementation] Daemon exit code on SIGTERM must be 0 so graceful stop is not restarted; verify shutdown path in `daemon/index.ts`, add test.
 - [RESOLVED: accept; status/enable output shows a "re-run `crontick autostart enable`" hint] `PATH` snapshot goes stale when engines are installed later.
 - [RESOLVED: MCP exposes autostart status only; no enable/disable via MCP. Deliberate surface-parity exception, see R1/D7; `SURFACE_CAPABILITIES` and `surface-drift.test.ts` encode it] MCP `enable` would let an agent create login persistence.
 - [RESOLVED: numbers assigned up front: 0034 autostart (SP07-09), 0035 trigger dispatch (SP05), 0036 webhook relay (SP06)] ADR 0034 number collision.
