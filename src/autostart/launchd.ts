@@ -1,9 +1,14 @@
 import { dirname, join } from 'node:path';
 import { CrontickError } from '../errors.js';
-import { PLIST_LABEL, plistPaths, renderPlist } from './plist.js';
+import { PLIST_LABEL, parsePlist, plistPaths, renderPlist } from './plist.js';
 import type { AutostartBackend, AutostartDeps, AutostartSpec, BackendInspection } from './types.js';
 
 const LAUNCHCTL = '/bin/launchctl';
+
+const LOGIN_ITEMS_NOTE =
+  'Registered but not loaded in launchd; it may be switched off in System Settings > General > Login Items & Extensions.';
+
+const DISABLED_RE = new RegExp(`"${PLIST_LABEL.replace(/\./g, '\\.')}"\\s*=>\\s*(disabled|true)`);
 
 const text = (r: { stderr: string; stdout: string }): string => (r.stderr || r.stdout).trim();
 
@@ -92,19 +97,66 @@ export class LaunchdBackend implements AutostartBackend {
     return { removed: wasLoaded || existed };
   }
 
-  // TODO(SP08 Task 3): real inspect (plist parse, launchctl print / print-disabled). Minimal stub for the interface.
   async inspect(): Promise<BackendInspection> {
-    return { registered: false };
+    const path = this.plistPath;
+    let xml: string;
+    try {
+      xml = await this.deps.fs.readFile(path, 'utf-8');
+    } catch {
+      return { registered: false };
+    }
+    const out: BackendInspection = { registered: true, definitionPath: path };
+    const notes: string[] = [];
+    const command = parsePlist(xml);
+    if (command) out.command = command;
+    else notes.push(`Could not parse ProgramArguments from ${path}.`);
+
+    const uid = this.getUid?.();
+    if (uid === undefined) {
+      notes.push('Cannot determine the current user id; launchd state unknown.');
+    } else {
+      const domain = `gui/${uid}`;
+      const loaded = await this.loadedState(`${domain}/${PLIST_LABEL}`);
+      if (loaded === 'unknown') notes.push('Could not read launchd state (launchctl print output unparseable or unavailable).');
+      else {
+        out.active = loaded === 'running';
+        if (loaded === 'absent') notes.push(LOGIN_ITEMS_NOTE);
+      }
+      const disabled = await this.disabledState(domain);
+      if (disabled !== undefined) out.enabledInManager = !disabled;
+    }
+    if (notes.length > 0) out.notes = notes;
+    return out;
+  }
+
+  /** `print` is "NOT API": parse only `state =` / `pid =`, tolerate anything else. */
+  private async loadedState(target: string): Promise<'running' | 'idle' | 'absent' | 'unknown'> {
+    try {
+      const r = await this.ctl('print', target);
+      if (r.code !== 0) return 'absent';
+      const state = /^\s*state\s*=\s*(.+?)\s*$/m.exec(r.stdout)?.[1];
+      const pid = /^\s*pid\s*=\s*(\d+)\s*$/m.exec(r.stdout)?.[1];
+      if (pid !== undefined && Number(pid) > 0) return 'running';
+      if (state === 'running') return 'running';
+      if (state !== undefined) return 'idle';
+      return 'unknown';
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  /** `undefined` when the disable database cannot be read. */
+  private async disabledState(domain: string): Promise<boolean | undefined> {
+    try {
+      const r = await this.ctl('print-disabled', domain);
+      return r.code === 0 ? DISABLED_RE.test(r.stdout) : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private async isDisabled(domain: string): Promise<boolean> {
-    try {
-      const r = await this.ctl('print-disabled', domain);
-      if (r.code !== 0) return false;
-      return new RegExp(`"${PLIST_LABEL.replace(/\./g, '\\.')}"\\s*=>\\s*(disabled|true)`).test(r.stdout);
-    } catch {
-      return false;
-    }
+    return (await this.disabledState(domain)) === true;
   }
 
   private failure(verb: string, what: string, r: { code: number; stderr: string; stdout: string }): CrontickError {

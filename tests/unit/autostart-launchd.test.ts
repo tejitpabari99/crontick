@@ -191,3 +191,71 @@ describe('LaunchdBackend.uninstall', () => {
     expect(h.files.has(PLIST)).toBe(false);
   });
 });
+
+describe('LaunchdBackend.inspect', () => {
+  const PRINT_RUNNING = `${target} = {\n\tactive count = 1\n\tstate = running\n\tprogram = /usr/local/bin/node\n\tpid = 4242\n\tlast exit code = (never exited)\n}`;
+  const PRINT_WAITING = `${target} = {\n\tstate = not running\n\tlast exit code = 1\n}`;
+  const PD_ENABLED = `disabled services = {\n\t"com.apple.foo" => disabled\n\t"${PLIST_LABEL}" => enabled\n}`;
+  const PD_DISABLED = `disabled services = {\n\t"${PLIST_LABEL}" => disabled\n}`;
+
+  it('missing plist -> registered false, no throw', async () => {
+    const h = harness();
+    expect(await h.backend.inspect()).toEqual({ registered: false });
+  });
+
+  it('loaded + running + enabled', async () => {
+    const h = harness({ files: { [PLIST]: rendered } });
+    h.respond[`print ${target}`] = { code: 0, stdout: PRINT_RUNNING };
+    h.respond['print-disabled gui/501'] = { code: 0, stdout: PD_ENABLED };
+    const r = await h.backend.inspect();
+    expect(r).toMatchObject({ registered: true, enabledInManager: true, active: true, definitionPath: PLIST });
+    expect(r.command?.nodePath).toBe(spec.nodePath);
+    expect(r.command?.args).toEqual([spec.daemonScript]);
+    expect(r.notes ?? []).toEqual([]);
+    expect(h.calls.every((c) => c[1] === 'print' || c[1] === 'print-disabled')).toBe(true);
+  });
+
+  it('loaded but not running -> active false', async () => {
+    const h = harness({ files: { [PLIST]: rendered } });
+    h.respond[`print ${target}`] = { code: 0, stdout: PRINT_WAITING };
+    h.respond['print-disabled gui/501'] = { code: 0, stdout: PD_ENABLED };
+    expect((await h.backend.inspect()).active).toBe(false);
+  });
+
+  it('unloaded service -> active false, Login Items note', async () => {
+    const h = harness({ files: { [PLIST]: rendered } });
+    h.respond[`print ${target}`] = NOT_LOADED;
+    h.respond['print-disabled gui/501'] = { code: 0, stdout: PD_ENABLED };
+    const r = await h.backend.inspect();
+    expect(r).toMatchObject({ registered: true, active: false });
+    expect(r.notes?.join(' ')).toContain('Login Items & Extensions');
+  });
+
+  it('disabled record -> enabledInManager false', async () => {
+    const h = harness({ files: { [PLIST]: rendered } });
+    h.respond[`print ${target}`] = NOT_LOADED;
+    h.respond['print-disabled gui/501'] = { code: 0, stdout: PD_DISABLED };
+    expect((await h.backend.inspect()).enabledInManager).toBe(false);
+  });
+
+  it('garbage print output -> active undefined + note, no throw', async () => {
+    const h = harness({ files: { [PLIST]: rendered } });
+    h.respond[`print ${target}`] = { code: 0, stdout: '\u0000<<garbage>>' };
+    h.respond['print-disabled gui/501'] = { code: 0, stdout: 'garbage' };
+    const r = await h.backend.inspect();
+    expect(r.registered).toBe(true);
+    expect(r.active).toBeUndefined();
+    expect(r.notes?.join(' ')).toMatch(/parse/i);
+  });
+
+  it('exec throwing and unparseable plist never throw', async () => {
+    const h = harness({ files: { [PLIST]: 'not a plist' } });
+    h.setThrow();
+    const r = await h.backend.inspect();
+    expect(r.registered).toBe(true);
+    expect(r.command).toBeUndefined();
+    expect(r.active).toBeUndefined();
+    expect(r.enabledInManager).toBeUndefined();
+    expect(r.notes?.length).toBeGreaterThan(0);
+  });
+});
