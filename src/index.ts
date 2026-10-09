@@ -15,7 +15,10 @@ export { CrontickError, ORPHAN_RUN_ERROR_CODE, ORPHAN_RUN_ERROR_MESSAGE } from '
 export { CrontickClient, createClient } from './client.js';
 export type { NormalizedUsage } from './run-output.js';
 export type {
+  ConfigListResult,
   ConfigPathInfo,
+  ConfigWriteOptions,
+  ConfigWriteResult,
   CreateJobOptions,
   ExportFile,
   ImportResult,
@@ -51,18 +54,11 @@ export type {
 export { jobJsonSchema, jobJsonSchemaText } from './schema-json.js';
 export {
   BUILT_IN_CONFIG,
-  addEngine,
   buildPromptRunCommand,
   configFilePath,
-  getConfigValue,
   initConfig,
-  listEngines,
   loadConfig,
   readConfigFile,
-  removeConfigValue,
-  removeEngine,
-  setConfigValue,
-  updateEngine,
   validateConfigFile,
   writeConfigFile,
 } from './config.js';

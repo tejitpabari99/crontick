@@ -70,13 +70,10 @@ Every method below that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `dashboardData` | `(options?: DashboardOptions): Promise<DashboardData>` | `DashboardData` — library-only; the dashboard is served by the daemon | `CrontickError` |
 | `jobJsonSchema` | `(): unknown` | JSON Schema object | — |
 | `getConfig` | `(): CrontickConfig` | `CrontickConfig` | `CrontickError` |
-| `getConfigValue` | `(path?: string): unknown` | Config value | `CrontickError` (`CONFIG_KEY_NOT_FOUND`) |
-| `setConfigValue` | `(path: string, value: unknown): CrontickConfig` | Updated config | `CrontickError` |
-| `removeConfigValue` | `(path: string): CrontickConfig` | Updated config | `CrontickError` |
-| `listEngines` | `(): Record<string, EngineConfig>` | Engines map | `CrontickError` |
-| `addEngine` | `(name: string, engine: Omit<EngineConfig, 'type'> & { type?: EngineConfig['type'] }): CrontickConfig` | Updated config | `CrontickError` (`CONFIG_ENGINE_EXISTS`) |
-| `updateEngine` | `(name: string, engine: Partial<EngineConfig>): CrontickConfig` | Updated config | `CrontickError` (`CONFIG_ENGINE_NOT_FOUND`) |
-| `removeEngine` | `(name: string): CrontickConfig` | Updated config | `CrontickError` (`CONFIG_ENGINE_NOT_FOUND`, `CONFIG_BUILTIN_ENGINE`) |
+| `configList` | `(): ConfigListResult` | `{ path, revision, config, stored, readOnly, notice }` — redacted effective config plus redacted stored keys; file-direct, works with the daemon down | `CrontickError` |
+| `configGet` | `(key: string): unknown` | Value at a dotted key of the redacted effective config | `CrontickError` (`CONFIG_KEY_NOT_FOUND`) |
+| `configSet` | `(key: string, value: unknown, options?: ConfigWriteOptions): Promise<ConfigWriteResult>` | `{ path, config, stored, changed, revision, notice, reload, warnings }` — `reload` is `reloaded`, `daemon-not-running` (no daemon is started) or `failed` (saved anyway, plus a warning). `engines.<name>` set adds or replaces an engine | `CrontickError` (`CONFIG_CONFLICT`, `CONFIG_KEY_READ_ONLY`, `RUNS_IN_FLIGHT`, validation codes) |
+| `configUnset` | `(key: string, options?: ConfigWriteOptions): Promise<ConfigWriteResult>` | Same as `configSet`. `unset engines.<name>` removes an engine; with a daemon up, a warning lists jobs still using it (the save is not blocked) | same |
 | `initConfig` | `(options?: { force?: boolean }): { path: string; config: CrontickConfig; created: boolean }` | Init result | `CrontickError` (`CONFIG_EXISTS`) |
 | `validateConfig` | `(path?: string): ConfigValidationResult` | Validation result | `CrontickError` |
 | `configPath` | `(): ConfigPathInfo` | `{ path, note }` — library-only helper mirrored by `info().configPath` | — |
@@ -86,13 +83,12 @@ Every method below that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 
 `RunRecord` includes optional `costUsd`, `turns`, `usageJson`, `transcriptPath`, and `engineStatus` for Claude runs with a complete result. `usageJson` is the redacted raw usage block serialized as JSON. `getRun` also returns `logFile`, the absolute path of the per-job log file (crontick-side lifecycle events of all runs of the job, one file per job, no engine output; `null` when file logging is off). `getLogs` and its types (`LogsResult`, `LogEntry`, `LogSource`, `LOG_SOURCES`) were removed; `crontick runs get` and `crontick_run_get` show the cleaned output and this path instead. `sessionId` is displayed as the Runner Session ID. The stored `command` shows `--settings <session-end-hook>` rather than the hook JSON. Raw-engine runs omit these fields. Run status `skipped` means an overlap fire never started; `canceled` means a run was terminated. `StatsSummary` and `JobStats` include separate `canceled` and `skipped` counts, plus `totalCostUsd` and `totalTurns`, summing runs with recorded usage and treating missing values as zero. `JobStats` covers every retained run of the job; `totalTurns` is the sum of `turns` (Claude `num_turns`, the agentic model round-trips of a run, accumulated across retries). `lastRunAt` stays epoch milliseconds (the CLI prints it as local ISO-8601).
 
-**Library-only methods (retained in the client but no longer part of `SURFACE_CAPABILITIES`, so they have no CLI/MCP equivalent):** `ensure`, `health`, `createJobFromCliOptions`, `jobJsonSchema`, `getConfig`, `drainNotices`, `isVerbose`, `daemonStart`, `daemonStatus`, `daemonRestart`, `configPath`, `validateSchedule`, `previewSchedule`, `dashboardStatus`, `dashboardData`, and the config/engine helpers (`getConfigValue`, `setConfigValue`, `removeConfigValue`, `listEngines`, `addEngine`, `updateEngine`, `removeEngine`, `initConfig`, `validateConfig`). These are intentionally excluded from the parity contract because they serve internal wiring, direct-use library scenarios, or launch infrastructure rather than proxying a daemon operation exposed on every surface. The `dashboard` command group and MCP tools were removed because the dashboard is always served by the daemon; `dashboardStart`/`dashboardStop` were removed entirely (they only made sense as commands), while `dashboardStatus`/`dashboardData` remain for direct library use.
+**Library-only methods (retained in the client but no longer part of `SURFACE_CAPABILITIES`, so they have no CLI/MCP equivalent):** `ensure`, `health`, `createJobFromCliOptions`, `jobJsonSchema`, `getConfig`, `drainNotices`, `isVerbose`, `daemonStart`, `daemonStatus`, `daemonRestart`, `configPath`, `validateSchedule`, `previewSchedule`, `dashboardStatus`, `dashboardData`, and the config helpers (`configList`, `configGet`, `configSet`, `configUnset`, `initConfig`, `validateConfig`). These are intentionally excluded from the parity contract because they serve internal wiring, direct-use library scenarios, or launch infrastructure rather than proxying a daemon operation exposed on every surface. The `dashboard` command group and MCP tools were removed because the dashboard is always served by the daemon; `dashboardStart`/`dashboardStop` were removed entirely (they only made sense as commands), while `dashboardStatus`/`dashboardData` remain for direct library use.
 
-Read methods that surface config values or captured text (`getConfigValue`, `getRun`,
+Read methods that surface config values or captured text (`configList`, `configGet`, `getRun`,
 `listRuns`, and `dashboardData`) apply the shared redaction contract before
 returning strings or structured text fields. Job-returning methods (`createJob`, `listJobs`,
-`getJob`, and `updateJob`) and config mutators (`setConfigValue`, `removeConfigValue`,
-`addEngine`, `updateEngine`, and `removeEngine`) also redact secret-like env/config values
+`getJob`, and `updateJob`) and config mutators (`configSet` and `configUnset`) also redact secret-like env/config values
 in their returned objects without changing the response schema. The same contract applies
 on CLI, MCP, and HTTP read surfaces: common provider tokens, `token=`/`******
 assignments, contextual or nearby-access-key-paired AWS secret-access-key values, and private keys
@@ -724,6 +720,8 @@ Returns the JSON Schema (object) generated from `JobSchema` via `zod-to-json-sch
 
 Exported from `src/schema-json.ts`; the JSON Schema as a formatted string.
 
+`ConfigWriteOptions` = `{ ifRevision?: string; inFlight?: 'stop' | 'wait' }`. `ifRevision` rejects with `CONFIG_CONFLICT` when the file changed since it was read. `inFlight` applies only when a daemon is up and runs are in flight (otherwise `RUNS_IN_FLIGHT`). The superseded `getConfigValue`, `setConfigValue`, `removeConfigValue`, `listEngines`, `addEngine`, `updateEngine`, `removeEngine` exports were removed.
+
 ### Config Functions
 
 ```ts
@@ -733,13 +731,6 @@ function readConfigFile(options?: ConfigOptions): CrontickConfig | null;
 function writeConfigFile(config: unknown, options?: ConfigOptions): CrontickConfig;
 function initConfig(options?: InitConfigOptions): { path: string; config: CrontickConfig; created: boolean };
 function validateConfigFile(options?: ConfigOptions): ConfigValidationResult;
-function getConfigValue(path: string | undefined, options?: ConfigOptions): unknown;
-function setConfigValue(path: string, value: unknown, options?: ConfigOptions): CrontickConfig;
-function removeConfigValue(path: string, options?: ConfigOptions): CrontickConfig;
-function listEngines(options?: ConfigOptions): Record<string, EngineConfig>;
-function addEngine(name: string, engine: unknown, options?: ConfigOptions): CrontickConfig;
-function updateEngine(name: string, engine: unknown, options?: ConfigOptions): CrontickConfig;
-function removeEngine(name: string, options?: ConfigOptions): CrontickConfig;
 function buildPromptRunCommand(action: PromptAction, options?: ConfigOptions): PromptRunCommand;
 ```
 

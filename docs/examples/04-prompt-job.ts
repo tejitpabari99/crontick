@@ -28,7 +28,7 @@ console.log('Created prompt job:', job.id);
 console.log('Action:', JSON.stringify(job.action, null, 2));
 
 // List available engines via the config API.
-const engines = client.listEngines();
+const engines = client.configList().config.engines;
 console.log('Registered engines:', Object.keys(engines));
 
 // Clean up.

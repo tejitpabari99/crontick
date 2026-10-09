@@ -43,23 +43,27 @@ import {
   type DashboardStatus,
 } from './dashboard.js';
 import {
-  addEngine,
+  applyOps,
+  getConfigRevision,
   getConfigValue,
   initConfig,
-  listEngines,
+  isDaemonProcessRunning,
   loadConfig,
+  readStoredConfigFile,
   redactConfigForRead,
-  removeConfigValue,
-  removeEngine,
-  setConfigValue,
-  updateEngine,
+  redactStoredConfigForRead,
   validateConfigFile,
   configFilePath,
   ensureConfigFile,
+  type ApplyOpsResult,
+  type ConfigOp,
   type ConfigValidationResult,
   type CrontickConfig,
-  type EngineConfig,
 } from './config.js';
+import { CONFIG_EDIT_NOTICE } from './constants/config.js';
+import type { PersistedConfig } from './schemas/config.js';
+import type { InFlightChoice } from './daemon/config-apply.js';
+import type { InFlightRun } from './daemon/runner.js';
 import { createLogger, isVerboseEnv, type Logger, type LogSink } from './logger.js';
 import { dataDir, jobsDir, logsDir, pidFilePath, portFilePath, runsDbPath } from './paths.js';
 import { VERSION } from './version.js';
@@ -212,6 +216,32 @@ export interface CrontickInfo {
    * served by the daemon whenever it is up; `info` never starts the daemon.
    */
   dashboardUrl: string | null;
+}
+
+export interface ConfigListResult {
+  path: string;
+  revision: string;
+  /** Effective config, redacted. */
+  config: CrontickConfig;
+  /** Raw stored keys, redacted. */
+  stored: PersistedConfig;
+  readOnly: string[];
+  notice: string;
+}
+
+export interface ConfigWriteOptions {
+  /** Reject with CONFIG_CONFLICT unless the file's revision equals this. */
+  ifRevision?: string;
+  /** Choice when runs are in flight (daemon up only). */
+  inFlight?: InFlightChoice;
+}
+
+export interface ConfigWriteResult extends ApplyOpsResult {
+  reload: 'reloaded' | 'daemon-not-running' | 'failed';
+  warnings: string[];
+  /** Present when the daemon applied the save. */
+  inFlightPolicy?: 'none' | InFlightChoice;
+  affectedRuns?: InFlightRun[];
 }
 
 export interface ConfigPathInfo {
@@ -595,32 +625,32 @@ export class CrontickClient {
     return redactConfigForRead(loadConfig({ env: this.effectiveEnv(), logger: this.logger.child('config') }));
   }
 
-  getConfigValue(path?: string): unknown {
-    return getConfigValue(path, { env: this.effectiveEnv(), logger: this.logger.child('config') });
+  /** File-direct config read (works with the daemon down): redacted effective config + redacted stored keys. */
+  configList(): ConfigListResult {
+    const options = { env: this.effectiveEnv(), logger: this.logger.child('config') };
+    return {
+      path: configFilePath(options),
+      revision: getConfigRevision(options),
+      config: redactConfigForRead(loadConfig(options)),
+      stored: redactStoredConfigForRead(readStoredConfigFile(options)),
+      readOnly: ['daemon'],
+      notice: CONFIG_EDIT_NOTICE,
+    };
   }
 
-  setConfigValue(path: string, value: unknown): CrontickConfig {
-    return setConfigValue(path, value, { env: this.effectiveEnv(), logger: this.logger.child('config') });
+  /** Value at a dotted key of the redacted effective config. Throws `CONFIG_KEY_NOT_FOUND` when absent. */
+  configGet(key: string): unknown {
+    return getConfigValue(key, { env: this.effectiveEnv(), logger: this.logger.child('config') });
   }
 
-  removeConfigValue(path: string): CrontickConfig {
-    return removeConfigValue(path, { env: this.effectiveEnv(), logger: this.logger.child('config') });
+  /** Sets one key (value already parsed). File-direct; routes through the daemon when one is up. */
+  async configSet(key: string, value: unknown, options: ConfigWriteOptions = {}): Promise<ConfigWriteResult> {
+    return this.writeConfig([{ op: 'set', key, value }], options);
   }
 
-  listEngines(): Record<string, EngineConfig> {
-    return listEngines({ env: this.effectiveEnv(), logger: this.logger.child('config') });
-  }
-
-  addEngine(name: string, engine: Omit<EngineConfig, 'type'> & { type?: EngineConfig['type'] }): CrontickConfig {
-    return addEngine(name, engine, { env: this.effectiveEnv(), logger: this.logger.child('config') });
-  }
-
-  updateEngine(name: string, engine: Partial<EngineConfig>): CrontickConfig {
-    return updateEngine(name, engine, { env: this.effectiveEnv(), logger: this.logger.child('config') });
-  }
-
-  removeEngine(name: string): CrontickConfig {
-    return removeEngine(name, { env: this.effectiveEnv(), logger: this.logger.child('config') });
+  /** Removes one key (reverts to default). File-direct; routes through the daemon when one is up. */
+  async configUnset(key: string, options: ConfigWriteOptions = {}): Promise<ConfigWriteResult> {
+    return this.writeConfig([{ op: 'unset', key }], options);
   }
 
   initConfig(options: { force?: boolean } = {}): { path: string; config: CrontickConfig; created: boolean } {
@@ -636,6 +666,87 @@ export class CrontickClient {
     const drained = this.notices;
     this.notices = [];
     return drained;
+  }
+
+  /**
+   * Shared config write path (D1): probe for a running daemon without demand-start.
+   * Daemon up -> PATCH /api/config (in-process reload, in-flight policy); falls back to a
+   * direct write if it is unreachable. Daemon down -> direct locked write, no spawn.
+   * Reload failure never fails the save.
+   */
+  private async writeConfig(ops: ConfigOp[], options: ConfigWriteOptions): Promise<ConfigWriteResult> {
+    const env = this.effectiveEnv();
+    const warnings: string[] = [];
+    const daemonUp = await this.probeDaemon();
+    let outcome: ApplyOpsResult & { inFlightPolicy?: ConfigWriteResult['inFlightPolicy']; affectedRuns?: ConfigWriteResult['affectedRuns'] } | undefined;
+    let reload: ConfigWriteResult['reload'] = 'daemon-not-running';
+    if (daemonUp) {
+      try {
+        outcome = await this.request('PATCH', '/api/config', { ops, ifRevision: options.ifRevision, inFlight: options.inFlight }, { ensure: false });
+        reload = 'reloaded';
+      } catch (err) {
+        if (!(err instanceof CrontickError) || err.code !== 'DAEMON_REQUEST_FAILED') throw err;
+        this.logger.debug('Daemon config PATCH unreachable; writing file directly', { error: errorMessage(err) });
+      }
+    }
+    if (!outcome) {
+      outcome = await applyOps(ops, {
+        env,
+        logger: this.logger.child('config'),
+        ifRevision: options.ifRevision,
+        daemonRunning: () => daemonUp,
+      });
+      if (daemonUp) {
+        try {
+          await this.request('POST', '/api/daemon/reload', undefined, { ensure: false });
+          reload = 'reloaded';
+        } catch (err) {
+          reload = 'failed';
+          this.logger.debug('Daemon reload after config save failed', { error: errorMessage(err) });
+          warnings.push('Config saved, but the daemon could not be reloaded; run `crontick daemon reload`.');
+        }
+      }
+    }
+    if (daemonUp) warnings.push(...(await this.engineRemovalWarnings(ops, outcome.changed)));
+    return { ...outcome, reload, warnings };
+  }
+
+  /** True when a daemon is reachable by pid/port file (or explicit URL); never starts one. */
+  private async probeDaemon(): Promise<boolean> {
+    const env = { ...process.env, ...this.effectiveEnv() };
+    const explicit = this.options.daemonUrl ?? env['CRONTICK_DAEMON_URL'];
+    if (!explicit && !isDaemonProcessRunning(env)) return false;
+    try {
+      await this.baseUrl({ ensure: false });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** D5: warn (never block) when a removed engine is still referenced by jobs. Only called with a daemon up. */
+  private async engineRemovalWarnings(ops: ConfigOp[], changed: string[]): Promise<string[]> {
+    const removed = ops
+      .filter((o) => o.op === 'unset' && changed.includes(o.key))
+      .map((o) => /^engines\.([^.]+)$/.exec(o.key)?.[1])
+      .filter((n): n is string => n !== undefined);
+    if (removed.length === 0) return [];
+    let jobs: Job[];
+    try {
+      jobs = await this.request<Job[]>('GET', '/api/jobs', undefined, { ensure: false });
+    } catch {
+      return [];
+    }
+    const warnings: string[] = [];
+    for (const name of removed) {
+      const users = jobs
+        .filter((j) => j.action.kind === 'prompt' && j.action.engine === name)
+        .map((j) => (j.alias ? `${j.id} (${j.alias})` : j.id));
+      if (users.length > 0) {
+        warnings.push(`Engine "${name}" was removed but is still used by ${users.length} job(s): ${users.join(', ')}. Their runs will fail until the engine is re-added or the jobs are changed.`);
+      }
+    }
+    return warnings;
   }
 
   /** Library-only verbose accessor. */

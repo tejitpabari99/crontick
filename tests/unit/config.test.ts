@@ -256,24 +256,24 @@ describe('crontick config core', () => {
     expect(result.args).toContain('--session-id');
   });
 
-  it('supports client config CRUD', () => {
+  it('supports client config CRUD', async () => {
     const { env, path } = makeHome();
     const client = createClient({ env, startDaemon: false });
 
     expect(client.initConfig()).toMatchObject({ path, created: true });
     expect(readFileSync(path, 'utf-8')).toContain('"defaultEngine": "claude"');
-    expect(client.addEngine('agency', { command: 'agency', args: ['cp'], env: { LOGS: 'XYZ' } })).toMatchObject({
+    expect((await client.configSet('engines.agency', { command: 'agency', args: ['cp'], env: { LOGS: 'XYZ' } })).config).toMatchObject({
       engines: { agency: { command: 'agency', args: ['cp'], env: { LOGS: 'XYZ' } } },
     });
-    expect(client.listEngines()).toHaveProperty('agency.command', 'agency');
-    expect(client.updateEngine('agency', { args: ['cp', '--logs-dir=XYZ'] })).toMatchObject({
+    expect(client.configList().config.engines).toHaveProperty('agency.command', 'agency');
+    expect((await client.configSet('engines.agency.args', ['cp', '--logs-dir=XYZ'])).config).toMatchObject({
       engines: { agency: { args: ['cp', '--logs-dir=XYZ'] } },
     });
-    expect(client.setConfigValue('defaultEngine', 'agency')).toMatchObject({ defaultEngine: 'agency' });
-    expect(client.getConfigValue('engines.agency.args')).toEqual(['cp', '--logs-dir=XYZ']);
-    expect(client.setConfigValue('defaultEngine', 'claude')).toMatchObject({ defaultEngine: 'claude' });
-    expect(client.removeEngine('agency')).not.toHaveProperty('engines.agency');
-    expect(client.removeConfigValue('engines.claude.args')).toMatchObject({ engines: { claude: { args: [] } } });
+    expect((await client.configSet('defaultEngine', 'agency')).config).toMatchObject({ defaultEngine: 'agency' });
+    expect(client.configGet('engines.agency.args')).toEqual(['cp', '--logs-dir=XYZ']);
+    expect((await client.configSet('defaultEngine', 'claude')).config).toMatchObject({ defaultEngine: 'claude' });
+    expect((await client.configUnset('engines.agency')).config).not.toHaveProperty('engines.agency');
+    expect((await client.configUnset('engines.claude.args')).config).toMatchObject({ engines: { claude: { args: [] } } });
     expect(client.validateConfig()).toMatchObject({ ok: true, problems: [] });
   });
 
