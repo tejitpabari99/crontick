@@ -44,6 +44,12 @@ with the crontick signature check and emits one notice (stderr and the daemon lo
 - `Port 47615 is in use by another crontick daemon (pid N, data dir <dir>); starting on a free port`
 - `Port 47615 is in use by another process (not crontick); starting on a free port`
 
+With an explicit `daemon.port` > 0 (`PreferredPort.explicit`), `EADDRINUSE` probes the same way but throws
+`CrontickError('DAEMON_PORT_IN_USE')` (details `{ port, occupant, configPath }`) with no fallback; `main()` logs it and
+exits 1, and `ensureDaemon` surfaces the text through the `DAEMON_START_FAILED` stderr tail. Explicit `0` is silent
+OS-assigned; non-`EADDRINUSE` errors (`EACCES`) rethrow. The port is resolved once at startup (config reload never
+rebinds); `describeDaemonPort(port, config)` reports `config says daemon.port N, running on M` when they differ.
+
 The process owner of a foreign listener is not detected. The actual bound port is written as plain text
 to `<dataDir>/daemon.port`, so clients always discover the real port from that file and never assume the default.
 `GET /health` returns `{ ok: true, product: "crontick", pid, port, dataDir, ... }`; clients verify `product`

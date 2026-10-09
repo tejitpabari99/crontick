@@ -227,6 +227,15 @@ still starts, on a free port, and says why: `Port 47615 is in use by another cro
 port actually in use, so bookmarked URLs on `47615` only work while that port is free. To get the stable port back,
 stop whatever holds it (or the other crontick daemon) and run `crontick daemon restart`.
 
+### `DAEMON_PORT_IN_USE` (explicit `daemon.port`)
+
+When `daemon.port` is set in `config.json`, the daemon binds exactly that port and never falls back. If it is taken,
+`crontick daemon start` (or any demand-start) fails with `Port N (config daemon.port) is in use by another crontick
+daemon (pid P, data dir D); free it or change daemon.port in <configPath>` (or `...by another process (not crontick)`).
+Free the port or edit `daemon.port`, then run `crontick daemon restart`: the port is read only at startup, and
+`crontick daemon status`/`info`/`doctor` show `config says daemon.port N, running on M` while they differ. On Windows,
+ports in reserved ranges fail with `EACCES` rather than "in use"; the error still names the port and key.
+
 ### `TRUST_REQUIRED` when creating a Claude job
 
 `jobs new`/`jobs update`/`share import` fail with `TRUST_REQUIRED` (nothing is saved) when the job's working

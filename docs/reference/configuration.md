@@ -133,6 +133,8 @@ crontick daemon reload
 |-------|------|----------|---------|-------------|------------------|
 | `port` | `integer` | no | unset (prefers `47615`) | `min(0)`, `max(65535)` | Read at daemon startup. Unset: prefer `47615`, falling back to a free port when taken. Set: bind exactly that port; `0` picks a free port. The bound port is recorded in `<dataDir>/daemon.port` |
 
+`daemon.port` is read only at daemon startup. Editing it has no effect until `crontick daemon restart` (a `daemon reload` never rebinds); while the running port differs from the configured one, `daemon status`, `info` and `doctor` note `config says daemon.port N, running on M`. If an explicit port is already in use the daemon exits with `DAEMON_PORT_IN_USE` (see [errors.md](errors.md#daemon_port_in_use)) instead of falling back. `0` is valid and always OS-assigned. The former daemon-port environment variable override was removed and is no longer read.
+
 ## RetentionConfig
 
 | Field | Type | Required | Default | Constraints | Runtime behavior |
