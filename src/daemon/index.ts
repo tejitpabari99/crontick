@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync, unlinkSync, existsSync, appendFileSync, re
 import { join } from 'node:path';
 import { ensureClaudeHookHelper } from '../claude-completion-marker.js';
 import {
+  configPath,
   dataDir,
   ensureDirs,
   pidFilePath,
@@ -357,7 +358,9 @@ if (needsSqliteShim) {
         resolve(typeof addr === 'object' && addr ? addr.port : 0);
       });
     });
-    const bound = await bindPort(preferredDaemonPort(), {
+    const bound = await bindPort(preferredDaemonPort(startupConfig), {
+      configPath: configPath(),
+      dataDir: dataDir(),
       listen: listenOn,
       probe: async (port) => {
         const healthy = await probeHealth(`http://127.0.0.1:${port}`, 1_000);

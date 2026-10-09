@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { mkdtempSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { writeTestConfig } from '../helpers/test-home.js';
 
 const CLI_SCRIPT = resolve('dist/cli/index.js');
 
@@ -13,6 +14,7 @@ describe('crontick doctor', () => {
   it('runs and reports checks (even if some fail)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'crontick-doctor-'));
     mkdirSync(join(dir, 'jobs'), { recursive: true });
+    writeTestConfig(dir);
 
     const result = spawnSync(process.execPath, [CLI_SCRIPT, 'doctor'], {
       encoding: 'utf-8',

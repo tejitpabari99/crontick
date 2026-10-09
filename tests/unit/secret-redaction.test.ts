@@ -375,6 +375,7 @@ function expectRawSecretBytesAbsent(buffer: Buffer, rawSecrets: string[], surfac
 
 function writeConfig(dir: string, env: Record<string, string>): void {
   writeFileSync(join(dir, 'config.json'), `${JSON.stringify({
+    daemon: { port: 0 },
     defaultEngine: 'copilot',
     engines: {
       copilot: {

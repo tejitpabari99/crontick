@@ -35,7 +35,8 @@ describe('ensureConfigFile', () => {
     const result = ensureConfigFile({ env });
     expect(result.created).toBe(true);
     const raw = JSON.parse(readFileSync(result.path, 'utf-8')) as Record<string, unknown>;
-    expect(Object.keys(raw).sort()).toEqual(['defaultEngine', 'defaults', 'engines', 'logging', 'maxConsecutiveFailures', 'retention']);
+    expect(Object.keys(raw).sort()).toEqual(['daemon', 'defaultEngine', 'defaults', 'engines', 'logging', 'maxConsecutiveFailures', 'retention']);
+    expect(raw['daemon']).toEqual({});
     expect(raw['defaults']).toEqual({ overlap: 'skip', retry: { max: 0, backoffSec: 30 } });
     expect(loadConfig({ env })).toEqual(JSON.parse(JSON.stringify(BUILT_IN_CONFIG)));
     if (process.platform !== 'win32') expect(statSync(result.path).mode & 0o777).toBe(0o600);

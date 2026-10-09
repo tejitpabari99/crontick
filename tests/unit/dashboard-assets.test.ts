@@ -65,7 +65,31 @@ describe('dashboard css', () => {
     expect(rule).toContain('display: inline-flex');
     expect(rule).toContain('align-items: center');
     expect(rule).toContain('vertical-align: middle');
-    expect(rule).toMatch(/width: 32px/);
-    expect(rule).toMatch(/height: 32px/);
+    expect(rule).toMatch(/width: 1.7778rem/);
+    expect(rule).toMatch(/height: 1.7778rem/);
+  });
+});
+
+describe('dashboard header', () => {
+  it('renders only version and pid, with no node/jobs/uptime text', () => {
+    expect(js).toContain('`v${health.version} · pid ${health.pid}`');
+    expect(js).not.toContain('health.node');
+    expect(js).not.toContain('health.jobs');
+    expect(js).not.toContain('formatUptime');
+    expect(js).not.toContain('daemon uptime');
+  });
+
+  it('hides the health badge by default and on success', () => {
+    expect(html).toMatch(/<div id="health-badge"[^>]*\shidden/);
+    expect(js).toMatch(/badge\.hidden = true/);
+  });
+
+  it('shows the badge in error style when loading the dashboard data fails', () => {
+    expect(js).toContain('function showHealthError');
+    expect(js).toContain('badge.hidden = false');
+    expect(js).toContain("badge.className = 'badge badge-error'");
+    expect(js).toContain('`✗ ${message}`');
+    // every loadDashboard failure path reports to the badge, not only the first load
+    expect(js.match(/showHealthError\(/g)!.length).toBeGreaterThanOrEqual(4);
   });
 });

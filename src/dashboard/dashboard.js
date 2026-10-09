@@ -71,12 +71,6 @@ function formatTime(value) {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
 }
 
-function formatUptime(sec) {
-  if (sec < 60) return `${sec}s`;
-  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
-  return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
-}
-
 function capitalize(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 }
@@ -118,10 +112,15 @@ function emptyRow(cols, message) {
 function renderHealth(health) {
   const badge = document.getElementById('health-badge');
   const versionEl = document.getElementById('version-info');
-  badge.textContent = `✓ up ${formatUptime(health.uptimeSec)}`;
-  badge.className = 'badge badge-ok';
-  badge.title = 'daemon uptime';
-  versionEl.textContent = `v${health.version} · pid ${health.pid} · node ${health.node} · ${health.jobs.total} jobs`;
+  badge.hidden = true;
+  versionEl.textContent = `v${health.version} · pid ${health.pid}`;
+}
+
+function showHealthError(message) {
+  const badge = document.getElementById('health-badge');
+  badge.textContent = `✗ ${message}`;
+  badge.className = 'badge badge-error';
+  badge.hidden = false;
 }
 
 function renderSummary(stats) {
@@ -250,7 +249,10 @@ function removeFilter(kind, value) {
 }
 
 function reloadWithErrors() {
-  return loadDashboard().catch((err) => showInlineError(err.message));
+  return loadDashboard().catch((err) => {
+    showHealthError(err.message);
+    showInlineError(err.message);
+  });
 }
 
 // ── Runs table ──────────────────────────────────────────────────────────────
@@ -627,7 +629,7 @@ function applyAutoRefresh(sec, persist) {
   refreshTimer = null;
   if (sec > 0) {
     refreshTimer = setInterval(() => {
-      if (!document.hidden) void loadDashboard().catch((err) => showInlineError(err.message));
+      if (!document.hidden) void loadDashboard().catch((err) => { showHealthError(err.message); showInlineError(err.message); });
     }, sec * 1000);
   }
 }
@@ -779,9 +781,7 @@ document.addEventListener('keydown', (e) => {
 
 applyAutoRefresh(readRefreshSetting(), false);
 loadDashboard().catch((err) => {
-  const badge = document.getElementById('health-badge');
-  badge.textContent = `✗ ${err.message}`;
-  badge.className = 'badge badge-error';
+  showHealthError(err.message);
   showInlineError(err.message);
 });
 

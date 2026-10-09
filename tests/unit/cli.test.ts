@@ -6,6 +6,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { jobJsonSchemaText } from '../../src/schema-json.js';
 import { teardownDaemon } from '../helpers/cleanup.js';
 import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
+import { writeTestConfig } from '../helpers/test-home.js';
 
 const CLI = resolve('dist/cli/index.js');
 const DAEMON_SCRIPT = resolve('dist/daemon/index.js');
@@ -17,6 +18,7 @@ function cli(args: string[], env?: NodeJS.ProcessEnv) {
 function makeTmpDir(): string {
   const d = mkdtempSync(join(tmpdir(), 'crontick-cli-'));
   mkdirSync(join(d, 'jobs'), { recursive: true });
+  writeTestConfig(d);
   mkdirSync(join(d, 'logs'), { recursive: true });
   return d;
 }

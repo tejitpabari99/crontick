@@ -44,8 +44,6 @@ export default defineConfig({
     // Isolated Claude config (root trusted) so tests never read ~/.claude.json.
     env: {
       CLAUDE_CONFIG_DIR: resolve('.crontick', 'test-claude-config'),
-      // Test daemons take a free port so parallel runs never fight over the default 47615.
-      CRONTICK_DAEMON_PORT: '0',
     },
     include: ['tests/**/*.test.ts'],
     exclude: ['tests/integration/**'],

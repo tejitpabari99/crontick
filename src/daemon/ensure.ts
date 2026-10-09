@@ -481,14 +481,14 @@ function readEnsureLogTail(path: string, startOffset: number): string {
   try {
     const raw = readFileSync(path);
     const tail = raw.subarray(Math.min(startOffset, raw.length)).toString('utf-8');
-    return tail.length > STDERR_LIMIT ? `${tail.slice(0, STDERR_LIMIT)}…` : tail;
+    return tail.length > STDERR_LIMIT ? `…${tail.slice(-STDERR_LIMIT)}` : tail;
   } catch {
     return '';
   }
 }
 
 function stderrHint(stderr: string, logPath: string): string {
-  return stderr ? `\nDaemon stderr excerpt from ${logPath}: ${stderr.slice(0, 500)}` : `\nDaemon log path: ${logPath}`;
+  return stderr ? `\nDaemon stderr excerpt from ${logPath}: ${stderr.slice(-1500)}` : `\nDaemon log path: ${logPath}`;
 }
 
 function errorMessage(err: unknown): string {

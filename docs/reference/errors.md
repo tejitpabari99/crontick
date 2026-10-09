@@ -45,6 +45,14 @@ class CrontickError extends Error {
 | **Message shape** | Includes stderr snippet from daemon process |
 | **Details** | — |
 
+### DAEMON_PORT_IN_USE
+
+| | |
+|---|---|
+| **When** | The daemon starts with an explicit `daemon.port` (> 0) that is already in use; it exits non-zero with no fallback |
+| **Message shape** | `Port <p> (config daemon.port) is in use by another crontick daemon (pid N, data dir D); free it or change daemon.port in <configPath>` or `...by another process (not crontick)...`; same-data-dir holder says to run `crontick daemon stop` |
+| **Details** | `{ port, occupant, configPath }`; surfaces to clients via the `DAEMON_START_FAILED` stderr excerpt |
+
 ### DAEMON_TIMEOUT
 
 | | |

@@ -36,13 +36,19 @@ exposes a loopback-only HTTP API and is demand-started by clients when needed.
 
 ## Port selection and discovery
 
-The daemon prefers `DEFAULT_DAEMON_PORT` = `47615` (`src/constants/daemon.ts`; override with env
-`CRONTICK_DAEMON_PORT`, used by tests, `0` = always OS-assigned). `bindPort(preferred, { listen, probe, notify })`
+The daemon prefers `DEFAULT_DAEMON_PORT` = `47615` (`src/constants/daemon.ts`; override with `daemon.port`
+in `config.json`; `0` = always OS-assigned). `bindPort(preferred, { listen, probe, notify })`
 is pure and injectable: it tries `listen(preferred)`; on `EADDRINUSE` it probes `GET /health` on that port
 with the crontick signature check and emits one notice (stderr and the daemon log), then binds `listen(0)`:
 
 - `Port 47615 is in use by another crontick daemon (pid N, data dir <dir>); starting on a free port`
 - `Port 47615 is in use by another process (not crontick); starting on a free port`
+
+With an explicit `daemon.port` > 0 (`PreferredPort.explicit`), `EADDRINUSE` probes the same way but throws
+`CrontickError('DAEMON_PORT_IN_USE')` (details `{ port, occupant, configPath }`) with no fallback; `main()` logs it and
+exits 1, and `ensureDaemon` surfaces the text through the `DAEMON_START_FAILED` stderr tail. Explicit `0` is silent
+OS-assigned; non-`EADDRINUSE` errors (`EACCES`) rethrow. The port is resolved once at startup (config reload never
+rebinds); `describeDaemonPort(port, config)` reports `config says daemon.port N, running on M` when they differ.
 
 The process owner of a foreign listener is not detected. The actual bound port is written as plain text
 to `<dataDir>/daemon.port`, so clients always discover the real port from that file and never assume the default.

@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
 
 import { teardownDaemon } from '../helpers/cleanup.js';
+import { writeTestConfig } from '../helpers/test-home.js';
 
 const DAEMON_SCRIPT = resolve('dist/daemon/index.js');
 const TIMEOUT_MS = 30_000;
@@ -16,6 +17,7 @@ const TIMEOUT_MS = 30_000;
 function makeTmpDir(): string {
   const d = mkdtempSync(join(tmpdir(), 'crontick-health-'));
   mkdirSync(join(d, 'jobs'), { recursive: true });
+  writeTestConfig(d);
   mkdirSync(join(d, 'logs'), { recursive: true });
   return d;
 }

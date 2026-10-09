@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Scheduler } from '../../src/daemon/scheduler.js';
 import { Store } from '../../src/daemon/store.js';
 import { createLogger, type LogEvent } from '../../src/logger.js';
+import { writeTestConfig } from '../helpers/test-home.js';
 
 const CLI = resolve('dist/cli/index.js');
 
@@ -21,6 +22,7 @@ const homes: string[] = [];
 function newHome(): string {
   const home = mkdtempSync(join(tmpdir(), 'crontick-jobopts-'));
   homes.push(home);
+  writeTestConfig(home);
   return home;
 }
 afterEach(() => {

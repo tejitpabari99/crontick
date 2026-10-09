@@ -10,6 +10,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { teardownDaemon } from '../helpers/cleanup.js';
 import { FAKE_ENGINE_CONFIG, FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 import { fakeClaudeEngineConfig } from '../helpers/fake-claude.js';
+import { writeTestConfig } from '../helpers/test-home.js';
 
 const DAEMON_SCRIPT = resolve('dist/daemon/index.js');
 const TIMEOUT_MS = 30_000;
@@ -17,6 +18,7 @@ const TIMEOUT_MS = 30_000;
 function makeTmpDir(): string {
   const d = mkdtempSync(join(tmpdir(), 'crontick-api-'));
   mkdirSync(join(d, 'jobs'), { recursive: true });
+  writeTestConfig(d);
   mkdirSync(join(d, 'logs'), { recursive: true });
   return d;
 }

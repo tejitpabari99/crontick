@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { formatJobStats, formatLocalIso, formatRunDetail } from '../../src/run-format.js';
 import type { RunRecord } from '../../src/client.js';
 import { sampleJob, startApiHarness, type ApiHarness } from '../helpers/api-harness.js';
+import { writeTestConfig } from '../helpers/test-home.js';
 
 const CLI = resolve('dist/cli/index.js');
 
@@ -88,6 +89,7 @@ describe('jobs schedule status', () => {
   it('prints status: enabled|disabled before the fire times; MCP/library payload has enabled', () => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), 'crontick-sched-')));
     homes.push(home);
+    writeTestConfig(home);
     const cli = (args: string[]) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf-8', env: { ...process.env, CRONTICK_HOME: home }, timeout: 30_000 });
     expect(cli(['jobs', 'new', '-a', 'sched-job', '-p', 'x', '--every', '1h']).status).toBe(0);
     let out = cli(['jobs', 'schedule', 'sched-job', '-n', '2']).stdout;

@@ -94,6 +94,7 @@ describe('crontick config core', () => {
       engines: { claude: { command: 'claude', args: [], env: {}, type: 'claude' } },
       retention: { maxRunsPerJob: DEFAULT_RUN_RETENTION_CAP, maxOutputBytesPerRun: DEFAULT_MAX_OUTPUT_BYTES_PER_RUN, maxLogFiles: DEFAULT_MAX_LOG_FILES },
       logging: { fileEnabled: true },
+      daemon: {},
       maxConsecutiveFailures: 3,
       defaults: { overlap: 'skip', retry: { max: 0, backoffSec: 30 } },
     });
@@ -422,6 +423,7 @@ describe('crontick config core', () => {
         engines: { claude: { command: 'claude', args: [], env: {}, type: 'claude' } },
         retention: { maxRunsPerJob: DEFAULT_RUN_RETENTION_CAP, maxOutputBytesPerRun: DEFAULT_MAX_OUTPUT_BYTES_PER_RUN, maxLogFiles: DEFAULT_MAX_LOG_FILES },
         logging: { fileEnabled: true },
+        daemon: {},
         maxConsecutiveFailures: 3,
         defaults: { overlap: 'skip', retry: { max: 0, backoffSec: 30 } },
       });
