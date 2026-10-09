@@ -10,7 +10,8 @@ const text = (r: { stderr: string; stdout: string }): string => (r.stderr || r.s
 export class SchtasksBackend implements AutostartBackend {
   readonly mechanism = 'schtasks' as const;
 
-  constructor(private readonly deps: AutostartDeps) {}
+  /** `taskName` is a test seam (integration tests use a unique name so they never touch a real install). */
+  constructor(private readonly deps: AutostartDeps, private readonly taskName: string = TASK_NAME) {}
 
   /** Matches the `Arguments` that `renderTaskXml` writes: `<cli> daemon start [--home <dir>]`. */
   expectedCommand(spec: AutostartSpec): string[] {
@@ -32,7 +33,7 @@ export class SchtasksBackend implements AutostartBackend {
     try {
       // Exit 0 or "task not found" both prove schtasks works; "not found" is told apart from a
       // blocked tool without localized text by probing a plain listing.
-      if ((await this.schtasks('/query', '/tn', TASK_NAME)).code === 0) return { ok: true };
+      if ((await this.schtasks('/query', '/tn', this.taskName)).code === 0) return { ok: true };
       const probe = await this.schtasks('/query', '/fo', 'csv', '/nh');
       if (probe.code === 0) return { ok: true };
       return { ok: false, reason: `schtasks.exe is not usable: ${text(probe) || `exit ${probe.code}`}` };
@@ -53,26 +54,26 @@ export class SchtasksBackend implements AutostartBackend {
 
   async install(spec: AutostartSpec): Promise<{ definitionPath: string }> {
     const sid = await this.currentSid();
-    const xml = encodeTaskXml(renderTaskXml(spec, sid));
+    const xml = encodeTaskXml(renderTaskXml(spec, sid, this.taskName));
     const file = win32.join(dataDir(spec.env), 'autostart', 'task.xml');
     await this.deps.fs.mkdir(win32.dirname(file), { recursive: true });
     await this.deps.fs.writeFile(file, xml, { mode: 0o600 });
     try {
-      const r = await this.schtasks('/create', '/tn', TASK_NAME, '/xml', file, '/f');
+      const r = await this.schtasks('/create', '/tn', this.taskName, '/xml', file, '/f');
       if (r.code !== 0) {
-        throw new CrontickError('AUTOSTART_FAILED', `schtasks /create ${TASK_NAME} failed (exit ${r.code}): ${text(r)}`);
+        throw new CrontickError('AUTOSTART_FAILED', `schtasks /create ${this.taskName} failed (exit ${r.code}): ${text(r)}`);
       }
     } finally {
       await this.deps.fs.rm(file, { force: true });
     }
-    return { definitionPath: TASK_NAME };
+    return { definitionPath: this.taskName };
   }
 
   async uninstall(): Promise<{ removed: boolean }> {
-    if ((await this.schtasks('/query', '/tn', TASK_NAME)).code !== 0) return { removed: false };
-    const r = await this.schtasks('/delete', '/tn', TASK_NAME, '/f');
+    if ((await this.schtasks('/query', '/tn', this.taskName)).code !== 0) return { removed: false };
+    const r = await this.schtasks('/delete', '/tn', this.taskName, '/f');
     if (r.code !== 0) {
-      throw new CrontickError('AUTOSTART_FAILED', `schtasks /delete ${TASK_NAME} failed (exit ${r.code}): ${text(r)}`);
+      throw new CrontickError('AUTOSTART_FAILED', `schtasks /delete ${this.taskName} failed (exit ${r.code}): ${text(r)}`);
     }
     return { removed: true };
   }
@@ -81,20 +82,20 @@ export class SchtasksBackend implements AutostartBackend {
   async inspect(): Promise<BackendInspection> {
     let xml: string;
     try {
-      const r = await this.schtasks('/query', '/tn', TASK_NAME, '/xml');
+      const r = await this.schtasks('/query', '/tn', this.taskName, '/xml');
       xml = cleanOutput(r.stdout);
       if (r.code !== 0 || !xml.includes('<Task')) return { registered: false };
     } catch {
       return { registered: false };
     }
-    const out: BackendInspection = { registered: true, definitionPath: TASK_NAME };
+    const out: BackendInspection = { registered: true, definitionPath: this.taskName };
     const notes: string[] = [];
     const parsed = parseTaskXml(xml);
     if (parsed) {
       out.command = { nodePath: parsed.nodePath, args: parsed.args, env: parsed.env };
       out.enabledInManager = parsed.enabled;
     } else {
-      notes.push(`Could not parse the command from the ${TASK_NAME} task definition.`);
+      notes.push(`Could not parse the command from the ${this.taskName} task definition.`);
     }
     const run = await this.runState();
     if (run.active !== undefined) out.active = run.active;
@@ -108,7 +109,7 @@ export class SchtasksBackend implements AutostartBackend {
   private async runState(): Promise<{ active?: boolean; note?: string }> {
     const unknown = { note: 'Could not determine the task run state (unparseable schtasks output); active state unknown.' };
     try {
-      const r = await this.schtasks('/query', '/tn', TASK_NAME, '/fo', 'csv', '/v', '/nh');
+      const r = await this.schtasks('/query', '/tn', this.taskName, '/fo', 'csv', '/v', '/nh');
       if (r.code !== 0) return unknown;
       const cols = parseCsvRow(cleanOutput(r.stdout));
       const last = cols[LAST_RESULT_COL]?.trim();

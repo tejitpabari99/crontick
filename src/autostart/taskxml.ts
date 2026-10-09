@@ -48,14 +48,14 @@ function renderArguments(spec: AutostartSpec): string {
  * Renders the logon-task definition for `spec`, scoped to `sid`. Emits exactly the documented
  * settings, nothing else. The caller must write it as UTF-16LE (see `encodeTaskXml`).
  */
-export function renderTaskXml(spec: AutostartSpec, sid: string): string {
+export function renderTaskXml(spec: AutostartSpec, sid: string, taskName: string = TASK_NAME): string {
   const user = val(sid);
   return [
     '<?xml version="1.0" encoding="UTF-16"?>',
     '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">',
     '  <RegistrationInfo>',
     '    <Author>crontick</Author>',
-    `    <URI>${val(TASK_NAME)}</URI>`,
+    `    <URI>${val(taskName)}</URI>`,
     `    <Description>${val(DESCRIPTION)}</Description>`,
     '  </RegistrationInfo>',
     '  <Triggers>',
