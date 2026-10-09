@@ -66,9 +66,9 @@ Tools that expose run rows or log text apply the shared redaction contract befor
 
 ## Tool Inventory
 
-The MCP server exposes 20 `crontick_*` tools, matching `SURFACE_CAPABILITIES`.
+The MCP server exposes 21 `crontick_*` tools, matching `SURFACE_CAPABILITIES`.
 
-Removed tools are not present: the `crontick_config_*` get/set/unset/init/validate/engine tools, `crontick_schedule_validate`, `crontick_schedule_preview`, `crontick_dashboard_data`, `crontick_run_delete`, `crontick_run_logs_tail` and `crontick_run_output` (folded into `crontick_run_get`), and the `crontick_daemon_start`/`crontick_daemon_status`/`crontick_daemon_restart` plus `crontick_dashboard_start`/`crontick_dashboard_status`/`crontick_dashboard_stop` tools. The dashboard is always served by the daemon; call `crontick_info`, read `configPath`, and open its `dashboardUrl`. Use `crontick_job_schedule` to preview an existing job's upcoming fire times.
+Removed tools are not present: the `crontick_config_*` get/set/unset/init/validate/engine tools, `crontick_schedule_validate`, `crontick_schedule_preview`, `crontick_dashboard_data`, `crontick_run_logs_tail` and `crontick_run_output` (folded into `crontick_run_get`), and the `crontick_daemon_start`/`crontick_daemon_status`/`crontick_daemon_restart` plus `crontick_dashboard_start`/`crontick_dashboard_status`/`crontick_dashboard_stop` tools. The dashboard is always served by the daemon; call `crontick_info`, read `configPath`, and open its `dashboardUrl`. Use `crontick_job_schedule` to preview an existing job's upcoming fire times.
 
 ---
 
@@ -244,6 +244,21 @@ List recent runs, optionally filtered by job and/or status.
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Array of run objects.
+
+---
+
+### crontick_run_delete
+
+Permanently delete run history and stored output, by run ids or for all runs of one job. Destructive and idempotent; confirm with the user first and consider `dryRun`.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `runIds` | `string[]` | one of `runIds`/`job` | — | Run IDs to delete |
+| `job` | `string` | one of `runIds`/`job` | — | Job id or alias; deletes all its runs |
+| `dryRun` | `boolean` | no | `false` | Preview only; nothing is deleted |
+| `verbose` | `boolean` | no | `false` | Include diagnostics |
+
+**Result:** `{ deleted, skipped: [{ id, status }], notFound, jobLogRemoved }`. Active runs are skipped.
 
 ---
 

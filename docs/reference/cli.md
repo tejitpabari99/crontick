@@ -39,6 +39,7 @@ crontick jobs run-now <id|alias>
 crontick runs list [--job <id|alias>] [--limit <n>] [--since <ms>] [--status <status>]
 crontick runs get <runId> [--json]
 crontick runs cancel <runId>
+crontick runs delete <runId...> | --job <id|alias> [--force] [--dry-run] [--json]
 
 crontick stats summary
 crontick stats job <id|alias>

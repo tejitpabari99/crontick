@@ -204,6 +204,7 @@ crontick also ships an MCP server that mirrors these commands one-to-one (tool p
 | `crontick_job_cancel_run` | `runs cancel` |
 | `crontick_run_list` | `runs list` |
 | `crontick_run_get` | `runs get` (also returns the cleaned output) |
+| `crontick_run_delete` | `runs delete` (`dryRun` previews; confirm with the user first) |
 | `crontick_stats_summary` / `crontick_stats_job` | `stats summary` / `stats job` |
 | `crontick_export` / `crontick_import` | `share export` / `share import` |
 | `crontick_doctor` | `doctor` |

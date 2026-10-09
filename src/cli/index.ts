@@ -19,6 +19,7 @@ import { isVerboseEnv, type LogEvent } from '../logger.js';
 import { readJsonFile } from '../json-file.js';
 import { formatJobStats, formatRunDetail, formatRunsTable } from '../run-format.js';
 import { resolveExportPath } from '../share.js';
+import { deleteRunsWithConfirm, formatDeleteRunsSummary, terminalConfirmIo } from './confirm.js';
 import { terminalTrustPromptIo, withTrustPrompt } from './trust-prompt.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -547,6 +548,30 @@ runs.command('get <runId>')
 runs.command('cancel <runId>').description('Cancel an in-progress run').action(async (runId: string) => {
   try { print(await client().cancelRun(runId)); } catch (err) { handleError(err); }
 });
+
+
+runs.command('delete [runIds...]')
+  .description('Delete runs (and their stored output) by run id, or all runs of a job with --job. Active runs are skipped.')
+  .option('--job <id|alias>', 'Delete every run of this job (id or alias; a deleted job\'s raw id also works)')
+  .option('--force', 'Skip the confirmation prompt (required when not on a terminal)')
+  .option('--dry-run', 'Show what would be deleted without deleting')
+  .option('--json', 'Print the full result as JSON')
+  .action(async (runIds: string[], opts) => {
+    try {
+      const ids = runIds ?? [];
+      if ((opts.job !== undefined) === (ids.length > 0)) {
+        throw new CrontickError('VALIDATION_ERROR', 'Provide run ids or --job <id|alias> (not both).');
+      }
+      const dryRun = opts.dryRun === true;
+      const result = await deleteRunsWithConfirm(client(), {
+        ...(opts.job !== undefined ? { job: opts.job as string } : { runIds: ids }),
+        force: opts.force === true,
+        dryRun,
+      }, terminalConfirmIo());
+      stdout(opts.json ? JSON.stringify(result, null, 2) : formatDeleteRunsSummary(result, dryRun));
+      if (result.notFound.length > 0) process.exitCode = 1;
+    } catch (err) { handleError(err); }
+  });
 
 
 // ── stats ────────────────────────────────────────────────────────────────────
