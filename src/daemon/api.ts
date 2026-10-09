@@ -283,6 +283,19 @@ async function handleRequest(
     }
 
 
+    // Delete runs by id list (?runId=a,b) XOR by job (?jobId=<id|alias|raw id>);
+    // ?dryRun=1 reports the same result without deleting. Active runs are
+    // skipped and reported, never canceled.
+    if (method === 'DELETE' && path === '/api/runs') {
+      const runIds = (url.searchParams.get('runId') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+      const jobId = (url.searchParams.get('jobId') ?? '').trim();
+      if ((runIds.length > 0) === (jobId !== '')) {
+        return sendError(res, 400, 'VALIDATION_ERROR', 'Provide exactly one of runId (comma-separated list) or jobId');
+      }
+      const dryRun = ['1', 'true'].includes((url.searchParams.get('dryRun') ?? '').toLowerCase());
+      return sendJson(res, 200, ctx.store.deleteRuns(jobId ? { jobId, dryRun } : { runIds, dryRun }));
+    }
+
     // /api/runs/:id/*
     const runMatch = path.match(/^\/api\/runs\/([^/]+)(\/.*)?$/);
     if (runMatch) {

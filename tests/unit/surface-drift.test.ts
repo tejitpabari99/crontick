@@ -22,6 +22,8 @@ const NON_PARITY_CLIENT_METHODS = new Set([
   'baseUrl',
   'normalizeOptions',
   'shouldStartDaemon',
+  // TEMPORARY (SP01 T4->T5): removed from here when Task 5 adds the delete-runs capability.
+  'deleteRuns',
   'effectiveEnv',
   'getOutput',
   'trustTarget',

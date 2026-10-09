@@ -99,6 +99,14 @@ export interface OrphanReconciliationResult {
  */
 export const MISSED_RUN_ERROR_MESSAGE = 'MISSED: daemon was not running at the scheduled fire time';
 
+/** Result of Store.deleteRuns / `DELETE /api/runs` (also returned by dry runs). */
+export interface DeleteRunsResult {
+  deleted: string[];
+  skipped: Array<{ id: string; status: RunStatus }>;
+  notFound: string[];
+  jobLogRemoved: boolean;
+}
+
 export class Store {
   private db!: DatabaseSync;
   private dbPath: string;
@@ -366,14 +374,84 @@ export class Store {
     return deleted > 0 ? { jobId: job.id, deletedRuns } : undefined;
   }
 
-  /** Best-effort removal of a job's per-job log file (see resolveJobLogPath). */
-  private removeJobLogFile(jobId: string): void {
+  /** Best-effort removal of a job's per-job log file (see resolveJobLogPath). Returns true when a file was removed. */
+  private removeJobLogFile(jobId: string): boolean {
     try {
       const logPath = resolveJobLogPath(jobId);
-      if (logPath && existsSync(logPath)) unlinkSync(logPath);
+      if (logPath && existsSync(logPath)) {
+        unlinkSync(logPath);
+        return true;
+      }
     } catch {
       // best-effort
     }
+    return false;
+  }
+
+  /**
+   * Deletes runs (and their outputs) selected by explicit run ids XOR a job
+   * ref (id or alias; falls back to the raw id so runs of an already-deleted
+   * job can still be cleaned up). Queued/running runs are skipped and
+   * reported, never deleted. Output rows then run rows go in ONE transaction.
+   * When an affected job no longer exists and no runs remain for it, its
+   * per-job log file is removed; a live job's log is never touched. With
+   * `dryRun` the same result is computed but nothing is changed.
+   */
+  deleteRuns(opts: { runIds: string[]; jobId?: undefined; dryRun?: boolean } | { jobId: string; runIds?: undefined; dryRun?: boolean }): DeleteRunsResult {
+    const dryRun = opts.dryRun === true;
+    const deleted: string[] = [];
+    const skipped: Array<{ id: string; status: RunStatus }> = [];
+    const notFound: string[] = [];
+    const rows: Array<{ id: string; job_id: string; status: string }> = [];
+    if (opts.jobId !== undefined) {
+      const targetJobId = this.getJob(opts.jobId)?.id ?? opts.jobId;
+      rows.push(...(this.db.prepare('SELECT id, job_id, status FROM runs WHERE job_id = ? ORDER BY started_at, id').all(targetJobId) as typeof rows));
+    } else {
+      for (const id of opts.runIds) {
+        const row = this.db.prepare('SELECT id, job_id, status FROM runs WHERE id = ?').get(id) as (typeof rows)[number] | undefined;
+        if (row) rows.push(row);
+        else notFound.push(id);
+      }
+    }
+    const touchedJobs = new Set<string>();
+    for (const row of rows) {
+      if (row.status === 'queued' || row.status === 'running') {
+        skipped.push({ id: row.id, status: row.status });
+      } else {
+        deleted.push(row.id);
+        touchedJobs.add(row.job_id);
+      }
+    }
+    if (!dryRun && deleted.length > 0) {
+      this.db.exec('BEGIN;');
+      try {
+        const del = (table: string, col: string) => this.db.prepare(`DELETE FROM ${table} WHERE ${col} = ?`);
+        for (const id of deleted) {
+          del('run_outputs', 'run_id').run(id);
+          del('runs', 'id').run(id);
+        }
+        this.db.exec('COMMIT;');
+      } catch (err) {
+        this.db.exec('ROLLBACK;');
+        throw err;
+      }
+    }
+    let jobLogRemoved = false;
+    const deletedSet = new Set(deleted);
+    for (const jobId of touchedJobs) {
+      if (this.getJobRowById(jobId)) continue; // live job: log untouched
+      const remaining = (this.db.prepare('SELECT id FROM runs WHERE job_id = ?').all(jobId) as Array<{ id: string }>)
+        .filter((r) => !deletedSet.has(r.id));
+      if (remaining.length > 0) continue;
+      if (dryRun) {
+        const logPath = resolveJobLogPath(jobId);
+        if (logPath && existsSync(logPath)) jobLogRemoved = true;
+      } else if (this.removeJobLogFile(jobId)) {
+        jobLogRemoved = true;
+      }
+    }
+    this.logger.debug('Deleted runs', { deleted: deleted.length, skipped: skipped.length, notFound: notFound.length, dryRun });
+    return { deleted, skipped, notFound, jobLogRemoved };
   }
 
   /**
