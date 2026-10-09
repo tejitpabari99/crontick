@@ -669,7 +669,8 @@ program.command('doctor').description('Check system health').action(runDoctor);
 // ── daemon ───────────────────────────────────────────────────────────────────
 // The daemon still demand-starts on first use; `daemon start` is the explicit,
 // manual way to start it (or run it in the foreground). It is NOT login/boot
-// registration (that removed feature is guarded by a regression test).
+// registration; only the opt-in `crontick autostart enable` registers anything
+// (see tests/unit/autostart-removal.test.ts).
 
 const daemon = groupHelp(program.command('daemon').description('Start, stop, and inspect the background daemon'));
 daemon.command('start')
