@@ -431,7 +431,7 @@ crontick autostart enable
 
 On Linux this writes `${XDG_CONFIG_HOME:-~/.config}/systemd/user/crontick.service` and runs `systemctl --user enable --now crontick.service`. The unit is a plain file you can read; it launches `node <dist>/daemon/index.js` with `Restart=on-failure`, `KillMode=process` (running jobs survive a daemon stop) and an environment of `CRONTICK_SUPERVISED=1`, `CRONTICK_HOME` (only if set when you ran `enable`) and a `PATH` snapshot taken at enable time. Re-run `enable` after you install an engine, change Node versions, or update crontick.
 
-Refuses (see [errors](errors.md)) when systemd `--user` is unavailable, the daemon script does not exist (unbuilt checkout), or the install path is ephemeral (`_npx`). Linux (systemd `--user`) and macOS (launchd LaunchAgent, see below) are supported; other platforms fail with `AUTOSTART_UNSUPPORTED`.
+Refuses (see [errors](errors.md)) when systemd `--user` is unavailable, the daemon script does not exist (unbuilt checkout), or the install path is ephemeral (`_npx`). Linux (systemd `--user`), macOS (launchd LaunchAgent) and Windows (Task Scheduler logon task) are supported (see below); other platforms fail with `AUTOSTART_UNSUPPORTED`.
 
 **Lifecycle caveat:** without systemd "linger", the user manager stops when you fully log out and stops the daemon, so jobs pause while you are logged out (a demand-started daemon survives logout; this differs). `status` prints the `loginctl enable-linger` hint; crontick does not change linger itself.
 
@@ -446,9 +446,20 @@ Refuses (see [errors](errors.md)) when systemd `--user` is unavailable, the daem
 - *Stale registrations.* Moving or removing the Node version (nvm, Homebrew upgrades) makes the plist stale; `status` reports it. Re-run `enable`.
 - Troubleshooting: `launchctl print gui/$(id -u)/dev.crontick.daemon` for live state, `launchctl print-disabled gui/$(id -u)` for the disabled flag, and the two `launchd.*.log` files. Crontick never uses legacy `launchctl load/unload/list`.
 
+**Windows (Task Scheduler).** `enable` registers the logon task `\crontick\daemon` for the current user via `schtasks.exe /create /tn "\crontick\daemon" /xml <file> /f` (an absolute `%SystemRoot%\System32\schtasks.exe`, no shell). The definition is a plain XML file written (UTF-16LE) to `<data dir>\autostart\task.xml` and deleted after registration. It has a `LogonTrigger` scoped to your user SID with a 30 s delay, `InteractiveToken` + `LeastPrivilege` (no elevation, no SYSTEM, no registry or Run key), no execution time limit, no battery restrictions, `MultipleInstancesPolicy IgnoreNew`, `Hidden=false`, author `crontick` and a description saying how to remove it. The action is `node.exe <dist>\cli\index.js daemon start` (plus `--home "<dir>"` when `CRONTICK_HOME` was set at `enable`): a short-lived launcher that starts the usual detached daemon and exits; if a daemon is already running it reports that and exits `0`, so a demand-start followed by `enable` never produces a second daemon. Re-running `enable` overwrites the task (`/f`).
+
+- *Login only.* It starts about 30 s after you log on, never at boot or while logged out, and needs no admin rights and no code signing (crontick ships JavaScript only; `node.exe` is signed by the OpenJS Foundation).
+- *Console flash.* Task Scheduler cannot hide a console-subsystem `node.exe`, so a console window may flash for under a second at logon while the launcher runs. The daemon itself has no window. `status` prints this caveat.
+- *Inspect.* Open `taskschd.msc` and the `\crontick` folder to see the task, its author and description. `status` reports the registered command, whether the task is enabled (`Settings/Enabled`), whether it is running, and the last result when available. Windows has no Settings > Startup apps toggle for tasks.
+- *Stale registrations.* Moving or removing Node, or relocating crontick, makes the task stale; `status` reports it. Re-run `enable`.
+- *Policy.* If group policy or an administrator prohibits task creation, `enable` fails with `AUTOSTART_UNAVAILABLE` (schtasks stderr as the reason) and writes nothing.
+- *Security tools.* There is no official program that pre-clears a persistence mechanism; see [SECURITY.md](../../SECURITY.md#windows-autostart-and-security-tools) for what crontick does to look like what it is and how to allowlist it.
+- *Task folder.* `disable` runs `schtasks /delete /tn "\crontick\daemon" /f`; `schtasks` cannot delete folders, so an empty `\crontick` folder remains. It is harmless.
+- *Unverified.* Creating the `\crontick\` folder as a standard (non-admin) user is unproven (CI runners are administrators); a root-level `\crontick-daemon` fallback is pre-approved but not implemented. See the owner checklist in ADR 0034.
+
 ### crontick autostart disable
 
-Remove the registration (Linux: `systemctl --user disable --now`, delete the unit file, reload; macOS: `launchctl bootout gui/$UID/dev.crontick.daemon` and delete the plist, which also removes the Login Items entry). Idempotent: when nothing is registered it prints `Autostart was not enabled; nothing to remove` and exits `0`.
+Remove the registration (Linux: `systemctl --user disable --now`, delete the unit file, reload; macOS: `launchctl bootout gui/$UID/dev.crontick.daemon` and delete the plist, which also removes the Login Items entry; Windows: `schtasks /delete /tn "\crontick\daemon" /f`). Idempotent: when nothing is registered it prints `Autostart was not enabled; nothing to remove` and exits `0`.
 
 ### crontick autostart status
 

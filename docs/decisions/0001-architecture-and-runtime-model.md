@@ -166,7 +166,7 @@ captured.
 
 ### OS autostart (ADR 0034, 2026-10-09)
 
-**Status:** accepted. Rule 8 reintroduction signed off by the owner; this section is the recorded rationale. SP08 (macOS) and SP09 (Windows) add their own subsections here under the marker below.
+**Status:** accepted. Rule 8 reintroduction signed off by the owner; this section is the recorded rationale. SP08 (macOS) and SP09 (Windows) subsections follow.
 
 **Context.** Demand-start only fires when something calls crontick, so after a reboot schedules do nothing until then. The earlier autostart was removed (PR #16) because of a native `registry-js` dependency, a Windows Run key plus a hidden VBS shim (EDR-flagged persistence), and surprise background processes.
 
@@ -203,7 +203,33 @@ captured.
 
 **Outcome of items 1-5: pending (owner, real Mac).**
 
-<!-- ADR 0034 platform sections: SP08 adds "macOS (launchd)" and SP09 adds "Windows (Task Scheduler)" immediately below this line, each covering mechanism, registered command, caveats and rejected alternatives. -->
+#### Windows (Task Scheduler) (SP09)
+
+**Mechanism.** A per-user logon task `\crontick\daemon` created with `schtasks /create /tn "\crontick\daemon" /xml <file> /f` (XML written UTF-16LE under `<data dir>\autostart\task.xml`, deleted afterwards) and removed with `schtasks /delete ... /f`. XML rather than flags because flags cannot express `ExecutionTimeLimit`, battery settings, `MultipleInstancesPolicy` or a trigger `UserId`; Task Scheduler's defaults (72 h stop, stop on battery) would hurt a daemon. The user is identified by SID (locale and domain-format independent). Inspect reads `/query /xml` (element names) and `/query /fo csv /v /nh` by column index; localized text is never relied on.
+
+**Registered command.** `node.exe <dist>\cli\index.js daemon start` (plus `--home "<dir>"` when `CRONTICK_HOME` was set), a short-lived launcher that spawns the existing detached daemon. This avoids a permanent console window the user could close (killing the daemon) and the already-running exit-code problem, since `daemon start` exits `0` when a daemon is up. Drift compares against `backend.expectedCommand(spec)`.
+
+**Login only, no admin, nothing to sign.** `LogonTrigger` for the current user (30 s delay), `InteractiveToken`, `LeastPrivilege`; no boot start, no "run whether logged on or not". crontick ships JavaScript only, so there is nothing of ours to Authenticode-sign or submit; `node.exe` is signed by the OpenJS Foundation. No Run key, registry, wscript, cmd, PowerShell or conhost.
+
+**Console flash.** The logon task runs a console-subsystem `node.exe`, so a console window may flash for under a second while the launcher runs. Removing it needs a GUI-subsystem binary, which we will not ship. `Hidden` stays `false` on purpose (hiding is what malware does).
+
+**Survival gate.** Whether a detached child outlives the task instance was the make-or-break unknown; a Windows CI test (84a1b9d) proved it before the backend was built [verified: https://github.com/tejitpabari99/crontick/actions/runs/37876631912]. The backend integration test also passes on CI [verified: https://github.com/tejitpabari99/crontick/actions/runs/37879341731], but GitHub-hosted runners are administrators, so the non-admin claim is not proven by CI.
+
+**Security tools.** There is no official pre-clearing program; see `SECURITY.md` (Windows autostart and security tools) for the levers and allowlisting steps.
+
+**Rejected.** `node.exe daemon.js` directly (persistent closable console); `conhost.exe --headless` (still flashes, published detection rule); S4U / password logon (no network or DPAPI access, or needs a password); `schtasks /sc onlogon /tr` flags; PowerShell `Register-ScheduledTask` or COM (LOLBin, dependencies); the removed `registry-js` Run-key + VBS shim; deleting the empty `\crontick` folder (schtasks cannot, harmless, left behind).
+
+**Known risk.** Creating the `\crontick\` folder and task as a standard user is unverified (no source states it either way; CI runners are admin). The pre-approved fallback is a root-level `\crontick-daemon` task; it is **not implemented**. If the owner check fails, implement it.
+
+**Owner real-Windows checklist (record results on the PR before release).**
+1. As a standard (non-admin) user: `enable`, log off/on, `crontick status` shows the daemon up; note the console flash; check `\crontick\daemon` in `taskschd.msc` (author, description); demand-start then `enable` yields no second daemon; `disable` removes it. This also settles the folder-creation risk above.
+2. Repeat on a Defender-for-Endpoint/corporate device if available; record any alert and the allowlist entry used, or a WDSI submission.
+3. Non-English Windows and a profile path with a space and a non-ASCII name: `status` sanity check.
+4. Optionally confirm the `node.exe` Authenticode signature.
+
+**Outcome of items 1-4: pending (owner, real Windows).**
+
+<!-- ADR 0034 platform sections: SP08 added "macOS (launchd)" and SP09 added "Windows (Task Scheduler)" above this line, each covering mechanism, registered command, caveats and rejected alternatives. -->
 
 ## Consequences
 

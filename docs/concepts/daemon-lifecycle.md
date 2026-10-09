@@ -105,7 +105,7 @@ The daemon demand-starts on first use, but `crontick daemon start` starts it exp
 
 ## Opt-in autostart at login
 
-`crontick autostart enable` registers the daemon with the OS user-level service manager (Linux: a `systemd --user` unit at `${XDG_CONFIG_HOME:-~/.config}/systemd/user/crontick.service`; macOS: a LaunchAgent at `~/Library/LaunchAgents/dev.crontick.daemon.plist`, see [macOS](#macos-launchd)); `autostart disable` removes it and `autostart status` reports it, including stale registrations after a Node or crontick upgrade. It is a local OS registration that works with the daemon down, so there is no daemon API route, and MCP exposes only `crontick_autostart_status`.
+`crontick autostart enable` registers the daemon with the OS user-level service manager (Linux: a `systemd --user` unit at `${XDG_CONFIG_HOME:-~/.config}/systemd/user/crontick.service`; macOS: a LaunchAgent at `~/Library/LaunchAgents/dev.crontick.daemon.plist`, see [macOS](#macos-launchd); Windows: a Task Scheduler logon task `\crontick\daemon`, see [Windows](#windows-task-scheduler)); `autostart disable` removes it and `autostart status` reports it, including stale registrations after a Node or crontick upgrade. It is a local OS registration that works with the daemon down, so there is no daemon API route, and MCP exposes only `crontick_autostart_status`.
 
 - **Coexists with demand-start.** The registered unit sets `CRONTICK_SUPERVISED=1`. The daemon is single-instance (PID file); with that variable set, finding a daemon already running logs and exits `0` instead of `1`, so a supervisor using `Restart=on-failure` does not crash-loop when something demand-started first. An unsupervised duplicate start still exits non-zero. A SIGTERM from the manager is a graceful stop (exit `0`) and is not restarted.
 - **Runs survive stops.** The unit uses `KillMode=process`, so detached job runs are not killed when the daemon stops and are re-adopted on the next start.
@@ -124,3 +124,13 @@ The macOS backend is a per-user LaunchAgent bootstrapped into `gui/$UID`; it sta
 - **Folder access (TCC).** The launchd-started `node` has no Full Disk Access. Job directories in `~/Documents`, `~/Desktop`, `~/Downloads`, iCloud or removable volumes can be denied; grant Full Disk Access to `node` or keep job directories elsewhere.
 - **Keychain / Claude login.** A LaunchAgent can normally read the login keychain, but Claude may report "Not logged in" when started under launchd. Set `CLAUDE_CODE_OAUTH_TOKEN` through the engine env config, not the plist.
 - **Logs.** `<data dir>/logs/launchd.out.log` and `launchd.err.log`.
+
+### Windows (Task Scheduler)
+
+The Windows backend is a per-user Task Scheduler logon task `\crontick\daemon`, registered from an XML definition with `schtasks.exe`; it starts at **logon only** (about 30 s after), not at boot, with no admin rights and no signing.
+
+- **Launcher, not a service.** The task runs `node.exe <cli> daemon start`, which spawns the normal detached, console-less daemon and exits. Task Scheduler never owns the long-running process, so there is no 72 h task time limit to hit (the definition also sets none), no persistent console window to close by accident, and no restart policy; crash recovery stays with demand-start. Windows CI proved the detached daemon survives the task instance ending.
+- **Coexists with demand-start.** `daemon start` finding a daemon already running reports it and exits `0`, so no `CRONTICK_SUPERVISED` is needed and the task env is empty. `CRONTICK_HOME` set at enable time is carried as `--home "<dir>"` in the arguments.
+- **Console flash.** Because `node.exe` is a console-subsystem executable, a console window may flash for under a second at logon. It cannot be removed without shipping a GUI-subsystem binary, which crontick does not.
+- **Visibility.** The task is not hidden: author `crontick`, a description with origin and removal instructions, in its own `\crontick` folder in `taskschd.msc`. `disable` leaves the empty folder behind (schtasks cannot delete folders).
+- **Stale registrations.** The task captures the Node path, CLI script path and `--home`; `status` reports drift, re-run `autostart enable`.

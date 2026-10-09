@@ -349,7 +349,7 @@ See [troubleshooting.md](../troubleshooting.md#trust_required-when-creating-a-cl
 
 | | |
 |---|---|
-| **When** | `autostartEnable()` / `autostartDisable()` on a platform with no autostart backend (only Linux systemd `--user` and macOS launchd today). `autostartStatus()` never throws; it returns `supported: false` with a reason |
+| **When** | `autostartEnable()` / `autostartDisable()` on a platform with no autostart backend (Linux systemd `--user`, macOS launchd and Windows Task Scheduler are supported). `autostartStatus()` never throws; it returns `supported: false` with a reason |
 | **Message shape** | Names the platform and what to do instead |
 | **Details** | — |
 
@@ -357,7 +357,7 @@ See [troubleshooting.md](../troubleshooting.md#trust_required-when-creating-a-cl
 
 | | |
 |---|---|
-| **When** | The backend exists but the service manager is not usable (no `systemctl`, no user bus: WSL1, containers; macOS: no GUI launchd session, e.g. over SSH or no console user). Nothing is written |
+| **When** | The backend exists but the service manager is not usable (no `systemctl`, no user bus: WSL1, containers; macOS: no GUI launchd session, e.g. over SSH or no console user; Windows: `schtasks.exe` unusable, e.g. policy prohibits task creation). Nothing is written |
 | **Message shape** | `Autostart is unavailable: <reason>` |
 | **Details** | `{ mechanism }` |
 
