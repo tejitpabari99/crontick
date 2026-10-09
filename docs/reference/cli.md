@@ -47,6 +47,11 @@ crontick stats job <id|alias>
 crontick share export [--out <file>] [--only-jobs <id|alias,...>]
 crontick share import <file> [--trust-folder]
 
+crontick config list [--json]
+crontick config get <key>
+crontick config set <key> <value> [--string] [--stop-running | --wait-running]
+crontick config unset <key> [--stop-running | --wait-running]
+
 crontick info
 crontick doctor
 crontick daemon start [--foreground] [--home <dir>]
@@ -54,6 +59,8 @@ crontick daemon stop
 crontick daemon restart
 crontick daemon status
 crontick daemon reload
+crontick daemon pause
+crontick daemon resume
 crontick autostart enable
 crontick autostart disable
 crontick autostart status
@@ -329,6 +336,47 @@ For Claude jobs, crontick checks that the folder is trusted in Claude's config (
 
 ---
 
+## Config Commands
+
+File-direct: these commands read and write `config.json` themselves, work with the daemon down, and never start a daemon. After a write, a running daemon is reloaded best-effort. Behavior, locking, secrets and error codes: [configuration.md](configuration.md#editing-config) and [specs/008-config-editing.md](../specs/008-config-editing.md).
+
+### crontick config list
+
+```bash
+crontick config list [--json]
+```
+
+Effective config (defaults merged with the file, secrets shown as `[REDACTED]`) as flat `key = value` lines; keys not present in the file are tagged `(default)`. `--json` prints `{ path, revision, config, stored, readOnly, notice }`.
+
+### crontick config get
+
+```bash
+crontick config get <key>
+```
+
+Prints one effective value (raw text for strings, JSON otherwise). Unknown key: `CONFIG_KEY_NOT_FOUND`. Works for `daemon.port`.
+
+### crontick config set / unset
+
+```bash
+crontick config set <key> <value> [--string] [--stop-running | --wait-running]
+crontick config unset <key> [--stop-running | --wait-running]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--string` | Treat `<value>` as a string instead of parsing it (e.g. an engine command literally named `123`) |
+| `--stop-running` | If runs are in flight, cancel them (and drop queued runs), then apply |
+| `--wait-running` | If runs are in flight, pause the daemon, wait for them to finish, apply, then resume |
+
+`<value>` is parsed as JSON and falls back to the raw string, so `600`, `true`, `'["-p","--verbose"]'` and `'{"command":"echo","type":"raw"}'` work as expected. A negative number looks like an option to the CLI parser, so put `--` before the arguments: `crontick config set -- <key> -5`. `--stop-running` and `--wait-running` are mutually exclusive. With runs in flight and neither flag, a terminal session is prompted (stop / wait / cancel); a non-interactive one fails with `RUNS_IN_FLIGHT` listing the runs.
+
+Engines: add or replace with `crontick config set engines.<name> '{"command":"...","type":"raw"}'`, remove with `crontick config unset engines.<name>`.
+
+Output: `changed: <keys>` and `reload: reloaded|daemon-not-running|failed` on stdout; warnings and the edit notice on stderr. Invalid values, unknown keys, and (while a daemon runs) `daemon.*` keys exit non-zero and leave the file byte-identical.
+
+---
+
 ## Info Commands
 
 ### crontick info
@@ -421,6 +469,15 @@ Reload job definitions from disk without restarting the daemon.
 crontick daemon reload
 ```
 
+### crontick daemon pause / resume
+
+`pause` keeps the daemon (API + dashboard) up but starts no new runs; fires that come due while paused are not run, not replayed on resume, and are recorded as runs with status `skipped`. In-flight runs continue. `resume` restores scheduling. Paused state is in-memory only (a daemon restart comes up unpaused) and is shown as `paused` in `crontick daemon status`. `stop` is unchanged.
+
+```bash
+crontick daemon pause
+crontick daemon resume
+```
+
 Running `crontick daemon` with no subcommand prints help. The former hidden `crontick info daemon` / `info doctor` aliases were removed. Config edits normally do not require reload; see [configuration.md](configuration.md#when-config-edits-take-effect).
 
 ---
@@ -442,12 +499,16 @@ stop`, and `crontick dashboard data` CLI commands have been removed.
 
 ### Dashboard web UI
 
+Mutating `/api` calls (anything but GET) are rejected with `REQUEST_REJECTED` unless the request has a loopback `Host` with the daemon port, `Content-Type: application/json` (even with no body, e.g. `DELETE /api/jobs/:id`), and, if an `Origin` header is sent, the daemon's own origin. Anyone calling the HTTP API directly must send the JSON header. See [specs/004-daemon.md](../specs/004-daemon.md#api-request-guard).
+
 The dashboard is a dependency-free web page served on the daemon's loopback origin
 (`/` and `/dashboard`). It renders live snapshots from `GET /api/dashboard` and drives
 job/run actions through the existing `/api/*` routes.
 
 - **Header** — shows the real daemon `version`, pid, node version and job count, plus an
   uptime badge (hover for a "daemon uptime" tooltip).
+- **Settings** — a gear button at the far right of the header opens a modal over `GET`/`PATCH /api/config`. It opens read-only; **Edit** enables the inputs (General, Job defaults, Retention, Logging, Engines with command/type/args rows/env rows and add/remove, Daemon). `daemon.port` is shown but never editable (stop the daemon and use `crontick config set daemon.port <n>`). **Save** sends only the changed keys plus the loaded `revision`; zero changes sends nothing. Errors show in a banner with edits intact; a `409` offers **Reload form**. If runs are in flight, Save asks whether to stop them or pause and wait. Cancel/Esc/backdrop on a dirty form asks "Discard unsaved changes?".
+- **Pause** — a Pause/Resume button and a "Paused" badge in the header drive `POST /api/daemon/pause|resume`.
 - **Theme** — an icon-only System (monitor) / Light (sun) / Dark (moon) radio group in the header (each button has an `aria-label` and `title`). Colors are CSS custom properties
   on `:root`; by default the dashboard follows `prefers-color-scheme`. Choosing Light or Dark
   sets `data-theme` on `<html>` and is persisted in `localStorage` (`crontick.theme`); choosing

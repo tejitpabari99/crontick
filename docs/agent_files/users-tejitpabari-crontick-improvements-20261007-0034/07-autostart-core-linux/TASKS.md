@@ -8,12 +8,12 @@ Source of truth: docs/agent_files/users-tejitpabari-crontick-improvements-202610
 
 | # | Task | Depends on | Status |
 |---|---|---|---|
-| 1 | Autostart core: types, service, factory, drift | - | todo |
-| 2 | Supervised already-running exit 0, SIGTERM check, `daemon start --home` | - | todo |
-| 3 | Linux systemd backend and unit renderer/parser | 1 | todo |
-| 4 | Client methods, CLI group, MCP status, surface parity exception | 1, 3 | todo |
-| 5 | Reverse the removal guards | 4 | todo |
-| 6 | Docs, ADR 0034, spec rewording, changeset, validate | 1-5 | todo |
+| 1 | Autostart core: types, service, factory, drift | - | done |
+| 2 | Supervised already-running exit 0, SIGTERM check, `daemon start --home` | - | done |
+| 3 | Linux systemd backend and unit renderer/parser | 1 | done |
+| 4 | Client methods, CLI group, MCP status, surface parity exception | 1, 3 | done |
+| 5 | Reverse the removal guards | 4 | done |
+| 6 | Docs, ADR 0034, spec rewording, changeset, validate | 1-5 | done |
 
 ## Task 1 — Autostart core: types, service, factory, drift
 What it is / what it means: The platform-neutral layer SP08/SP09 plug into (D2, D9, R3, R4, R6, R7).

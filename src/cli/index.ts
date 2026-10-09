@@ -21,6 +21,8 @@ import { formatJobStats, formatRunDetail, formatRunsTable } from '../run-format.
 import { resolveExportPath } from '../share.js';
 import { deleteRunsWithConfirm, formatDeleteRunsSummary, terminalConfirmIo } from './confirm.js';
 import { terminalTrustPromptIo, withTrustPrompt } from './trust-prompt.js';
+import { flattenConfigLines, formatConfigValue, terminalInFlightIo, writeConfigWithInFlight } from './config-write.js';
+import { parseConfigValue } from '../utils/config-value.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -623,6 +625,70 @@ share.command('import <file>')
     } catch (err) { handleError(err); }
   });
 
+// ── config ───────────────────────────────────────────────────────────────────
+// File-direct (no daemon demand-start): works even when the daemon is down or broken.
+const config = groupHelp(program.command('config').description('List, read, set, and unset config values (dotted keys, e.g. defaults.timeoutSec)'));
+
+function inFlightOptions(command: Command): Command {
+  return command
+    .option('--stop-running', 'If runs are in flight, cancel them, then apply (prompts on a terminal when neither flag is given)')
+    .option('--wait-running', 'If runs are in flight, pause the daemon, wait for them to finish, apply, then resume');
+}
+
+function printConfigWrite(result: Awaited<ReturnType<CrontickClient['configSet']>>): void {
+  stdout(`changed: ${result.changed.length > 0 ? result.changed.join(', ') : '(nothing)'}`);
+  stdout(`reload: ${result.reload}`);
+  for (const warning of result.warnings) stderr(`Warning: ${warning}`);
+  stderr(result.notice);
+}
+
+config.command('list')
+  .description('Show the effective config as key = value lines; keys not in the config file are tagged (default)')
+  .option('--json', 'Print the full structured result as JSON')
+  .action((opts) => {
+    try {
+      const result = client(false).configList();
+      if (opts.json) stdout(JSON.stringify(result, null, 2));
+      else for (const line of flattenConfigLines(result.config, result.stored)) stdout(line);
+    } catch (err) { handleError(err); }
+  });
+
+config.command('get <key>')
+  .description('Print one effective config value (secrets are redacted)')
+  .action((key: string) => {
+    try { stdout(formatConfigValue(client(false).configGet(key))); } catch (err) { handleError(err); }
+  });
+
+inFlightOptions(config.command('set <key> <value>')
+  .description('Set a config value. The value is parsed as JSON, falling back to a plain string; arrays/objects are JSON; put -- before a negative number. Engines: config set engines.<name> \'{"command":"...","type":"raw"}\'')
+  .option('--string', 'Treat the value as a string (e.g. a command named 123)'))
+  .action(async (key: string, value: string, opts) => {
+    try {
+      const c = client(false);
+      const parsed = parseConfigValue(value, { string: booleanOption(opts.string) });
+      const result = await writeConfigWithInFlight(
+        (inFlight) => c.configSet(key, parsed, { inFlight }),
+        { stopRunning: booleanOption(opts.stopRunning), waitRunning: booleanOption(opts.waitRunning) },
+        terminalInFlightIo(),
+      );
+      printConfigWrite(result);
+    } catch (err) { handleError(err); }
+  });
+
+inFlightOptions(config.command('unset <key>')
+  .description('Remove a config key (reverts to its default). Engines: config unset engines.<name>'))
+  .action(async (key: string, opts) => {
+    try {
+      const c = client(false);
+      const result = await writeConfigWithInFlight(
+        (inFlight) => c.configUnset(key, { inFlight }),
+        { stopRunning: booleanOption(opts.stopRunning), waitRunning: booleanOption(opts.waitRunning) },
+        terminalInFlightIo(),
+      );
+      printConfigWrite(result);
+    } catch (err) { handleError(err); }
+  });
+
 // ── info ─────────────────────────────────────────────────────────────────────
 
 const info = program.command('info')
@@ -717,6 +783,12 @@ daemon.command('status').description('Show whether the daemon is running').actio
 });
 daemon.command('reload').description('Reload jobs from disk').action(async () => {
   try { print(await client().daemonReload()); } catch (err) { handleError(err); }
+});
+daemon.command('pause').description('Pause scheduling: the daemon stays up but starts no new runs; fires due while paused are recorded as skipped').action(async () => {
+  try { print(await client().daemonPause()); } catch (err) { handleError(err); }
+});
+daemon.command('resume').description('Resume scheduling after a pause').action(async () => {
+  try { print(await client().daemonResume()); } catch (err) { handleError(err); }
 });
 
 // ── autostart ────────────────────────────────────────────────────────────────

@@ -44,6 +44,7 @@ number assigned in order of creation.
 | 005 | [Surface Parity](005-surface-parity.md) | Active | CLI/MCP/API parity enforcement |
 | 006 | [State and Persistence](006-state-and-persistence.md) | Active | Durability, schema, layout, retention |
 | 007 | [Prompt Jobs](007-prompt-jobs.md) | Active | Prompt engines, invocation, session capture |
+| 008 | [Config Editing](008-config-editing.md) | Active | Config list/get/set/unset, write core, pause, in-flight policy |
 
 ## Template
 

@@ -180,7 +180,7 @@ crontick daemon reload
 crontick daemon stop
 ```
 
-`info` prints version, runtime, config path, storage paths, daemon status, and dashboard URL. Edit `config.json` by hand; `info` tells you where it lives. If `retention.maxRunsPerJob` changes, run `crontick daemon reload` to apply it.
+`info` prints version, runtime, config path, storage paths, daemon status, and dashboard URL. Edit config with `crontick config set <key> <value>` (or by hand; `info` tells you where it lives). `config set`/`unset` reload a running daemon automatically; after a hand edit of `retention.maxRunsPerJob`, run `crontick daemon reload`.
 
 ---
 

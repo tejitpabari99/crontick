@@ -99,6 +99,9 @@ export interface OrphanReconciliationResult {
  */
 export const MISSED_RUN_ERROR_MESSAGE = 'MISSED: daemon was not running at the scheduled fire time';
 
+/** `error` written to a skipped run recorded because the daemon was paused when the fire came due. */
+export const PAUSED_SKIP_ERROR_MESSAGE = 'SKIPPED: daemon was paused at the scheduled fire time';
+
 /** Result of Store.deleteRuns / `DELETE /api/runs` (also returned by dry runs). */
 export interface DeleteRunsResult {
   deleted: string[];
@@ -588,6 +591,23 @@ export class Store {
       this.logger.error('Run retention prune failed; missed run was still recorded', { jobId, error: String(err) });
     }
     return { id, jobId, startedAt: plannedAt, endedAt: plannedAt, status: 'missed', error: note ?? MISSED_RUN_ERROR_MESSAGE, outputTruncated: false };
+  }
+
+  /** Records a fire that came due while the daemon was paused as a terminal 'skipped' run (startedAt = endedAt = plannedAt). */
+  recordSkippedRun(jobId: string, plannedAt: number, note: string = PAUSED_SKIP_ERROR_MESSAGE): Run {
+    const id = randomUUID();
+    this.db
+      .prepare(
+        'INSERT INTO runs (id, job_id, started_at, ended_at, status, error) VALUES (?, ?, ?, ?, ?, ?)',
+      )
+      .run(id, jobId, plannedAt, plannedAt, 'skipped', note);
+    this.logger.debug('Recorded skipped run', { runId: id, jobId, plannedAt });
+    try {
+      this.pruneRunsForJob(jobId);
+    } catch (err) {
+      this.logger.error('Run retention prune failed; skipped run was still recorded', { jobId, error: String(err) });
+    }
+    return { id, jobId, startedAt: plannedAt, endedAt: plannedAt, status: 'skipped', error: note, outputTruncated: false };
   }
 
   updateRun(

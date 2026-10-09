@@ -24,9 +24,21 @@ import { buildRunOutput } from '../run-output.js';
 import { nullLogger, redactValue, type Logger } from '../logger.js';
 import { readEnvFileForAction } from './env-file.js';
 import { resolveJobLogPath } from './job-log-file.js';
+import { checkMutatingRequest, isGuardedRequest } from './request-guard.js';
 import { describeDaemonPort } from './bind-port.js';
-import { loadConfig } from '../config.js';
+import { dataDir } from '../paths.js';
+import { CONFIG_EDIT_NOTICE, IN_FLIGHT_CHOICES } from '../constants/config.js';
+import {
+  getConfigRevision,
+  loadConfig,
+  redactConfigForRead,
+  redactStoredConfigForRead,
+  configFilePath,
+  readStoredConfigFile,
+  type ConfigOp,
+} from '../config.js';
 import type { CrontickConfig } from '../schemas/config.js';
+import { applyConfigWithPolicy, type InFlightChoice, type LostPendingConfigApply } from './config-apply.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -47,6 +59,8 @@ export interface ApiContext {
   logger?: Logger;
   /** L1: graceful in-process shutdown, wired by index.ts after the HTTP server exists. */
   shutdown?: (signal: string) => Promise<void>;
+  /** A wait-then-apply config save lost with the previous daemon session (null when none). */
+  lostPendingConfigApply?: LostPendingConfigApply | null;
   /** L2: summary of fires missed while the daemon was down, computed once at startup. */
   missedFireSummary?: {
     jobsWithMissedFires: number;
@@ -91,6 +105,15 @@ async function handleRequest(
   });
 
   try {
+    // Central guard: every mutating /api route, including unknown ones, before any handler runs.
+    if (isGuardedRequest(method, path)) {
+      const rejection = checkMutatingRequest(req);
+      if (rejection) {
+        req.resume();
+        return sendError(res, rejection.status, 'REQUEST_REJECTED', rejection.message);
+      }
+    }
+
     // ── Health ───────────────────────────────────────────────────────────────
     if (method === 'GET' && path === '/health') {
       return sendJson(res, 200, buildDashboardData({ ...ctx, pid: process.pid }, { runsLimit: 1 }).health);
@@ -395,6 +418,8 @@ async function handleRequest(
         portNote: describeDaemonPort(ctx.port, currentConfigOrEmpty()),
         uptimeSec: Math.floor((Date.now() - ctx.startedAt.getTime()) / 1000),
         jobs: ctx.store.listJobs().length,
+        paused: ctx.scheduler.isPaused(),
+        lostPendingConfigApply: ctx.lostPendingConfigApply ?? null,
         // L2: report-only missed-fire summary computed once at startup.
         missedFires: ctx.missedFireSummary ?? {
           jobsWithMissedFires: 0,
@@ -403,6 +428,16 @@ async function handleRequest(
           capPerJob: 0,
         },
       });
+    }
+
+    if (method === 'POST' && path === '/api/daemon/pause') {
+      ctx.scheduler.pause();
+      return sendJson(res, 200, { ok: true, paused: true });
+    }
+
+    if (method === 'POST' && path === '/api/daemon/resume') {
+      ctx.scheduler.resume();
+      return sendJson(res, 200, { ok: true, paused: false });
     }
 
     if (method === 'POST' && path === '/api/daemon/reload') {
@@ -534,6 +569,36 @@ async function handleRequest(
       return serveDashboard(res, path);
     }
 
+    // ── Config ────────────────────────────────────────────────────────────────
+    if (method === 'GET' && path === '/api/config') {
+      return sendJson(res, 200, {
+        path: configFilePath(),
+        revision: getConfigRevision(),
+        config: redactConfigForRead(loadConfig()),
+        stored: redactStoredConfigForRead(readStoredConfigFile()),
+        readOnly: ['daemon'],
+        notice: CONFIG_EDIT_NOTICE,
+      });
+    }
+
+    if (method === 'PATCH' && path === '/api/config') {
+      const body = await readBody(req);
+      const request = parseConfigPatchBody(body);
+      if ('error' in request) return sendError(res, 400, 'VALIDATION_ERROR', request.error);
+      try {
+        const result = await applyConfigWithPolicy(
+          { runner: ctx.runner, scheduler: ctx.scheduler, reload: ctx.reload, dataDir: dataDir() },
+          request,
+        );
+        return sendJson(res, 200, result);
+      } catch (err) {
+        if (err instanceof CrontickError && (err.code === 'CONFIG_CONFLICT' || err.code === 'RUNS_IN_FLIGHT')) {
+          return sendError(res, 409, err.code, err.message, err.details);
+        }
+        throw err;
+      }
+    }
+
     // ── 404 ───────────────────────────────────────────────────────────────────
     return sendError(res, 404, 'NOT_FOUND', `${method} ${path} not found`);
   } catch (err) {
@@ -625,6 +690,35 @@ function optionalPositiveInt(raw: string | null, field: string): number | undefi
     );
   }
   return parsed;
+}
+
+function parseConfigPatchBody(
+  body: Record<string, unknown>,
+): { ops: ConfigOp[]; ifRevision?: string; inFlight?: InFlightChoice } | { error: string } {
+  const { ops, ifRevision, inFlight } = body;
+  if (!Array.isArray(ops) || ops.length === 0) return { error: 'ops must be a non-empty array of { op: "set"|"unset", key, value? }' };
+  const parsed: ConfigOp[] = [];
+  for (const raw of ops) {
+    const o = raw as { op?: unknown; key?: unknown; value?: unknown } | null;
+    if (typeof o !== 'object' || o === null || typeof o.key !== 'string' || o.key === '') return { error: 'each op needs a non-empty string key' };
+    if (o.op === 'set') {
+      if (!('value' in o)) return { error: `set op for ${o.key} needs a value` };
+      parsed.push({ op: 'set', key: o.key, value: o.value });
+    } else if (o.op === 'unset') {
+      parsed.push({ op: 'unset', key: o.key });
+    } else {
+      return { error: 'op must be "set" or "unset"' };
+    }
+  }
+  if (ifRevision !== undefined && typeof ifRevision !== 'string') return { error: 'ifRevision must be a string' };
+  if (inFlight !== undefined && !(IN_FLIGHT_CHOICES as readonly unknown[]).includes(inFlight)) {
+    return { error: `inFlight must be one of: ${IN_FLIGHT_CHOICES.join(', ')}` };
+  }
+  return {
+    ops: parsed,
+    ...(ifRevision !== undefined ? { ifRevision } : {}),
+    ...(inFlight !== undefined ? { inFlight: inFlight as InFlightChoice } : {}),
+  };
 }
 
 async function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {

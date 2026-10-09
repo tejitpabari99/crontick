@@ -19,12 +19,12 @@ All three are thin adapters over `CrontickClient`, which communicates with the d
 
 ## The `SURFACE_CAPABILITIES` constant
 
-`src/surface.ts` exports a single constant that canonically enumerates the 24 parity capabilities:
+`src/surface.ts` exports a single constant that canonically enumerates the 30 parity capabilities:
 
 ```typescript
 export const SURFACE_CAPABILITIES = [
   { capability: 'create-job', clientMethod: 'createJob', cliCommand: ['jobs', 'new'], mcpTool: 'crontick_job_create', optionNames: ['force', 'trustFolder'] },
-  // ... 23 more entries
+  // ... 29 more entries
 ] as const satisfies readonly SurfaceCapability[];
 ```
 
@@ -40,7 +40,7 @@ Each entry maps:
 
 ## Current capability map
 
-24 capabilities are defined today; see
+30 capabilities are defined today; see
 [specs/005-surface-parity.md](../specs/005-surface-parity.md#current-capability-table) for the
 full table. The CLI may fold multiple capabilities into one command path when the operation is
 an option on a shared command -- `enable-job`/`disable-job` are `crontick jobs update --enable`

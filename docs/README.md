@@ -109,7 +109,7 @@ observable behavior without updating relevant docs is incomplete.
 | [README.md](decisions/README.md) | ADR index and process |
 | [0000-template.md](decisions/0000-template.md) | Template for new ADRs |
 
-See [decisions/README.md](decisions/README.md) for the full list of architecture decision records (ADRs 0001-0003).
+See [decisions/README.md](decisions/README.md) for the full list of architecture decision records (ADRs 0001-0004).
 
 ### specs/
 
@@ -124,6 +124,7 @@ See [decisions/README.md](decisions/README.md) for the full list of architecture
 | [005-surface-parity.md](specs/005-surface-parity.md) | Surface parity requirements |
 | [006-state-and-persistence.md](specs/006-state-and-persistence.md) | State format and durability guarantees |
 | [007-prompt-jobs.md](specs/007-prompt-jobs.md) | Prompt job behavior specification |
+| [008-config-editing.md](specs/008-config-editing.md) | Config editing: surfaces, write core, pause, in-flight policy |
 
 ### examples/
 

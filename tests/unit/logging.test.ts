@@ -76,7 +76,7 @@ describe('verbose propagation', () => {
         onLog: (event) => events.push(event),
       });
       expect(client.isVerbose()).toBe(true);
-      expect(client.getConfigValue()).toHaveProperty('engines');
+      expect(client.getConfig()).toHaveProperty('engines');
       expect(events.some((event) => event.level === 'debug' && event.message.includes('Config'))).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });

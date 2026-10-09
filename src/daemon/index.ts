@@ -18,6 +18,7 @@ import {
 import { Store } from './store.js';
 import { Scheduler } from './scheduler.js';
 import { Runner } from './runner.js';
+import { consumeLostPendingConfigApply } from './config-apply.js';
 import { createApiServer } from './api.js';
 import { bindPort, preferredDaemonPort } from './bind-port.js';
 import { probeHealth } from './ensure.js';
@@ -319,6 +320,18 @@ if (needsSqliteShim) {
       }
     });
 
+    // Fires that come due while paused are recorded 'skipped' (not run, not replayed on resume).
+    scheduler.on('paused-tick', ({ jobId, plannedAt }) => {
+      try {
+        const job = store.getJob(jobId);
+        if (!job || !job.enabled) return;
+        store.recordSkippedRun(jobId, plannedAt.getTime());
+        store.recordTick(jobId, plannedAt.getTime());
+      } catch (err) {
+        logger.error('Failed to record skipped run while paused', { jobId, error: String(err) });
+      }
+    });
+
     async function reload(): Promise<void> {
       logger.info('Reloading jobs from disk');
       // Read+validate everything that can throw (config) BEFORE mutating the
@@ -355,7 +368,13 @@ if (needsSqliteShim) {
       logger.info(`Reloaded ${reloaded.length} job(s)`);
     }
 
-    const ctx: ApiContext = { store, scheduler, runner, startedAt, port: 0, reload, logger, missedFireSummary, shutdown: () => Promise.resolve() };
+    // A wait-then-apply config save pending when the previous daemon died is lost; report it, never replay it.
+    const lostPendingConfigApply = consumeLostPendingConfigApply(dataDir());
+    if (lostPendingConfigApply) {
+      logger.warn('A pending config save (wait for in-flight runs) was lost on restart; re-apply it if still wanted', lostPendingConfigApply);
+    }
+
+    const ctx: ApiContext = { store, scheduler, runner, startedAt, port: 0, reload, logger, missedFireSummary, lostPendingConfigApply, shutdown: () => Promise.resolve() };
     const server = createApiServer(ctx);
 
     // Bind loopback only (security invariant). Prefer the stable default port;

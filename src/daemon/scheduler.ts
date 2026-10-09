@@ -36,10 +36,26 @@ export interface EnumerateFiresResult {
 export class Scheduler extends EventEmitter {
   private entries: Map<string, { stop: () => void }> = new Map();
   private readonly logger: Logger;
+  /** In-memory only (never persisted): while true, fires emit 'paused-tick' instead of 'tick'. */
+  private paused = false;
 
   constructor(logger: Logger = nullLogger) {
     super();
     this.logger = logger.child('scheduler');
+  }
+
+  /** Pause: timers keep running but due fires emit 'paused-tick' (recorded skipped by the daemon), never 'tick'. Idempotent. */
+  pause(): void {
+    this.paused = true;
+  }
+
+  /** Resume normal scheduling. Idempotent. */
+  resume(): void {
+    this.paused = false;
+  }
+
+  isPaused(): boolean {
+    return this.paused;
   }
 
   /** Register a timer for a job. Calls unschedule first (idempotent re-schedule without leaking timers). */
@@ -181,7 +197,7 @@ export class Scheduler extends EventEmitter {
   // ── Private helpers ────────────────────────────────────────────────────────
 
   private fireTick(jobId: string, plannedAt: Date): void {
-    this.emit('tick', { jobId, plannedAt } satisfies TickEvent);
+    this.emit(this.paused ? 'paused-tick' : 'tick', { jobId, plannedAt } satisfies TickEvent);
   }
 
   private scheduleCron(

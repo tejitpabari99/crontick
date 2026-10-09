@@ -496,7 +496,10 @@ th.sorted .sort-ind, th.sorted .sort-btn { opacity: 1; color: var(--accent); }
 }
 
 /* ── Theme toggle ─────────────────────────────────────────────────────────── */
-.theme-toggle { margin-left: auto; }
+.theme-toggle { margin-left: 0; }
+.pause-controls { margin-left: auto; display: flex; align-items: center; gap: 0.5556rem; }
+.badge-paused { background: var(--warn-soft); color: var(--warn); }
+.pause-controls[hidden], .badge-paused[hidden] { display: none; }
 header .theme-toggle ~ .badge { margin-left: 0; }
 
 /* Icon-only theme switcher */
@@ -507,3 +510,45 @@ a.btn { text-decoration: none; display: inline-block; }
 
 /* Icon-only refresh button sits at the far right of the toolbar, after the auto-refresh control. */
 .btn-refresh { font-size: 1.1111rem; line-height: 1; padding: 0.2222rem 0.6667rem; }
+
+/* ── Settings modal ───────────────────────────────────────────────────────── */
+.settings-modal { width: min(46.6667rem, 100%); }
+.settings-modal .modal-body { flex: 1; min-height: 0; }
+.settings-footer { display: flex; justify-content: flex-end; gap: 0.5556rem; padding: 0.6667rem 1.1111rem; border-top: 1px solid var(--border); background: var(--surface); }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+.btn-primary:hover { color: var(--on-accent); opacity: .9; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn:disabled:hover { border-color: var(--border); color: var(--text); }
+.btn-primary:disabled:hover { border-color: var(--accent); color: var(--on-accent); }
+.settings-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 0.5556rem; margin-bottom: 0.5556rem; }
+.settings-toolbar[hidden], .settings-toolbar .btn[hidden] { display: none; }
+.settings-banner, .settings-inflight { border-radius: 0.3333rem; padding: 0.5556rem 0.8333rem; margin-bottom: 0.6667rem; font-size: 0.8889rem; }
+.settings-banner { background: var(--error-banner); border: 1px solid var(--error); color: var(--error); display: flex; align-items: center; gap: 0.6667rem; flex-wrap: wrap; }
+.settings-inflight { background: var(--warn-soft); border: 1px solid var(--warn); }
+.settings-inflight .row { display: flex; gap: 0.5556rem; flex-wrap: wrap; margin-top: 0.5556rem; }
+.settings-banner[hidden], .settings-inflight[hidden] { display: none; }
+.settings-section { margin-bottom: 0.8333rem; }
+.settings-grid { display: grid; grid-template-columns: minmax(8.3333rem, 12rem) 1fr; gap: 0.4444rem 0.8333rem; align-items: center; }
+.settings-grid label { color: var(--muted); font-size: 0.8333rem; }
+.settings-form input[type="text"], .settings-form input[type="number"], .settings-form select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 0.3333rem;
+  padding: 0.2778rem 0.5rem; font-size: 0.8333rem; width: 100%; min-width: 0;
+}
+.settings-form input[type="checkbox"] { width: auto; }
+.settings-form input:disabled, .settings-form select:disabled { opacity: .7; cursor: default; }
+.settings-form input:focus-visible, .settings-form select:focus-visible { outline: 0.1111rem solid var(--accent); outline-offset: -0.0556rem; }
+.settings-form .field-error { border-color: var(--error); outline: 0.1111rem solid var(--error); outline-offset: -0.0556rem; }
+.settings-hint { color: var(--muted); font-size: 0.7778rem; }
+.engine-card { border: 1px solid var(--border); border-radius: 0.4444rem; padding: 0.6667rem 0.8333rem; margin-bottom: 0.6667rem; background: var(--bg); }
+.engine-card-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5556rem; margin-bottom: 0.4444rem; }
+.engine-card-head strong { color: var(--accent); }
+.engine-tag { margin-left: 0.4444rem; }
+.kv-rows { display: flex; flex-direction: column; gap: 0.3333rem; }
+.kv-row { display: flex; gap: 0.4444rem; align-items: center; }
+.kv-row input { flex: 1; }
+.kv-row .env-key { flex: 0 0 35%; }
+.settings-add-engine { display: flex; gap: 0.5556rem; align-items: center; }
+.settings-add-engine input { max-width: 16.6667rem; }
+.settings-add-engine[hidden], .settings-form [data-edit-only][hidden] { display: none; }
+.settings-port code { font-size: 0.8333rem; }
+@media (max-width: 40rem) { .settings-grid { grid-template-columns: 1fr; } }

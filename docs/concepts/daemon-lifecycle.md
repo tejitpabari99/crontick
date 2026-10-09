@@ -28,6 +28,10 @@ The real port is always in `daemon.port`. Non-loopback gets HTTP 403.
 `GET /health` returns `{ ok, product: "crontick", pid, port }`; the client validates all four
 fields, to avoid accidentally connecting to a different service on the same port.
 
+## Pause and resume
+
+`crontick daemon pause` keeps the daemon process, HTTP API and dashboard up but starts no new runs. Fires that come due while paused are not run and not replayed on resume; each is recorded as a run with status `skipped`. In-flight runs continue. `crontick daemon resume` restores scheduling. Paused state lives in memory only: a restart comes up unpaused. This is distinct from `daemon stop`, which exits the process. Config saves use pause internally for the "wait for in-flight runs" choice; see [configuration.md](../reference/configuration.md#editing-config).
+
 ## Port, PID, and lock files
 
 `daemon.port` (text) lets clients find the API without configuration; `daemon.pid` (text) is the

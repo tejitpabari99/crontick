@@ -488,11 +488,11 @@ describe('shared secret redaction', () => {
         const tailed = logs.lines.map((line) => line.data).join('');
         expectRedacted(tailed, entry.rawSecrets, entry.expectedRuntime, `${entry.name} logs tail`);
 
-        const configValue = fixture.client.getConfigValue(`engines.copilot.env.${entry.configKey}`);
+        const configValue = fixture.client.configGet(`engines.copilot.env.${entry.configKey}`);
         const configText = typeof configValue === 'string' ? configValue : JSON.stringify(configValue);
         expectRedacted(configText, entry.rawSecrets, entry.expectedConfig, `${entry.name} config get`);
 
-        const engines = fixture.client.listEngines();
+        const engines = fixture.client.configList().config.engines;
         const enginesText = JSON.stringify(engines);
         expectRedacted(enginesText, entry.rawSecrets, entry.expectedConfig, `${entry.name} config engines`);
         expect(engines.copilot?.env?.[entry.configKey]).toBe(entry.expectedConfig);
@@ -707,36 +707,34 @@ describe('shared secret redaction', () => {
     try {
       fixture.client.initConfig({ force: true });
 
-      const setResult = fixture.client.setConfigValue('engines.claude.env', {
+      const setResult = (await fixture.client.configSet('engines.claude.env', {
         OPENAI_API_KEY: OPENAI_GENERIC,
         NON_SECRET: BENIGN_WINDOWS_PATH,
-      });
+      })).config;
       expect(JSON.stringify(setResult)).not.toContain(OPENAI_GENERIC);
       expect(setResult.engines.claude.env).toMatchObject({
         OPENAI_API_KEY: '[REDACTED]',
         NON_SECRET: BENIGN_WINDOWS_PATH,
       });
 
-      const added = fixture.client.addEngine('client-redaction-engine', {
+      const added = (await fixture.client.configSet('engines.client-redaction-engine', {
         command: 'agency',
         args: ['cp'],
         env: {
           OPENAI_API_KEY: OPENAI_PROJECT,
           NON_SECRET: BENIGN_URL,
         },
-      });
+      })).config;
       expect(JSON.stringify(added)).not.toContain(OPENAI_PROJECT);
       expect(added.engines['client-redaction-engine']?.env).toMatchObject({
         OPENAI_API_KEY: '[REDACTED]',
         NON_SECRET: BENIGN_URL,
       });
 
-      const updated = fixture.client.updateEngine('client-redaction-engine', {
-        env: {
-          AWS_SECRET_ACCESS_KEY,
-          NO_PASSWORD: BENIGN_40_CHAR,
-        },
-      });
+      const updated = (await fixture.client.configSet('engines.client-redaction-engine.env', {
+        AWS_SECRET_ACCESS_KEY,
+        NO_PASSWORD: BENIGN_40_CHAR,
+      })).config;
       expect(JSON.stringify(updated)).not.toContain(AWS_SECRET_ACCESS_KEY);
       expect(updated.engines['client-redaction-engine']?.env).toMatchObject({
         AWS_SECRET_ACCESS_KEY: '[REDACTED]',
@@ -843,10 +841,10 @@ describe('shared secret redaction', () => {
       expectNoRedactionMarker(JSON.stringify(logs), 'benign logs tail');
 
       for (const [key, value] of Object.entries(BENIGN_CONFIG_ENV)) {
-        expect(fixture.client.getConfigValue(`engines.copilot.env.${key}`)).toBe(value);
+        expect(fixture.client.configGet(`engines.copilot.env.${key}`)).toBe(value);
       }
 
-      const engines = fixture.client.listEngines();
+      const engines = fixture.client.configList().config.engines;
       expect(engines.copilot?.env).toEqual(BENIGN_CONFIG_ENV);
       expectNoRedactionMarker(JSON.stringify(engines), 'benign config engines');
 

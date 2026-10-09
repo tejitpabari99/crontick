@@ -10,7 +10,7 @@ is the normative contract; for the design rationale see
 
 ## Summary
 
-Every user-facing capability in crontick MUST be available on all three parity surfaces: CLI, MCP server, and library API (`CrontickClient`). A canonical table (`SURFACE_CAPABILITIES` in `src/surface.ts`) encodes this mapping and an automated drift test enforces it. The current table contains 24 capabilities.
+Every user-facing capability in crontick MUST be available on all three parity surfaces: CLI, MCP server, and library API (`CrontickClient`). A canonical table (`SURFACE_CAPABILITIES` in `src/surface.ts`) encodes this mapping and an automated drift test enforces it. The current table contains 30 capabilities.
 
 When a change extends an existing capability rather than adding a new one (for example the `create-job` capability's `force` option), the same table MAY annotate the parity-coupled option names.
 
@@ -75,6 +75,12 @@ The command-tree reorganization intentionally narrowed some exposure without rem
 | `import` | `importJobs` | `crontick share import` | `crontick_import` |
 | `daemon-stop` | `daemonStop` | `crontick daemon stop` | `crontick_daemon_stop` |
 | `daemon-reload` | `daemonReload` | `crontick daemon reload` | `crontick_daemon_reload` |
+| `daemon-pause` | `daemonPause` | `crontick daemon pause` | `crontick_daemon_pause` |
+| `daemon-resume` | `daemonResume` | `crontick daemon resume` | `crontick_daemon_resume` |
+| `config-list` | `configList` | `crontick config list` | `crontick_config_list` |
+| `config-get` | `configGet` | `crontick config get` | `crontick_config_get` |
+| `config-set` | `configSet` | `crontick config set` | `crontick_config_set` |
+| `config-unset` | `configUnset` | `crontick config unset` | `crontick_config_unset` |
 | `doctor` | `doctor` | `crontick doctor` | `crontick_doctor` |
 | `info` | `info` | `crontick info` | `crontick_info` |
 | `autostart-enable` | `autostartEnable` | `crontick autostart enable` | none (`mcpExemption`) |

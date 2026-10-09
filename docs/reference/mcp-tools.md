@@ -66,11 +66,11 @@ Tools that expose run rows or log text apply the shared redaction contract befor
 
 ## Tool Inventory
 
-The MCP server exposes 22 `crontick_*` tools, matching `SURFACE_CAPABILITIES` except for the deliberate exemption below.
+The MCP server exposes 28 `crontick_*` tools, matching `SURFACE_CAPABILITIES` except for the deliberate exemption below.
 
 **Autostart exception:** only `crontick_autostart_status` (read-only) is exposed. `autostart enable` and `autostart disable` are intentionally not MCP tools: an agent must not be able to create login persistence. They remain available on the CLI and the library (see [ADR 0001](../decisions/0001-architecture-and-runtime-model.md), "OS autostart").
 
-Removed tools are not present: the `crontick_config_*` get/set/unset/init/validate/engine tools, `crontick_schedule_validate`, `crontick_schedule_preview`, `crontick_dashboard_data`, `crontick_run_logs_tail` and `crontick_run_output` (folded into `crontick_run_get`), and the `crontick_daemon_start`/`crontick_daemon_status`/`crontick_daemon_restart` plus `crontick_dashboard_start`/`crontick_dashboard_status`/`crontick_dashboard_stop` tools. The dashboard is always served by the daemon; call `crontick_info`, read `configPath`, and open its `dashboardUrl`. Use `crontick_job_schedule` to preview an existing job's upcoming fire times.
+Removed tools are not present: the former `crontick_config_*` init/validate/engine tools (engine management is now `crontick_config_set`/`crontick_config_unset` on `engines.<name>`), `crontick_schedule_validate`, `crontick_schedule_preview`, `crontick_dashboard_data`, `crontick_run_logs_tail` and `crontick_run_output` (folded into `crontick_run_get`), and the `crontick_daemon_start`/`crontick_daemon_status`/`crontick_daemon_restart` plus `crontick_dashboard_start`/`crontick_dashboard_status`/`crontick_dashboard_stop` tools. The dashboard is always served by the daemon; call `crontick_info`, read `configPath`, and open its `dashboardUrl`. Use `crontick_job_schedule` to preview an existing job's upcoming fire times.
 
 ---
 
@@ -353,6 +353,52 @@ Reload job definitions from disk without restarting.
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `{ ok: true }`
+
+---
+
+### crontick_daemon_pause
+
+Pause scheduling (daemon stays up; due fires are recorded `skipped`; not persisted across restart). Parameter: `verbose`. **Result:** `{ ok: true, paused: true }`
+
+---
+
+### crontick_daemon_resume
+
+Resume scheduling after a pause. Parameter: `verbose`. **Result:** `{ ok: true, paused: false }`
+
+---
+
+### crontick_config_list
+
+Effective config (secrets redacted) plus stored keys, file `revision` and read-only keys. Works with the daemon down. Parameter: `verbose`. **Result:** `{ path, revision, config, stored, readOnly, notice }`
+
+---
+
+### crontick_config_get
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `key` | `string` | yes | Dotted key, e.g. `defaults.timeoutSec`, `engines.claude.command` |
+
+**Result:** `{ key, value }`. Unknown key: `CONFIG_KEY_NOT_FOUND`.
+
+---
+
+### crontick_config_set
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `key` | `string` | yes | Dotted key. `engines.<name>` with an object value adds or replaces an engine |
+| `value` | any JSON | yes | Typed JSON value (not parsed from text) |
+| `inFlight` | `"stop"\|"wait"` | no | Only when runs are in flight (otherwise `RUNS_IN_FLIGHT` lists them): `stop` cancels them then applies; `wait` pauses, waits for them, applies, resumes. Ask the user which |
+
+Validated and written atomically to `config.json` (works with the daemon down, never starts it), then a running daemon is reloaded. **Result:** `{ path, config, stored, changed, revision, notice, reload, warnings }`. `daemon.*` keys fail with `CONFIG_KEY_READ_ONLY` while a daemon runs.
+
+---
+
+### crontick_config_unset
+
+Parameters: `key` (required), `inFlight` (optional, as above). Removes the key so it reverts to its default; `engines.<name>` removes that engine (warns when jobs use it). **Result:** same as `crontick_config_set`.
 
 ---
 
