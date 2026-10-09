@@ -228,6 +228,9 @@ function commonJobOptions(command: Command): Command {
     .option(`${scheduleFlag('--every').flag} ${scheduleFlag('--every').arg}`, scheduleFlag('--every').description, parseEveryInterval)
     .option(`${scheduleFlag('--at').flag} ${scheduleFlag('--at').arg}`, scheduleFlag('--at').description)
     .option(`${scheduleFlag('--after').flag} ${scheduleFlag('--after').arg}`, scheduleFlag('--after').description)
+    .option('--webhook', 'Schedule: run on webhook events (via --relay) or local `jobs trigger`')
+    .option('--relay <url|auto>', 'With --webhook: relay channel URL (smee.io-style), or "auto" to create a smee.io channel; omit for local-trigger-only')
+    .option('--webhook-secret <secret>', 'With --webhook: verify x-hub-signature-256 on relay events')
     .option('--after-status <status>', 'With --after: which upstream outcome triggers this job: success|failure|any (default: success)')
     .option('--dir <path>', 'Directory the job runs in (default: current directory)')
     .option('--trust-folder', 'Trust the working directory in Claude without asking (when it is not trusted yet)')
@@ -260,6 +263,9 @@ function collectJobOptions(engineArgs: string[], passthroughArgs: string[], cliA
     at: stringOption(opts.at),
     after: stringOption(opts.after),
     afterStatus: stringOption(opts.afterStatus),
+    webhook: booleanOption(opts.webhook),
+    relay: stringOption(opts.relay),
+    webhookSecret: stringOption(opts.webhookSecret),
     cwd: stringOption(opts.dir),
     trustFolder: booleanOption(opts.trustFolder),
     prompt: stringOption(opts.prompt),
@@ -287,6 +293,9 @@ function collectPatchOptions(engineArgs: string[], passthroughArgs: string[], cl
     at: stringOption(opts.at),
     after: stringOption(opts.after),
     afterStatus: stringOption(opts.afterStatus),
+    webhook: booleanOption(opts.webhook),
+    relay: stringOption(opts.relay),
+    webhookSecret: stringOption(opts.webhookSecret),
     cwd: stringOption(opts.dir),
     trustFolder: booleanOption(opts.trustFolder),
     prompt: stringOption(opts.prompt),
@@ -468,7 +477,7 @@ commonJobOptions(jobs.command('update <id|alias> [engineArgs...]').description('
     try {
       assertNoCrontickFlagCollision(engineArgs, cmd);
       const { rawArgs, passthroughArgs } = splitPromptEngineArgs(engineArgs);
-      const patchOptions = collectPatchOptions(rawArgs, passthroughArgs, engineArgs, opts);
+      const patchOptions = await c.resolveRelayAuto(collectPatchOptions(rawArgs, passthroughArgs, engineArgs, opts));
       const patch = buildJobPatchFromUpdateOptions(patchOptions, {
         cwd: process.cwd(),
         onNotice: (message) => notices.push(message),

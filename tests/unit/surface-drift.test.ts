@@ -16,6 +16,7 @@ const NON_PARITY_CLIENT_METHODS = new Set([
   'ensure',
   'health',
   'createJobFromCliOptions',
+  'resolveRelayAuto',
   'jobJsonSchema',
   'getConfig',
   'writeConfig',

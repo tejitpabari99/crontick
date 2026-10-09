@@ -20,6 +20,7 @@ import {
   JobSchema,
   PromptActionBaseSchema,
   AfterScheduleSchema,
+  WebhookScheduleSchema,
   CronScheduleSchema,
   IntervalScheduleSchema,
   OneShotScheduleSchema,
@@ -86,6 +87,7 @@ const ScheduleInputSchema = z.discriminatedUnion('kind', [
   IntervalScheduleSchema,
   OneShotScheduleSchema,
   AfterScheduleSchema.extend({ jobId: z.string().min(1).describe('Upstream job id (GUID) or alias; stored as the GUID') }),
+  WebhookScheduleSchema,
 ]);
 
 /** Create inputs must leave missing policy fields absent until config defaults are applied. */
@@ -160,6 +162,12 @@ export interface JobCreateCliOptions {
   after?: string;
   /** Which upstream outcome triggers the run (`--after-status`): success (default), failure, or any. */
   afterStatus?: string;
+  /** Webhook-triggered job (`--webhook`). */
+  webhook?: boolean;
+  /** Relay channel URL (`--relay`); `auto` is resolved to a smee.io channel by the client before building. */
+  relay?: string;
+  /** HMAC secret for relay events (`--webhook-secret`). */
+  webhookSecret?: string;
   /** Working directory the engine runs in (CLI `--dir`); stored as `action.cwd`. Defaults to the invoking directory on create. */
   cwd?: string;
   /** Trust the job's working directory in Claude without asking (`--trust-folder`). */
@@ -665,19 +673,27 @@ function formatCliFlagList(flags: readonly string[]): string {
 
 function buildSchedule(input: JobCreateCliOptions): JobCreateInput['schedule'] {
   const schedule = maybeBuildSchedule(input);
-  if (!schedule) throw new CrontickError('MISSING_ARG', 'Provide exactly one schedule: --cron <expr>, --every <interval> (seconds, or a s/m/h/d suffix such as 30m), --at <datetime> (one-shot ISO-8601 time, local timezone unless an offset is given), or --after <id|alias> (run when another job finishes)');
+  if (!schedule) throw new CrontickError('MISSING_ARG', 'Provide exactly one schedule: --cron <expr>, --every <interval> (seconds, or a s/m/h/d suffix such as 30m), --at <datetime> (one-shot ISO-8601 time, local timezone unless an offset is given), --after <id|alias> (run when another job finishes), or --webhook (run on webhook events)');
   return schedule;
 }
 
 const AFTER_STATUSES: readonly string[] = ['success', 'failure', 'any'];
 
 function maybeBuildSchedule(input: JobPatchCliOptions): JobCreateInput['schedule'] | undefined {
-  const count = [input.cron, input.every, input.at, input.after].filter((value) => value !== undefined).length;
+  const count = [input.cron, input.every, input.at, input.after, input.webhook ? true : undefined].filter((value) => value !== undefined).length;
+  if (!input.webhook && input.relay !== undefined) throw new CrontickError('VALIDATION_ERROR', '--relay requires --webhook');
+  if (!input.webhook && input.webhookSecret !== undefined) throw new CrontickError('VALIDATION_ERROR', '--webhook-secret requires --webhook');
   if (input.afterStatus !== undefined && input.after === undefined) {
     throw new CrontickError('VALIDATION_ERROR', '--after-status requires --after <id|alias>');
   }
   if (count === 0) return undefined;
-  if (count > 1) throw new CrontickError('VALIDATION_ERROR', 'Provide only one schedule: --cron, --every, --at, or --after (they cannot be combined)');
+  if (count > 1) throw new CrontickError('VALIDATION_ERROR', 'Provide only one schedule: --cron, --every, --at, --after, or --webhook (they cannot be combined)');
+  if (input.webhook) {
+    if (input.relay === 'auto') throw new CrontickError('VALIDATION_ERROR', '--relay auto must be resolved to a channel URL before building the job (use the client)');
+    const schedule = WebhookScheduleSchema.safeParse({ kind: 'webhook', relay: input.relay, secret: input.webhookSecret });
+    if (!schedule.success) throw new CrontickError('VALIDATION_ERROR', schedule.error.issues.map((i) => i.message).join('; '));
+    return schedule.data;
+  }
   if (input.after !== undefined) {
     const status = input.afterStatus ?? 'success';
     if (!AFTER_STATUSES.includes(status)) {
@@ -757,6 +773,9 @@ function assertFileModeExclusive(opts: JobPatchCliOptions, rawArgs: string[]): v
     || opts.at !== undefined
     || opts.after !== undefined
     || opts.afterStatus !== undefined
+    || opts.webhook !== undefined
+    || opts.relay !== undefined
+    || opts.webhookSecret !== undefined
     || opts.cwd !== undefined
     || opts.prompt !== undefined
     || opts.promptFile !== undefined

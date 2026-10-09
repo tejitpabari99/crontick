@@ -18,5 +18,6 @@ export function describeSchedule(schedule: Schedule, lookup: ScheduleLabelLookup
     if (!upstream) return `after ${id8} (missing)`;
     return `after ${upstream.alias || id8} (on ${schedule.status})`;
   }
+  if (schedule.kind === 'webhook') return schedule.relay ? `webhook (relay: ${schedule.relay})` : 'webhook (local only)';
   return `once at ${schedule.runAt}`;
 }

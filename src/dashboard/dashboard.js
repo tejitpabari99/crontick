@@ -1120,6 +1120,9 @@ const EDITOR_CLI_PARITY = {
   '--at': 'schedule',
   '--after': 'schedule', // `after` SCHEDULE_KINDS entry (upstream select)
   '--after-status': 'schedule',
+  '--webhook': 'schedule', // `webhook` SCHEDULE_KINDS entry arrives with the dashboard webhook UI
+  '--relay': 'schedule',
+  '--webhook-secret': 'schedule',
   '--dir': 'cwd',
   '--trust-folder': 'trustFolder', // revealed after TRUST_REQUIRED (Task 7)
   '--runner': 'engine',

@@ -132,6 +132,7 @@ export class Scheduler extends EventEmitter {
       case 'one-shot':
         return this.previewOneShot(schedule.runAt);
       case 'after':
+      case 'webhook':
         return [];
       default:
         return assertNever(schedule);
@@ -184,6 +185,11 @@ export class Scheduler extends EventEmitter {
       return { ok: true };
     }
 
+    if (schedule.kind === 'webhook') {
+      // Event-driven: relay reachability is runtime state, not a schedule validity concern.
+      return { ok: true };
+    }
+
     if (schedule.kind === 'after') {
       // Upstream existence / cycles are validated by the daemon API, not the timer layer.
       return { ok: true };
@@ -226,6 +232,7 @@ export class Scheduler extends EventEmitter {
         return { fires: [t], capped: false };
       }
       case 'after':
+      case 'webhook':
         return { fires: [], capped: false };
       default:
         return assertNever(schedule);

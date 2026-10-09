@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { promptRuntimeValidationMessage } from '../prompt-runtime.js';
 import { EngineNameSchema } from './config.js';
 import { isReservedJobRef } from '../utils/job-ref.js';
+import { isValidRelayUrl } from '../utils/relay-url.js';
 
 // ── Schedule ──────────────────────────────────────────────────────────────────
 
@@ -38,15 +39,27 @@ export const AfterScheduleSchema = z.object({
   status: z.enum(['success', 'failure', 'any']).describe('Which upstream terminal outcome triggers this job'),
 });
 
+/**
+ * Non-time trigger: fires on events from an outbound-SSE relay (smee.io-style) or a local trigger.
+ * `relay` is a bearer secret URL (https, or http for loopback hosts only); omitted = local-trigger-only.
+ */
+export const WebhookScheduleSchema = z.object({
+  kind: z.literal('webhook'),
+  relay: z.string().refine(isValidRelayUrl, { message: 'relay must be an https URL (http is allowed only for loopback hosts)' }).optional()
+    .describe('Relay channel URL (smee.io-style SSE); treat as a secret. Omit for a local-trigger-only job'),
+  secret: z.string().min(1).optional().describe('Optional HMAC secret verifying x-hub-signature-256 on relay events'),
+});
+
 /** Schedule discriminated union (exactly one schedule per job); croner v9 validates the cron expression at runtime. */
 export const ScheduleSchema = z.discriminatedUnion('kind', [
   CronScheduleSchema,
   IntervalScheduleSchema,
   OneShotScheduleSchema,
   AfterScheduleSchema,
+  WebhookScheduleSchema,
 ]);
 
-export type TimeSchedule = Exclude<z.infer<typeof ScheduleSchema>, z.infer<typeof AfterScheduleSchema>>;
+export type TimeSchedule = Exclude<z.infer<typeof ScheduleSchema>, z.infer<typeof AfterScheduleSchema> | z.infer<typeof WebhookScheduleSchema>>;
 
 /** True for schedule kinds driven by the clock (cron, interval, one-shot); false for event-driven kinds. */
 export function isTimeSchedule(schedule: z.infer<typeof ScheduleSchema>): schedule is TimeSchedule {
@@ -56,6 +69,7 @@ export function isTimeSchedule(schedule: z.infer<typeof ScheduleSchema>): schedu
     case 'one-shot':
       return true;
     case 'after':
+    case 'webhook':
       return false;
   }
 }

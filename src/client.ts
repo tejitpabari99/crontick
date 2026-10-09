@@ -72,6 +72,7 @@ import { createLogger, isVerboseEnv, type Logger, type LogSink } from './logger.
 import { dataDir, jobsDir, logsDir, pidFilePath, portFilePath, runsDbPath } from './paths.js';
 import { remapAfterUpstreams } from './share.js';
 import { describeSchedule } from './utils/schedule-label.js';
+import { createRelayChannel } from './utils/relay-url.js';
 import { VERSION } from './version.js';
 
 export interface CrontickClientOptions extends Omit<EnsureDaemonOptions, 'startDaemon' | 'logger'> {
@@ -84,6 +85,8 @@ export interface CrontickClientOptions extends Omit<EnsureDaemonOptions, 'startD
   verbose?: boolean;
   onLog?: LogSink;
   logger?: Logger;
+  /** Injectable fetch for `--relay auto` channel creation (tests); defaults to global fetch. */
+  relayFetch?: typeof fetch;
 }
 
 /**
@@ -376,6 +379,7 @@ export class CrontickClient {
 
   /** CLI convenience: builds a Job from raw CLI flags before delegating to createJob. Library-only. */
   async createJobFromCliOptions(input: JobCreateCliOptions): Promise<Job> {
+    if (!input.file) input = await this.resolveRelayAuto(input);
     // The builder returns a finished (GUID-validated) Job, so an `--after` alias is resolved to the upstream GUID first.
     if (input.after !== undefined && !input.file) {
       const upstream = await fetchAfterUpstream(this, input.after);
@@ -386,6 +390,20 @@ export class CrontickClient {
       buildJobFromCreateOptions(input, this.normalizeOptions({ cwd: this.options.cwd ?? process.cwd() })),
       { force: input.force, trustFolder: input.trustFolder },
     );
+  }
+
+  /**
+   * Resolves `--relay auto` to a freshly created smee.io channel (no redirect following) and queues a
+   * one-time "treat as a secret" notice. Other inputs pass through; `--relay` without `--webhook` is an error.
+   * Library-only.
+   */
+  async resolveRelayAuto<T extends { webhook?: boolean; relay?: string }>(input: T): Promise<T> {
+    if (input.relay === undefined) return input;
+    if (!input.webhook) throw new CrontickError('VALIDATION_ERROR', '--relay requires --webhook');
+    if (input.relay !== 'auto') return input;
+    const channel = await createRelayChannel(this.options.relayFetch);
+    this.notices.push(`Created relay channel ${channel} -- treat it as a secret (anyone with the URL can trigger this job). Shown once; \`crontick jobs get\` shows it again.`);
+    return { ...input, relay: channel };
   }
 
   async listJobs(): Promise<Job[]> {
