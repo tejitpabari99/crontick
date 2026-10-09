@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { promptRuntimeValidationMessage } from '../prompt-runtime.js';
 import { EngineNameSchema } from './config.js';
+import { isReservedJobRef } from '../utils/job-ref.js';
 
 // ── Schedule ──────────────────────────────────────────────────────────────────
 
@@ -91,6 +92,12 @@ export const RetrySchema = z.object({
  */
 export const JOB_ALIAS_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/** Alias validation shared by create, update and import: kebab-case and not a reserved ref (e.g. `all`). */
+export const JobAliasSchema = z
+  .string()
+  .regex(JOB_ALIAS_PATTERN, 'Job alias must be kebab-case (e.g. "my-job")')
+  .refine((a) => !isReservedJobRef(a), { message: 'Job alias "all" is reserved' });
+
 /**
  * Immutable primary key: a GUID assigned once at creation and never changed
  * (see docs/decisions and docs/concepts/jobs.md). Runs, the scheduler, and
@@ -108,7 +115,7 @@ export const JobBaseSchema = z.object({
    * tried first, falling back to `alias`. When omitted on create, one is
    * auto-generated (see generateAlias in job-input.ts).
    */
-  alias: z.string().regex(JOB_ALIAS_PATTERN, 'Job alias must be kebab-case (e.g. "my-job")').optional().describe('Unique kebab-case job alias (set via CLI --alias); auto-generated when omitted'),
+  alias: JobAliasSchema.optional().describe('Unique kebab-case job alias (set via CLI --alias); auto-generated when omitted'),
   description: z.string().optional(),
   enabled: z.boolean().default(true),
   schedule: ScheduleSchema,

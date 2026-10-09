@@ -56,6 +56,8 @@ crontick daemon reload
 crontick mcp [--no-start-daemon] [--daemon-url <url>]
 ```
 
+The alias `all` is reserved (it is the `jobs delete all` keyword) and is rejected on create, update and import.
+
 Commands accept a job identifier as either the immutable GUID `id` or the job's **alias** (the unique kebab-case name; `--alias`/`-a` sets it). `jobs new` assigns the GUID automatically; pass `--alias <alias>` only when you want to control the alias. Every command that takes a job (`jobs update/get/schedule/delete/run-now`, `stats job`, `runs list --job`, `share export --only-jobs`) resolves an id or an alias the same way. A missing job reports `Job X not found (id or alias)`.
 
 ---

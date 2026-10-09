@@ -15,7 +15,7 @@ import { TextDecoder } from 'node:util';
 import { z } from 'zod';
 import { CrontickError } from './errors.js';
 import {
-  JOB_ALIAS_PATTERN,
+  JobAliasSchema,
   JobBaseSchema,
   JobSchema,
   PromptActionBaseSchema,
@@ -93,7 +93,7 @@ export type ExportFile = { schema: 1; exportedAt?: string; crontickVersion?: str
 
 export const JobPatchInputSchema = z.object({
   /** Alias is user-editable after creation; `id` (the GUID) is never patchable. */
-  alias: z.string().regex(JOB_ALIAS_PATTERN, 'Job alias must be kebab-case (e.g. "my-job")').optional().describe('Unique kebab-case job alias (set via CLI --alias)'),
+  alias: JobAliasSchema.optional().describe('Unique kebab-case job alias (set via CLI --alias)'),
   description: z.string().optional(),
   enabled: z.boolean().optional(),
   schedule: ScheduleSchema.optional(),

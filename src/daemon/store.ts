@@ -13,6 +13,7 @@ import { nullLogger, type Logger } from '../logger.js';
 import type { EngineOutput } from '../run-output.js';
 import { readClaudeCompletionMarker, readClaudeHookTranscriptPath } from '../claude-completion-marker.js';
 import { loadConfig } from '../config.js';
+import { resolveJobRef } from '../utils/job-ref.js';
 import { resolveJobLogPath } from './job-log-file.js';
 import { getEngineAdapter } from '../engines/registry.js';
 import { DEFAULT_RUN_RETENTION_CAP } from '../constants/retention.js';
@@ -298,17 +299,12 @@ export class Store {
    * a job identifier is accepted.
    */
   getJob(idOrAlias: string): Job | undefined {
-    const byId = this.getJobRowById(idOrAlias);
-    if (byId) {
-      this.logger.debug('Read job from store by id', { jobId: idOrAlias });
-      return byId;
-    }
-    const byAlias = this.getJobRowByAlias(idOrAlias);
-    if (byAlias) {
-      this.logger.debug('Read job from store by alias', { alias: idOrAlias, jobId: byAlias.id });
-      return byAlias;
-    }
-    return undefined;
+    const job = resolveJobRef(idOrAlias, {
+      byId: (ref) => this.getJobRowById(ref),
+      byAlias: (ref) => this.getJobRowByAlias(ref),
+    });
+    if (job) this.logger.debug('Read job from store', { ref: idOrAlias, jobId: job.id });
+    return job;
   }
 
   private getJobRowById(id: string): Job | undefined {
