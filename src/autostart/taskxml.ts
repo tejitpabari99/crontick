@@ -14,11 +14,19 @@ function val(v: string): string {
   return escapeXml(v);
 }
 
+/**
+ * Quotes one argument for CommandLineToArgvW / the MSVC runtime: backslashes directly before the
+ * closing quote must be doubled, otherwise `\"` is read as an escaped quote.
+ */
+function quoteArg(v: string): string {
+  return `"${v.replace(/\\+$/, (b) => b + b)}"`;
+}
+
 /** Arguments string for the launcher action: `"<cli>" daemon start [--home "<dir>"]`. */
 function renderArguments(spec: AutostartSpec): string {
   const home = spec.env['CRONTICK_HOME'];
-  const parts = [`"${spec.cliScript}"`, 'daemon', 'start'];
-  if (home) parts.push('--home', `"${home}"`);
+  const parts = [quoteArg(spec.cliScript), 'daemon', 'start'];
+  if (home) parts.push('--home', quoteArg(home));
   return parts.join(' ');
 }
 
@@ -82,11 +90,11 @@ function element(xml: string, name: string): string | undefined {
   return m ? m[1]! : undefined;
 }
 
-/** Splits a Windows-style argument string; double quotes group, no escapes (paths cannot contain `"`). */
+/** Splits a Windows-style argument string; double quotes group, trailing backslashes in a quoted token are halved (inverse of `quoteArg`; paths cannot contain `"`). */
 function splitArguments(s: string): string[] {
   const out: string[] = [];
   const re = /"([^"]*)"|(\S+)/g;
-  for (let m = re.exec(s); m; m = re.exec(s)) out.push(m[1] ?? m[2]!);
+  for (let m = re.exec(s); m; m = re.exec(s)) out.push(m[1] !== undefined ? m[1].replace(/\\+$/, (b) => b.slice(0, b.length >> 1)) : m[2]!);
   return out;
 }
 

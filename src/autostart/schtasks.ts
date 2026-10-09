@@ -100,7 +100,7 @@ export class SchtasksBackend implements AutostartBackend {
     const run = await this.runState();
     if (run.active !== undefined) out.active = run.active;
     if (run.note) notes.push(run.note);
-    notes.push(UI_HINT, FLASH_HINT);
+    notes.push(UI_HINT, FLASH_HINT, ACTIVE_HINT);
     out.notes = notes;
     return out;
   }
@@ -126,6 +126,8 @@ export class SchtasksBackend implements AutostartBackend {
 
 const UI_HINT = 'Inspect the task in Task Scheduler: run taskschd.msc and open the \\crontick folder.';
 const FLASH_HINT = 'The logon task runs a short-lived launcher, so a console window may flash briefly (about 30 seconds after logon).';
+
+const ACTIVE_HINT = 'Active reflects the short-lived launcher task, not the daemon: "no" is normal while the daemon runs. Use `crontick daemon status` for the daemon.';
 
 // `schtasks /query /v /fo csv` column order is stable across locales; text is not.
 const STATUS_COL = 3;

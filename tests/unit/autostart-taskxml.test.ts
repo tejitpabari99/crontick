@@ -119,6 +119,13 @@ describe('task xml parser', () => {
     expect(p?.args).toEqual([s.cliScript, 'daemon', 'start', '--home', s.env['CRONTICK_HOME']]);
   });
 
+  it('doubles trailing backslashes so a closing quote is not escaped (regression)', () => {
+    const s: AutostartSpec = { ...spec, env: { CRONTICK_HOME: 'C:\\data\\' } };
+    const xml = renderTaskXml(s, SID);
+    expect(xml).toContain('--home &quot;C:\\data\\\\&quot;');
+    expect(parseTaskXml(xml)?.args).toEqual([s.cliScript, 'daemon', 'start', '--home', 'C:\\data\\']);
+  });
+
   it('reads Settings/Enabled, not the trigger Enabled', () => {
     const xml = renderTaskXml(spec, SID).replace(/(<Hidden>false<\/Hidden>\s*<Enabled>)true/, '$1false');
     expect(parseTaskXml(xml)?.enabled).toBe(false);

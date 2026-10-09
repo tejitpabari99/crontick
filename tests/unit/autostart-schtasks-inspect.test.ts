@@ -61,6 +61,7 @@ describe('SchtasksBackend.inspect', () => {
     expect(r.active).toBe(false);
     expect(r.notes?.some((n) => n.includes('taskschd.msc'))).toBe(true);
     expect(r.notes?.some((n) => /flash/i.test(n))).toBe(true);
+    expect(r.notes?.some((n) => /launcher task, not the daemon/.test(n))).toBe(true);
   });
 
   it('localized status is ignored; last result 267009 means running', async () => {

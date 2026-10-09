@@ -10,7 +10,7 @@ export function defaultAutostartDeps(env: NodeJS.ProcessEnv): AutostartDeps {
     env,
     homedir: homedir(),
     exec: (file, args) => new Promise((done) => {
-      execFile(file, args, { encoding: 'utf-8', timeout: 30_000 }, (err, stdout, stderr) => {
+      execFile(file, args, { encoding: 'utf-8', timeout: 30_000, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
         const code = err ? (typeof (err as { code?: unknown }).code === 'number' ? (err as unknown as { code: number }).code : 1) : 0;
         done({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? (err ? err.message : '')) });
       });
