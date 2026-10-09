@@ -11,7 +11,7 @@ function makeTmpDir(): string {
 }
 
 function makeJob(id: string): Job {
-  return {
+  return { catchUp: false,
     id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },

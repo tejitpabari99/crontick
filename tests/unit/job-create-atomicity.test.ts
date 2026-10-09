@@ -33,7 +33,7 @@ function makeRunner(): Runner {
 }
 
 function baseJob(alias: string): Job {
-  return {
+  return { catchUp: false,
     id: randomUUID(),
     alias,
     description: 'original description',

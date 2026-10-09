@@ -10,6 +10,7 @@ function makeOneShotJob(id: string, runAt: string) {
     action: { kind: 'prompt' as const, prompt: 'noop', args: [], reuseSession: false },
     overlap: 'skip' as const,
     retry: { max: 0, backoffSec: 30 },
+    catchUp: false,
   };
 }
 

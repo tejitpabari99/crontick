@@ -163,6 +163,8 @@ export const JobBaseSchema = z.object({
   /** Default 'skip' means new ticks are discarded when a run is already active. */
   overlap: z.enum(['skip', 'queue', 'cancel-previous']).default('skip'),
   retry: RetrySchema.default({ max: 0, backoffSec: 30 }),
+  /** Run the most recent missed fire after downtime. Only meaningful for time schedules (cron, interval, one-shot). */
+  catchUp: z.boolean().default(false).describe('Run the most recent missed fire once after downtime (cron, interval, one-shot schedules only)'),
 });
 
 /** A reused session (captured via reuseSession, or fixed via explicit sessionId) may have only one in-flight turn. */
@@ -173,6 +175,13 @@ export const JobSchema = JobBaseSchema.superRefine((job, ctx) => {
       code: z.ZodIssueCode.custom,
       path: ['overlap'],
       message: 'reuseSession or an explicit sessionId requires overlap: skip',
+    });
+  }
+  if (job.catchUp && !isTimeSchedule(job.schedule)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['catchUp'],
+      message: `catchUp is only valid for cron, interval and one-shot schedules, not ${job.schedule.kind}`,
     });
   }
 });

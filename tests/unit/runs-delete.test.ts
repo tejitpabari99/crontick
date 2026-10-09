@@ -20,7 +20,7 @@ let prevUrl: string | undefined;
 let server: ReturnType<typeof createApiServer> | undefined;
 
 function job(alias: string): Job {
-  return {
+  return { catchUp: false,
     id: randomUUID(), alias, description: '', enabled: true,
     schedule: { kind: 'cron', cron: '0 0 * * *' },
     action: { kind: 'prompt', prompt: 'noop', args: [], reuseSession: false },

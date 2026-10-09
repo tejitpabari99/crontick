@@ -102,7 +102,7 @@ afterEach(async () => {
 });
 
 function seed(alias: string): { jobId: string; runs: string[] } {
-  const j: Job = {
+  const j: Job = { catchUp: false,
     id: randomUUID(), alias, description: '', enabled: true,
     schedule: { kind: 'cron', cron: '0 0 * * *' },
     action: { kind: 'prompt', prompt: 'noop', args: [], reuseSession: false },

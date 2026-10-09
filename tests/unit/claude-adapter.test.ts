@@ -231,7 +231,7 @@ describe('Claude resume safety', () => {
     mkdirSync(join(dir, 'jobs'));
     const store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
     store.open();
-    const job: Job = {
+    const job: Job = { catchUp: false,
       id: 'resume-job', enabled: true, schedule: { kind: 'cron', cron: '* * * * *' },
       action: { kind: 'prompt', prompt: 'hello', engine: 'test-claude', args: [], reuseSession: false, sessionId: 'session-1', cwd: dir },
       overlap: 'skip', retry: { max: 2, backoffSec: 0 },
@@ -363,7 +363,7 @@ describe('Claude run session assignment', () => {
     const store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
     store.open();
     try {
-      const job: Job = {
+      const job: Job = { catchUp: false,
         id: 'job-1', enabled: true, schedule: { kind: 'cron', cron: '* * * * *' },
         action: { kind: 'prompt', prompt: 'hello', engine: 'test-claude', args: [], reuseSession: false },
         overlap: 'skip', retry: { max: 0, backoffSec: 30 },
@@ -421,7 +421,7 @@ describe('Claude run session assignment', () => {
     const store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
     store.open();
     try {
-      const job: Job = {
+      const job: Job = { catchUp: false,
         id: 'job-error', enabled: true, schedule: { kind: 'cron', cron: '* * * * *' },
         action: { kind: 'prompt', prompt: 'hello', engine: 'test-claude', args: [], reuseSession: false },
         overlap: 'skip', retry: { max: 0, backoffSec: 30 },
@@ -461,7 +461,7 @@ describe('Claude run session assignment', () => {
       const store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
       store.open();
       try {
-        const job: Job = {
+        const job: Job = { catchUp: false,
           id: suffix, enabled: true, schedule: { kind: 'cron', cron: '* * * * *' },
           action: { kind: 'prompt', prompt: 'hello', engine: 'test-claude', args: [], reuseSession: true },
           overlap: 'skip', retry: { max: 0, backoffSec: 0 },
@@ -506,7 +506,7 @@ describe('Claude run session assignment', () => {
     source.open();
     restored.open();
     try {
-      const job: Job = {
+      const job: Job = { catchUp: false,
         id: 'export-job', enabled: true, schedule: { kind: 'cron', cron: '* * * * *' },
         action: { kind: 'prompt', prompt: 'hello', engine: 'test-claude', args: [], reuseSession: true, cwd: dir },
         overlap: 'skip', retry: { max: 0, backoffSec: 0 },
@@ -569,7 +569,7 @@ describe('Claude run session assignment', () => {
     const store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
     store.open();
     try {
-      const job: Job = {
+      const job: Job = { catchUp: false,
         id: 'retry-cost-job', enabled: true, schedule: { kind: 'cron', cron: '* * * * *' },
         action: { kind: 'prompt', prompt: 'hello', engine: 'test-claude', args: [], reuseSession: false, cwd: dir },
         overlap: 'skip', retry: { max: 1, backoffSec: 0 },
@@ -620,7 +620,7 @@ describe('Claude run session assignment', () => {
     const store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
     store.open();
     try {
-      const job: Job = {
+      const job: Job = { catchUp: false,
         id: 'reuse-retry-job', enabled: true, schedule: { kind: 'cron', cron: '* * * * *' },
         action: { kind: 'prompt', prompt: 'hello', engine: 'test-claude', args: [], reuseSession: true, cwd: dir },
         overlap: 'skip', retry: { max: 1, backoffSec: 0 },

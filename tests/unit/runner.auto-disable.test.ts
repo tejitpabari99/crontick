@@ -11,7 +11,7 @@ import { loadConfig } from '../../src/config.js';
 import { FAKE_ENGINE_CONFIG, FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
 
 function job(id: string, code: string): Job {
-  return {
+  return { catchUp: false,
     id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },

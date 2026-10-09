@@ -36,7 +36,7 @@ describe('Integration: timeout semantics', () => {
   });
 
   it('prompt job exceeding timeoutSec is killed and run is marked terminal', async () => {
-    const job: Job = {
+    const job: Job = { catchUp: false,
       id: 'timeout-job',
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },
@@ -58,7 +58,7 @@ describe('Integration: timeout semantics', () => {
   }, 15_000);
 
   it('run completes before timeout if it finishes quickly', async () => {
-    const job: Job = {
+    const job: Job = { catchUp: false,
       id: 'fast-job',
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },

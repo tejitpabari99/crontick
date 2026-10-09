@@ -50,7 +50,7 @@ function makeStore(dir: string): Store {
 function execJob(id: string, _command: string, args: string[], opts?: Partial<Job>): Job {
   const code = args[0] === '-e' ? (args[1] ?? '') : args.join(' ');
   const extraArgs = args[0] === '-e' ? args.slice(2) : [];
-  return {
+  return { catchUp: false,
     id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
@@ -62,7 +62,7 @@ function execJob(id: string, _command: string, args: string[], opts?: Partial<Jo
 }
 
 function promptJob(id: string, action: Partial<Extract<Job['action'], { kind: 'prompt' }>> = {}): Job {
-  return {
+  return { catchUp: false,
     id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },

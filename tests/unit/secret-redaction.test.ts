@@ -295,7 +295,7 @@ function makeStore(dir: string): Store {
 }
 
 function jobWithEnv(id: string, env: Record<string, string>): Job {
-  return {
+  return { catchUp: false,
     id,
     alias: id,
     enabled: true,

@@ -121,7 +121,7 @@ describe('Security', () => {
     store2.open();
 
     const dangerousArg = '$(echo INJECTED)';
-    const job: Job = {
+    const job: Job = { catchUp: false,
       id: 'shell-inject',
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },
@@ -156,7 +156,7 @@ describe('Security', () => {
     logStore.open();
 
     const secretValue = 'AKIA1234567890ABCDEF';
-    const job: Job = {
+    const job: Job = { catchUp: false,
       id: 'aws-secret',
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },
@@ -192,7 +192,7 @@ describe('Security', () => {
     logStore.open();
 
     const ghToken = 'ghp_' + 'A'.repeat(36);
-    const job: Job = {
+    const job: Job = { catchUp: false,
       id: 'gh-token',
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },

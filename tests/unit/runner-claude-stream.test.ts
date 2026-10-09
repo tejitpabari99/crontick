@@ -17,7 +17,7 @@ describe('Claude run: stream trimming and transcript path', () => {
 
   function setup(options: FakeClaudeOptions): Job {
     writeFileSync(join(dir, 'config.json'), JSON.stringify({ defaultEngine: 'test-claude', engines: { 'test-claude': fakeClaudeEngineConfig(options) } }));
-    const job: Job = {
+    const job: Job = { catchUp: false,
       id: 'stream-job', enabled: true, schedule: { kind: 'cron', cron: '* * * * *' },
       action: { kind: 'prompt', prompt: 'hello', engine: 'test-claude', args: [], reuseSession: false, cwd: dir },
       overlap: 'skip', retry: { max: 0, backoffSec: 0 },

@@ -84,6 +84,7 @@ describe('core dashboard data model', () => {
       action: { kind: 'prompt', prompt: 'hello', args: [], reuseSession: false },
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
+      catchUp: false,
     } satisfies Job;
     store.upsertJob(job);
     scheduler.schedule(job);
@@ -112,6 +113,7 @@ describe('core dashboard data model', () => {
       action: { kind: 'prompt', prompt: 'hello', args: [], reuseSession: false },
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
+      catchUp: false,
     });
     const a = mk('11111111-1111-4111-8111-111111111111', 'trial');
     const b = mk('22222222-2222-4222-8222-222222222222', 'sample');
@@ -163,6 +165,7 @@ describe('core dashboard data model', () => {
       action: { kind: 'prompt', prompt: 'hello', args: [], reuseSession: false },
       overlap: 'skip',
       retry: { max: 0, backoffSec: 30 },
+      catchUp: false,
     } satisfies Job;
     store.upsertJob(job);
     scheduler.schedule(job);

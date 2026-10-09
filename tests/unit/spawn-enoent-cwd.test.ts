@@ -20,7 +20,7 @@ function makeStore(dir: string): Store {
 }
 
 function promptJob(id: string, cwd: string): Job {
-  return {
+  return { catchUp: false,
     id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },

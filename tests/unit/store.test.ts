@@ -25,7 +25,7 @@ function makeStoreWithEvents(dir: string): { store: Store; events: LogEvent[] } 
 }
 
 function execJob(id: string): Job {
-  return {
+  return { catchUp: false,
     id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
@@ -36,7 +36,7 @@ function execJob(id: string): Job {
 }
 
 function promptJob(id: string): Job {
-  return {
+  return { catchUp: false,
     id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },

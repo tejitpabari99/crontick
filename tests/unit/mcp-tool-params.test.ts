@@ -8,7 +8,7 @@ import { MCP_TOOLS } from '../../src/surface.js';
 const MCP = resolve('dist', 'mcp', 'index.js');
 const RUN_ID = 'ctd-015-run';
 const EXPECTED_TOOL_PARAMS = {
-  crontick_job_create: ['id', 'alias', 'description', 'enabled', 'schedule', 'action', 'overlap', 'retry', 'force', 'trustFolder'],
+  crontick_job_create: ['id', 'alias', 'description', 'enabled', 'schedule', 'action', 'overlap', 'retry', 'catchUp', 'force', 'trustFolder'],
   crontick_job_list: [],
   crontick_job_get: ['id'],
   crontick_job_update: ['id', 'alias', 'description', 'enabled', 'schedule', 'action', 'overlap', 'retry', 'trustFolder', 'inFlight'],

@@ -43,7 +43,7 @@ describe('webhook relay -> real run (end to end, fake SSE)', () => {
     store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
     store.open();
     runner = new Runner(undefined, undefined, undefined, 25);
-    jobRow = {
+    jobRow = { catchUp: false,
       id: randomUUID(), enabled: true,
       schedule: { kind: 'webhook', relay: URL_, secret: SECRET },
       action: { kind: 'prompt', prompt: 'review:', engine: FAKE_ENGINE_NAME, args: [], reuseSession: false, env: { OUT: join(dir, 'out.json') } },

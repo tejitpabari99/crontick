@@ -41,7 +41,7 @@ interface FakeChild extends EventEmitter {
 }
 
 function makeJob(overrides: Partial<Job> = {}): Job {
-  return {
+  return { catchUp: false,
     id: 'auth-job',
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },

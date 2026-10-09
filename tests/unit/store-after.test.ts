@@ -13,7 +13,7 @@ const C = '00000000-0000-4000-8000-00000000000c';
 const MISSING = '00000000-0000-4000-8000-0000000000ff';
 
 function cronJob(id: string): Job {
-  return {
+  return { catchUp: false,
     id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },

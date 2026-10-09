@@ -116,7 +116,7 @@ describe('verbose propagation', () => {
     const store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'), logger);
     store.open();
     try {
-      const job: Job = {
+      const job: Job = { catchUp: false,
         id: 'verbose-run',
         enabled: true,
         schedule: { kind: 'interval', everySec: 60 },

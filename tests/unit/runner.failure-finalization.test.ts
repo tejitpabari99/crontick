@@ -35,7 +35,7 @@ function makeStore(dir: string): Store {
  * engine; no real engine binary is needed.
  */
 function execJob(id: string, opts: Partial<Extract<Job['action'], { kind: 'prompt' }>> = {}): Job {
-  return {
+  return { catchUp: false,
     id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
@@ -53,7 +53,7 @@ function execJob(id: string, opts: Partial<Extract<Job['action'], { kind: 'promp
 }
 
 function promptJob(id: string, opts: Partial<Extract<Job['action'], { kind: 'prompt' }>> = {}): Job {
-  return {
+  return { catchUp: false,
     id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },

@@ -28,7 +28,7 @@ describe('run usage fields', () => {
     const store = new Store(join(dir, 'runs.db'), join(dir, 'jobs'));
     store.open();
     try {
-      const job = (id: string, engine: string, prompt: string): Job => ({
+      const job = (id: string, engine: string, prompt: string): Job => ({ catchUp: false,
         id, enabled: true, schedule: { kind: 'cron', cron: '* * * * *' },
         action: { kind: 'prompt', engine, prompt, args: [], reuseSession: false, cwd: dir },
         overlap: 'skip', retry: { max: 0, backoffSec: 0 },

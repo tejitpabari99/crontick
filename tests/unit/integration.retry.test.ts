@@ -38,7 +38,7 @@ describe('Integration: retry semantics', () => {
   it('retries exactly retry.max times on failure with backoffSec gap', async () => {
     const backoffSec = 0.3;
     const maxRetries = 2;
-    const job: Job = {
+    const job: Job = { catchUp: false,
       id: 'retry-timing',
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },
@@ -58,7 +58,7 @@ describe('Integration: retry semantics', () => {
   }, 30_000);
 
   it('does not retry on success', async () => {
-    const job: Job = {
+    const job: Job = { catchUp: false,
       id: 'no-retry-success',
       enabled: true,
       schedule: { kind: 'cron', cron: '* * * * *' },

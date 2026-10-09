@@ -18,7 +18,7 @@ function makeStore(dir: string): Store {
 }
 
 function makeJob(id: string, overlap: Job['overlap'], durationMs = 200): Job {
-  return {
+  return { catchUp: false,
     id,
     enabled: true,
     schedule: { kind: 'cron', cron: '* * * * *' },
