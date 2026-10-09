@@ -8,7 +8,7 @@ Source of truth: docs/agent_files/users-tejitpabari-crontick-improvements-202610
 
 | # | Task | Depends on | Status |
 |---|---|---|---|
-| 1 | `after` schema kind and time-only guards | - | todo |
+| 1 | `after` schema kind and time-only guards | - | done |
 | 2 | Store: `listDependents`, graph validation, `trigger_json` | 1 | todo |
 | 3 | Runner completion hook, `RunContext`, `buildRunEnv` | 1 | todo |
 | 4 | `TriggerDispatcher` and daemon wiring | 2, 3 | todo |
