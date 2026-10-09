@@ -10,7 +10,7 @@ Source: [brainstorm.md](brainstorm.md) (approved). Deferred ideas: [docs/agent_f
 
 ## TL;DR
 
-Ten sub-projects: CLI polish, `daemon.port` + dashboard polish, config surfaces + Settings UI (+ API hardening), dashboard job editor, `--after` and `--webhook` triggers, opt-in autostart (Linux, macOS, Windows), opt-in catch-up. Biggest risks: SP09 launcher-survival unknown, SP06 HMAC-over-smee (the SP07/08/09 interface mismatch is resolved, see Contradictions). 1 OPEN item remains (SP04 DOM harness, verify-during-implementation); 0 need an owner decision. SP05-SP10 items are DEFERRED to implementation (owner, 2026-10-08).
+Ten sub-projects: CLI polish, `daemon.port` + dashboard polish, config surfaces + Settings UI (+ API hardening), dashboard job editor, `--after` and `--webhook` triggers, opt-in autostart (Linux, macOS, Windows), opt-in catch-up. Biggest risks: SP09 launcher-survival unknown, SP06 HMAC-over-smee (the SP07/08/09 interface mismatch is resolved, see Contradictions). 0 OPEN items remain (SP04 DOM harness deferred, verify-during-implementation); 0 need an owner decision. SP04-SP10 remaining items are DEFERRED to implementation (owner, 2026-10-08/09).
 
 ## Sub-projects
 
@@ -19,7 +19,7 @@ Ten sub-projects: CLI polish, `daemon.port` + dashboard polish, config surfaces 
 | 01 | [01-cli-polish](01-cli-polish/PRD.md) | Schedule help + footer, `--dir`, `resolveJobRef`, `runs delete` | none | 1 | 0 |
 | 02 | [02-port-and-dashboard-polish](02-port-and-dashboard-polish/PRD.md) | `daemon.port` config, drop env var, rem scale ~80%, trimmed header | none | 1 | 0 |
 | 03 | [03-config-surfaces-and-settings](03-config-surfaces-and-settings/PRD.md) | `config list/get/set/unset`, `/api/config`, Settings modal, **request guard on all mutating routes**, **daemon pause/resume + stop-vs-wait on in-flight edits** (pause/resume user-facing) | 02 | 2 | 0 |
-| 04 | [04-dashboard-job-editor](04-dashboard-job-editor/PRD.md) | "+" create / pencil edit, `job-prepare.ts`, `SCHEDULE_KINDS` | 03, 01 | 2 | 1 (V) |
+| 04 | [04-dashboard-job-editor](04-dashboard-job-editor/PRD.md) | "+" create / pencil edit, `job-prepare.ts`, `SCHEDULE_KINDS` | 03, 01 | 2 | 0 |
 | 05 | [05-after-trigger](05-after-trigger/PRD.md) | `after` kind, `onRunComplete`, `TriggerDispatcher`, `trigger_json` | 01, 04 | 3 | 0 |
 | 06 | [06-webhook-trigger](06-webhook-trigger/PRD.md) | `webhook` kind, smee-style SSE relay, `jobs trigger` | 05, 01, 04, 03 | 3 | 0 |
 | 07 | [07-autostart-core-linux](07-autostart-core-linux/PRD.md) | `autostart enable/disable/status`, backend interface, systemd, guard rewrite, `daemon start --home`; MCP status only | none | 3 | 0 |
@@ -107,7 +107,7 @@ Assigned: 0034 autostart (07-09), 0035 trigger dispatch (05), 0036 webhook relay
 
 ## Consolidated [OPEN] questions
 
-Legend: **O** = owner decision, **V** = verify during implementation. Status: RESOLVED / DEFERRED / OPEN (remaining). Remaining open: 1 (0 O, 1 V).
+Legend: **O** = owner decision, **V** = verify during implementation. Status: RESOLVED / DEFERRED / OPEN (remaining). Remaining open: 0 (0 O, 0 V).
 
 | SP | Item | Kind | Status |
 |---|---|---|---|
@@ -135,7 +135,7 @@ Legend: **O** = owner decision, **V** = verify during implementation. Status: RE
 | 04 | Expose `retry.backoffSec` as "advanced" (OPEN-5): expose under advanced | O | RESOLVED |
 | 04 | No warning when editing job with in-flight run/dependents (OPEN-6): confirm at Save; stop in-flight runs or wait | V | RESOLVED |
 | 04 | `datetime-local` parsed as local like `--at` (OPEN-7); Windows cmd-line length (OPEN-8) | V | RESOLVED |
-| 04 | No DOM harness for dashboard tests (string/HTTP only) | V | OPEN |
+| 04 | No DOM harness for dashboard tests (string/HTTP only) | V | DEFERRED (verify in task) |
 | 05 | Where `runs get` renders `trigger_json`: SP06 renders, SP05 stores `{kind, upstream}` | V | RESOLVED |
 | 05 | `trigger_json` migration pattern (additive, guarded `ALTER`) | V | DEFERRED (verify in task) |
 | 05 | `skip` overlap drops triggers: docs recommend `queue` | V | DEFERRED (verify in task) |
