@@ -31,7 +31,7 @@ import { TriggerDispatcher, type TriggerSkipReason } from './trigger.js';
 import { createRelayChannel } from '../utils/relay-url.js';
 import { toRelayStatusView, redactTriggerMeta } from '../utils/webhook-redact.js';
 import { buildWebhookContext, buildWebhookPayload } from '../utils/webhook-payload.js';
-import { checkMutatingRequest, isGuardedRequest } from './request-guard.js';
+import { checkApiRequest, isGuardedRequest } from './request-guard.js';
 import { describeDaemonPort } from './bind-port.js';
 import { dataDir } from '../paths.js';
 import { IN_FLIGHT_CHOICES } from '../constants/config.js';
@@ -75,6 +75,8 @@ export interface ApiContext {
   syncRelays?: () => void;
   /** In-memory relay connection status (raw URLs; redacted before leaving the API). */
   relayStatus?: () => Array<Parameters<typeof toRelayStatusView>[0]>;
+  /** The daemon's shared trigger dispatcher (used by `POST /api/jobs/:id/trigger`). */
+  dispatcher?: TriggerDispatcher;
   /** Injectable fetch for `POST /api/relay/new` (tests); defaults to global fetch. */
   relayFetch?: typeof fetch;
   logger?: Logger;
@@ -152,9 +154,9 @@ async function handleRequest(
   });
 
   try {
-    // Central guard: every mutating /api route, including unknown ones, before any handler runs.
+    // Central guard: every /api route (reads too: GET /api/jobs/:id returns webhook secrets), including unknown ones, before any handler runs.
     if (isGuardedRequest(method, path)) {
-      const rejection = checkMutatingRequest(req);
+      const rejection = checkApiRequest(req);
       if (rejection) {
         req.resume();
         return sendError(res, rejection.status, 'REQUEST_REJECTED', rejection.message);
@@ -443,7 +445,7 @@ async function handleRequest(
           payload: buildWebhookPayload({ body: body['payload'], receivedAt: new Date().toISOString() }),
           source: 'local',
         });
-        const dispatcher = new TriggerDispatcher({
+        const dispatcher = ctx.dispatcher ?? new TriggerDispatcher({
           store: ctx.store, runner: ctx.runner, logger: logger,
           isPaused: (id) => ctx.scheduler.isPaused() || ctx.scheduler.isJobPaused(id),
         });

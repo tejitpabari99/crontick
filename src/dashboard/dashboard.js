@@ -457,7 +457,7 @@ async function renderDrawer(jobId, opts = {}) {
       ${kv('Timeout', escHtml(timeouts))}
       ${kv('Retry', escHtml(retry))}
       ${kv('Working directory', (wrapped.cwd || action.cwd) ? `<code>${escHtml(wrapped.cwd || action.cwd)}</code>` : '—')}
-      ${isWebhook ? kv('Relay', relayRowHtml(job.schedule, relays)) : ''}
+      ${isWebhook ? kv('Relay', relayRowHtml(job.schedule, relays, job.id)) : ''}
       ${kv('Next run', escHtml(formatTime(wrapped.nextRunAt)))}
       ${kv('Last run', wrapped.lastRunAt ? `${escHtml(formatTime(wrapped.lastRunAt))} ${statusBadge(wrapped.lastStatus)}` : '—')}
     </dl>
@@ -482,9 +482,9 @@ async function renderDrawer(jobId, opts = {}) {
 }
 
 /** Webhook relay row: read-only (redacted) URL, status dot from GET /api/relays, and a Copy that fetches the full URL. */
-function relayRowHtml(schedule, relays) {
+function relayRowHtml(schedule, relays, jobId) {
   if (!schedule.relay) return '<span class="muted">local trigger only</span>';
-  const status = (relays || []).find((r) => r.urlRedacted === schedule.relay);
+  const status = (relays || []).find((r) => (jobId && Array.isArray(r.jobIds) && r.jobIds.includes(jobId)) || r.urlRedacted === schedule.relay);
   const state = status?.state || 'unknown';
   const title = status ? `${state}${status.lastError ? `: ${status.lastError}` : ''}${status.lastEventAt ? ` · last event ${formatTime(status.lastEventAt)}` : ''}` : 'status unknown';
   return `<span class="relay-dot relay-${escHtml(state)}" title="${escHtml(title)}" aria-label="${escHtml(title)}"></span><code>${escHtml(schedule.relay)}</code>`

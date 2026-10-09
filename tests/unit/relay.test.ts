@@ -11,7 +11,7 @@ const B = 'https://smee.io/bbb';
 
 interface Stream { url: string; push(s: string): void; end(): void; signal: AbortSignal }
 
-function setup(opts: { guardDrop?: boolean } = {}) {
+function setup(opts: { guardDrop?: boolean; bodyOnly?: boolean } = {}) {
   const streams: Stream[] = [];
   const fetchFn = (async (url: string, init: RequestInit) => {
     let ctrl!: ReadableStreamDefaultController<Uint8Array>;
@@ -27,6 +27,7 @@ function setup(opts: { guardDrop?: boolean } = {}) {
     dispatcher, fetch: fetchFn, random: () => 1,
     logger: createLogger({ verbose: false, component: 'test', sink: () => {} }),
     ...(opts.guardDrop ? { guard: () => false } : {}),
+    ...(opts.bodyOnly ? { bodyOnly: () => true } : {}),
   });
   return { mgr, streams, dispatched };
 }
@@ -59,6 +60,31 @@ describe('RelayManager', () => {
     const st = mgr.status();
     expect(st).toHaveLength(1);
     expect(st[0]).toMatchObject({ state: 'connected', eventCount: 1, jobIds: ['j1', 'j2'] });
+    mgr.stop();
+  });
+
+  it('bodyOnly (HMAC-verified) jobs get only the signed body: no headers, no query', async () => {
+    const { mgr, streams, dispatched } = setup({ bodyOnly: true });
+    mgr.subscribe('j1', A);
+    await flush();
+    streams[0]!.push(msg({ 'x-github-event': 'push', 'x-github-delivery': 'd1', body: { a: 1 }, query: { evil: 'x' } }));
+    await flush();
+    const ev = JSON.parse(dispatched[0]!.req.env.CRONTICK_EVENT!);
+    expect(ev).toMatchObject({ body: { a: 1 }, headers: {}, verified: true });
+    expect(ev.query).toBeUndefined();
+    expect(dispatched[0]!.req.env.CRONTICK_EVENT_ID).toBeUndefined();
+    mgr.stop();
+  });
+
+  it('a clean reconnect after a connected stream leaves lastError null (no doctor warning)', async () => {
+    const { mgr, streams } = setup();
+    mgr.subscribe('j1', A);
+    await flush();
+    streams[0]!.push('event: ready\ndata: {}\n\n');
+    await flush();
+    streams[0]!.end();
+    await flush();
+    expect(mgr.status()[0]).toMatchObject({ state: 'backoff', lastError: null });
     mgr.stop();
   });
 

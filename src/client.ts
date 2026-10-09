@@ -399,9 +399,26 @@ export class CrontickClient {
   /**
    * Resolves `--relay auto` to a freshly created smee.io channel (no redirect following) and queues a
    * one-time "treat as a secret" notice. Other inputs pass through; `--relay` without `--webhook` is an error.
+   * With `updateJobId` (the `jobs update` path), `--relay` / `--webhook-secret` alone edit an existing
+   * webhook job: the stored relay/secret not being changed are carried over (error if it is not a webhook job).
    * Library-only.
    */
-  async resolveRelayAuto<T extends { webhook?: boolean; relay?: string }>(input: T): Promise<T> {
+  async resolveRelayAuto<T extends { webhook?: boolean; relay?: string; webhookSecret?: string }>(input: T, updateJobId?: string): Promise<T> {
+    if (updateJobId !== undefined && !input.webhook && (input.relay !== undefined || input.webhookSecret !== undefined)) {
+      const scheduleFlags = input as Record<string, unknown>;
+      if (['cron', 'every', 'at', 'after'].every((k) => scheduleFlags[k] === undefined)) {
+        const existing = (await this.getJob(updateJobId)).schedule;
+        if (existing.kind !== 'webhook') {
+          throw new CrontickError('VALIDATION_ERROR', '--relay / --webhook-secret only apply to a webhook job; pass --webhook to switch this job to a webhook schedule');
+        }
+        input = {
+          ...input,
+          webhook: true,
+          ...(input.relay === undefined && existing.relay !== undefined ? { relay: existing.relay } : {}),
+          ...(input.webhookSecret === undefined && existing.secret !== undefined ? { webhookSecret: existing.secret } : {}),
+        };
+      }
+    }
     if (input.relay === undefined) return input;
     if (!input.webhook) throw new CrontickError('VALIDATION_ERROR', '--relay requires --webhook');
     if (input.relay !== 'auto') return input;

@@ -18,6 +18,9 @@ describe('redaction helpers', () => {
     expect(redactRelayUrl(RELAY)).toBe(REDACTED_RELAY);
     expect(redactRelayUrl(REDACTED_RELAY)).toBe(REDACTED_RELAY);
     expect(redactRelayUrl('https://smee.io/abc')).toBe('https://smee.io/…');
+    // trailing slash and query tokens must not leak the channel
+    expect(redactRelayUrl(`${RELAY}/`)).toBe(REDACTED_RELAY);
+    expect(redactRelayUrl(`${RELAY}?token=hunter2`)).toBe(REDACTED_RELAY);
   });
   it('redactWebhookDeep redacts relay and sets secret: set, leaves other values', () => {
     const out = redactWebhookDeep({ a: [{ schedule: { kind: 'webhook', relay: RELAY, secret: SECRET } }], b: { kind: 'cron', cron: '* * * * *' } }) as any;

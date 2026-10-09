@@ -1,5 +1,6 @@
-// Request guard for every mutating daemon API route (DNS-rebinding / cross-site defense).
-// Applied centrally by method in api.ts, so a new mutating route cannot skip it.
+// Request guard for every daemon API route (DNS-rebinding / cross-site defense).
+// Host/Origin are checked on ALL /api requests (reads can return webhook relay URLs and secrets);
+// Content-Type is additionally required on mutating ones. Applied centrally in api.ts, so a new route cannot skip it.
 import type http from 'node:http';
 
 export const MUTATING_METHODS: ReadonlySet<string> = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -11,9 +12,9 @@ export interface GuardRejection {
   message: string;
 }
 
-/** True when `/api` mutating requests must pass the guard. */
-export function isGuardedRequest(method: string, path: string): boolean {
-  return MUTATING_METHODS.has(method) && (path === '/api' || path.startsWith('/api/'));
+/** True when the request must pass the guard: any method on `/api` (reads included). */
+export function isGuardedRequest(_method: string, path: string): boolean {
+  return path === '/api' || path.startsWith('/api/');
 }
 
 /** Parse "host:port" authority; returns null unless hostname is loopback and port equals `port`. */
@@ -27,19 +28,21 @@ function loopbackAuthority(authority: string, port: number): string | null {
 }
 
 /**
- * Validate a mutating request: loopback Host with the bound port, strict
- * `Content-Type: application/json` (even when bodyless), and Origin (if present)
- * equal to a loopback origin on the bound port. Returns null when allowed.
+ * Validate an `/api` request: loopback Host with the bound port, Origin (if present) equal to a
+ * loopback origin on the bound port, and, for mutating methods only, strict
+ * `Content-Type: application/json` (even when bodyless). Returns null when allowed.
  */
-export function checkMutatingRequest(req: http.IncomingMessage): GuardRejection | null {
+export function checkApiRequest(req: http.IncomingMessage): GuardRejection | null {
   const port = req.socket.localPort ?? 0;
   const host = req.headers.host ?? '';
   if (loopbackAuthority(host, port) === null) {
     return { status: 403, message: 'Rejected: Host header must be a loopback address with the daemon port' };
   }
-  const contentType = (req.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase();
-  if (contentType !== 'application/json') {
-    return { status: 415, message: 'Rejected: mutating requests require Content-Type: application/json' };
+  if (MUTATING_METHODS.has(req.method ?? 'GET')) {
+    const contentType = (req.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase();
+    if (contentType !== 'application/json') {
+      return { status: 415, message: 'Rejected: mutating requests require Content-Type: application/json' };
+    }
   }
   const origin = req.headers.origin;
   if (origin !== undefined) {

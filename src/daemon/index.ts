@@ -284,9 +284,17 @@ if (needsSqliteShim) {
         return runId;
       },
     });
-    const relays = new RelayManager({ dispatcher: triggerDispatcher, logger, guard: relayGuard.guard });
+    const secretOf = (id: string): string | undefined => {
+      const sch = store.getJob(id)?.schedule;
+      return sch?.kind === 'webhook' ? sch.secret : undefined;
+    };
+    const relays = new RelayManager({ dispatcher: triggerDispatcher, logger, guard: relayGuard.guard, bodyOnly: (id) => secretOf(id) !== undefined });
     const syncRelays = (): void => {
-      try { relays.sync(store.listJobs()); } catch (err) { logger.error('Relay sync failed', { error: String(err) }); }
+      try {
+        const jobs = store.listJobs();
+        relays.sync(jobs);
+        relayGuard.retain(new Set(jobs.filter((j) => j.enabled && j.schedule.kind === 'webhook' && j.schedule.relay).map((j) => j.id)));
+      } catch (err) { logger.error('Relay sync failed', { error: String(err) }); }
     };
     syncRelays();
 
@@ -375,7 +383,7 @@ if (needsSqliteShim) {
       logger.warn('A pending config save (wait for in-flight runs) was lost on restart; re-apply it if still wanted', lostPendingConfigApply);
     }
 
-    const ctx: ApiContext = { store, scheduler, runner, startedAt, port: 0, reload, syncRelays, relayStatus: () => relays.status(), logger, missedFireSummary, lostPendingConfigApply, shutdown: () => Promise.resolve() };
+    const ctx: ApiContext = { store, scheduler, runner, startedAt, port: 0, reload, syncRelays, dispatcher: triggerDispatcher, relayStatus: () => relays.status(), logger, missedFireSummary, lostPendingConfigApply, shutdown: () => Promise.resolve() };
     const server = createApiServer(ctx);
 
     // Bind loopback only (security invariant). Prefer the stable default port;

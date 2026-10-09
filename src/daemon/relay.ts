@@ -13,7 +13,7 @@ import {
   RELAY_IDLE_TIMEOUT_MS,
   RELAY_STABLE_MS,
 } from '../constants/relay.js';
-import { buildWebhookContext, buildWebhookPayload } from '../utils/webhook-payload.js';
+import { buildWebhookContext, buildWebhookPayload, flattenRelayHeaders } from '../utils/webhook-payload.js';
 import { connectSse, type SseEvent } from './sse.js';
 import type { TriggerRequest, TriggerResult } from './trigger.js';
 
@@ -50,6 +50,8 @@ export interface RelayManagerDeps {
    * May rewrite nothing; runs per subscribed job before dispatch.
    */
   guard?: (delivery: RelayDelivery) => boolean;
+  /** True when the job verifies an HMAC secret: only the signed `body` is then delivered (no headers/query). */
+  bodyOnly?: (jobId: string) => boolean;
 }
 
 interface Conn {
@@ -64,7 +66,6 @@ interface Conn {
   wake: (() => void) | null;
 }
 
-const NON_HEADER_KEYS = new Set(['body', 'query', 'timestamp', 'headers']);
 
 function normalizeUrl(url: string): string {
   try {
@@ -193,7 +194,8 @@ export class RelayManager {
           },
           onEvent: (e) => this.onEvent(conn, e),
         });
-        if (!conn.stopped) conn.lastError = 'stream ended';
+        // A stream that ended after it had connected is a normal reconnect, not an error to surface.
+        if (!conn.stopped) conn.lastError = connectedAt === null ? 'stream ended' : null;
       } catch (err) {
         if (conn.stopped) break;
         conn.lastError = idled ? `idle timeout (${RELAY_IDLE_TIMEOUT_MS}ms without data)` : (err instanceof Error ? err.message : String(err));
@@ -231,26 +233,30 @@ export class RelayManager {
     conn.eventCount++;
     conn.lastEventAt = this.now();
 
-    const headers: Record<string, string> = {};
-    const nested = obj['headers'];
-    for (const src of [nested !== null && typeof nested === 'object' ? (nested as Record<string, unknown>) : {}, obj]) {
-      for (const [k, v] of Object.entries(src)) {
-        if (src === obj && NON_HEADER_KEYS.has(k)) continue;
-        if (typeof v === 'string') headers[k] = v;
+    const headers = flattenRelayHeaders(obj);
+    const receivedAt = new Date(this.now()).toISOString();
+    const contexts = new Map<boolean, ReturnType<typeof buildWebhookContext>>();
+    // Signed jobs get only the HMAC-covered body (headers/query are unauthenticated); others get everything.
+    const contextFor = (bodyOnly: boolean): ReturnType<typeof buildWebhookContext> => {
+      let c = contexts.get(bodyOnly);
+      if (!c) {
+        const payload = buildWebhookPayload({
+          headers,
+          body: obj['body'],
+          ...(obj['query'] !== undefined ? { query: obj['query'] } : {}),
+          receivedAt,
+          verified: bodyOnly,
+        });
+        contexts.set(bodyOnly, (c = buildWebhookContext({ payload, source: 'relay' })));
       }
-    }
-    const payload = buildWebhookPayload({
-      headers,
-      body: obj['body'],
-      ...(obj['query'] !== undefined ? { query: obj['query'] } : {}),
-      receivedAt: new Date(this.now()).toISOString(),
-    });
-    const ctx = buildWebhookContext({ payload, source: 'relay' });
+      return c;
+    };
 
     for (const jobId of [...conn.jobs]) {
       if (conn.stopped || !conn.jobs.has(jobId)) continue;
       try {
         if (this.deps.guard && !this.deps.guard({ jobId, relayUrl: conn.url, data: obj, sseId: e.id })) continue;
+        const ctx = contextFor(this.deps.bodyOnly?.(jobId) === true);
         const res = this.deps.dispatcher.dispatch(jobId, {
           kind: 'webhook', env: ctx.env, meta: { ...ctx.meta }, promptSuffix: ctx.promptSuffix,
         });

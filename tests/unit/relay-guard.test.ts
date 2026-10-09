@@ -98,6 +98,48 @@ describe('RelayGuard', () => {
     });
   });
 
+  describe('signed replay (HMAC covers only the body)', () => {
+    it('a captured signed event replayed with a fresh delivery id is deduped', () => {
+      const { g } = setup('s3cret');
+      const sig = sign('s3cret', { a: 1 });
+      expect(g.guard(ev({ 'x-github-delivery': 'orig', 'x-hub-signature-256': sig }))).toBe(true);
+      expect(g.guard(ev({ 'x-github-delivery': 'forged-new-id', 'x-request-id': 'other', 'x-hub-signature-256': sig }))).toBe(false);
+    });
+    it('distinct signed bodies are both admitted even with the same unsigned id', () => {
+      const { g } = setup('s3cret');
+      const same = { 'x-github-delivery': 'same' };
+      expect(g.guard(ev({ ...same, body: { a: 1 }, 'x-hub-signature-256': sign('s3cret', { a: 1 }) }))).toBe(true);
+      expect(g.guard(ev({ ...same, body: { a: 2 }, 'x-hub-signature-256': sign('s3cret', { a: 2 }) }))).toBe(true);
+    });
+    it('deliveryKey uses the signature when given', () => {
+      expect(deliveryKey({ 'x-github-delivery': 'd' }, 'sha256=abc')).toBe('sig:sha256=abc');
+    });
+  });
+
+  describe('dedupe is recorded only for admitted events', () => {
+    it('a burst-dropped event can be redelivered (same id) once tokens refill', () => {
+      const { g } = setup();
+      for (let i = 0; i < RELAY_RATE_LIMIT_PER_WINDOW; i++) expect(g.guard(ev())).toBe(true);
+      const dropped = ev({ 'x-github-delivery': 'redeliver' });
+      expect(g.guard(dropped)).toBe(false); // burst
+      vi.advanceTimersByTime(RELAY_RATE_WINDOW_MS);
+      expect(g.guard(dropped)).toBe(true); // not treated as a duplicate
+      expect(g.guard(dropped)).toBe(false); // now it is
+    });
+  });
+
+  describe('retain', () => {
+    it('forgets state for jobs no longer active, keeps active ones', () => {
+      const { g } = setup();
+      const a = ev({ 'x-github-delivery': 'k' }, 'j1');
+      const b = ev({ 'x-github-delivery': 'k' }, 'j2');
+      g.guard(a); g.guard(b);
+      g.retain(new Set(['j1']));
+      expect(g.guard(a)).toBe(false);
+      expect(g.guard(b)).toBe(true);
+    });
+  });
+
   describe('burst limit', () => {
     it('drops the 11th event and records one skipped run, then updates its count', () => {
       const { g, recorded } = setup();

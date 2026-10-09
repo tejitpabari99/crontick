@@ -111,4 +111,29 @@ describe('--relay auto', () => {
     await expect(client.resolveRelayAuto({ relay: 'auto' })).rejects.toThrow(/--relay requires --webhook/);
     expect(f).not.toHaveBeenCalled();
   });
+  describe('resolveRelayAuto on update (rotation without --webhook)', () => {
+    const stored = (schedule: Record<string, unknown>) => ({ schedule }) as never;
+    it('--relay auto alone rotates the channel and keeps the stored secret', async () => {
+      const f = redirect(307, 'https://smee.io/Rot999');
+      const client = createClient({ relayFetch: f as any, startDaemon: false });
+      vi.spyOn(client, 'getJob').mockResolvedValue(stored({ kind: 'webhook', relay: 'https://smee.io/old', secret: 'hmac' }));
+      const out = await client.resolveRelayAuto({ relay: 'auto' }, 'job1');
+      expect(out).toMatchObject({ webhook: true, relay: 'https://smee.io/Rot999', webhookSecret: 'hmac' });
+      expect(client.drainNotices().join('\n')).toContain('https://smee.io/Rot999');
+    });
+    it('--webhook-secret alone keeps the stored relay', async () => {
+      const client = createClient({ startDaemon: false });
+      vi.spyOn(client, 'getJob').mockResolvedValue(stored({ kind: 'webhook', relay: 'https://smee.io/keep' }));
+      expect(await client.resolveRelayAuto({ webhookSecret: 'new' }, 'job1')).toMatchObject({ webhook: true, relay: 'https://smee.io/keep', webhookSecret: 'new' });
+    });
+    it('rejects relay/secret flags on a non-webhook job', async () => {
+      const client = createClient({ startDaemon: false });
+      vi.spyOn(client, 'getJob').mockResolvedValue(stored({ kind: 'interval', everySec: 60 }));
+      await expect(client.resolveRelayAuto({ relay: 'https://smee.io/x' }, 'job1')).rejects.toThrow(/only apply to a webhook job/);
+    });
+    it('without updateJobId the create-path rule is unchanged', async () => {
+      const client = createClient({ startDaemon: false });
+      await expect(client.resolveRelayAuto({ relay: 'https://smee.io/x' })).rejects.toThrow(/--relay requires --webhook/);
+    });
+  });
 });

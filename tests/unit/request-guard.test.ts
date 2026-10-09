@@ -111,8 +111,42 @@ describe('API request guard', () => {
     }
   });
 
-  it('GET routes are not subject to the guard', async () => {
+  it('GET with a loopback Host and no Content-Type is allowed', async () => {
     const r = await raw(h.port, 'GET', '/api/jobs', { Host: `127.0.0.1:${h.port}` });
     expect(r.status).toBe(200);
+    expect((await raw(h.port, 'GET', '/api/jobs', { Host: `localhost:${h.port}`, Origin: `http://localhost:${h.port}` })).status).toBe(200);
+  });
+
+  it.each([
+    '/api/jobs',
+    '/api/jobs/x',
+    '/api/relays',
+    '/api/export?includeSecrets=1',
+    '/api/anything',
+  ])('GET %s rejects a non-loopback Host or foreign Origin (DNS rebinding)', async (path) => {
+    for (const headers of [
+      { Host: 'evil.example' },
+      { Host: `evil.example:${h.port}` },
+      { Host: `127.0.0.1:${h.port + 1}` },
+      { Host: `127.0.0.1:${h.port}`, Origin: 'http://evil.example' },
+      { Host: `127.0.0.1:${h.port}`, Origin: 'null' },
+    ]) {
+      const r = await raw(h.port, 'GET', path, headers);
+      expect(r.status).toBe(403);
+      expect(r.data.error?.code).toBe('REQUEST_REJECTED');
+    }
+  });
+
+  it('GET of a webhook job with a rebinding Host never returns the relay secret', async () => {
+    const created = await h.call('POST', '/api/jobs', sampleJob({ schedule: { kind: 'webhook', relay: 'https://smee.io/abcdefghij', secret: 'hmac-secret' } }));
+    const id = (created.data as { id: string }).id;
+    const bad = await raw(h.port, 'GET', `/api/jobs/${id}`, { Host: `evil.example:${h.port}` });
+    expect(bad.status).toBe(403);
+    const ok = await h.call('GET', `/api/jobs/${id}`);
+    expect(ok.status).toBe(200);
+  });
+
+  it('/health is not guarded', async () => {
+    expect((await raw(h.port, 'GET', '/health', { Host: 'evil.example' })).status).toBe(200);
   });
 });

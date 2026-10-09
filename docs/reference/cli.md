@@ -95,7 +95,7 @@ crontick jobs new [engineArgs...]
 | `--after <id\|alias>` | string | — | Schedule: run when this upstream job finishes (resolved to its GUID). Cycles: `AFTER_CYCLE`; unknown upstream: `AFTER_UPSTREAM_NOT_FOUND` |
 | `--after-status <status>` | string | `success` | With `--after`: `success`, `failure` (failed or timeout) or `any`. Without an after schedule it is an error |
 | `--webhook` | boolean | `false` | Schedule: run on webhook events (via `--relay`) or local `jobs trigger`. See [Webhooks](../concepts/webhooks.md) |
-| `--relay <url\|auto>` | string | — | With `--webhook`: relay channel URL (smee.io protocol; `http://` only for loopback hosts), or `auto` to create a smee.io channel (printed once; treat as a secret). Omit for local-trigger-only. Without `--webhook` it is an error |
+| `--relay <url\|auto>` | string | — | With `--webhook`: relay channel URL (smee.io protocol; `http://` only for loopback hosts), or `auto` to create a smee.io channel (printed once; treat as a secret). Omit for local-trigger-only. Without `--webhook` it is an error on `jobs new`; on `jobs update` of a webhook job it edits just the relay (e.g. `--relay auto` rotates it) |
 | `--webhook-secret <secret>` | string | — | With `--webhook`: require a valid `x-hub-signature-256` on relay events. HMAC over smee is unverified against real GitHub deliveries (see [Webhooks](../concepts/webhooks.md#guards-relay-events-only)). Without `--webhook` it is an error |
 | `--dir <path>` | string | the current directory | Directory the job runs in; stored as `action.cwd`. Must be an existing directory (`INVALID_CWD`). See [Working directory and Claude trust](#working-directory-and-claude-trust) |
 | `--trust-folder` | boolean | `false` | Trust the working directory in Claude without asking when it is not trusted yet |
@@ -166,7 +166,7 @@ crontick jobs list
 
 ### crontick jobs get
 
-Get a job by GUID or alias. The output includes `cwd` and, when set, the `Runner Session ID`. This is the only command that prints a webhook job's full relay URL and secret in clear (every other output masks them: `https://smee.io/Uk…Sd`, `secret: set`). For a webhook job with a relay it also prints a `relay:` line with the redacted URL, state (`connecting|connected|backoff|error`), event count, last event time and last error (`relay: not connected (daemon not running or job disabled)` otherwise). `jobs update --relay auto` rotates the channel but prints the masked URL; use `jobs get` to read the new one.
+Get a job by GUID or alias. The output includes `cwd` and, when set, the `Runner Session ID`. This is the only command that prints a webhook job's full relay URL and secret in clear (every other output masks them: `https://smee.io/Uk…Sd`, `secret: set`). For a webhook job with a relay it also prints a `relay:` line with the redacted URL, state (`connecting|connected|backoff|error`), event count, last event time and last error (`relay: not connected (daemon not running or job disabled)` otherwise). `jobs update <job> --relay auto` (no `--webhook` needed) rotates the channel, keeps the stored secret, and prints the new URL once in a `Notice:` line on stderr; `jobs get` shows it again.
 
 ```bash
 crontick jobs get <id|alias>
@@ -551,7 +551,7 @@ stop`, and `crontick dashboard data` CLI commands have been removed.
 
 ### Dashboard web UI
 
-Mutating `/api` calls (anything but GET) are rejected with `REQUEST_REJECTED` unless the request has a loopback `Host` with the daemon port, `Content-Type: application/json` (even with no body, e.g. `DELETE /api/jobs/:id`), and, if an `Origin` header is sent, the daemon's own origin. Anyone calling the HTTP API directly must send the JSON header. See [specs/004-daemon.md](../specs/004-daemon.md#api-request-guard).
+Every `/api` call, reads included, is rejected with `REQUEST_REJECTED` unless the request has a loopback `Host` with the daemon port and, if an `Origin` header is sent, the daemon's own origin (DNS-rebinding defense: `GET /api/jobs/:id` and `GET /api/export?includeSecrets=1` return webhook relay URLs and secrets). Mutating calls (POST/PUT/PATCH/DELETE) additionally need `Content-Type: application/json` (even with no body, e.g. `DELETE /api/jobs/:id`). Anyone calling the HTTP API directly must send a loopback Host (curl does by default) and, for writes, the JSON header. `/health` is not guarded. See [specs/004-daemon.md](../specs/004-daemon.md#api-request-guard).
 
 The dashboard is a dependency-free web page served on the daemon's loopback origin
 (`/` and `/dashboard`). It renders live snapshots from `GET /api/dashboard` and drives

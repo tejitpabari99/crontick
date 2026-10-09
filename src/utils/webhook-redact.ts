@@ -8,6 +8,8 @@ const SMEE_URL_RE = /https?:\/\/smee\.io\/[^\s"'<>)]+/g;
 
 /** Masks the last path segment (the channel id) of a relay URL; idempotent. */
 export function redactRelayUrl(url: string): string {
+  // Drop any query/fragment (tokens can live there) and trailing slashes so the channel segment is the last one.
+  url = url.replace(/[?#].*$/, '').replace(/\/+$/, '');
   const idx = url.lastIndexOf('/');
   if (idx < 0) return ELLIPSIS;
   const head = url.slice(0, idx + 1);

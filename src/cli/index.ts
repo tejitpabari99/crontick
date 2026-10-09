@@ -482,7 +482,7 @@ commonJobOptions(jobs.command('update <id|alias> [engineArgs...]').description('
     try {
       assertNoCrontickFlagCollision(engineArgs, cmd);
       const { rawArgs, passthroughArgs } = splitPromptEngineArgs(engineArgs);
-      const patchOptions = await c.resolveRelayAuto(collectPatchOptions(rawArgs, passthroughArgs, engineArgs, opts));
+      const patchOptions = await c.resolveRelayAuto(collectPatchOptions(rawArgs, passthroughArgs, engineArgs, opts), id);
       const patch = buildJobPatchFromUpdateOptions(patchOptions, {
         cwd: process.cwd(),
         onNotice: (message) => notices.push(message),

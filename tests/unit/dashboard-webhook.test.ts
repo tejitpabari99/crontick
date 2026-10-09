@@ -52,6 +52,10 @@ describe('dashboard wiring', () => {
     expect(js).toContain("'/api/relay/new'");
     expect(js).toContain('create-relay');
   });
+  it('status dot matches the relay by job id, not only by redacted URL text', () => {
+    expect(js).toContain('r.jobIds.includes(jobId)');
+    expect(js).toContain('relayRowHtml(job.schedule, relays, job.id)');
+  });
   it('drawer shows read-only relay, Copy fetching the full job, status dot, Trigger now', () => {
     expect(js).toContain('/api/relays');
     expect(js).toContain('relay-dot');

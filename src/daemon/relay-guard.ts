@@ -12,6 +12,7 @@ import {
   RELAY_RATE_LIMIT_PER_WINDOW,
   RELAY_RATE_WINDOW_MS,
 } from '../constants/relay.js';
+import { flattenRelayHeaders } from '../utils/webhook-payload.js';
 import type { RelayDelivery } from './relay.js';
 
 export interface RelayGuardDeps {
@@ -37,16 +38,7 @@ interface Window {
 }
 
 function headerValue(data: Record<string, unknown>, name: string): string | undefined {
-  const nested = data['headers'];
-  if (nested !== null && typeof nested === 'object') {
-    for (const [k, v] of Object.entries(nested as Record<string, unknown>)) {
-      if (k.toLowerCase() === name && typeof v === 'string') return v;
-    }
-  }
-  for (const [k, v] of Object.entries(data)) {
-    if (k.toLowerCase() === name && typeof v === 'string') return v;
-  }
-  return undefined;
+  return flattenRelayHeaders(data)[name];
 }
 
 /** True when `sig` equals `sha256=` + HMAC-SHA256(secret, JSON.stringify(body)). */
@@ -57,8 +49,13 @@ export function verifySignature(secret: string, body: unknown, sig: string | und
   return got.length === expected.length && timingSafeEqual(got, expected);
 }
 
-/** x-github-delivery, else x-request-id, else sha256 of the body (timestamp-less). */
-export function deliveryKey(data: Record<string, unknown>): string {
+/**
+ * Dedupe key. Signed jobs (`signature` given, already verified): the signature itself, because the
+ * delivery-id headers are NOT covered by the HMAC and a replayed signed body could carry a fresh id.
+ * Otherwise x-github-delivery, else x-request-id, else sha256 of the body (timestamp-less).
+ */
+export function deliveryKey(data: Record<string, unknown>, signature?: string): string {
+  if (signature !== undefined) return 'sig:' + signature;
   return (
     headerValue(data, 'x-github-delivery') ??
     headerValue(data, 'x-request-id') ??
@@ -81,17 +78,29 @@ export class RelayGuard {
   /** RelayManager `guard` seam: true = dispatch, false = drop. */
   guard = (d: RelayDelivery): boolean => {
     const secret = this.deps.getSecret(d.jobId);
-    if (secret !== undefined && !verifySignature(secret, d.data['body'], headerValue(d.data, 'x-hub-signature-256'))) {
+    const signature = headerValue(d.data, 'x-hub-signature-256');
+    if (secret !== undefined && !verifySignature(secret, d.data['body'], signature)) {
       this.signatureRejected++;
       this.deps.logger.warn('Relay event dropped: missing or invalid signature', { jobId: d.jobId });
       return false;
     }
-    if (this.isDuplicate(d.jobId, deliveryKey(d.data))) {
+    const key = deliveryKey(d.data, secret !== undefined ? signature : undefined);
+    if (this.isDuplicate(d.jobId, key)) {
       this.deps.logger.debug('Relay event dropped: duplicate delivery', { jobId: d.jobId });
       return false;
     }
-    return this.takeToken(d.jobId);
+    // Remember the key only once the event is admitted, so a burst-dropped event can be redelivered.
+    if (!this.takeToken(d.jobId)) return false;
+    this.remember(d.jobId, key);
+    return true;
   };
+
+  /** Releases state for every job not in `activeJobIds` (deleted, disabled or no longer relayed). */
+  retain(activeJobIds: ReadonlySet<string>): void {
+    for (const id of new Set([...this.seen.keys(), ...this.buckets.keys(), ...this.windows.keys()])) {
+      if (!activeJobIds.has(id)) this.forget(id);
+    }
+  }
 
   forget(jobId: string): void {
     this.seen.delete(jobId);
@@ -99,10 +108,11 @@ export class RelayGuard {
     this.windows.delete(jobId);
   }
 
+  /** True when `key` was admitted within the TTL (refreshing its LRU position); never records. */
   private isDuplicate(jobId: string, key: string): boolean {
     const now = this.now();
-    let m = this.seen.get(jobId);
-    if (!m) this.seen.set(jobId, (m = new Map()));
+    const m = this.seen.get(jobId);
+    if (!m) return false;
     for (const [k, at] of m) {
       if (now - at < RELAY_DEDUPE_TTL_MS) break; // insertion order == age order
       m.delete(k);
@@ -112,9 +122,14 @@ export class RelayGuard {
       m.set(key, now); // refresh LRU position
       return true;
     }
-    m.set(key, now);
-    while (m.size > RELAY_DEDUPE_MAX_ENTRIES) m.delete(m.keys().next().value as string);
     return false;
+  }
+
+  private remember(jobId: string, key: string): void {
+    let m = this.seen.get(jobId);
+    if (!m) this.seen.set(jobId, (m = new Map()));
+    m.set(key, this.now());
+    while (m.size > RELAY_DEDUPE_MAX_ENTRIES) m.delete(m.keys().next().value as string);
   }
 
   private takeToken(jobId: string): boolean {
