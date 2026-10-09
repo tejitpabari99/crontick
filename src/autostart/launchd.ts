@@ -1,9 +1,11 @@
 import { posix } from 'node:path';
 import { CrontickError } from '../errors.js';
+import { sleep } from '../utils/sleep.js';
 import { PLIST_LABEL, parsePlist, plistPaths, renderPlist } from './plist.js';
 import type { AutostartBackend, AutostartDeps, AutostartSpec, BackendInspection } from './types.js';
 
 const LAUNCHCTL = '/bin/launchctl';
+const BOOTSTRAP_RETRY_MS = 1000;
 
 const LOGIN_ITEMS_NOTE =
   'Registered but not loaded in launchd; it may be switched off in System Settings > General > Login Items & Extensions.';
@@ -21,6 +23,7 @@ export class LaunchdBackend implements AutostartBackend {
     private readonly getUid: (() => number | undefined) | undefined = typeof process.getuid === 'function'
       ? () => process.getuid!()
       : undefined,
+    private readonly delay: (ms: number) => Promise<void> = sleep,
   ) {}
 
   private get plistPath(): string {
@@ -63,7 +66,9 @@ export class LaunchdBackend implements AutostartBackend {
     await this.deps.fs.writeFile(path, renderPlist(spec, PLIST_LABEL, paths), { mode: 0o644 });
 
     // Never blind-bootstrap: a loaded label fails with an opaque "5: Input/output error".
+    let bootedOut = false;
     if ((await this.ctl('print', target)).code === 0) {
+      bootedOut = true;
       const out = await this.ctl('bootout', target);
       if (out.code !== 0) throw this.failure('bootout', target, out);
     }
@@ -71,6 +76,11 @@ export class LaunchdBackend implements AutostartBackend {
     if (boot.code !== 0 && (await this.isDisabled(domain))) {
       const en = await this.ctl('enable', target);
       if (en.code !== 0) throw this.failure('enable', target, en);
+      boot = await this.ctl('bootstrap', domain, path);
+    }
+    if (boot.code !== 0 && bootedOut) {
+      // bootout can return before teardown finishes; the immediate bootstrap then fails with "5: Input/output error".
+      await this.delay(BOOTSTRAP_RETRY_MS);
       boot = await this.ctl('bootstrap', domain, path);
     }
     if (boot.code !== 0) throw this.failure('bootstrap', `${domain} ${path}`, boot);

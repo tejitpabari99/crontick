@@ -1,3 +1,4 @@
+import { assertXmlSafe, escapeXml, unescapeXml } from '../utils/xml.js';
 import type { AutostartSpec } from './types.js';
 
 /** Pure renderer/parser for the Windows Task Scheduler task definition (XML). */
@@ -7,33 +8,10 @@ export const TASK_NAME = '\\crontick\\daemon';
 const DESCRIPTION =
   'Starts the crontick scheduler daemon at logon. Created by `crontick autostart enable`; remove with `crontick autostart disable`.';
 
-function esc(v: string): string {
-  return v
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
-function unesc(v: string): string {
-  return v.replace(/&(#x[0-9a-fA-F]+|#[0-9]+|lt|gt|quot|apos|amp);/g, (_m, e: string) => {
-    if (e === 'lt') return '<';
-    if (e === 'gt') return '>';
-    if (e === 'quot') return '"';
-    if (e === 'apos') return "'";
-    if (e === 'amp') return '&';
-    const code = e[1] === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
-    return String.fromCodePoint(code);
-  });
-}
-
 /** Escapes a value; refuses characters XML 1.0 cannot represent. */
 function val(v: string): string {
-  if ([...v].some((c) => { const n = c.charCodeAt(0); return n < 0x20 && n !== 0x09 && n !== 0x0a && n !== 0x0d; })) {
-    throw new Error('Cannot write a value containing control characters into a Task Scheduler definition.');
-  }
-  return esc(v);
+  assertXmlSafe(v, 'a Task Scheduler definition');
+  return escapeXml(v);
 }
 
 /** Arguments string for the launcher action: `"<cli>" daemon start [--home "<dir>"]`. */
@@ -128,7 +106,7 @@ export function parseTaskXml(xml: string): ParsedTask | undefined {
     const exec = element(xml, 'Exec');
     if (exec === undefined) return undefined;
     const command = element(exec, 'Command');
-    const nodePath = command === undefined ? '' : unesc(command).trim();
+    const nodePath = command === undefined ? '' : unescapeXml(command).trim();
     if (!nodePath) return undefined;
     const rawArgs = element(exec, 'Arguments');
     const settings = element(xml, 'Settings');
@@ -137,11 +115,11 @@ export function parseTaskXml(xml: string): ParsedTask | undefined {
     const userId = principal === undefined ? undefined : element(principal, 'UserId');
     const result: ParsedTask = {
       nodePath,
-      args: rawArgs === undefined ? [] : splitArguments(unesc(rawArgs)),
+      args: rawArgs === undefined ? [] : splitArguments(unescapeXml(rawArgs)),
       env: {},
-      enabled: enabledText === undefined ? true : unesc(enabledText).trim().toLowerCase() !== 'false',
+      enabled: enabledText === undefined ? true : unescapeXml(enabledText).trim().toLowerCase() !== 'false',
     };
-    if (userId !== undefined) result.userId = unesc(userId).trim();
+    if (userId !== undefined) result.userId = unescapeXml(userId).trim();
     return result;
   } catch {
     return undefined;

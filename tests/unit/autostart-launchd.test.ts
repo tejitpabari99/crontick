@@ -50,7 +50,7 @@ function harness(opts: { files?: Record<string, string> } = {}) {
       },
     },
   };
-  const backend = new LaunchdBackend(deps, () => 501);
+  const backend = new LaunchdBackend(deps, () => 501, async () => {});
   return { backend, calls, files, dirs, modes, respond, setThrow: () => (throwExec = true) };
 }
 
@@ -153,6 +153,23 @@ describe('LaunchdBackend.install', () => {
     const err = await h.backend.install(spec).catch((e) => e);
     expect(err).toBeInstanceOf(CrontickError);
     expect((err as Error).message).toContain('still broken');
+    expect(h.calls.filter((c) => c[1] === 'bootstrap')).toHaveLength(2);
+  });
+
+  it('loaded label: retries bootstrap once after bootout race (regression)', async () => {
+    const h = harness();
+    h.respond[`bootstrap gui/501 ${PLIST}`] = [{ code: 5, stderr: 'Bootstrap failed: 5: Input/output error' }, { code: 0 }];
+    await h.backend.install(spec);
+    expect(h.calls.filter((c) => c[1] === 'bootstrap')).toHaveLength(2);
+    expect(h.calls[h.calls.length - 1]).toEqual([L, 'enable', target]);
+  });
+
+  it('loaded label: bootstrap failing twice surfaces stderr', async () => {
+    const h = harness();
+    h.respond[`bootstrap gui/501 ${PLIST}`] = { code: 5, stderr: 'still racing' };
+    h.respond['print-disabled gui/501'] = { code: 0, stdout: 'disabled services = {\n}' };
+    const err = await h.backend.install(spec).catch((e) => e);
+    expect((err as Error).message).toContain('still racing');
     expect(h.calls.filter((c) => c[1] === 'bootstrap')).toHaveLength(2);
   });
 

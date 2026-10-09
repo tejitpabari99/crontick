@@ -1,5 +1,6 @@
 import { posix } from 'node:path';
 import { dataDir } from '../paths.js';
+import { assertXmlSafe, escapeXml, unescapeXml } from '../utils/xml.js';
 import type { AutostartSpec } from './types.js';
 
 /** Pure, dependency-free renderer/parser for the launchd LaunchAgent plist. */
@@ -18,38 +19,20 @@ export function plistPaths(spec: AutostartSpec): PlistPaths {
   return { logsDir: posix.join(data, 'logs'), dataDir: data };
 }
 
-function esc(v: string): string {
-  return v
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
-function unesc(v: string): string {
-  return v.replace(/&(#x[0-9a-fA-F]+|#[0-9]+|lt|gt|quot|apos|amp);/g, (_m, e: string) => {
-    if (e === 'lt') return '<';
-    if (e === 'gt') return '>';
-    if (e === 'quot') return '"';
-    if (e === 'apos') return "'";
-    if (e === 'amp') return '&';
-    const code = e[1] === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
-    return String.fromCodePoint(code);
-  });
-}
-
 function str(v: string): string {
   // XML 1.0 cannot represent most control characters; refuse rather than emit an invalid plist.
-  if ([...v].some((c) => { const n = c.charCodeAt(0); return n < 0x20 && n !== 0x09 && n !== 0x0a && n !== 0x0d; })) {
-    throw new Error('Cannot write a value containing control characters into a launchd plist.');
-  }
-  return `<string>${esc(v)}</string>`;
+  assertXmlSafe(v, 'a launchd plist');
+  return `<string>${escapeXml(v)}</string>`;
+}
+
+function key(k: string): string {
+  assertXmlSafe(k, 'a launchd plist');
+  return `<key>${escapeXml(k)}</key>`;
 }
 
 /** Renders the LaunchAgent plist for `spec`. Emits exactly the documented keys, nothing else. */
 export function renderPlist(spec: AutostartSpec, label: string, paths: PlistPaths): string {
-  const env = Object.entries(spec.env).map(([k, v]) => `\t\t<key>${esc(k)}</key>\n\t\t${str(v)}`);
+  const env = Object.entries(spec.env).map(([k, v]) => `\t\t${key(k)}\n\t\t${str(v)}`);
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -101,7 +84,7 @@ function parseValue(xml: string, pos: { i: number }): PlistValue | undefined {
     if (selfClosed) return name === 'string' ? '' : undefined;
     const end = xml.indexOf(`</${name}>`, pos.i);
     if (end < 0) return undefined;
-    const text = unesc(xml.slice(pos.i, end));
+    const text = unescapeXml(xml.slice(pos.i, end));
     pos.i = end + name.length + 3;
     return name === 'integer' || name === 'real' ? Number(text) : text;
   }
@@ -133,7 +116,7 @@ function parseValue(xml: string, pos: { i: number }): PlistValue | undefined {
       pos.i += k[0].length;
       const v = parseValue(xml, pos);
       if (v === undefined) return undefined;
-      out[unesc(k[1]!)] = v;
+      out[unescapeXml(k[1]!)] = v;
     }
   }
   return undefined;

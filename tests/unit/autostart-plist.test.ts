@@ -93,6 +93,11 @@ describe('plist renderer', () => {
     expect(parsePlist(xml)?.env).toEqual({ CRONTICK_SUPERVISED: '1' });
   });
 
+  it('rejects control characters in env keys (regression)', () => {
+    const s: AutostartSpec = { ...spec, env: { 'A\u0001B': '1' } };
+    expect(() => renderPlist(s, PLIST_LABEL, paths)).toThrow(/control characters/);
+  });
+
   it('escapes & < > " \' everywhere', () => {
     const nasty = `/a&b<c>d"e'f`;
     const s: AutostartSpec = { ...spec, nodePath: nasty, daemonScript: `${nasty}/d.js`, env: { K: nasty, 'A&B': '1' } };
