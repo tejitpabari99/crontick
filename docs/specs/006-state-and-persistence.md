@@ -64,6 +64,7 @@ human-editability of jobs and efficient querying of run history.
 - **R-006-27**: Run history MUST NOT be importable: `importRuns` and `RunImportSchema` do not exist and `share import` ignores any `runs` payload.
 - **R-006-27a**: An imported Claude job with a session ID lacking an independently trusted local completed run MUST have the ID cleared and start a fresh session; raw-engine jobs retain their stored session ID.
 - **R-006-28**: Read surfaces serializing config values, run rows, run output, or dashboard payloads MUST apply the shared redaction contract defensively at read time as well.
+- **R-006-30**: `recordSkippedRun(jobId, firedAtMs, reason)` MUST insert a terminal `skipped` run with no `pid` and `error: reason` (used for fires superseded by a catch-up run), subject to the same retention cap. The job's `catchUp` boolean is stored in the job JSON (default `false`).
 - **R-006-29**: Library config read helpers MUST redact returned secret-like values without mutating `config.json` on disk, using high-confidence normalized suffix matching for key hints.
 
 ### Non-functional requirements
@@ -128,6 +129,7 @@ human-editability of jobs and efficient querying of run history.
 - [x] Retention/purge policy enforced via `pruneRunsForJob()`/`pruneAllJobsRunHistory()`, reload-applicable via `setRunRetentionCap()` (test files: `tests/unit/store.test.ts`, `tests/unit/integration.persistence.test.ts`, `tests/unit/config.test.ts`)
 - [x] `job_schedule_state`: `recordTick`/`getScheduleState` seed and advance a job's watermark (test file: `tests/unit/store.test.ts`)
 - [x] `recordMissedRun` inserts a terminal `missed` run with no pid, subject to the same retention cap (test file: `tests/unit/store.test.ts`)
+- [x] `recordSkippedRun` inserts a terminal `skipped` run with no pid (test files: `tests/unit/store.test.ts`, `tests/unit/startup-catchup.test.ts`)
 - [x] Share import validates the whole file, assigns new ids, suffixes alias collisions and never imports runs (test files: `tests/unit/api.test.ts`; `tests/unit/cli.test.ts`; `tests/unit/mcp.test.ts`)
 - [x] Read-time redaction applies consistently across config, run, log, and dashboard read surfaces (test file: `tests/unit/secret-redaction.test.ts`)
 

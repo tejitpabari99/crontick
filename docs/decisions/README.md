@@ -76,7 +76,7 @@ files, is the historical record.
 | 0012 | Cap run history per job with count-based, best-effort, batched eviction | [0001](0001-architecture-and-runtime-model.md) |
 | 0013 | Narrow the autostart-removal guard test to shipped product surfaces only | [0001](0001-architecture-and-runtime-model.md) |
 | 0014 | HTTP-based graceful shutdown, with signals as a POSIX-only fallback | [0001](0001-architecture-and-runtime-model.md) |
-| 0015 | Report missed fires as records, never replay them | [0001](0001-architecture-and-runtime-model.md) |
+| 0015 | Report missed fires as records, never replay them by default; opt-in `catchUp` runs only the latest missed fire at startup (amended by SP10) | [0001](0001-architecture-and-runtime-model.md) |
 | 0016 | Spawn every job process detached, identically on every platform | [0001](0001-architecture-and-runtime-model.md) |
 | 0017 | No migration framework for the v1.0.0 schema | [0001](0001-architecture-and-runtime-model.md) |
 | 0018 | `--exec` takes command and args verbatim, separated by `--` | [0002](0002-prompt-only-jobs-and-engine-adapters.md) (obsolete: `exec` removed) |

@@ -292,6 +292,7 @@ interface JobCreateCliOptions {
   envFile?: string;
   timeout?: number;
   overlap?: string;
+  catchUp?: boolean; // --catch-up / --no-catch-up; cron, interval, one-shot only
   retry?: number;
   desc?: string;
   enabled?: boolean;

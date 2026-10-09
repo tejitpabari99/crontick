@@ -105,6 +105,7 @@ crontick jobs new [engineArgs...]
 | `--file <path>` | string | — | Create the job from a full prompt-job JSON file |
 | `--timeout <sec>` | integer | config `defaults.timeoutSec` (unset by default) | Per-run timeout in seconds |
 | `--overlap <policy>` | `skip` \| `queue` \| `cancel-previous` | `skip` (config `defaults.overlap`) | Overlap policy: skip\|queue\|cancel-previous (default: skip). On `jobs update`, omitting it leaves the job's policy unchanged |
+| `--catch-up` / `--no-catch-up` | boolean | off | Run the latest missed fire once when the daemon starts (cron, interval, one-shot only). On `jobs update`, omitting both leaves it unchanged. `jobs get` prints `catch-up: on\|off`; `jobs list` appends ` (catch-up)` |
 | `--retry <max>` | integer | config `defaults.retry.max` (`0` by default) | Retry count on failure |
 | `--desc <description>` | string | — | Job description |
 | `--force` | boolean | `false` | Replace an existing job when the same alias already exists |
@@ -498,7 +499,7 @@ Show `autostart` (`enabled`, `disabled` or `unsupported`), `mechanism`, `definit
 
 ### crontick daemon status
 
-Show whether the daemon is running (PID, port, dashboard URL, uptime, job count; `portNote` when it is on a fallback port). Exits `1` with a hint when it is not running. Never starts the daemon.
+Show whether the daemon is running (PID, port, dashboard URL, uptime, job count, missed-fire summary including `catchUpRuns`; `portNote` when it is on a fallback port). Exits `1` with a hint when it is not running. Never starts the daemon.
 
 ### crontick daemon restart
 

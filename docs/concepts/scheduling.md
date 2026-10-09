@@ -40,6 +40,7 @@ For `interval` schedules, the initial delay depends on `startAt`:
 - **No startAt**: the first tick fires after one full `everySec` interval.
 - **startAt in the future**: the first tick fires at `startAt`, then every `everySec` thereafter.
 - **startAt in the past**: the scheduler calculates `elapsed % intervalMs` to align the next tick to the original cadence.
+- Missed-fire enumeration uses the same `startAt` grid: no fire is ever computed before `startAt`, and a future `startAt` yields zero missed fires.
 
 ## One-shot scheduling
 
@@ -57,7 +58,23 @@ Previews are exposed for an existing job as `crontick jobs schedule <id|alias>` 
 
 ## Missed runs when the daemon is down
 
-crontick does **not** catch up on missed ticks. If the daemon was stopped while a cron tick should have fired, that tick is lost. When the daemon restarts it re-registers all enabled jobs from the current moment forward. The scheduler holds no persistent "last fired at" state.
+By default crontick does **not** run fires that came due while the daemon was stopped. The daemon keeps a persistent per-job "last seen ticking" watermark (`job_schedule_state`). On startup it enumerates the fires each enabled job should have had since that watermark (capped at 500 per job) and records each as a terminal `missed` run; nothing is executed. A job with no watermark is seeded with the current time and no gap is computed. See [daemon lifecycle](daemon-lifecycle.md#what-happens-while-the-daemon-is-down).
+
+## Catch-up (opt-in)
+
+A job with `catchUp: true` (default `false`; valid only on `cron`, `interval` and `one-shot`, otherwise `VALIDATION_ERROR`) runs its **latest** missed fire once when the daemon starts:
+
+- The run's `plannedAt` is the latest missed fire. It is a normal run: overlap policy, retry, timeout and auto-disable apply, and `after` dependents fire once when it finishes.
+- Every other missed fire is recorded as `skipped` with `error: "CATCH_UP: superseded by catch-up run <runId>"`. `missed` keeps meaning "nothing ran and nobody decided that".
+- Beyond the 500 cap the latest fire is computed directly (`Scheduler.latestFireBefore`), so the run still uses the true latest fire; one summary row is recorded as `skipped` instead of 500 rows.
+- The run gets `CRONTICK_TRIGGER=catch-up` and `CRONTICK_CATCHUP_MISSED=<n>` (a lower bound when capped), so a prompt can tell it is late.
+- A `one-shot` whose `runAt` passed while the daemon was down runs. Without the flag it is recorded `missed`.
+- Jobs with no watermark are only seeded. Disabled jobs are never caught up, and their watermark advances at startup, so re-enabling never back-fills a stale gap.
+- With `overlap: skip` and an adopted run from the previous daemon still alive, the catch-up run is recorded as a visible `skipped` run.
+- Only daemon **startup** catches up. `daemon reload` never does, and neither does a machine waking from sleep while the daemon stays up (timers after suspend are unverified pending a manual suspend test).
+- `missedFires.catchUpRuns` (in `daemon status` / `GET /api/daemon/status`) counts catch-up runs started at that startup.
+
+Set it with `--catch-up` / `--no-catch-up` on `jobs new|update`, `catchUp` in MCP create/update and the library, or the dashboard checkbox "Catch up missed run on daemon start". `jobs get` prints `catch-up: on|off`, `jobs list` appends ` (catch-up)`. Export and import carry the field. Rationale: [ADR 0001](../decisions/0001-architecture-and-runtime-model.md) ("Missed fires are reported; opt-in catch-up runs only the latest").
 
 ## After triggers
 

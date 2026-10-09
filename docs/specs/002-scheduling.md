@@ -125,7 +125,7 @@ removes the entry from the internal map. `unscheduleAll()` iterates all entries.
 
 ## Out of scope
 
-- Missed-run catch-up (crontick does not retroactively fire missed ticks after daemon downtime).
+- Replay of every missed tick, default-on catch-up, a catch-up max-age window, and catch-up on wake from sleep (opt-in latest-fire catch-up at daemon startup is specified in spec 004 R-004-37).
 - Replay of webhook events missed while the daemon or relay is down; event filtering; provider-specific verifiers other than GitHub `x-hub-signature-256`; multiple relays per job.
 - Replay of upstream completions missed during downtime; multiple upstreams or AND-joins; passing upstream output (use `crontick runs get "$CRONTICK_UPSTREAM_RUN_ID"`); delay/debounce.
 - Persistent schedule state (schedules are re-registered from job definitions on daemon start).

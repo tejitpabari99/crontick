@@ -27,7 +27,7 @@ local cron daemon, with observability through parsed run output, a per-job log f
 | Term | Definition |
 |------|-----------|
 | Run | A single execution attempt of a job, identified by a UUID. |
-| Run status | One of: `queued`, `running`, `success`, `failed`, `canceled`, `skipped`, `timeout`. `missed` is inserted directly by daemon startup for a fire that occurred while no daemon was running (spec 004 R-004-28). |
+| Run status | One of: `queued`, `running`, `success`, `failed`, `canceled`, `skipped`, `timeout`. `missed` is inserted directly by daemon startup for a fire that occurred while no daemon was running (spec 004 R-004-28). A `skipped` run with `error` starting `CATCH_UP: superseded by catch-up run` records a missed fire intentionally superseded by a catch-up run (spec 004 R-004-37). |
 | Overlap policy | `skip`: drop new tick if active; `queue`: serialize; `cancel-previous`: abort active. |
 | Retry | Re-attempt after backoff on failure (not on cancel/timeout). |
 
@@ -76,6 +76,7 @@ local cron daemon, with observability through parsed run output, a per-job log f
 ### Non-functional requirements
 
 - **R-003-22a**: Deleting runs (`deleteRuns`, `DELETE /api/runs`) MUST accept exactly one of a run-id list or a job reference, MUST skip and report `queued`/`running` runs without canceling them, MUST delete `run_outputs` then `runs` in one transaction, MUST report unknown ids in `notFound`, and MUST remove the per-job log only when the job no longer exists and no runs for it remain. `dryRun` MUST return the same result without deleting.
+- **R-003-22b**: A catch-up run MUST be started through the normal runner path with env `CRONTICK_TRIGGER=catch-up` and `CRONTICK_CATCHUP_MISSED=<n>` (a lower bound when capped), merged last like other `CRONTICK_*` trigger env; overlap, retry, timeout and `after` dependents apply unchanged. Tests: `tests/unit/startup-catchup.test.ts`, `tests/unit/catchup-gaps.test.ts`.
 - **R-003-23**: The runner SHOULD NOT block the event loop; all I/O is async or delegated to the child process.
 - **R-003-24**: Log capture SHOULD be streamed incrementally (not buffered until exit).
 

@@ -72,8 +72,10 @@ without saying so.
   *would* have produced since then and records each as a terminal `missed` run (capped at 500 per
   job). `crontick info` / `GET /api/daemon/status` summarizes this as `missedFires`, and
   `crontick runs list --status missed` lists the rows. crontick deliberately does **not** run the
-  missed fires -- see [ADR 0001](../decisions/0001-architecture-and-runtime-model.md). A job
-  never observed live yet has its watermark seeded, with no gap computed.
+  missed fires by default -- see [ADR 0001](../decisions/0001-architecture-and-runtime-model.md). A job
+  never observed live yet has its watermark seeded, with no gap computed. Jobs with `catchUp: true`
+  are the opt-in exception: at startup they run the latest missed fire once and record the rest
+  as `skipped` (see [scheduling](scheduling.md#catch-up-opt-in)).
 - **Orphan runs are reconciled by checking real process liveness, not assumed dead.** `queued`
   runs are always canceled (never spawned). `running` runs are checked against the OS process
   table: confirmed dead -> canceled; alive with a start time consistent with `startedAt`

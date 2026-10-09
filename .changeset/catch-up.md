@@ -1,0 +1,5 @@
+---
+"crontick": minor
+---
+
+Add opt-in catch-up: a job with `catchUp: true` (cron, interval or one-shot only; `--catch-up` / `--no-catch-up` on `jobs new|update`, `catchUp` in MCP create/update and the library, a dashboard checkbox) runs its latest missed fire once when the daemon starts. The other missed fires are recorded as `skipped` (`CATCH_UP: superseded by catch-up run <runId>`). The run is a normal run (overlap, retry, timeout and `after` dependents apply) with `CRONTICK_TRIGGER=catch-up` and `CRONTICK_CATCHUP_MISSED=<n>`. One-shots whose `runAt` passed while the daemon was down run; disabled jobs are never caught up and re-enabling never back-fills; `daemon reload` never catches up; `catchUp` on an `after`/`webhook` job is a `VALIDATION_ERROR`. `daemon status` shows `missedFires.catchUpRuns`; `jobs get` prints `catch-up: on|off` and `jobs list` appends ` (catch-up)`. Interval missed-fire enumeration now honors `startAt`. Default behavior (missed fires recorded as `missed`, never run) is unchanged. Sleep/wake catch-up while the daemon stays up is not covered. See ADR 0001.

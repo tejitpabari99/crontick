@@ -17,6 +17,7 @@ Top-level job object.
 | `schedule` | `Schedule` | yes | — | Discriminated union on `kind` | When the job runs |
 | `action` | `Action` | yes | — | Discriminated union on `kind` | What the job does |
 | `overlap` | `"skip" \| "queue" \| "cancel-previous"` | no | `config.json` `defaults.overlap`, then `"skip"` | Enum | What happens when a new tick fires while a previous run is still active |
+| `catchUp` | `boolean` | no | `false` | Only for `cron`, `interval`, `one-shot` schedules (else `VALIDATION_ERROR`) | At daemon startup, run the latest missed fire once; other missed fires are recorded `skipped`. See [scheduling](../concepts/scheduling.md#catch-up-opt-in) |
 | `retry` | `Retry` | no | `config.json` `defaults.retry`, then `{ max: 0, backoffSec: 30 }` | — | Retry policy for failed runs |
 
 ### Identity: GUID `id` + `alias`
@@ -202,6 +203,6 @@ Runs stored in SQLite use these status values:
 | `success` | Completed with exit code 0 and no Claude `is_error` result |
 | `failed` | Completed with non-zero exit code, Claude `is_error`, or another run error |
 | `canceled` | Canceled by user, overlap policy `cancel-previous`, or orphan reconciliation on daemon restart (which can include queued runs) |
-| `skipped` | A fire that never ran because another run was already active (`overlap: "skip"`); distinct from an active run terminated by cancellation |
+| `skipped` | A fire that never ran because another run was already active (`overlap: "skip"`), or a missed fire superseded by a catch-up run (`error` starts `CATCH_UP: superseded by catch-up run`); distinct from an active run terminated by cancellation |
 | `timeout` | Killed due to `timeoutSec` |
 | `missed` | No process ever ran: recorded at daemon startup for a fire that occurred while no daemon was running. See [concepts/daemon-lifecycle.md](../concepts/daemon-lifecycle.md#what-happens-while-the-daemon-is-down) |

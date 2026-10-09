@@ -89,6 +89,7 @@ Create and schedule a new job.
 | `schedule` | `Schedule` | yes | — | Schedule object (see [job-schema.md](job-schema.md)); `{ kind: 'webhook', relay?, secret? }` runs the job on webhook events (see `crontick_job_trigger` and [Webhooks](../concepts/webhooks.md)); `{ kind: 'after', jobId: <upstream id or alias>, status: 'success'\|'failure'\|'any' }` runs the job when the upstream finishes (stored as the GUID; errors `AFTER_CYCLE`, `AFTER_UPSTREAM_NOT_FOUND`) |
 | `action` | `ActionInput` | yes | — | Prompt action with `kind: "prompt"` |
 | `overlap` | `"skip"\|"queue"\|"cancel-previous"` | no | config `defaults.overlap`, then `"skip"` | Overlap policy |
+| `catchUp` | `boolean` | no | `false` | Run the latest missed fire once at daemon startup; only for cron, interval, one-shot (else `VALIDATION_ERROR`) |
 | `retry` | `{ max?: number, backoffSec?: number }` | no | config `defaults.retry`, then `{ max: 0, backoffSec: 30 }` | Retry config |
 | `force` | `boolean` | no | `false` | Replace an existing job with the same alias or id |
 | `trustFolder` | `boolean` | no | `false` | Claude jobs only: trust `action.cwd` when it is not trusted yet. On `TRUST_REQUIRED`, ask the user, then call again with `true` |
@@ -140,6 +141,7 @@ Update an existing job by GUID or alias. The patch is merged with the existing d
 | `schedule` | `Schedule` | no | — | New schedule (may be `kind: 'after'`; see `crontick_job_create`) |
 | `action` | `ActionInput` | no | — | New or patched prompt action; `action.timeoutSec` and `action.sessionId` also accept `null` to remove them |
 | `overlap` | `"skip"\|"queue"\|"cancel-previous"` | no | — | Overlap policy |
+| `catchUp` | `boolean` | no | — | Set or clear catch-up; omitted leaves it unchanged; `true` on an `after`/`webhook` job is `VALIDATION_ERROR` |
 | `retry` | `{ max?: number, backoffSec?: number }` | no | — | Retry config |
 | `trustFolder` | `boolean` | no | `false` | See `crontick_job_create`; checked only when `action.cwd` or the engine changes |
 | `inFlight` | `"stop"\|"wait"` | no | — | Needed only when the job has runs in flight (else the call fails with `RUNS_IN_FLIGHT`, listing them): `stop` cancels them and drops queued ones, then applies; `wait` pauses the job, applies once they finish, then resumes it. Ask the user which before choosing |

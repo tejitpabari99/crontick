@@ -1,7 +1,7 @@
 # 0001: Architecture and runtime model
 
 - Status: Accepted
-- Date: 2026-10-09 (amended; originally 2026-09-28)
+- Date: 2026-10-09 (amended; originally 2026-09-28; missed-fire section amended for opt-in catch-up, SP10)
 - Supersedes: former ADRs 0001, 0003, 0004, 0005, 0011 (surface-drift portion only; the
   vitest tooling choice moves to [ADR 0003](0003-toolchain-and-distribution.md)), 0012,
   0013, 0014, 0015, 0016, 0017, 0020 (the generic detached-spawn exception only; the
@@ -112,9 +112,26 @@ Separately, because the daemon only fires jobs while running, a fire that happen
 a stopped period is unrecoverable after the fact -- crontick does not pretend otherwise.
 On startup, every fire that provably should have happened since the last recorded tick
 becomes a terminal `missed` run (capped at 500 per job), visible in `daemon status` and
-`runs list --status missed`. Missed fires are reported, never replayed: crontick will not
-guess whether a stale action is still safe to run, and will not queue a burst of
+`runs list --status missed`. By default missed fires are reported, never replayed: crontick
+will not guess whether a stale action is still safe to run, and will not queue a burst of
 catch-up executions for a job that was due many times during a long gap.
+
+*Opt-in catch-up (SP10).* A job may set `catchUp: true` (cron, interval, one-shot only;
+other kinds are rejected, never silently ignored). At daemon startup the scan collects the
+latest missed fire as pending instead of recording it; once the runner, orphan
+reconciliation and the tick/`after` listeners exist, it dispatches that single fire as a
+normal run (`CRONTICK_TRIGGER=catch-up`, `CRONTICK_CATCHUP_MISSED=<n>`), so overlap, retry,
+timeout and `after` dependents behave as for any run. The other missed fires are recorded
+`skipped` (`CATCH_UP: superseded by catch-up run <runId>`), keeping `missed` for "nothing ran
+and nobody decided that". Beyond the 500 cap the latest fire comes from
+`Scheduler.latestFireBefore` and one summary row is recorded. Only the latest fire runs
+(replay-all and default-on stay rejected: a 30s job down for a month would replay 86,400
+times). One-shots whose `runAt` passed run; jobs without a watermark are only seeded;
+disabled jobs advance their watermark at startup so re-enabling never back-fills. Reload never
+catches up, and wake-from-sleep with the daemon up is out of scope (timer behavior after
+suspend is unverified pending a manual suspend test). Interval enumeration now honors `startAt`
+so catch-up never runs a fire that never existed. Max-age windows, startup staggering and a
+login-storm concurrency cap are deferred.
 
 ### Shared, precision-first secret redaction
 
@@ -240,7 +257,7 @@ captured.
 - *New schedule kind `after`* `{ jobId, status: success|failure|any }`. `jobId` is the upstream GUID (aliases are editable; inputs accept an alias and resolve it before storage).
 - *Single completion hook.* `Runner.recordRunOutcome` is the one place every terminal run passes (normal runs after retries, adopted runs, reconciled runs). `Runner.onRunComplete` listeners are invoked from there via `queueMicrotask`, each in try/catch, after auto-disable bookkeeping, so the run that disables the upstream still triggers `failure`/`any` dependents. Overlap-skipped runs never reach it; `canceled`/`skipped`/`missed` are filtered out. `timeout` counts as failure.
 - *Shared `TriggerDispatcher`* (`src/daemon/trigger.ts`): re-reads the job, skips when disabled or when the schedule kind no longer matches the event, inserts the run with `runs.trigger_json`, and runs it through the normal runner (`RunContext.env`, merged last by `buildRunEnv`, so `CRONTICK_*` cannot be shadowed). Overlap, retry and timeout apply unchanged; a `skip` downstream records a visible `skipped` run, so docs recommend `overlap: queue` for a fast upstream with a slow downstream. It never calls `recordTick`: the missed-fire watermark stays time-only. A later webhook trigger reuses it unchanged.
-- *No replay.* The listener is registered after startup reconciliation, so completions during downtime and startup-finalized runs trigger nothing, consistent with report-only missed fires (above). Adopted runs that exit after the restart do trigger. A chain interrupted by downtime stops; the next upstream run resumes it.
+- *No replay.* The listener is registered after startup reconciliation, so completions during downtime and startup-finalized runs trigger nothing, consistent with report-only missed fires (above). Catch-up runs (SP10) are dispatched after the listener exists and are normal runs, so their `after` dependents fire exactly once. Adopted runs that exit after the restart do trigger. A chain interrupted by downtime stops; the next upstream run resumes it.
 - *Safe graph.* One upstream per node makes cycle detection a pointer walk (`validateAfterGraph`). Cycles and dangling upstreams are rejected on create/update/enable; import reports cycles and imports dangling jobs disabled with `AFTER_UPSTREAM_NOT_FOUND`; hand-edited graphs load but stay inert and flagged broken. Deleting an upstream needs `force` (`JOB_HAS_DEPENDENTS`), which disables dependents. Share export keeps ids only on referenced upstreams and import remaps them.
 
 **Alternatives rejected.** Storing the upstream alias (renames would break chains); an event emitter on the store or polling the runs table (not exactly-once, misses adopted runs); replaying completions on restart (run storms); an after-specific dispatch path (the webhook trigger needs identical steps).
@@ -283,7 +300,7 @@ context-free AWS secret may not be redacted.
 
 **Impossible (by design):** a surface-only feature without core support; jobs firing
 while the daemon is fully stopped and nothing has triggered it since; automatic
-replay/catch-up of a missed fire; opening a pre-1.0.0 database and having it work;
+default or automatic replay of every missed fire (only the opt-in latest-fire catch-up exists); opening a pre-1.0.0 database and having it work;
 reintroducing the removed mechanisms (native dependencies, Run key / VBS shim) or removed
 legacy/migration code without the explicit sign-off `AGENTS.md` rule 8 requires;
 creating login persistence from an MCP tool.
@@ -299,5 +316,5 @@ creating login persistence from an MCP tool.
   mechanism scoped forward from that release, not a resurrection of the pre-1.0 approach.
 - A future transport replaces loopback HTTP, or repeated reports show the 2-second
   graceful-stop timeout is wrong for real workloads.
-- Users repeatedly ask for opt-in catch-up of the most recent missed fire, or crontick
-  gains a new high-confidence secret-detection signal that doesn't risk false positives.
+- Opt-in catch-up of the most recent missed fire was revisited by SP10 (shipped as `catchUp`). Revisit for a catch-up max-age window, staggered or capped catch-up at login, wake-from-sleep catch-up, or replay-all, if users ask.
+- crontick gains a new high-confidence secret-detection signal that doesn't risk false positives.
