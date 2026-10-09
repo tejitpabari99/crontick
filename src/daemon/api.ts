@@ -28,6 +28,7 @@ import { redactWebhookDeep, restoreRedactedWebhook } from '../utils/webhook-reda
 import { readEnvFileForAction } from './env-file.js';
 import { resolveJobLogPath } from './job-log-file.js';
 import { TriggerDispatcher, type TriggerSkipReason } from './trigger.js';
+import { createRelayChannel } from '../utils/relay-url.js';
 import { toRelayStatusView, redactTriggerMeta } from '../utils/webhook-redact.js';
 import { buildWebhookContext, buildWebhookPayload } from '../utils/webhook-payload.js';
 import { checkMutatingRequest, isGuardedRequest } from './request-guard.js';
@@ -77,6 +78,8 @@ export interface ApiContext {
   syncRelays?: () => void;
   /** In-memory relay connection status (raw URLs; redacted before leaving the API). */
   relayStatus?: () => Array<Parameters<typeof toRelayStatusView>[0]>;
+  /** Injectable fetch for `POST /api/relay/new` (tests); defaults to global fetch. */
+  relayFetch?: typeof fetch;
   logger?: Logger;
   /** L1: graceful in-process shutdown, wired by index.ts after the HTTP server exists. */
   shutdown?: (signal: string) => Promise<void>;
@@ -167,6 +170,12 @@ async function handleRequest(
 
     if (method === 'GET' && path === '/api/relays') {
       return sendJson(res, 200, (ctx.relayStatus?.() ?? []).map(toRelayStatusView));
+    }
+
+    // Dashboard "Create channel": the smee.io/new redirect is followed server-side (browser CORS blocks it).
+    // Mutating, so the central request guard above already applies.
+    if (method === 'POST' && path === '/api/relay/new') {
+      return sendJson(res, 200, { url: await createRelayChannel(ctx.relayFetch) });
     }
 
     // ── Jobs ─────────────────────────────────────────────────────────────────

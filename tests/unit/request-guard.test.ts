@@ -42,6 +42,7 @@ const MUTATING_ROUTES: Array<[string, string]> = [
   ['POST', '/api/schedules/validate'],
   ['POST', '/api/schedules/validate?jobId=x'], // after-cycle variant: same source condition
   ['POST', '/api/schedules/preview'],
+  ['POST', '/api/relay/new'],
   ['POST', '/api/daemon/reload'],
   ['POST', '/api/daemon/stop'],
   ['POST', '/api/daemon/pause'],

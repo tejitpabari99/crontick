@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { join, resolve } from 'node:path';
-import { createApiServer } from '../../src/daemon/api.js';
+import { createApiServer, type ApiContext } from '../../src/daemon/api.js';
 import type { Runner } from '../../src/daemon/runner.js';
 import { Scheduler } from '../../src/daemon/scheduler.js';
 import { Store } from '../../src/daemon/store.js';
@@ -25,7 +25,7 @@ export interface ApiHarness {
   close(): Promise<void>;
 }
 
-export async function startApiHarness(scratchName: string, runner?: Partial<Runner>): Promise<ApiHarness> {
+export async function startApiHarness(scratchName: string, runner?: Partial<Runner>, extra: Partial<ApiContext> = {}): Promise<ApiHarness> {
   const dir = resolve('.crontick', scratchName, randomUUID());
   mkdirSync(join(dir, 'jobs'), { recursive: true });
   mkdirSync(join(dir, 'logs'), { recursive: true });
@@ -40,6 +40,7 @@ export async function startApiHarness(scratchName: string, runner?: Partial<Runn
     startedAt: new Date(),
     port: 0,
     reload: async () => {},
+    ...extra,
   };
   const server = createApiServer(ctx);
   await new Promise<void>((res, rej) => {

@@ -587,3 +587,15 @@ a.btn { text-decoration: none; display: inline-block; }
 .editor-preview ul { margin: 0.2222rem 0 0 1.1111rem; padding: 0; color: var(--text); }
 .editor-preview-title { font-weight: 600; }
 .editor-preview-error { color: var(--error); }
+
+.editor-howto { margin: 0 0 0.6667rem 0; font-size: 0.8333rem; color: var(--muted); }
+.editor-howto summary { cursor: pointer; }
+.editor-howto ul { margin: 0.2222rem 0 0 1.1111rem; padding: 0; }
+.relay-dot { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--muted); margin-right: 0.4rem; }
+.relay-connected { background: var(--success, #2da44e); }
+.relay-connecting, .relay-backoff { background: var(--warning, #bf8700); }
+.relay-error { background: var(--error); }
+.drawer-trigger { display: grid; gap: 0.3333rem; margin-bottom: 0.5556rem; }
+.drawer-trigger-payload { width: 100%; font-family: monospace; }
+.run-trigger { font-size: 0.8333rem; }
+.trigger-payload summary { cursor: pointer; color: var(--muted); }

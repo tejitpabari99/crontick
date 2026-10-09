@@ -30,8 +30,8 @@ const p = loadPure();
 const kind = (id: string): Kind => p.findScheduleKind(id)!;
 
 describe('SCHEDULE_KINDS registry', () => {
-  it('ships cron, interval, one-shot, after with label and fields', () => {
-    expect(p.SCHEDULE_KINDS.map((k) => k.kind)).toEqual(['cron', 'interval', 'one-shot', 'after']);
+  it('ships cron, interval, one-shot, after, webhook with label and fields', () => {
+    expect(p.SCHEDULE_KINDS.map((k) => k.kind)).toEqual(['cron', 'interval', 'one-shot', 'after', 'webhook']);
     for (const k of p.SCHEDULE_KINDS) {
       expect(k.label).toBeTruthy();
       expect(k.fields.length).toBeGreaterThan(0);

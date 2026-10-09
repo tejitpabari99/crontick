@@ -417,9 +417,13 @@ async function renderDrawer(jobId, opts = {}) {
   }
   const job = wrapped.job || {};
   const action = job.action || {};
-  const [stats, runs] = await Promise.all([
+  const isWebhook = job.schedule?.kind === 'webhook';
+  const [stats, runs, relays] = await Promise.all([
     fetch(`/api/stats/jobs/${encodeURIComponent(jobId)}`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
     fetch(`/api/runs?jobId=${encodeURIComponent(jobId)}&limit=10`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+    isWebhook && job.schedule.relay
+      ? fetch('/api/relays').then((r) => (r.ok ? r.json() : [])).catch(() => [])
+      : Promise.resolve([]),
   ]);
   if (drawerJobId !== jobId || document.getElementById('job-drawer').hidden) return;
   const finished = stats ? stats.succeeded + stats.failed + stats.canceled + stats.skipped : 0;
@@ -433,7 +437,13 @@ async function renderDrawer(jobId, opts = {}) {
       <button type="button" class="btn" data-drawer-action="run-now" title="${escHtml(RUN_NOW_TITLE)}">${RUN_NOW_ICON} Run now</button>
       <button type="button" class="btn" data-drawer-action="${wrapped.enabled ? 'disable' : 'enable'}">${wrapped.enabled ? '⏹ Disable' : '▶ Enable'}</button>
       <button type="button" class="btn" data-drawer-action="filter-runs">Filter runs</button>
+      ${isWebhook ? '<button type="button" class="btn" data-drawer-action="trigger-toggle">⚡ Trigger now</button>' : ''}
     </div>
+    ${isWebhook ? `<div class="drawer-trigger" hidden>
+      <label for="drawer-trigger-payload">Payload (JSON or text, optional)</label>
+      <textarea id="drawer-trigger-payload" class="drawer-trigger-payload" rows="4" placeholder='{"hello":"world"}'></textarea>
+      <button type="button" class="btn btn-primary" data-drawer-action="trigger">Fire</button>
+    </div>` : ''}
     <h4>Config</h4>
     <dl class="kv-list">
       ${kv('Alias', escHtml(wrapped.alias || '—'))}
@@ -446,6 +456,7 @@ async function renderDrawer(jobId, opts = {}) {
       ${kv('Timeout', escHtml(timeouts))}
       ${kv('Retry', escHtml(retry))}
       ${kv('Working directory', (wrapped.cwd || action.cwd) ? `<code>${escHtml(wrapped.cwd || action.cwd)}</code>` : '—')}
+      ${isWebhook ? kv('Relay', relayRowHtml(job.schedule, relays)) : ''}
       ${kv('Next run', escHtml(formatTime(wrapped.nextRunAt)))}
       ${kv('Last run', wrapped.lastRunAt ? `${escHtml(formatTime(wrapped.lastRunAt))} ${statusBadge(wrapped.lastStatus)}` : '—')}
     </dl>
@@ -467,6 +478,39 @@ async function renderDrawer(jobId, opts = {}) {
     </ul>`}
   `;
   if (opts.silent && focusedAction) body.querySelector(`[data-drawer-action="${focusedAction}"]`)?.focus();
+}
+
+/** Webhook relay row: read-only (redacted) URL, status dot from GET /api/relays, and a Copy that fetches the full URL. */
+function relayRowHtml(schedule, relays) {
+  if (!schedule.relay) return '<span class="muted">local trigger only</span>';
+  const status = (relays || []).find((r) => r.urlRedacted === schedule.relay);
+  const state = status?.state || 'unknown';
+  const title = status ? `${state}${status.lastError ? `: ${status.lastError}` : ''}${status.lastEventAt ? ` · last event ${formatTime(status.lastEventAt)}` : ''}` : 'status unknown';
+  return `<span class="relay-dot relay-${escHtml(state)}" title="${escHtml(title)}" aria-label="${escHtml(title)}"></span><code>${escHtml(schedule.relay)}</code>`
+    + ` <button type="button" class="icon-btn" data-drawer-action="copy-relay" title="Copy full relay URL" aria-label="Copy full relay URL">📋</button>`;
+}
+
+/** Copy needs the unredacted URL, which only GET /api/jobs/:id returns. */
+async function copyRelayUrl(jobId) {
+  const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { headers: { 'Content-Type': 'application/json' } });
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body?.schedule?.relay) throw new Error(body?.error?.message || 'Relay URL unavailable');
+  if (await copyToClipboard(body.schedule.relay)) showToast('Relay URL copied');
+  else throw new Error('Copy failed');
+}
+
+/** Trigger now: POST /api/jobs/:id/trigger with the optional payload; JSON when it parses, else raw text. */
+async function triggerJobNow(jobId) {
+  const text = document.getElementById('drawer-trigger-payload')?.value ?? '';
+  const body = {};
+  if (text.trim()) {
+    try { body.payload = JSON.parse(text); } catch { body.payload = text; }
+  }
+  const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/trigger`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error?.message || `Trigger failed (${res.status})`);
+  showToast(`Triggered run ${String(data.runId).slice(0, 8)}`);
+  await loadDashboard().catch(() => {});
 }
 
 function openDrawer(jobId) {
@@ -503,6 +547,7 @@ async function openRunModal(runId) {
   document.getElementById('modal-status').innerHTML = '';
   document.getElementById('modal-meta').textContent = '';
   document.getElementById('modal-error-section').hidden = true;
+  document.getElementById('modal-trigger-section').hidden = true;
   document.getElementById('modal-output').textContent = 'Loading…';
   document.getElementById('modal-logfile').innerHTML = '';
   document.getElementById('modal-transcript').innerHTML = '';
@@ -532,6 +577,8 @@ async function openRunModal(runId) {
       out.truncated ? 'Output truncated' : null,
     ].filter(Boolean);
     document.getElementById('modal-meta').textContent = meta.join(' · ');
+    document.getElementById('modal-trigger-section').hidden = !detail?.trigger;
+    document.getElementById('modal-trigger').innerHTML = detail?.trigger ? renderTriggerHtml(detail.trigger) : '';
     document.getElementById('modal-error-section').hidden = !out.error;
     document.getElementById('modal-error').textContent = out.error || '';
     document.getElementById('modal-stderr-section').hidden = !out.stderr;
@@ -1120,7 +1167,7 @@ const EDITOR_CLI_PARITY = {
   '--at': 'schedule',
   '--after': 'schedule', // `after` SCHEDULE_KINDS entry (upstream select)
   '--after-status': 'schedule',
-  '--webhook': 'schedule', // `webhook` SCHEDULE_KINDS entry arrives with the dashboard webhook UI
+  '--webhook': 'schedule', // `webhook` SCHEDULE_KINDS entry (relay URL + secret fields)
   '--relay': 'schedule',
   '--webhook-secret': 'schedule',
   '--dir': 'cwd',
@@ -1278,6 +1325,7 @@ const SCHEDULE_KINDS = [
   {
     kind: 'cron',
     label: 'Cron expression',
+    help: 'Cron: five-field expression in local time, e.g. 0 9 * * *',
     fields: [{ id: 'cron', label: 'Expression', type: 'text', required: true, placeholder: '0 9 * * *', hint: 'Fires in the machine local time zone' }],
     toSchedule: (v) => (String(v.cron ?? '').trim() ? { kind: 'cron', cron: v.cron.trim() } : null),
     fromSchedule: (s) => ({ cron: s.cron ?? '' }),
@@ -1285,6 +1333,7 @@ const SCHEDULE_KINDS = [
   {
     kind: 'interval',
     label: 'Every N units',
+    help: 'Every N units: repeats at a fixed interval, optionally from a start time',
     fields: [
       { id: 'count', label: 'Every', type: 'number', required: true, placeholder: '30' },
       { id: 'unit', label: 'Unit', type: 'select', options: ['s', 'm', 'h', 'd'], default: 'm' },
@@ -1303,6 +1352,7 @@ const SCHEDULE_KINDS = [
   {
     kind: 'one-shot',
     label: 'One time',
+    help: 'One time: runs once at a local date and time',
     fields: [{ id: 'runAt', label: 'Run at', type: 'datetime-local', required: true, hint: 'Local time, same as --at' }],
     toSchedule: (v) => (String(v.runAt ?? '').trim() ? { kind: 'one-shot', runAt: v.runAt.trim() } : null),
     fromSchedule: (s) => ({ runAt: toLocalInputValue(s.runAt) }),
@@ -1310,6 +1360,7 @@ const SCHEDULE_KINDS = [
   {
     kind: 'after',
     label: 'After another job',
+    help: 'After another job: runs when the upstream job finishes',
     fields: [
       { id: 'jobId', label: 'Upstream job', type: 'select', optionsFrom: 'jobs', required: true, hint: 'Runs when this job finishes' },
       { id: 'status', label: 'When upstream', type: 'select', options: ['success', 'failure', 'any'], default: 'success' },
@@ -1317,7 +1368,33 @@ const SCHEDULE_KINDS = [
     toSchedule: (v) => (String(v.jobId ?? '').trim() ? { kind: 'after', jobId: v.jobId.trim(), status: v.status || 'success' } : null),
     fromSchedule: (s) => ({ jobId: s.jobId ?? '', status: s.status ?? 'success' }),
   },
+  {
+    kind: 'webhook',
+    label: 'Webhook',
+    help: 'Webhook: runs when a relay channel (smee.io) delivers an event, or when you press Trigger now. Leave the relay blank for local-trigger-only',
+    fields: [
+      { id: 'relay', label: 'Relay URL', type: 'text', placeholder: 'https://smee.io/…', hint: 'Treat as a secret: anyone with the URL can trigger this job. Blank = local trigger only', button: { label: 'Create channel', act: 'create-relay' } },
+      { id: 'secret', label: 'Secret', type: 'password', hint: 'Optional HMAC secret verifying x-hub-signature-256' },
+    ],
+    toSchedule: (v) => {
+      const schedule = { kind: 'webhook' };
+      if (String(v.relay ?? '').trim()) schedule.relay = v.relay.trim();
+      if (String(v.secret ?? '').trim()) schedule.secret = v.secret.trim();
+      return schedule;
+    },
+    fromSchedule: (s) => ({ relay: s.relay ?? '', secret: s.secret ?? '' }),
+  },
 ];
+
+/** Run-log trigger block: source, delivery id, receipt time, and the payload as collapsible pretty JSON (text fallback). */
+function renderTriggerHtml(trigger) {
+  const t = trigger || {};
+  let payload = String(t.payload ?? '');
+  try { payload = JSON.stringify(JSON.parse(payload), null, 2); } catch { /* not JSON: show as-is */ }
+  const row = (label, value) => (value ? `<div><strong>${escHtml(label)}:</strong> ${escHtml(value)}</div>` : '');
+  return `${row('Source', t.source)}${row('Delivery', t.deliveryId)}${row('Received', t.receivedAt)}`
+    + (payload ? `<details class="trigger-payload"><summary>Payload</summary><pre class="log-pane">${escHtml(payload)}</pre></details>` : '');
+}
 
 /** Options for a select field: static strings, or `optionsFrom: 'jobs'` = every job except the one being edited (no self-trigger). */
 function scheduleFieldOptions(f) {
@@ -1423,11 +1500,29 @@ const editorScheduleHook = (() => {
     const control = f.type === 'select'
       ? `<select id="${id}" data-sched-field="${escHtml(f.id)}">${scheduleFieldOptions(f).map((o) => `<option value="${escHtml(o.value)}"${o.value === v ? ' selected' : ''}>${escHtml(o.label)}</option>`).join('')}</select>`
       : `<input id="${id}" type="${f.type}" data-sched-field="${escHtml(f.id)}" value="${escHtml(v)}"${f.placeholder ? ` placeholder="${escHtml(f.placeholder)}"` : ''}${f.type === 'number' ? ' min="0" step="any"' : ''}${f.required ? ' required' : ''} autocomplete="off">`;
-    return `<label for="${id}">${escHtml(f.label)}</label><div>${control}${f.hint ? `<div class="editor-hint">${escHtml(f.hint)}</div>` : ''}</div>`;
+    const button = f.button ? ` <button type="button" class="btn" data-sched-act="${escHtml(f.button.act)}">${escHtml(f.button.label)}</button>` : '';
+    return `<label for="${id}">${escHtml(f.label)}</label><div>${control}${button}${f.hint ? `<div class="editor-hint">${escHtml(f.hint)}</div>` : ''}</div>`;
   }
 
   function drawPanel() {
     box.querySelector('.editor-sched-panel').innerHTML = `<div class="editor-grid">${kindDef().fields.map(fieldHtml).join('')}</div>`;
+  }
+
+  /** "Create channel": the daemon follows the smee.io/new redirect (CORS blocks the browser). */
+  async function createRelay(btn) {
+    btn.disabled = true;
+    try {
+      const { res, data } = await postJson('/api/relay/new', {});
+      if (!res.ok) throw new Error(data?.error?.message || `Create channel failed (${res.status})`);
+      values.relay = data.url;
+      drawPanel();
+      showToast('Channel created. Treat the URL as a secret');
+      schedulePreview();
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   function setPreview(html, isError) {
@@ -1505,8 +1600,12 @@ const editorScheduleHook = (() => {
       kindId = def.kind;
       values = { ...defaultsFor(def), ...(job ? def.fromSchedule(job.schedule) : {}) };
       baseline = snapshot();
-      box.innerHTML = `<div class="editor-grid"><label for="editor-sch-kind">Schedule</label><div><select id="editor-sch-kind" data-sched-kind>${SCHEDULE_KINDS.map((k) => `<option value="${escHtml(k.kind)}"${k.kind === kindId ? ' selected' : ''}>${escHtml(k.label)}</option>`).join('')}</select></div></div><div class="editor-sched-panel"></div><div class="editor-preview" aria-live="polite"></div>`;
+      box.innerHTML = `<div class="editor-grid"><label for="editor-sch-kind">Schedule</label><div><select id="editor-sch-kind" data-sched-kind>${SCHEDULE_KINDS.map((k) => `<option value="${escHtml(k.kind)}"${k.kind === kindId ? ' selected' : ''}>${escHtml(k.label)}</option>`).join('')}</select></div></div><div class="editor-sched-panel"></div><div class="editor-preview" aria-live="polite"></div><details class="editor-howto"><summary>How to schedule</summary><ul>${SCHEDULE_KINDS.map((k) => `<li>${escHtml(k.help || k.label)}</li>`).join('')}</ul></details>`;
       drawPanel();
+      box.onclick = (e) => {
+        const btn = e.target?.closest?.('[data-sched-act="create-relay"]');
+        if (btn) void createRelay(btn);
+      };
       box.oninput = onField;
       box.onchange = (e) => (e.target?.matches?.('[data-sched-kind]') ? onKindChange(e) : onField(e));
       box.addEventListener('focusout', (e) => {
@@ -1985,6 +2084,19 @@ document.getElementById('drawer-body').addEventListener('click', (e) => {
     syncMultiChecks();
     closeDrawer();
     void reloadWithErrors();
+    return;
+  }
+  if (action === 'trigger-toggle') {
+    const panel = document.querySelector('#drawer-body .drawer-trigger');
+    if (panel) {
+      panel.hidden = !panel.hidden;
+      if (!panel.hidden) panel.querySelector('textarea')?.focus();
+    }
+    return;
+  }
+  if (action === 'copy-relay' || action === 'trigger') {
+    const run = action === 'copy-relay' ? copyRelayUrl : triggerJobNow;
+    run(drawerJobId).catch((err) => showToast(err.message, true));
     return;
   }
   void handleJobAction(action, drawerJobId);
