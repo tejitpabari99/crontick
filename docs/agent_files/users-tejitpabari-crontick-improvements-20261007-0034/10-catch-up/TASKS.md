@@ -8,13 +8,13 @@ Source of truth: docs/agent_files/users-tejitpabari-crontick-improvements-202610
 
 | # | Task | Depends on | Status |
 |---|---|---|---|
-| 1 | `catchUp` job field and time-only validation | - | todo |
-| 2 | Interval `startAt` enumeration and `latestFireBefore` | - | todo |
-| 3 | Store `recordSkippedRun` and `dispatchTimeRun` | - | todo |
-| 4 | Startup catch-up flow, watermark, summary | 1, 2, 3 | todo |
-| 5 | Prepare, client, CLI, MCP, API, `SURFACE_CAPABILITIES` | 1, 4 | todo |
-| 6 | Display and dashboard editor | 1, 5 | todo |
-| 7 | Tests, docs, ADR "0015" amendment, changeset | 1-6 | todo |
+| 1 | `catchUp` job field and time-only validation | - | done |
+| 2 | Interval `startAt` enumeration and `latestFireBefore` | - | done |
+| 3 | Store `recordSkippedRun` and `dispatchTimeRun` | - | done |
+| 4 | Startup catch-up flow, watermark, summary | 1, 2, 3 | done |
+| 5 | Prepare, client, CLI, MCP, API, `SURFACE_CAPABILITIES` | 1, 4 | done |
+| 6 | Display and dashboard editor | 1, 5 | done |
+| 7 | Tests, docs, ADR "0015" amendment, changeset | 1-6 | done |
 
 ## Task 1 — `catchUp` job field and time-only validation
 What it is / what it means: The data shape and the honesty rule that the flag only exists where fires exist (R1, D1, D7).
