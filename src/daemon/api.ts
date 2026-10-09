@@ -387,11 +387,6 @@ async function handleRequest(
               { dependents: names },
             );
           }
-          for (const dep of dependents) {
-            if (!dep.enabled) continue;
-            ctx.store.upsertJob({ ...dep, enabled: false });
-            ctx.scheduler.unschedule(dep.id);
-          }
         }
         // Stop everything that could still touch the job first: the schedule,
         // then any in-flight run (unlike a daemon stop, where a detached child
@@ -403,6 +398,12 @@ async function handleRequest(
         const canceledRun = ctx.runner.cancelJob(job.id);
         const deleted = ctx.store.deleteJobAndRuns(job.id);
         if (!deleted) return sendJobNotFoundError(res, requestedId);
+        // Only after the delete succeeded: a failed delete must not leave dependents disabled.
+        for (const dep of dependents) {
+          if (!dep.enabled) continue;
+          ctx.store.upsertJob({ ...dep, enabled: false });
+          ctx.scheduler.unschedule(dep.id);
+        }
         ctx.syncRelays?.();
         return sendJson(res, 200, { ok: true, canceledRun, deletedRuns: deleted.deletedRuns });
       }
@@ -756,6 +757,11 @@ async function handleRequest(
           usedAliases.add(alias);
           results.push({ id: job.id, alias, ok: true, ...(renamedFrom ? { renamedFrom } : {}), ...(importError ? { error: importError, disabled: true } : {}) });
         } catch (err) {
+          // A job that failed to import (other than a cycle member, which must keep failing its whole
+          // cycle) is not an available upstream for later rows of the batch.
+          const failedAt = batchJobs.findIndex((b) => b.id === parsed.data.id);
+          const isCycle = err instanceof CrontickError && err.code === 'AFTER_CYCLE';
+          if (failedAt >= 0 && !isCycle) batchJobs.splice(failedAt, 1);
           results.push({ id: job.id, alias, ok: false, error: err instanceof Error ? err.message : String(err) });
         }
       }

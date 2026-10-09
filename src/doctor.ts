@@ -9,6 +9,8 @@ import { configFilePath, loadDaemonConfigOrEmpty } from './config.js';
 import net from 'node:net';
 import { probeHealth, readPortFile, resolveDaemonBaseUrl } from './daemon/ensure.js';
 import type { RelayStatusView } from './utils/webhook-redact.js';
+import { validateAfterGraph } from './utils/after-graph.js';
+import type { Job } from './schemas/job.js';
 import { describeDaemonPort, preferredDaemonPort } from './daemon/bind-port.js';
 
 export interface DoctorCheck {
@@ -105,6 +107,24 @@ export async function runDoctorChecks(options: DoctorOptions = {}): Promise<Doct
       if (res.ok) checks.push(...relayDoctorChecks((await res.json()) as RelayStatusView[]));
     } catch {
       // Relay status is advisory; an unreachable endpoint adds no check.
+    }
+  }
+
+  if (daemonReachable && baseUrl) {
+    try {
+      const res = await fetch(`${baseUrl}/api/jobs`, { signal: AbortSignal.timeout(2_000) });
+      if (res.ok) {
+        const jobs = (await res.json()) as Job[];
+        const broken = jobs
+          .map((j) => ({ j, err: validateAfterGraph(j, jobs) }))
+          .filter((x) => x.err !== undefined);
+        if (broken.length > 0) {
+          const note = broken.map((x) => `${x.j.alias ?? x.j.id.slice(0, 8)}: ${x.err?.code === 'AFTER_CYCLE' ? 'upstream cycle' : 'upstream missing'}`).join('; ');
+          checks.push({ name: 'after-trigger jobs', ok: false, note: `${broken.length} broken (will not fire): ${note}` });
+        }
+      }
+    } catch {
+      // Job listing is advisory here; an unreachable endpoint adds no check.
     }
   }
 

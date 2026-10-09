@@ -11,7 +11,7 @@ import { redactValue } from './logger.js';
 import { redactWebhookDeep } from './utils/webhook-redact.js';
 import { VERSION } from './version.js';
 import { dataDir } from './paths.js';
-import type { Job } from './schemas/job.js';
+import { isTimeSchedule, type Job } from './schemas/job.js';
 import type { Store, Run } from './daemon/store.js';
 import { describeSchedule } from './utils/schedule-label.js';
 import type { Scheduler } from './daemon/scheduler.js';
@@ -310,7 +310,7 @@ function buildDashboardJob(ctx: DashboardContext, job: Job): DashboardJob {
     actionKind: job.action.kind,
     lastStatus: lastRun?.status ?? null,
     lastRunAt: lastRun?.startedAt ?? null,
-    nextRunAt: job.enabled && job.schedule.kind !== 'after' ? (ctx.scheduler.previewNext(job.schedule, { n: 1 })[0] ?? null) : null,
+    nextRunAt: job.enabled && isTimeSchedule(job.schedule) ? (ctx.scheduler.previewNext(job.schedule, { n: 1 })[0] ?? null) : null,
     job,
   };
 }

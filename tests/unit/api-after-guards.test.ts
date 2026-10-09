@@ -138,4 +138,16 @@ describe('API after-trigger guards', () => {
     expect(h.store.getJob(dep.id)?.schedule).toMatchObject({ jobId: up.id });
     expect(h.store.listDependents(up.id).map((j) => j.id)).toContain(dep.id);
   });
+
+  it('regression: import does not treat a batch job that failed to import as an available upstream', async () => {
+    const badUp = { ...sampleJob({ alias: `bad-${randomUUID().slice(0, 8)}`, schedule: { kind: 'once', runAt: '2000-01-01T00:00:00Z' } }), id: randomUUID() };
+    const dep = { ...after(badUp.id), id: randomUUID() };
+    const r = await h.call('POST', '/api/import', { jobs: [badUp, dep] });
+    expect(r.status).toBe(200);
+    const depRow = r.data.results.find((x: { id: string }) => x.id === dep.id);
+    expect(r.data.results.find((x: { id: string }) => x.id === badUp.id)?.ok).toBe(false);
+    expect(depRow.ok).toBe(true);
+    expect(depRow.disabled).toBe(true);
+    expect(depRow.error).toMatch(/AFTER_UPSTREAM_NOT_FOUND/);
+  });
 });

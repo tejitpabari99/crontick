@@ -14,6 +14,7 @@ import type { EngineOutput } from '../run-output.js';
 import { readClaudeCompletionMarker, readClaudeHookTranscriptPath } from '../claude-completion-marker.js';
 import { loadConfig } from '../config.js';
 import { resolveJobRef } from '../utils/job-ref.js';
+import { validateAfterGraph, type AfterGraphError } from '../utils/after-graph.js';
 import { resolveJobLogPath } from './job-log-file.js';
 import { getEngineAdapter } from '../engines/registry.js';
 import { DEFAULT_RUN_RETENTION_CAP } from '../constants/retention.js';
@@ -116,8 +117,6 @@ export class Store {
   private jobsPath: string;
   private logger: Logger;
   private runRetentionCap: number;
-  /** After-jobs with a dangling or cyclic upstream, recomputed on every loadJobsFromDisk(); inert until repaired. */
-  private brokenJobs = new Map<string, AfterGraphError>();
 
   constructor(
     dbPath?: string,
@@ -348,13 +347,20 @@ export class Store {
     return this.listJobs().filter((j) => j.schedule.kind === 'after' && j.schedule.jobId === upstreamId);
   }
 
-  /** After-jobs flagged broken (dangling/cyclic upstream) by the last loadJobsFromDisk(), keyed by job id. */
+  /** After-jobs with a dangling/cyclic upstream, keyed by job id. Computed live from current jobs (never cached). */
   getBrokenJobs(): ReadonlyMap<string, AfterGraphError> {
-    return this.brokenJobs;
+    const jobs = this.listJobs();
+    const broken = new Map<string, AfterGraphError>();
+    for (const job of jobs) {
+      const err = validateAfterGraph(job, jobs);
+      if (err) broken.set(job.id, err);
+    }
+    return broken;
   }
 
   isJobBroken(id: string): boolean {
-    return this.brokenJobs.has(id);
+    const job = this.getJob(id);
+    return job ? validateAfterGraph(job, this.listJobs()) !== undefined : false;
   }
 
   /** Persists what triggered a non-time run (SP05 stores `{kind, upstream}`; rendering is SP06). */
@@ -574,15 +580,10 @@ export class Store {
     this.logger.debug('Loaded jobs from disk', { jobsPath: this.jobsPath, files: files.length, loaded });
   }
 
-  /** Post-pass of loadJobsFromDisk: marks after-jobs with a dangling/cyclic upstream as broken (still loaded, never fired). */
+  /** Post-pass of loadJobsFromDisk: warns about after-jobs with a dangling/cyclic upstream (still loaded, never fired while broken). */
   private flagBrokenAfterJobs(): void {
-    this.brokenJobs = new Map();
-    const jobs = this.listJobs();
-    for (const job of jobs) {
-      const err = validateAfterGraph(job, jobs);
-      if (!err) continue;
-      this.brokenJobs.set(job.id, err);
-      this.logger.warn('Job is broken and will not fire', { jobId: job.id, code: err.code, reason: err.message });
+    for (const [jobId, err] of this.getBrokenJobs()) {
+      this.logger.warn('Job is broken and will not fire', { jobId, code: err.code, reason: err.message });
     }
   }
 
@@ -1104,46 +1105,7 @@ export class Store {
   }
 }
 
-// ── After-trigger graph validation ────────────────────────────────────────────
-
-export interface AfterGraphError {
-  code: 'AFTER_CYCLE' | 'AFTER_UPSTREAM_NOT_FOUND';
-  message: string;
-}
-
-/**
- * Validates the `after` upstream chain of a (proposed) job against `jobs`. Each node has one
- * upstream, so this is a pointer walk: a cycle iff the walk reaches `job.id`; a visited set
- * guards against corrupt data that loops without including `job`. The proposed `job` replaces
- * any stored job with the same id. Only the first hop is checked for existence (a missing
- * ancestor is that ancestor's own problem). Returns undefined when valid or not an after-job.
- */
-export function validateAfterGraph(job: Job, jobs: readonly Job[]): AfterGraphError | undefined {
-  if (job.schedule.kind !== 'after') return undefined;
-  const byId = new Map(jobs.map((j) => [j.id, j] as const));
-  byId.set(job.id, job);
-  const visited = new Set<string>();
-  let cur: string = job.schedule.jobId;
-  let first = true;
-  for (;;) {
-    if (cur === job.id) {
-      return { code: 'AFTER_CYCLE', message: `After-trigger cycle: job ${job.id} is (transitively) its own upstream` };
-    }
-    if (visited.has(cur)) {
-      return { code: 'AFTER_CYCLE', message: `After-trigger cycle in the upstream chain of job ${job.id} (at ${cur})` };
-    }
-    visited.add(cur);
-    const next = byId.get(cur);
-    if (!next) {
-      return first
-        ? { code: 'AFTER_UPSTREAM_NOT_FOUND', message: `Upstream job ${cur} not found` }
-        : undefined;
-    }
-    first = false;
-    if (next.schedule.kind !== 'after') return undefined;
-    cur = next.schedule.jobId;
-  }
-}
+export { validateAfterGraph, type AfterGraphError } from '../utils/after-graph.js';
 
 // ── Internal row types ────────────────────────────────────────────────────────
 

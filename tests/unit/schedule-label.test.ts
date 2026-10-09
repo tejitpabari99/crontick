@@ -35,7 +35,7 @@ describe('dashboard after entry and display sites', () => {
   });
   it('dashboard payload uses describeSchedule and null nextRunAt for after', () => {
     expect(dash).toContain('describeSchedule');
-    expect(dash).toMatch(/schedule\.kind !== 'after'/);
+    expect(dash).toMatch(/isTimeSchedule\(job\.schedule\)/);
   });
   it('CLI list/get and jobSchedule use the label', () => {
     expect(cli).toContain('describeSchedule');

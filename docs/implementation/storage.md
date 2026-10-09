@@ -69,7 +69,7 @@ class Store {
   recordMissedRun(jobId, firedAt): Run;
   setRunOutput(runId, out: EngineOutput): void; getRunOutput(runId): EngineOutput | undefined;
   listDependents(upstreamId): Job[];        // jobs whose `after` schedule targets upstreamId (full scan)
-  getBrokenJobs(): Map<id, AfterGraphError>; isJobBroken(id): boolean;  // set by loadJobsFromDisk's post-pass
+  getBrokenJobs(): Map<id, AfterGraphError>; isJobBroken(id): boolean;  // computed live from current jobs (no cache); loadJobsFromDisk's post-pass only logs
   setRunTrigger(runId, trigger): void; getRunTrigger(runId): object | undefined;
   recordTick(jobId, tickAt): void; getScheduleState(jobId): { lastTickAt } | undefined;
   reconcileOrphanRuns(check?): { canceled: number; adopted: number };
@@ -86,7 +86,7 @@ directly; the public default is `BUILT_IN_CONFIG.retention.maxRunsPerJob`.
 
 ## After-trigger graph
 
-`validateAfterGraph(job, jobs)` (exported from `store.ts`) walks `after.jobId` pointers: `AFTER_CYCLE` when the walk reaches the job's own id (or loops on corrupt data), `AFTER_UPSTREAM_NOT_FOUND` when the first upstream is absent. `loadJobsFromDisk` still loads such jobs but records them in `getBrokenJobs()` with a warn log; they must not fire.
+`validateAfterGraph(job, jobs)` (lives in `src/utils/after-graph.ts`, re-exported from `store.ts`) walks `after.jobId` pointers: `AFTER_CYCLE` when the walk reaches the job's own id (or loops on corrupt data), `AFTER_UPSTREAM_NOT_FOUND` when the first upstream is absent. `loadJobsFromDisk` still loads such jobs but logs a warn; `getBrokenJobs()`/`isJobBroken()` evaluate the graph live so a repair via the API takes effect immediately; broken jobs must not fire.
 
 ## Orphan reconciliation
 

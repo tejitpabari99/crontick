@@ -126,4 +126,17 @@ describe('Store after-trigger support', () => {
     store.loadJobsFromDisk();
     expect(store.isJobBroken(B)).toBe(false);
   });
+
+  it('regression: broken state follows upsert/delete without a reload (repaired job is not inert)', () => {
+    const b = afterJob(B, MISSING);
+    store.upsertJob(b);
+    expect(store.isJobBroken(B)).toBe(true);
+    store.upsertJob(afterJob(B, A)); // repoint to an upstream that does not exist yet
+    expect(store.isJobBroken(B)).toBe(true);
+    store.upsertJob(cronJob(A));
+    expect(store.isJobBroken(B)).toBe(false);
+    expect(store.getBrokenJobs().size).toBe(0);
+    store.deleteJob(A);
+    expect(store.isJobBroken(B)).toBe(true);
+  });
 });
