@@ -23,6 +23,7 @@ import { createApiServer } from './api.js';
 import { bindPort, preferredDaemonPort } from './bind-port.js';
 import { probeHealth } from './ensure.js';
 import type { ApiContext } from './api.js';
+import { TriggerDispatcher, registerAfterTrigger } from './trigger.js';
 import { createLogger, isVerboseEnv, type LogEvent, type Logger } from '../logger.js';
 import { ensureConfigFile, loadConfig } from '../config.js';
 import { createProcessLivenessCheck } from '../process-liveness.js';
@@ -283,6 +284,12 @@ if (needsSqliteShim) {
     }
     for (const f of reconciliation.finalized) {
       runner.recordRunOutcome(f.jobId, f.runId, { status: f.status, error: f.error }, store);
+      const dependents = store.listDependents(f.jobId);
+      if (dependents.length > 0) {
+        logger.info('Run finalized at startup; its after-dependents are not triggered (no replay)', {
+          jobId: f.jobId, runId: f.runId, status: f.status, dependents: dependents.map((d) => d.id),
+        });
+      }
     }
     for (const { jobId, runId, pid } of reconciliation.adopted) {
       runner.adoptRun(jobId, runId, pid, store);
@@ -292,6 +299,14 @@ if (needsSqliteShim) {
         adopted: reconciliation.adopted.map((a) => ({ jobId: a.jobId, runId: a.runId, pid: a.pid })),
       });
     }
+
+    // After-trigger listener: registered only now, AFTER startup reconciliation, so runs
+    // finalized at startup never fire dependents (D4); adopted runs exiting later do.
+    const triggerDispatcher = new TriggerDispatcher({
+      store, runner, logger,
+      isPaused: (id) => scheduler.isPaused() || scheduler.isJobPaused(id),
+    });
+    registerAfterTrigger({ runner, store, dispatcher: triggerDispatcher, logger });
 
     for (const job of jobs) {
       if (job.enabled) scheduler.schedule(job);
