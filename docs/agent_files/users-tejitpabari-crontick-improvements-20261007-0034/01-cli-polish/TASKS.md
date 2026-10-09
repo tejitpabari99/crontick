@@ -8,12 +8,12 @@ Source of truth: docs/agent_files/users-tejitpabari-crontick-improvements-202610
 
 | # | Task | Depends on | Status |
 |---|---|---|---|
-| 1 | Schedule flag help and "How to schedule" footer | - | todo |
-| 2 | Replace `-C, --cwd` with `--dir` | - | todo |
-| 3 | Shared `resolveJobRef` and reserved alias `all` | - | todo |
-| 4 | `runs delete` core: store, API route, client | 3 | todo |
-| 5 | `runs delete` CLI, confirm prompt, MCP tool, surface entry | 4 | todo |
-| 6 | Tests, docs, reference, changeset | 1-5 | todo |
+| 1 | Schedule flag help and "How to schedule" footer | - | done |
+| 2 | Replace `-C, --cwd` with `--dir` | - | done |
+| 3 | Shared `resolveJobRef` and reserved alias `all` | - | done |
+| 4 | `runs delete` core: store, API route, client | 3 | done |
+| 5 | `runs delete` CLI, confirm prompt, MCP tool, surface entry | 4 | done |
+| 6 | Tests, docs, reference, changeset | 1-5 | done |
 
 ## Task 1 — Schedule flag help and "How to schedule" footer
 What it is / what it means: The `--cron`, `--every`, `--at` help text should use the brief's exact wording, and `jobs new` should explain the one-of rule in a footer (R1, R2, D8).
