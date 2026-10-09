@@ -18,7 +18,7 @@ export interface AutostartExecResult {
 /** Promise-based fs subset; injected so tests never touch the real filesystem. */
 export interface AutostartFs {
   readFile(path: string, encoding: 'utf-8'): Promise<string>;
-  writeFile(path: string, data: string, options?: { mode?: number }): Promise<void>;
+  writeFile(path: string, data: string | Uint8Array, options?: { mode?: number }): Promise<void>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<unknown>;
   rm(path: string, options?: { force?: boolean }): Promise<void>;
   /** Resolves when the path exists, rejects otherwise. */

@@ -38,7 +38,7 @@ function harness(opts: { env?: NodeJS.ProcessEnv; files?: Record<string, string>
         if (v === undefined) throw new Error('ENOENT');
         return v;
       },
-      writeFile: async (p, d) => void files.set(p, d),
+      writeFile: async (p, d) => void files.set(p, String(d)),
       mkdir: async () => undefined,
       rm: async (p) => void files.delete(p),
       access: async (p) => {

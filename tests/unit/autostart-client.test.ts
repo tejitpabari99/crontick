@@ -16,7 +16,7 @@ function fakeDeps(platform: NodeJS.Platform, files: Map<string, string>, calls: 
     },
     fs: {
       async readFile(p) { const v = files.get(p); if (v === undefined) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); return v; },
-      async writeFile(p, d) { files.set(p, d); },
+      async writeFile(p, d) { files.set(p, String(d)); },
       async mkdir() { return undefined; },
       async rm(p) { files.delete(p); },
       async access(p) { if (!files.has(p) && !p.endsWith('index.js')) throw new Error('ENOENT'); },

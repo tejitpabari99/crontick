@@ -40,7 +40,7 @@ function harness(opts: { files?: Record<string, string> } = {}) {
         return v;
       },
       writeFile: async (p, d, o) => {
-        files.set(p, d);
+        files.set(p, String(d));
         modes[p] = o?.mode;
       },
       mkdir: async (p) => void dirs.push(p),
