@@ -431,15 +431,24 @@ crontick autostart enable
 
 On Linux this writes `${XDG_CONFIG_HOME:-~/.config}/systemd/user/crontick.service` and runs `systemctl --user enable --now crontick.service`. The unit is a plain file you can read; it launches `node <dist>/daemon/index.js` with `Restart=on-failure`, `KillMode=process` (running jobs survive a daemon stop) and an environment of `CRONTICK_SUPERVISED=1`, `CRONTICK_HOME` (only if set when you ran `enable`) and a `PATH` snapshot taken at enable time. Re-run `enable` after you install an engine, change Node versions, or update crontick.
 
-Refuses (see [errors](errors.md)) when systemd `--user` is unavailable, the daemon script does not exist (unbuilt checkout), or the install path is ephemeral (`_npx`). Only Linux (systemd `--user`) is supported today; other platforms fail with `AUTOSTART_UNSUPPORTED`.
+Refuses (see [errors](errors.md)) when systemd `--user` is unavailable, the daemon script does not exist (unbuilt checkout), or the install path is ephemeral (`_npx`). Linux (systemd `--user`) and macOS (launchd LaunchAgent, see below) are supported; other platforms fail with `AUTOSTART_UNSUPPORTED`.
 
 **Lifecycle caveat:** without systemd "linger", the user manager stops when you fully log out and stops the daemon, so jobs pause while you are logged out (a demand-started daemon survives logout; this differs). `status` prints the `loginctl enable-linger` hint; crontick does not change linger itself.
 
 **Before uninstalling the package, run `crontick autostart disable`.** Uninstalling leaves the unit behind, and it would keep trying (bounded by systemd start limits) to launch a script that no longer exists.
 
+**macOS (launchd).** `enable` writes `~/Library/LaunchAgents/dev.crontick.daemon.plist` (label `dev.crontick.daemon`) and runs `launchctl bootstrap gui/$UID <plist>` then `launchctl enable gui/$UID/dev.crontick.daemon`; if the label is already loaded it is booted out first, so re-running is safe. The plist is a plain file with `RunAtLoad`, `KeepAlive {SuccessfulExit: false}` (a crash restarts it; a graceful `daemon stop` stays stopped), `ThrottleInterval 30`, `AbandonProcessGroup` (detached runs survive a daemon stop), `WorkingDirectory` set to the crontick data dir, and the same environment as Linux (`CRONTICK_SUPERVISED=1`, `CRONTICK_HOME` if set, `PATH` snapshot). launchd output goes to `<data dir>/logs/launchd.out.log` and `launchd.err.log`.
+
+- *Login only.* It starts when you log in to the desktop (GUI session), never at boot, and needs no admin rights or code signing. `enable` fails with `AUTOSTART_UNAVAILABLE` when there is no GUI launchd session (for example over SSH with no console user); nothing is written.
+- *Login Items.* macOS 13+ shows a "Background Items Added" notification and lists the item in System Settings > General > Login Items & Extensions. Because the plist is unsigned, it appears as a generic "node" item from an unidentified developer. You may be asked to approve it. If you switch it off there, `status` reports it as not running with a note pointing at that panel; switch it back on, then re-run `crontick autostart enable`. If `enable` fails with `Input/output error` (5), check that panel first.
+- *Folder access (TCC).* A launchd-started `node` has no Full Disk Access, so jobs whose directory is in `~/Documents`, `~/Desktop`, `~/Downloads`, iCloud Drive or a removable volume may be silently denied or prompt. Grant Full Disk Access to the `node` binary, or keep job directories outside protected folders. crontick does not manage this.
+- *Claude engine login.* A daemon started by launchd may report Claude as "Not logged in" even with valid credentials. Workaround: set `CLAUDE_CODE_OAUTH_TOKEN` in the engine's env config (`crontick config set engines.<name> ...`), not in the plist. Whether this occurs on your macOS version is unverified (see the owner checklist in ADR 0034).
+- *Stale registrations.* Moving or removing the Node version (nvm, Homebrew upgrades) makes the plist stale; `status` reports it. Re-run `enable`.
+- Troubleshooting: `launchctl print gui/$(id -u)/dev.crontick.daemon` for live state, `launchctl print-disabled gui/$(id -u)` for the disabled flag, and the two `launchd.*.log` files. Crontick never uses legacy `launchctl load/unload/list`.
+
 ### crontick autostart disable
 
-Remove the registration (`systemctl --user disable --now`, delete the unit file, reload). Idempotent: when nothing is registered it prints `Autostart was not enabled; nothing to remove` and exits `0`.
+Remove the registration (Linux: `systemctl --user disable --now`, delete the unit file, reload; macOS: `launchctl bootout gui/$UID/dev.crontick.daemon` and delete the plist, which also removes the Login Items entry). Idempotent: when nothing is registered it prints `Autostart was not enabled; nothing to remove` and exits `0`.
 
 ### crontick autostart status
 

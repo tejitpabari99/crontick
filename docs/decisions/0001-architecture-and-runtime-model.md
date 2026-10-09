@@ -183,6 +183,26 @@ captured.
 
 **Consequences / trade-offs.** Harder: without `loginctl enable-linger`, the user manager stops at last logout and jobs pause while fully logged out (a demand-started daemon survives logout); the `PATH` snapshot goes stale when an engine is installed later; uninstalling the package leaves the unit unless `autostart disable` is run first. Deferred: linger management, multiple data directories per user, `systemd-analyze verify` in CI.
 
+#### macOS (launchd) (SP08)
+
+**Mechanism.** A user LaunchAgent, label `dev.crontick.daemon`, file `~/Library/LaunchAgents/dev.crontick.daemon.plist`, loaded with `launchctl bootstrap gui/$UID` and removed with `bootout`. Login only (`RunAtLoad`), no admin, no signing, no new dependencies. The plist is rendered by string with XML escaping (`src/autostart/plist.ts`) and holds the `ProgramArguments` (node path, daemon script), the core-built `EnvironmentVariables` (`CRONTICK_SUPERVISED=1`, optional `CRONTICK_HOME`, `PATH` snapshot), `KeepAlive {SuccessfulExit: false}`, `ThrottleInterval 30`, `AbandonProcessGroup true` (analogue of systemd `KillMode=process`), `WorkingDirectory` = data dir, and `StandardOut/ErrorPath` = `<logsDir>/launchd.{out,err}.log`. `ProcessType` is omitted because `Background` would throttle engine runs.
+
+**Idempotency.** `install` never blind-bootstraps: it checks whether the label is loaded, boots it out, bootstraps, then runs `enable`; a failure with a lingering disable record is retried once after `enable`. `uninstall` boots out (ignoring "not loaded") and deletes the plist. `inspect` is read-only and tolerant: `launchctl print` output is documented as not-an-API, so only `pid`/`state` are parsed and unparseable output yields an unknown state plus a note, never a throw.
+
+**Caveats.** macOS 13+ surfaces every third-party plist in Login Items with a "Background Items Added" notification; unsigned items appear as a generic "node" entry from an unidentified developer, and the user can toggle it off. That BTM toggle is separate from launchd's disable database and cannot be read without `sfltool dumpbtm` (undocumented, needs sudo), so status infers it from `print-disabled` and "registered but not loaded" with a note. A launchd-started `node` has no Full Disk Access (TCC), so protected-folder job directories may be denied; and Claude may report "Not logged in" under launchd, in which case `CLAUDE_CODE_OAUTH_TOKEN` is set through the engine env config rather than the plist.
+
+**Rejected.** LaunchDaemon (needs root, boot start, no GUI keychain); legacy `launchctl load/unload/list` (exit 0 on failure); `SMAppService` or a signed/notarized helper bundle (US$99/yr, tracked in `futures.md`); `sfltool` for BTM state; `ProcessType=Background`. There is no macOS CI runner, so correctness rests on injected-exec unit tests (`platform: 'darwin'`) plus the owner checklist below.
+
+**Owner real-Mac checklist (macOS 13+, ideally 15; record results on the PR before release; not verified on Linux).**
+1. `crontick autostart enable` writes the plist, shows the "Background Items Added" notification, and `launchctl print gui/$UID/dev.crontick.daemon` shows running. After logout/login the daemon is up. A second `enable` is a no-op, `status` shows enabled, and `disable` removes the plist and the Login Items entry. Demand-start then `enable` leaves no respawn loop in `launchd.err.log`.
+2. Approve the item in Login Items if asked; toggle it off and confirm `status` reports not running with the note. Record the displayed name/developer. Verify whether a BTM toggle appears in `print-disabled` and the error 5 re-enable behavior.
+3. Run a job with cwd in `~/Documents` and a Claude-engine job under autostart; record the TCC and "Not logged in" outcomes here.
+4. Verify `daemon stop` / `bootout` leaves a detached job alive, and note TCC attribution after restart.
+5. Confirm `launchctl print` parsing on each available macOS version.
+6. Optional: signed+notarized helper or `SMAppService` (out of scope).
+
+**Outcome of items 1-5: pending (owner, real Mac).**
+
 <!-- ADR 0034 platform sections: SP08 adds "macOS (launchd)" and SP09 adds "Windows (Task Scheduler)" immediately below this line, each covering mechanism, registered command, caveats and rejected alternatives. -->
 
 ## Consequences

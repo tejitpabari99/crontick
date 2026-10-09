@@ -349,7 +349,7 @@ See [troubleshooting.md](../troubleshooting.md#trust_required-when-creating-a-cl
 
 | | |
 |---|---|
-| **When** | `autostartEnable()` / `autostartDisable()` on a platform with no autostart backend (only Linux systemd `--user` today). `autostartStatus()` never throws; it returns `supported: false` with a reason |
+| **When** | `autostartEnable()` / `autostartDisable()` on a platform with no autostart backend (only Linux systemd `--user` and macOS launchd today). `autostartStatus()` never throws; it returns `supported: false` with a reason |
 | **Message shape** | Names the platform and what to do instead |
 | **Details** | — |
 
@@ -357,7 +357,7 @@ See [troubleshooting.md](../troubleshooting.md#trust_required-when-creating-a-cl
 
 | | |
 |---|---|
-| **When** | The backend exists but the service manager is not usable (no `systemctl`, no user bus: WSL1, containers). Nothing is written |
+| **When** | The backend exists but the service manager is not usable (no `systemctl`, no user bus: WSL1, containers; macOS: no GUI launchd session, e.g. over SSH or no console user). Nothing is written |
 | **Message shape** | `Autostart is unavailable: <reason>` |
 | **Details** | `{ mechanism }` |
 
@@ -381,7 +381,7 @@ See [troubleshooting.md](../troubleshooting.md#trust_required-when-creating-a-cl
 
 | | |
 |---|---|
-| **When** | The backend threw while enabling or disabling (e.g. a `systemctl` call failed) |
+| **When** | The backend threw while enabling or disabling (e.g. a `systemctl` or `launchctl` call failed; on macOS the cause includes launchctl stderr, and an opaque `Input/output error` (5) on bootstrap usually means the item is switched off in Login Items) |
 | **Message shape** | `Failed to enable autostart: <cause>` / `Failed to disable autostart: <cause>` |
 | **Details** | — |
 

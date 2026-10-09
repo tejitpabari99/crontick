@@ -105,7 +105,7 @@ The daemon demand-starts on first use, but `crontick daemon start` starts it exp
 
 ## Opt-in autostart at login
 
-`crontick autostart enable` registers the daemon with the OS user-level service manager (Linux: a `systemd --user` unit at `${XDG_CONFIG_HOME:-~/.config}/systemd/user/crontick.service`); `autostart disable` removes it and `autostart status` reports it, including stale registrations after a Node or crontick upgrade. It is a local OS registration that works with the daemon down, so there is no daemon API route, and MCP exposes only `crontick_autostart_status`.
+`crontick autostart enable` registers the daemon with the OS user-level service manager (Linux: a `systemd --user` unit at `${XDG_CONFIG_HOME:-~/.config}/systemd/user/crontick.service`; macOS: a LaunchAgent at `~/Library/LaunchAgents/dev.crontick.daemon.plist`, see [macOS](#macos-launchd)); `autostart disable` removes it and `autostart status` reports it, including stale registrations after a Node or crontick upgrade. It is a local OS registration that works with the daemon down, so there is no daemon API route, and MCP exposes only `crontick_autostart_status`.
 
 - **Coexists with demand-start.** The registered unit sets `CRONTICK_SUPERVISED=1`. The daemon is single-instance (PID file); with that variable set, finding a daemon already running logs and exits `0` instead of `1`, so a supervisor using `Restart=on-failure` does not crash-loop when something demand-started first. An unsupervised duplicate start still exits non-zero. A SIGTERM from the manager is a graceful stop (exit `0`) and is not restarted.
 - **Runs survive stops.** The unit uses `KillMode=process`, so detached job runs are not killed when the daemon stops and are re-adopted on the next start.
@@ -113,3 +113,14 @@ The daemon demand-starts on first use, but `crontick daemon start` starts it exp
 - **Stale registrations.** The unit captures the Node path, the daemon script path, `CRONTICK_HOME` (if set) and a `PATH` snapshot at enable time. `status` reports `stale` when these drift; re-run `autostart enable` to fix it (also after installing an engine later).
 - **Uninstalling.** Run `crontick autostart disable` before uninstalling the package; otherwise the unit stays and keeps failing to start (bounded by systemd start limits).
 - A login start is a normal daemon start, so startup behavior such as recording missed fires is unchanged.
+
+### macOS (launchd)
+
+The macOS backend is a per-user LaunchAgent bootstrapped into `gui/$UID`; it starts at **login only** (a GUI session is required), not at boot, with no admin rights and no signing.
+
+- **Supervision.** `KeepAlive {SuccessfulExit: false}` restarts the daemon only after a non-zero exit or crash, throttled to 30 s. A graceful stop (exit `0`) stays stopped, and `CRONTICK_SUPERVISED=1` makes a start that finds a daemon already running exit `0`, so a demand-start followed by `autostart enable` causes no respawn loop.
+- **Runs survive stops.** `AbandonProcessGroup` keeps detached job runs alive when launchd stops the daemon; they are re-adopted on the next start.
+- **Login Items visibility.** macOS 13+ announces the item ("Background Items Added") and lists it under System Settings > General > Login Items & Extensions as an unsigned "node" item from an unidentified developer. Users can switch it off there; `status` then reports it registered but not running, with a note. Crontick cannot read that toggle directly (it uses `launchctl print` and `print-disabled`).
+- **Folder access (TCC).** The launchd-started `node` has no Full Disk Access. Job directories in `~/Documents`, `~/Desktop`, `~/Downloads`, iCloud or removable volumes can be denied; grant Full Disk Access to `node` or keep job directories elsewhere.
+- **Keychain / Claude login.** A LaunchAgent can normally read the login keychain, but Claude may report "Not logged in" when started under launchd. Set `CLAUDE_CODE_OAUTH_TOKEN` through the engine env config, not the plist.
+- **Logs.** `<data dir>/logs/launchd.out.log` and `launchd.err.log`.
