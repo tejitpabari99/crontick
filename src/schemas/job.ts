@@ -27,12 +27,38 @@ export const OneShotScheduleSchema = z.object({
   runAt: z.string().min(1).describe('One-shot run time, ISO-8601 (e.g. 2026-10-01T09:00). Interpreted in the machine local timezone unless an offset such as Z or +02:00 is given'),
 });
 
+/**
+ * Non-time trigger: fires when the upstream job's run reaches a terminal status.
+ * `jobId` is the upstream GUID (never an alias: aliases are user-editable).
+ * `failure` matches failed or timeout runs.
+ */
+export const AfterScheduleSchema = z.object({
+  kind: z.literal('after'),
+  jobId: z.string().uuid().describe('Upstream job GUID (never an alias)'),
+  status: z.enum(['success', 'failure', 'any']).describe('Which upstream terminal outcome triggers this job'),
+});
+
 /** Schedule discriminated union (exactly one schedule per job); croner v9 validates the cron expression at runtime. */
 export const ScheduleSchema = z.discriminatedUnion('kind', [
   CronScheduleSchema,
   IntervalScheduleSchema,
   OneShotScheduleSchema,
+  AfterScheduleSchema,
 ]);
+
+export type TimeSchedule = Exclude<z.infer<typeof ScheduleSchema>, z.infer<typeof AfterScheduleSchema>>;
+
+/** True for schedule kinds driven by the clock (cron, interval, one-shot); false for event-driven kinds. */
+export function isTimeSchedule(schedule: z.infer<typeof ScheduleSchema>): schedule is TimeSchedule {
+  switch (schedule.kind) {
+    case 'cron':
+    case 'interval':
+    case 'one-shot':
+      return true;
+    case 'after':
+      return false;
+  }
+}
 
 // ── Action ────────────────────────────────────────────────────────────────────
 

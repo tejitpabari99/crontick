@@ -3,7 +3,7 @@
 // See docs/implementation/scheduler.md
 import { EventEmitter } from 'node:events';
 import { Cron, type CronOptions } from 'croner';
-import type { Job, Schedule } from '../schemas/job.js';
+import { isTimeSchedule, type Job, type Schedule } from '../schemas/job.js';
 import { nullLogger, type Logger } from '../logger.js';
 import { DEFAULT_ENUMERATE_FIRES_CAP } from '../constants/scheduler.js';
 
@@ -32,6 +32,10 @@ export interface EnumerateFiresResult {
 }
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
+
+function assertNever(x: never): never {
+  throw new Error(`Unhandled schedule kind: ${JSON.stringify(x)}`);
+}
 
 export class Scheduler extends EventEmitter {
   private entries: Map<string, { stop: () => void }> = new Map();
@@ -83,6 +87,10 @@ export class Scheduler extends EventEmitter {
     }
 
     const { schedule } = job;
+    if (!isTimeSchedule(schedule)) {
+      this.logger.debug('Not scheduling non-time job', { jobId: job.id, kind: schedule.kind });
+      return;
+    }
     if (schedule.kind === 'cron') {
       this.logger.debug('Scheduling cron job', { jobId: job.id, cron: schedule.cron });
       this.scheduleCron(job, schedule.cron);
@@ -116,27 +124,34 @@ export class Scheduler extends EventEmitter {
   previewNext(schedule: Schedule, opts: PreviewOptions = {}): string[] {
     const n = opts.n ?? 5;
 
-    if (schedule.kind === 'cron') {
-      return cronNextN(schedule.cron, n);
+    switch (schedule.kind) {
+      case 'cron':
+        return cronNextN(schedule.cron, n);
+      case 'interval':
+        return this.previewInterval(schedule.everySec, n);
+      case 'one-shot':
+        return this.previewOneShot(schedule.runAt);
+      case 'after':
+        return [];
+      default:
+        return assertNever(schedule);
     }
+  }
 
-    if (schedule.kind === 'interval') {
-      const now = Date.now();
-      const intervalMs = schedule.everySec * 1000;
-      const results: string[] = [];
-      for (let i = 1; i <= n; i++) {
-        results.push(new Date(now + i * intervalMs).toISOString());
-      }
-      return results;
+  private previewInterval(everySec: number, n: number): string[] {
+    const now = Date.now();
+    const intervalMs = everySec * 1000;
+    const results: string[] = [];
+    for (let i = 1; i <= n; i++) {
+      results.push(new Date(now + i * intervalMs).toISOString());
     }
+    return results;
+  }
 
-    if (schedule.kind === 'one-shot') {
-      const t = new Date(schedule.runAt);
-      if (isNaN(t.getTime())) return [];
-      return t > new Date() ? [t.toISOString()] : [];
-    }
-
-    return [];
+  private previewOneShot(runAt: string): string[] {
+    const t = new Date(runAt);
+    if (isNaN(t.getTime())) return [];
+    return t > new Date() ? [t.toISOString()] : [];
   }
 
   /** Validate structural correctness of a schedule without side effects. */
@@ -169,6 +184,11 @@ export class Scheduler extends EventEmitter {
       return { ok: true };
     }
 
+    if (schedule.kind === 'after') {
+      // Upstream existence / cycles are validated by the daemon API, not the timer layer.
+      return { ok: true };
+    }
+
     return { ok: false, error: 'Unknown schedule kind' };
   }
 
@@ -195,18 +215,21 @@ export class Scheduler extends EventEmitter {
     const cap = opts.cap ?? DEFAULT_ENUMERATE_FIRES_CAP;
     if (fromExclusiveMs >= toExclusiveMs) return { fires: [], capped: false };
 
-    if (schedule.kind === 'cron') {
-      return enumerateCronFires(schedule.cron, fromExclusiveMs, toExclusiveMs, cap);
+    switch (schedule.kind) {
+      case 'cron':
+        return enumerateCronFires(schedule.cron, fromExclusiveMs, toExclusiveMs, cap);
+      case 'interval':
+        return enumerateIntervalFires(schedule.everySec, fromExclusiveMs, toExclusiveMs, cap);
+      case 'one-shot': {
+        const t = new Date(schedule.runAt).getTime();
+        if (isNaN(t) || t <= fromExclusiveMs || t >= toExclusiveMs) return { fires: [], capped: false };
+        return { fires: [t], capped: false };
+      }
+      case 'after':
+        return { fires: [], capped: false };
+      default:
+        return assertNever(schedule);
     }
-    if (schedule.kind === 'interval') {
-      return enumerateIntervalFires(schedule.everySec, fromExclusiveMs, toExclusiveMs, cap);
-    }
-    if (schedule.kind === 'one-shot') {
-      const t = new Date(schedule.runAt).getTime();
-      if (isNaN(t) || t <= fromExclusiveMs || t >= toExclusiveMs) return { fires: [], capped: false };
-      return { fires: [t], capped: false };
-    }
-    return { fires: [], capped: false };
   }
 
   // ── Private helpers ────────────────────────────────────────────────────────

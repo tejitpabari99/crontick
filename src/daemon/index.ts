@@ -27,6 +27,7 @@ import { createLogger, isVerboseEnv, type LogEvent, type Logger } from '../logge
 import { ensureConfigFile, loadConfig } from '../config.js';
 import { createProcessLivenessCheck } from '../process-liveness.js';
 import { SUPERVISED_ENV } from '../constants/daemon.js';
+import { isTimeSchedule } from '../schemas/job.js';
 
 /** Cap on missed fires recorded per job at startup (see enumerateFiresBetween()). */
 const MISSED_FIRE_CAP_PER_JOB = 500;
@@ -225,6 +226,7 @@ if (needsSqliteShim) {
     const nowMs = startedAt.getTime();
     for (const job of jobs) {
       if (!job.enabled) continue;
+      if (!isTimeSchedule(job.schedule)) continue; // event-driven kinds have no fire times to miss
       const state = store.getScheduleState(job.id);
       if (!state) {
         store.recordTick(job.id, nowMs);

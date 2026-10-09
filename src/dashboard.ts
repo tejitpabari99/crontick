@@ -330,6 +330,7 @@ function toDashboardRun(run: Run, aliasByJobId: ReadonlyMap<string, string | nul
 function scheduleLabel(schedule: Schedule): string {
   if (schedule.kind === 'cron') return schedule.cron;
   if (schedule.kind === 'interval') return `every ${schedule.everySec}s`;
+  if (schedule.kind === 'after') return `after ${schedule.jobId.slice(0, 8)} (on ${schedule.status})`;
   return `once at ${schedule.runAt}`;
 }
 
