@@ -207,7 +207,7 @@ describe('duplicate create requires explicit force', () => {
       clientMethod: 'createJob',
       cliCommand: ['jobs', 'new'],
       mcpTool: 'crontick_job_create',
-      optionNames: ['force', 'trustFolder'],
+      optionNames: ['force', 'trustFolder', 'webhook', 'relay', 'webhookSecret'],
     });
     expect(SURFACE_CAPABILITIES.map((capability) => String(capability.capability))).not.toContain('overwrite-job');
   });

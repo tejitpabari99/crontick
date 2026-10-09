@@ -19,6 +19,7 @@ import { isVerboseEnv, type LogEvent } from '../logger.js';
 import { readJsonFile } from '../json-file.js';
 import { formatJobStats, formatRunDetail, formatRunsTable } from '../run-format.js';
 import { resolveExportPath } from '../share.js';
+import { resolvePayloadArg } from './payload-source.js';
 import { deleteRunsWithConfirm, formatDeleteRunsSummary, terminalConfirmIo } from './confirm.js';
 import { terminalTrustPromptIo, withTrustPrompt } from './trust-prompt.js';
 import { flattenConfigLines, formatConfigValue, terminalInFlightIo, writeConfigWithInFlight } from './config-write.js';
@@ -546,6 +547,13 @@ jobs.command('delete <id|alias>')
 jobs.command('run-now <id|alias>').description('Run a job once right now, even if it is disabled (does not enable it or change its schedule)').action(async (id: string) => {
   try { print(await client().runNow(id)); } catch (err) { handleError(err); }
 });
+
+jobs.command('trigger <id|alias>')
+  .description('Fire a webhook job once with an optional JSON payload (same path as relay events; non-webhook jobs: use run-now)')
+  .option('--payload <json|@file|->', 'Event payload: inline JSON, @file to read a file, or - for stdin')
+  .action(async (id: string, opts: { payload?: string }) => {
+    try { print(await client().triggerJob(id, { payload: resolvePayloadArg(opts.payload) })); } catch (err) { handleError(err); }
+  });
 
 // ── runs ─────────────────────────────────────────────────────────────────────
 const RUN_STATUSES = ['queued', 'running', 'success', 'failed', 'canceled', 'skipped', 'timeout', 'missed'] as const;

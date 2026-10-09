@@ -26,6 +26,8 @@ import { buildRunOutput } from '../run-output.js';
 import { nullLogger, redactValue, type Logger } from '../logger.js';
 import { readEnvFileForAction } from './env-file.js';
 import { resolveJobLogPath } from './job-log-file.js';
+import { TriggerDispatcher, type TriggerSkipReason } from './trigger.js';
+import { buildWebhookContext, buildWebhookPayload } from '../utils/webhook-payload.js';
 import { checkMutatingRequest, isGuardedRequest } from './request-guard.js';
 import { describeDaemonPort } from './bind-port.js';
 import { dataDir } from '../paths.js';
@@ -388,6 +390,38 @@ async function handleRequest(
         ctx.scheduler.unschedule(job.id);
         ctx.syncRelays?.();
         return sendJson(res, 200, redactValue(updated));
+      }
+
+      // Local webhook fire: same TriggerDispatcher path as relay events, minus the relay-only
+      // HMAC/dedupe/burst guards (the local caller is the owner). Covered by the central request guard.
+      if (method === 'POST' && sub === '/trigger') {
+        if (!job) return sendJobNotFoundError(res, requestedId);
+        if (job.schedule.kind !== 'webhook') {
+          return sendError(res, 400, 'NOT_WEBHOOK_JOB', `Job ${requestedId} is not a webhook job; use run-now to run it once`);
+        }
+        if (!job.enabled) return sendError(res, 409, 'JOB_DISABLED', `Job ${requestedId} is disabled`);
+        const body = await readBody(req, { strict: true });
+        const context = buildWebhookContext({
+          payload: buildWebhookPayload({ body: body['payload'], receivedAt: new Date().toISOString() }),
+          source: 'local',
+        });
+        const dispatcher = new TriggerDispatcher({
+          store: ctx.store, runner: ctx.runner, logger: logger,
+          isPaused: (id) => ctx.scheduler.isPaused() || ctx.scheduler.isJobPaused(id),
+        });
+        const result = dispatcher.dispatch(job.id, {
+          kind: 'webhook', env: context.env, promptSuffix: context.promptSuffix, meta: { ...context.meta },
+        });
+        if ('runId' in result) return sendJson(res, 202, { runId: result.runId });
+        const refusal: Record<TriggerSkipReason, [number, string]> = {
+          'not-found': [404, 'JOB_NOT_FOUND'],
+          'disabled': [409, 'JOB_DISABLED'],
+          'kind-mismatch': [400, 'NOT_WEBHOOK_JOB'],
+          'broken': [409, 'JOB_BROKEN'],
+          'paused': [409, 'JOB_PAUSED'],
+        };
+        const [status, code] = refusal[result.skipped];
+        return sendError(res, status, code, `Job ${requestedId} was not triggered (${result.skipped})`);
       }
 
       // `/run-now` is an alias of `/run` (used by the dashboard). Runs the job once
@@ -868,7 +902,7 @@ function parseConfigPatchBody(
   };
 }
 
-async function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
+async function readBody(req: http.IncomingMessage, opts: { strict?: boolean } = {}): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -881,7 +915,8 @@ async function readBody(req: http.IncomingMessage): Promise<Record<string, unkno
       try {
         resolve(JSON.parse(raw) as Record<string, unknown>);
       } catch {
-        resolve({});
+        if (opts.strict) reject(new CrontickError('INVALID_PAYLOAD', 'Request body must be valid JSON'));
+        else resolve({});
       }
     });
     req.on('error', reject);

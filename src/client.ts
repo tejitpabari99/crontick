@@ -466,6 +466,23 @@ export class CrontickClient {
     return this.request<{ runId: string }>('POST', `/api/jobs/${encodeURIComponent(id)}/run`);
   }
 
+  /**
+   * Fire a webhook-kind job once through the same dispatch path as relay events
+   * (no HMAC/dedupe/burst guards: the local caller is the owner). `payload` is any
+   * JSON value. Non-webhook jobs fail with NOT_WEBHOOK_JOB (use runNow); disabled
+   * ones with JOB_DISABLED. `id` accepts either the job's GUID id or its alias.
+   */
+  async triggerJob(id: string, options: { payload?: unknown } = {}): Promise<{ runId: string }> {
+    let body: { payload: unknown } | undefined;
+    if (options.payload !== undefined) {
+      let serialized: string | undefined;
+      try { serialized = JSON.stringify(options.payload); } catch { serialized = undefined; }
+      if (serialized === undefined) throw new CrontickError('INVALID_PAYLOAD', 'Payload must be JSON-serializable');
+      body = { payload: JSON.parse(serialized) as unknown };
+    }
+    return this.request<{ runId: string }>('POST', `/api/jobs/${encodeURIComponent(id)}/trigger`, body);
+  }
+
   async cancelRun(runId: string): Promise<{ ok: true; canceled: boolean }> {
     return this.request<{ ok: true; canceled: boolean }>('POST', `/api/runs/${encodeURIComponent(runId)}/cancel`);
   }

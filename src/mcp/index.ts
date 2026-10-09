@@ -261,6 +261,20 @@ export function createMcpServer(): McpServer {
   );
 
   server.registerTool(
+    'crontick_job_trigger',
+    {
+      description:
+        'Fire a webhook-kind job (id or alias) once, right now, with an optional JSON payload delivered to the run as untrusted event data (CRONTICK_EVENT). Same path as relay events but local: no signature/dedupe/burst checks. Non-webhook jobs are refused with NOT_WEBHOOK_JOB (use crontick_job_run_now); disabled jobs with JOB_DISABLED. This executes the job\'s prompt on the user\'s machine -- confirm with the user before calling. Returns a runId to track progress with crontick_run_get.',
+      inputSchema: withVerbose({
+        id: z.string().describe('Job id (GUID) or alias of a webhook job'),
+        payload: z.unknown().optional().describe('Event payload: any JSON value'),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    async (args) => toolWrap(args, (client) => client.triggerJob(args.id, { payload: args.payload })),
+  );
+
+  server.registerTool(
     'crontick_job_cancel_run',
     {
       description: 'Cancel an in-progress run by its run ID.',
