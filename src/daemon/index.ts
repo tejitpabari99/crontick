@@ -23,6 +23,7 @@ import { createApiServer } from './api.js';
 import { bindPort, preferredDaemonPort } from './bind-port.js';
 import { probeHealth } from './ensure.js';
 import type { ApiContext } from './api.js';
+import { RelayManager } from './relay.js';
 import { TriggerDispatcher, registerAfterTrigger } from './trigger.js';
 import { createLogger, isVerboseEnv, type LogEvent, type Logger } from '../logger.js';
 import { ensureConfigFile, loadConfig } from '../config.js';
@@ -307,6 +308,12 @@ if (needsSqliteShim) {
       isPaused: (id) => scheduler.isPaused() || scheduler.isJobPaused(id),
     });
     registerAfterTrigger({ runner, store, dispatcher: triggerDispatcher, logger });
+    // Webhook relays: one idempotent sync wired to startup, job mutations and reload.
+    const relays = new RelayManager({ dispatcher: triggerDispatcher, logger });
+    const syncRelays = (): void => {
+      try { relays.sync(store.listJobs()); } catch (err) { logger.error('Relay sync failed', { error: String(err) }); }
+    };
+    syncRelays();
 
     for (const job of jobs) {
       if (job.enabled) scheduler.schedule(job);
@@ -382,6 +389,7 @@ if (needsSqliteShim) {
       for (const job of reloaded) {
         if (job.enabled) scheduler.schedule(job);
       }
+      syncRelays();
       logger.info(`Reloaded ${reloaded.length} job(s)`);
     }
 
@@ -391,7 +399,7 @@ if (needsSqliteShim) {
       logger.warn('A pending config save (wait for in-flight runs) was lost on restart; re-apply it if still wanted', lostPendingConfigApply);
     }
 
-    const ctx: ApiContext = { store, scheduler, runner, startedAt, port: 0, reload, logger, missedFireSummary, lostPendingConfigApply, shutdown: () => Promise.resolve() };
+    const ctx: ApiContext = { store, scheduler, runner, startedAt, port: 0, reload, syncRelays, logger, missedFireSummary, lostPendingConfigApply, shutdown: () => Promise.resolve() };
     const server = createApiServer(ctx);
 
     // Bind loopback only (security invariant). Prefer the stable default port;
@@ -443,6 +451,7 @@ if (needsSqliteShim) {
       logger.info(`Received ${signal}, shutting down`);
       server.close();
       scheduler.unscheduleAll();
+      relays.stop();
       await new Promise<void>((r) => setTimeout(r, 100)); // brief drain window
       store.close();
       cleanup();

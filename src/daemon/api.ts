@@ -59,6 +59,8 @@ export interface ApiContext {
   startedAt: Date;
   port: number;
   reload: () => Promise<void>;
+  /** Re-diff relay subscriptions against the stored jobs (idempotent). */
+  syncRelays?: () => void;
   logger?: Logger;
   /** L1: graceful in-process shutdown, wired by index.ts after the HTTP server exists. */
   shutdown?: (signal: string) => Promise<void>;
@@ -221,6 +223,7 @@ async function handleRequest(
       }
       const stored = ctx.store.getJob(job.id) ?? job;
       ctx.scheduler.schedule(stored);
+      ctx.syncRelays?.();
       // L2: seed the missed-fire watermark so a restart computes forward from
       // "job just created/updated", not from some earlier (or absent) state.
       ctx.store.recordTick(stored.id);
@@ -245,6 +248,7 @@ async function handleRequest(
         ctx.scheduler.unschedule(job.id);
         ctx.runner.cancelJob(job.id);
       }
+      ctx.syncRelays?.();
       return sendJson(res, 200, { ok: true, deleted });
     }
 
@@ -311,6 +315,7 @@ async function handleRequest(
                 if (updatedJob.enabled && !job.enabled) ctx.store.resetConsecutiveFailures(job.id);
                 const stored = ctx.store.getJob(job.id) ?? updatedJob;
                 ctx.scheduler.schedule(stored);
+                ctx.syncRelays?.();
                 // L2: same watermark seed as job creation — an update can re-enable a
                 // job or change its schedule, both of which should compute missed
                 // fires forward from now, not from a stale pre-update state.
@@ -359,6 +364,7 @@ async function handleRequest(
         const canceledRun = ctx.runner.cancelJob(job.id);
         const deleted = ctx.store.deleteJobAndRuns(job.id);
         if (!deleted) return sendJobNotFoundError(res, requestedId);
+        ctx.syncRelays?.();
         return sendJson(res, 200, { ok: true, canceledRun, deletedRuns: deleted.deletedRuns });
       }
 
@@ -369,6 +375,7 @@ async function handleRequest(
         ctx.store.upsertJob(updated);
         ctx.store.resetConsecutiveFailures(job.id);
         ctx.scheduler.schedule(updated);
+        ctx.syncRelays?.();
         // L2: re-enabling starts a fresh watermark, same reasoning as create/update.
         ctx.store.recordTick(job.id);
         return sendJson(res, 200, redactValue(updated));
@@ -379,6 +386,7 @@ async function handleRequest(
         const updated = { ...job, enabled: false };
         ctx.store.upsertJob(updated);
         ctx.scheduler.unschedule(job.id);
+        ctx.syncRelays?.();
         return sendJson(res, 200, redactValue(updated));
       }
 
@@ -669,6 +677,7 @@ async function handleRequest(
           results.push({ id: job.id, alias, ok: false, error: err instanceof Error ? err.message : String(err) });
         }
       }
+      ctx.syncRelays?.();
       return sendJson(res, 200, { imported: results.filter((r) => r.ok).length, results });
     }
 
