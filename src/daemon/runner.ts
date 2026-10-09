@@ -22,6 +22,7 @@ import { ADOPTED_RUN_POLL_MS, EXIT_CLOSE_GRACE_MS, KILL_GRACE_MS, DEFAULT_MAX_CO
 import { killProcessTree, type TreeKiller } from './process-tree.js';
 import type { TerminalEngineError } from '../engines/types.js';
 import { sleep } from '../utils/sleep.js';
+import { buildRunEnv, type RunContext } from './run-context.js';
 
 // ── Output cap (L5) ───────────────────────────────────────────────────────────
 
@@ -195,6 +196,15 @@ class RunLogWriter {
   }
 }
 
+export interface RunCompleteEvent {
+  jobId: string;
+  runId: string;
+  /** Final run status (success | failed | timeout | canceled | ...). */
+  status: string;
+  error?: string;
+}
+export type RunCompleteListener = (event: RunCompleteEvent) => void | Promise<void>;
+
 // ── Runner ────────────────────────────────────────────────────────────────────
 
 export class Runner {
@@ -212,6 +222,8 @@ export class Runner {
   private inFlight: Map<string, string> = new Map();
   /** Resolvers for waitForIdle(), settled when `inFlight` drains. */
   private idleWaiters: Array<{ jobId?: string; resolve: () => void }> = [];
+  /** Listeners notified exactly once per terminal run (see emitComplete()). */
+  private completeListeners: RunCompleteListener[] = [];
 
   private readonly logger: Logger;
   private readonly jobLogFiles: JobLogFileFactory;
@@ -314,16 +326,16 @@ export class Runner {
    * Execute a job run, honouring overlap + retry policies.
    * The run record must already exist in the store (status=queued).
    */
-  async run(job: Job, runId: string, store: Store): Promise<void> {
+  async run(job: Job, runId: string, store: Store, ctx?: RunContext): Promise<void> {
     this.inFlight.set(runId, job.id);
     try {
-      await this.runTracked(job, runId, store);
+      await this.runTracked(job, runId, store, ctx);
     } finally {
       this.markSettled(runId);
     }
   }
 
-  private async runTracked(job: Job, runId: string, store: Store): Promise<void> {
+  private async runTracked(job: Job, runId: string, store: Store, ctx?: RunContext): Promise<void> {
     const overlap = job.overlap ?? 'skip';
     const log = new RunLogWriter(this.jobLogFiles.open(job.id), runId);
     this.logger.debug('Starting run orchestration', { jobId: job.id, runId, overlap, retryMax: job.retry?.max ?? 0 });
@@ -348,19 +360,19 @@ export class Runner {
     }
 
     if (overlap === 'queue') {
-      await this.enqueue(job, runId, store, log);
+      await this.enqueue(job, runId, store, log, ctx);
     } else {
-      await this.execute(job, runId, store, log);
+      await this.execute(job, runId, store, log, ctx);
     }
   }
 
-  private enqueue(job: Job, runId: string, store: Store, log: RunLogWriter): Promise<void> {
+  private enqueue(job: Job, runId: string, store: Store, log: RunLogWriter, ctx?: RunContext): Promise<void> {
     return new Promise<void>((resolve) => {
       const queue = this.queues.get(job.id) ?? [];
       queue.push({
         runId,
         start: async () => {
-          await this.execute(job, runId, store, log);
+          await this.execute(job, runId, store, log, ctx);
           resolve();
         },
         drop: async (reason: string) => {
@@ -393,7 +405,7 @@ export class Runner {
     await this.drainQueue(jobId);
   }
 
-  private async execute(job: Job, runId: string, store: Store, log: RunLogWriter): Promise<void> {
+  private async execute(job: Job, runId: string, store: Store, log: RunLogWriter, ctx?: RunContext): Promise<void> {
     const maxRetries = job.retry?.max ?? 0;
     const backoffSec = job.retry?.backoffSec ?? 30;
     let lastResult: RunResult = { status: 'failed', error: 'not started' };
@@ -424,7 +436,7 @@ export class Runner {
           break;
         }
         try {
-          lastResult = await this.spawn(job, runId, store, ctrl.signal, log);
+          lastResult = await this.spawn(job, runId, store, ctrl.signal, log, ctx);
         } catch (err) {
           lastResult = this.runResultFromError(err, ctrl.signal);
           this.logger.error('Run attempt failed before child completion', {
@@ -481,6 +493,31 @@ export class Runner {
    * resets the count (see the /enable route in api.ts).
    */
   recordRunOutcome(jobId: string, runId: string, result: { status: string; error?: string | undefined }, store: Store, log?: RunLogWriter): void {
+    this.recordFailureState(jobId, runId, result, store, log);
+    this.emitComplete({ jobId, runId, status: result.status, ...(result.error !== undefined ? { error: result.error } : {}) });
+  }
+
+  /** Register a listener fired once per terminal run, after failure/auto-disable bookkeeping. */
+  onRunComplete(cb: RunCompleteListener): void {
+    this.completeListeners.push(cb);
+  }
+
+  /** Listeners run on a microtask, each isolated: a throw/rejection never reaches uncaughtException. */
+  private emitComplete(event: RunCompleteEvent): void {
+    for (const cb of [...this.completeListeners]) {
+      queueMicrotask(() => {
+        try {
+          void Promise.resolve(cb(event)).catch((err: unknown) => {
+            this.logger.error('Run-complete listener failed', { jobId: event.jobId, runId: event.runId, error: String(err) });
+          });
+        } catch (err) {
+          this.logger.error('Run-complete listener failed', { jobId: event.jobId, runId: event.runId, error: String(err) });
+        }
+      });
+    }
+  }
+
+  private recordFailureState(jobId: string, runId: string, result: { status: string; error?: string | undefined }, store: Store, log?: RunLogWriter): void {
     try {
       if (result.status === 'success') {
         store.resetConsecutiveFailures(jobId);
@@ -507,6 +544,7 @@ export class Runner {
     store: Store,
     signal: AbortSignal,
     log: RunLogWriter,
+    ctx?: RunContext,
   ): Promise<RunResult> {
     const { action } = job;
     validateActionCwd(action);
@@ -531,7 +569,7 @@ export class Runner {
     }
 
     const { invocation: runCommand, adapter, engineOptions } = resolvePromptRunCommand(
-      { ...latestAction, sessionId },
+      { ...latestAction, sessionId, ...(ctx?.promptSuffix ? { prompt: latestAction.prompt + ctx.promptSuffix } : {}) },
       { logger: this.logger },
       { runId, jobId: job.id, dataDir: dataDir() },
     );
@@ -544,7 +582,7 @@ export class Runner {
     this.appendDiagnosticLog(log, 'resolved prompt command', { engine: promptEngineBinary, command: cmd, args: displayArgs, envKeys: Object.keys(promptEnv) });
 
     if (sessionId) {
-      const transcriptPath = adapter.resumeTranscriptPath(action.cwd ?? process.cwd(), sessionId, { ...process.env, ...promptEnv, ...(action.env ?? {}) });
+      const transcriptPath = adapter.resumeTranscriptPath(action.cwd ?? process.cwd(), sessionId, buildRunEnv(promptEnv, undefined, action.env, ctx?.env));
       if (transcriptPath && !this.transcriptExists(transcriptPath)) {
         throw new CrontickError(
           'SESSION_NOT_FOUND',
@@ -592,7 +630,7 @@ export class Runner {
     const isWindowsPowerShellHost = platform() === 'win32' && isPowerShellHostCommand(cmd);
     const spawnOpts: Parameters<typeof spawn>[2] = {
       cwd: action.cwd ?? process.cwd(),
-      env: { ...process.env, ...promptEnv, ...(action.env ?? {}) } as NodeJS.ProcessEnv,
+      env: buildRunEnv(promptEnv, undefined, action.env, ctx?.env),
       signal,
       shell: false,
       detached: !isWindowsPowerShellHost,
@@ -606,12 +644,7 @@ export class Runner {
     // Merge envFile variables (lower priority than action.env, higher than process.env).
     const envFile = readEnvFileForAction(action);
     if (envFile) {
-      spawnOpts.env = {
-        ...process.env,
-        ...promptEnv,
-        ...envFile.vars,
-        ...(action.env ?? {}),
-      } as NodeJS.ProcessEnv;
+      spawnOpts.env = buildRunEnv(promptEnv, envFile.vars, action.env, ctx?.env);
       this.logger.debug('Loaded env file for run', { jobId: job.id, runId, envFile: envFile.path, envKeys: Object.keys(envFile.vars) });
     }
 
