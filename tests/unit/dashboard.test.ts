@@ -273,6 +273,21 @@ describe('Dashboard serving', () => {
     expect(js).not.toContain('avgDurationMs');
   });
 
+  it('scales the dashboard via a single rem root scale (no px font-sizes)', async () => {
+    const css = await (await fetch(`http://127.0.0.1:${port}/dashboard/dashboard.css`)).text();
+    expect(css).toMatch(/--ui-scale:\s*0\.8\s*;/);
+    expect(css).toMatch(/font-size:\s*calc\(18px \* var\(--ui-scale\)\)/);
+    const pxFonts = css.split('\n').filter((l) => /font-size:[^;]*\d+(\.\d+)?px/.test(l) && !l.includes('--ui-scale'));
+    expect(pxFonts).toEqual([]);
+    // Only 1px borders (and the 640px media query / root size) may remain in px.
+    const stray = css
+      .split('\n')
+      .filter((l) => /\d+(\.\d+)?px/.test(l) && !l.includes('--ui-scale') && !l.includes('@media'))
+      .filter((l) => !/^\s*[\w-]*border[\w-]*:[^;]*\b1px\b/.test(l) && !/\{[^}]*border[^}]*1px[^}]*\}/.test(l))
+      .filter((l) => l.replace(/\b1px\b/g, '').match(/\d+(\.\d+)?px/));
+    expect(stray).toEqual([]);
+  });
+
   it('serves a light/dark theme toggle backed by CSS custom properties', async () => {
     const html = await (await fetch(`http://127.0.0.1:${port}/dashboard`)).text();
     const css = await (await fetch(`http://127.0.0.1:${port}/dashboard/dashboard.css`)).text();
