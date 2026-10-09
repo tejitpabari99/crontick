@@ -1,4 +1,4 @@
-import type { Schedule } from '../schemas/job.js';
+import { isTimeSchedule, type Schedule } from '../schemas/job.js';
 import { redactRelayUrl } from './webhook-redact.js';
 
 /** Minimal upstream info needed to label an `after` schedule. */
@@ -10,7 +10,12 @@ export interface ScheduleLabelTarget {
 export type ScheduleLabelLookup = (jobId: string) => ScheduleLabelTarget | undefined;
 
 /** Human-readable schedule label shared by CLI, MCP and dashboard. */
-export function describeSchedule(schedule: Schedule, lookup: ScheduleLabelLookup): string {
+export function describeSchedule(schedule: Schedule, lookup: ScheduleLabelLookup, catchUp = false): string {
+  const label = describeBase(schedule, lookup);
+  return catchUp && isTimeSchedule(schedule) ? `${label} (catch-up)` : label;
+}
+
+function describeBase(schedule: Schedule, lookup: ScheduleLabelLookup): string {
   if (schedule.kind === 'cron') return schedule.cron;
   if (schedule.kind === 'interval') return `every ${schedule.everySec}s`;
   if (schedule.kind === 'after') {

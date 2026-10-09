@@ -143,6 +143,7 @@ code { color: var(--text); }
 .badge { padding: 0.1667rem 0.5556rem; border-radius: 0.5556rem; font-size: 0.7778rem; font-weight: 600; }
 .badge-ok { background: var(--success-soft); color: var(--success); }
 .badge-error { background: var(--error-soft); color: var(--error); }
+.badge-catchup { background: var(--muted-soft); color: var(--muted); }
 .badge-unknown { background: var(--muted-soft); color: var(--muted); }
 
 .status-success { color: var(--success); }

@@ -507,7 +507,7 @@ jobs.command('list').description('List all jobs').action(async () => {
   try {
     const list = await client().listJobs();
     const byId = new Map(list.map((j) => [j.id, j]));
-    print(list.map((j) => ({ ...j, scheduleLabel: describeSchedule(j.schedule, (id) => byId.get(id)) })));
+    print(list.map((j) => ({ ...j, scheduleLabel: describeSchedule(j.schedule, (id) => byId.get(id), j.catchUp) })));
   } catch (err) { handleError(err); }
 });
 
@@ -523,6 +523,7 @@ jobs.command('get <id|alias>').description('Get a job by id or alias').action(as
       for (const s of mine) stdout(`relay: ${formatRelayStatusLine(s)}`);
       if (mine.length === 0) stdout('relay: not connected (daemon not running or job disabled)');
     }
+    stdout(`catch-up: ${job.catchUp ? 'on' : 'off'}`);
     if (job.action.cwd) stdout(`cwd: ${job.action.cwd}`);
     if (job.action.sessionId) stdout(`Runner Session ID: ${job.action.sessionId}`);
   } catch (err) { handleError(err); }

@@ -158,7 +158,7 @@ function renderJobs(allJobs) {
       <td>${escHtml(job.alias || '—')}</td>
       <td class="id-cell"><code title="${escHtml(job.id)}">${escHtml(job.id)}</code>${copyIcon(job.id)}</td>
       <td>${escHtml(job.description || '—')}</td>
-      <td><code>${escHtml(job.scheduleLabel)}</code></td>
+      <td><code>${escHtml(job.scheduleLabel)}</code>${job.job?.catchUp ? ' <span class="badge badge-catchup" title="Runs the most recent missed fire once on daemon start">catch-up</span>' : ''}</td>
       <td>${escHtml(job.actionKind)}</td>
       <td class="status-${escHtml(job.lastStatus || 'queued')}">${escHtml(job.lastStatus || '—')}</td>
       <td>${escHtml(formatTime(job.nextRunAt))}</td>
@@ -451,6 +451,7 @@ async function renderDrawer(jobId, opts = {}) {
       ${kv('Description', escHtml(wrapped.description || '—'))}
       ${kv('Enabled', wrapped.enabled ? 'Yes' : 'No (disabled)')}
       ${kv('Schedule', `<code>${escHtml(wrapped.scheduleLabel)}</code>`)}
+      ${kv('Catch-up', job.catchUp ? 'On' : 'Off')}
       ${kv('Runner', escHtml([action.kind, action.engine].filter(Boolean).join(' / ') || '—'))}
       ${kv('Overlap', escHtml(job.overlap || '—'))}
       ${kv('Timeout', escHtml(timeouts))}
@@ -1180,8 +1181,8 @@ const EDITOR_CLI_PARITY = {
   '--overlap': 'overlap',
   '--retry': 'retryMax',
   '--desc': 'description',
-  '--catch-up': null, // checkbox lands with the dashboard editor catch-up task
-  '--no-catch-up': null,
+  '--catch-up': 'catchUp', // checkbox inside the schedule section, shown only for supportsCatchUp kinds
+  '--no-catch-up': 'catchUp',
 };
 
 /** '' -> undefined (blank), numeric text -> number, anything else -> 'invalid'. */
@@ -1200,7 +1201,7 @@ function cleanArgs(args) {
 function blankEditorValues(meta) {
   const d = meta?.defaults || {};
   return {
-    alias: '', prompt: '', cwd: '', engine: meta?.defaultEngine || '', args: [], sessionId: '', 'reuseSession': false,
+    alias: '', prompt: '', cwd: '', engine: meta?.defaultEngine || '', args: [], sessionId: '', 'reuseSession': false, catchUp: false,
     timeoutSec: d.timeoutSec != null ? String(d.timeoutSec) : '', overlap: d.overlap || 'skip',
     retryMax: d.retry?.max != null ? String(d.retry.max) : '', backoffSec: '', description: '',
   };
@@ -1212,7 +1213,7 @@ function jobToEditorValues(job) {
   const str = (v) => (v == null ? '' : String(v));
   return {
     alias: str(job?.alias), prompt: str(a.prompt), cwd: str(a.cwd), engine: str(a.engine), args: [...(a.args || [])],
-    sessionId: str(a.sessionId), 'reuseSession': Boolean(a.reuseSession), timeoutSec: str(a.timeoutSec),
+    sessionId: str(a.sessionId), 'reuseSession': Boolean(a.reuseSession), catchUp: Boolean(job?.catchUp), timeoutSec: str(a.timeoutSec),
     overlap: str(job?.overlap), retryMax: str(job?.retry?.max), backoffSec: str(job?.retry?.backoffSec),
     description: str(job?.description),
   };
@@ -1238,6 +1239,7 @@ function buildCreateBody(v, schedule) {
   const timeout = parseOptionalNumber(v.timeoutSec);
   if (typeof timeout === 'number') action.timeoutSec = timeout;
   const body = { schedule, action };
+  if (v.catchUp && findScheduleKind(schedule?.kind)?.supportsCatchUp) body.catchUp = true;
   const alias = String(v.alias).trim();
   if (alias) body.alias = alias;
   const description = String(v.description).trim();
@@ -1263,6 +1265,7 @@ function buildEditPatch(base, draft, schedule) {
     else if (String(base.description).trim()) patch.description = null;
   }
   if (schedule !== undefined) patch.schedule = schedule;
+  if (Boolean(draft.catchUp) !== Boolean(base.catchUp)) patch.catchUp = Boolean(draft.catchUp);
   if (draft.prompt !== base.prompt && String(draft.prompt).trim()) action.prompt = draft.prompt;
   if (draft.cwd !== base.cwd && String(draft.cwd).trim()) action.cwd = String(draft.cwd).trim();
   if (draft.engine !== base.engine && draft.engine) action.engine = draft.engine;
@@ -1326,6 +1329,7 @@ function toLocalInputValue(iso) {
 const SCHEDULE_KINDS = [
   {
     kind: 'cron',
+    supportsCatchUp: true,
     label: 'Cron expression',
     help: 'Cron: five-field expression in local time, e.g. 0 9 * * *',
     fields: [{ id: 'cron', label: 'Expression', type: 'text', required: true, placeholder: '0 9 * * *', hint: 'Fires in the machine local time zone' }],
@@ -1334,6 +1338,7 @@ const SCHEDULE_KINDS = [
   },
   {
     kind: 'interval',
+    supportsCatchUp: true,
     label: 'Every N units',
     help: 'Every N units: repeats at a fixed interval, optionally from a start time',
     fields: [
@@ -1353,6 +1358,7 @@ const SCHEDULE_KINDS = [
   },
   {
     kind: 'one-shot',
+    supportsCatchUp: true,
     label: 'One time',
     help: 'One time: runs once at a local date and time',
     fields: [{ id: 'runAt', label: 'Run at', type: 'datetime-local', required: true, hint: 'Local time, same as --at' }],
@@ -1527,6 +1533,15 @@ const editorScheduleHook = (() => {
     }
   }
 
+  /** Catch-up checkbox: visible only for kinds with supportsCatchUp; hidden kinds clear it. */
+  function syncCatchUp() {
+    const label = box?.querySelector('.editor-catchup');
+    if (!label) return;
+    const supported = Boolean(kindDef().supportsCatchUp);
+    label.hidden = !supported;
+    if (!supported) label.querySelector('input').checked = false;
+  }
+
   function setPreview(html, isError) {
     const el = box?.querySelector('.editor-preview');
     if (!el) return;
@@ -1589,6 +1604,7 @@ const editorScheduleHook = (() => {
     kindId = def.kind;
     values = defaultsFor(def);
     drawPanel();
+    syncCatchUp();
     setPreview('', false);
     schedulePreview();
   }
@@ -1602,8 +1618,9 @@ const editorScheduleHook = (() => {
       kindId = def.kind;
       values = { ...defaultsFor(def), ...(job ? def.fromSchedule(job.schedule) : {}) };
       baseline = snapshot();
-      box.innerHTML = `<div class="editor-grid"><label for="editor-sch-kind">Schedule</label><div><select id="editor-sch-kind" data-sched-kind>${SCHEDULE_KINDS.map((k) => `<option value="${escHtml(k.kind)}"${k.kind === kindId ? ' selected' : ''}>${escHtml(k.label)}</option>`).join('')}</select></div></div><div class="editor-sched-panel"></div><div class="editor-preview" aria-live="polite"></div><details class="editor-howto"><summary>How to schedule</summary><ul>${SCHEDULE_KINDS.map((k) => `<li>${escHtml(k.help || k.label)}</li>`).join('')}</ul></details>`;
+      box.innerHTML = `<div class="editor-grid"><label for="editor-sch-kind">Schedule</label><div><select id="editor-sch-kind" data-sched-kind>${SCHEDULE_KINDS.map((k) => `<option value="${escHtml(k.kind)}"${k.kind === kindId ? ' selected' : ''}>${escHtml(k.label)}</option>`).join('')}</select></div></div><div class="editor-sched-panel"></div><label class="editor-check editor-catchup"><input type="checkbox" data-editor-field="catchUp"${job?.catchUp ? ' checked' : ''}> Catch up missed run on daemon start</label><div class="editor-preview" aria-live="polite"></div><details class="editor-howto"><summary>How to schedule</summary><ul>${SCHEDULE_KINDS.map((k) => `<li>${escHtml(k.help || k.label)}</li>`).join('')}</ul></details>`;
       drawPanel();
+      syncCatchUp();
       box.onclick = (e) => {
         const btn = e.target?.closest?.('[data-sched-act="create-relay"]');
         if (btn) void createRelay(btn);
@@ -1700,6 +1717,7 @@ function collectEditorValues() {
     v[f] = editorEl(f)?.value ?? '';
   }
   v.reuseSession = Boolean(editorEl('reuseSession')?.checked);
+  v.catchUp = Boolean(editorEl('catchUp')?.checked);
   v.args = [...editorForm.querySelectorAll('[data-editor-field="args"]')].map((i) => i.value);
   return v;
 }
