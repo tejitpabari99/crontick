@@ -286,6 +286,31 @@ describe('Store', () => {
     }
   });
 
+  it('recordSkippedRun records a terminal skipped run carrying the given reason', () => {
+    const run = store.recordSkippedRun('skip-job', 7000, 'SKIPPED: catch-up collapsed 3 missed fires');
+    expect(run.status).toBe('skipped');
+    expect(run.startedAt).toBe(7000);
+    expect(run.endedAt).toBe(7000);
+    const got = store.getRun(run.id);
+    expect(got?.status).toBe('skipped');
+    expect(got?.error).toBe('SKIPPED: catch-up collapsed 3 missed fires');
+  });
+
+  it('recordSkippedRun and recordMissedRun rows are pruned together under the retention cap', () => {
+    const smallCapStore = new Store(join(dir, 'runs.db'), join(dir, 'jobs'), undefined, 2);
+    smallCapStore.open();
+    try {
+      smallCapStore.recordMissedRun('mixed-cap-job', 1);
+      smallCapStore.recordSkippedRun('mixed-cap-job', 2, 'why');
+      smallCapStore.recordSkippedRun('mixed-cap-job', 3, 'why');
+      const runs = smallCapStore.listRuns({ jobId: 'mixed-cap-job' });
+      expect(runs).toHaveLength(2);
+      expect(runs.every((r) => r.status === 'skipped')).toBe(true);
+    } finally {
+      smallCapStore.close();
+    }
+  });
+
   it('listRuns filters by jobId', () => {
     store.insertRun('job-a');
     store.insertRun('job-a');

@@ -1,6 +1,7 @@
 // Daemon entry point: starts the scheduler, runner, store, and HTTP API.
 // Re-execs with --experimental-sqlite on Node < 24 when the flag is absent.
 // See docs/implementation/daemon.md
+import { dispatchTimeRun } from './time-dispatch.js';
 import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, unlinkSync, existsSync, appendFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -336,17 +337,11 @@ if (needsSqliteShim) {
     // any updates applied since it was initially scheduled.
     scheduler.on('tick', ({ jobId, plannedAt }) => {
       try {
-        const job = store.getJob(jobId);
-        if (!job || !job.enabled) {
+        const result = dispatchTimeRun({ store, runner, logger }, jobId, plannedAt);
+        if ('skipped' in result) {
           // Disabled out-of-band (e.g. auto-disabled after consecutive failures): drop the timer.
           scheduler.unschedule(jobId);
-          return;
         }
-        const run = store.insertRun(jobId, plannedAt.getTime());
-        store.recordTick(jobId, plannedAt.getTime());
-        runner.run(job, run.id, store).catch((err: unknown) => {
-          logger.error('Runner error', { jobId, error: String(err) });
-        });
       } catch (err) {
         // A synchronous throw out of an EventEmitter listener is not caught by
         // runner.run()'s own .catch() — it propagates straight to the global
