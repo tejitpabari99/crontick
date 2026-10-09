@@ -163,6 +163,7 @@ function renderJobs(allJobs) {
       <td class="status-${escHtml(job.lastStatus || 'queued')}">${escHtml(job.lastStatus || '—')}</td>
       <td>${escHtml(formatTime(job.nextRunAt))}</td>
       <td class="actions-cell">
+        <button class="icon-btn action-btn" data-action="edit" data-id="${escHtml(job.id)}" title="Edit job" aria-label="Edit job">✎</button>
         <button class="icon-btn action-btn run-now-btn" data-action="run-now" data-id="${escHtml(job.id)}" title="${escHtml(RUN_NOW_TITLE)}" aria-label="${escHtml(RUN_NOW_TITLE)}">${RUN_NOW_ICON}</button>
         ${toggle}
         <button class="icon-btn action-btn" data-action="delete" data-id="${escHtml(job.id)}" title="Delete job" aria-label="Delete job">🗑</button>
@@ -376,6 +377,10 @@ async function apiAction(method, path) {
 }
 
 async function handleJobAction(action, id) {
+  if (action === 'edit') {
+    void openEditor(id);
+    return;
+  }
   try {
     if (action === 'disable') {
       if (!window.confirm('Disable this job? It will stop running on its schedule.')) return;
@@ -639,7 +644,7 @@ function applyAutoRefresh(sec, persist) {
 
 function trapTab(e, container) {
   if (e.key !== 'Tab') return;
-  const items = [...container.querySelectorAll('button, input, summary, a[href], [tabindex]:not([tabindex="-1"])')]
+  const items = [...container.querySelectorAll('button, input, select, textarea, summary, a[href], [tabindex]:not([tabindex="-1"])')]
     .filter((el) => !el.disabled && el.offsetParent !== null);
   if (items.length === 0) return;
   const first = items[0];
@@ -1101,6 +1106,386 @@ settingsInflight.addEventListener('click', (e) => {
   void saveSettings(choice);
 });
 
+// ── Job editor (create / edit modal) ────────────────────────────────────────
+
+// <editor-pure>
+/** CLI flag (commonJobOptions) -> form field id (data-editor-field); null = intentionally not in the form. */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- read by tests/unit/dashboard-job-editor.test.ts
+const EDITOR_CLI_PARITY = {
+  '--alias': 'alias',
+  '--prompt': 'prompt',
+  '--prompt-file': null, // file picker N/A: textarea only
+  '--cron': 'schedule', // schedule controls live behind editorScheduleHook (Task 6)
+  '--every': 'schedule',
+  '--at': 'schedule',
+  '--dir': 'cwd',
+  '--trust-folder': 'trustFolder', // revealed after TRUST_REQUIRED (Task 7)
+  '--runner': 'engine',
+  '--session-id': 'sessionId',
+  '--reuse-session': 'reuseSession',
+  '--file': null, // JSON import N/A
+  '--timeout': 'timeoutSec',
+  '--overlap': 'overlap',
+  '--retry': 'retryMax',
+  '--desc': 'description',
+};
+
+/** '' -> undefined (blank), numeric text -> number, anything else -> 'invalid'. */
+function parseOptionalNumber(text) {
+  const t = String(text ?? '').trim();
+  if (t === '') return undefined;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : 'invalid';
+}
+
+function cleanArgs(args) {
+  return (args || []).filter((a) => String(a).trim() !== '');
+}
+
+/** Empty create form; engine/overlap/retry come from GET /api/jobs/editor-meta, directory has no default. */
+function blankEditorValues(meta) {
+  const d = meta?.defaults || {};
+  return {
+    alias: '', prompt: '', cwd: '', engine: meta?.defaultEngine || '', args: [], sessionId: '', 'reuseSession': false,
+    timeoutSec: d.timeoutSec != null ? String(d.timeoutSec) : '', overlap: d.overlap || 'skip',
+    retryMax: d.retry?.max != null ? String(d.retry.max) : '', backoffSec: '', description: '',
+  };
+}
+
+/** Loaded Job -> flat form values (env/envFile are intentionally not represented). */
+function jobToEditorValues(job) {
+  const a = job?.action || {};
+  const str = (v) => (v == null ? '' : String(v));
+  return {
+    alias: str(job?.alias), prompt: str(a.prompt), cwd: str(a.cwd), engine: str(a.engine), args: [...(a.args || [])],
+    sessionId: str(a.sessionId), 'reuseSession': Boolean(a.reuseSession), timeoutSec: str(a.timeoutSec),
+    overlap: str(job?.overlap), retryMax: str(job?.retry?.max), backoffSec: str(job?.retry?.backoffSec),
+    description: str(job?.description),
+  };
+}
+
+/** Names of required fields still empty (Save is disabled while non-empty). */
+function editorMissing(v, isCreate) {
+  const missing = [];
+  if (!String(v.prompt).trim()) missing.push('prompt');
+  if (isCreate && !String(v.cwd).trim()) missing.push('cwd');
+  if (!isCreate && !String(v.alias).trim()) missing.push('alias');
+  return missing;
+}
+
+/** JobCreateInput for POST /api/jobs?prepare=1 (optional blanks omitted so server defaults apply). */
+function buildCreateBody(v, schedule) {
+  const action = { kind: 'prompt', prompt: v.prompt, cwd: String(v.cwd).trim(), engine: v.engine };
+  const args = cleanArgs(v.args);
+  if (args.length) action.args = args;
+  const session = String(v.sessionId).trim();
+  if (session) action.sessionId = session;
+  else if (v.reuseSession) action.reuseSession = true;
+  const timeout = parseOptionalNumber(v.timeoutSec);
+  if (typeof timeout === 'number') action.timeoutSec = timeout;
+  const body = { schedule, action };
+  const alias = String(v.alias).trim();
+  if (alias) body.alias = alias;
+  const description = String(v.description).trim();
+  if (description) body.description = description;
+  if (v.overlap) body.overlap = v.overlap;
+  const retry = {};
+  const max = parseOptionalNumber(v.retryMax);
+  if (typeof max === 'number') retry.max = max;
+  const backoff = parseOptionalNumber(v.backoffSec);
+  if (typeof backoff === 'number') retry.backoffSec = backoff;
+  if (Object.keys(retry).length) body.retry = retry;
+  return body;
+}
+
+/** JobPatchInput for PUT /api/jobs/:id?prepare=1: changed fields only; cleared optionals -> null. `schedule` comes from the schedule hook. */
+function buildEditPatch(base, draft, schedule) {
+  const patch = {};
+  const action = {};
+  if (draft.alias !== base.alias && String(draft.alias).trim()) patch.alias = String(draft.alias).trim();
+  if (draft.description !== base.description) {
+    const d = String(draft.description).trim();
+    if (d) patch.description = d;
+    else if (String(base.description).trim()) patch.description = null;
+  }
+  if (schedule !== undefined) patch.schedule = schedule;
+  if (draft.prompt !== base.prompt && String(draft.prompt).trim()) action.prompt = draft.prompt;
+  if (draft.cwd !== base.cwd && String(draft.cwd).trim()) action.cwd = String(draft.cwd).trim();
+  if (draft.engine !== base.engine && draft.engine) action.engine = draft.engine;
+  const baseArgs = cleanArgs(base.args);
+  const draftArgs = cleanArgs(draft.args);
+  if (JSON.stringify(baseArgs) !== JSON.stringify(draftArgs)) action.args = draftArgs;
+  const session = String(draft.sessionId).trim();
+  if (session !== String(base.sessionId).trim()) action.sessionId = session || null;
+  if (!session && draft.reuseSession !== base.reuseSession) action.reuseSession = Boolean(draft.reuseSession);
+  if (String(draft.timeoutSec).trim() !== String(base.timeoutSec).trim()) {
+    const t = parseOptionalNumber(draft.timeoutSec);
+    if (t === undefined) action.timeoutSec = null;
+    else if (t !== 'invalid') action.timeoutSec = t;
+  }
+  if (Object.keys(action).length) patch.action = { kind: 'prompt', ...action };
+  if (draft.overlap !== base.overlap && draft.overlap) patch.overlap = draft.overlap;
+  const retry = {};
+  for (const [field, key] of [['retryMax', 'max'], ['backoffSec', 'backoffSec']]) {
+    if (String(draft[field]).trim() === String(base[field]).trim()) continue;
+    const n = parseOptionalNumber(draft[field]);
+    if (typeof n === 'number') retry[key] = n;
+  }
+  if (Object.keys(retry).length) patch.retry = retry;
+  return patch;
+}
+// </editor-pure>
+
+/**
+ * Schedule section hook (Task 6 replaces this stub with the SCHEDULE_KINDS-driven controls).
+ * render(container, job|null): draw into #editor-schedule; collect(): Schedule object or undefined (unchanged/none);
+ * isComplete(): schedule inputs are syntactically complete; isDirty(): schedule edited.
+ */
+const editorScheduleHook = {
+  render() {},
+  collect() { return undefined; },
+  isComplete() { return true; },
+  isDirty() { return false; },
+};
+
+const jobEditor = document.getElementById('job-editor');
+const editorForm = document.getElementById('editor-form');
+const editorSave = document.getElementById('editor-save');
+const editorBanner = document.getElementById('editor-banner');
+let editorMeta = null;
+let editorJobId = null; // null = create
+let editorBase = null; // form values at open (blank for create)
+let editorBusy = false;
+let editorReturnFocus = null;
+
+const editorEl = (field) => editorForm.querySelector(`[data-editor-field="${field}"]`);
+
+function editorField(label, field, controlHtml, hint) {
+  const id = `editor-f-${field}`;
+  return `<label for="${id}">${escHtml(label)}</label><div>${controlHtml.replace('<!--id-->', id)}${hint ? `<div class="editor-hint">${escHtml(hint)}</div>` : ''}</div>`;
+}
+
+function editorArgRow(value) {
+  return `<div class="editor-arg-row"><input type="text" data-editor-field="args" aria-label="Argument" value="${escHtml(value)}"><button type="button" class="icon-btn" data-editor-act="remove-arg" aria-label="Remove argument">✕</button></div>`;
+}
+
+function renderEditorForm(values, isCreate) {
+  const meta = editorMeta;
+  const engines = (meta?.engines || []).map((e) => e.name);
+  if (values.engine && !engines.includes(values.engine)) engines.push(values.engine);
+  const opts = (list, sel) => list.map((o) => `<option value="${escHtml(o)}"${o === sel ? ' selected' : ''}>${escHtml(o)}</option>`).join('');
+  const input = (field, type, value, extra = '') => `<input id="<!--id-->" type="${type}" data-editor-field="${field}" value="${escHtml(value)}" ${extra}>`;
+  editorForm.innerHTML = `
+    <div class="editor-grid">
+      ${editorField('Alias', 'alias', input('alias', 'text', values.alias, `placeholder="${isCreate ? 'auto-generated' : ''}" autocomplete="off"${meta?.aliasPattern ? ` pattern="${escHtml(meta.aliasPattern)}"` : ''}`), 'kebab-case, e.g. nightly-report')}
+      ${editorField('Prompt', 'prompt', `<textarea id="<!--id-->" data-editor-field="prompt" rows="5" required>${escHtml(values.prompt)}</textarea>`)}
+    </div>
+    <div id="editor-schedule" class="editor-schedule" data-editor-field="schedule"></div>
+    <div class="editor-grid">
+      ${editorField('Directory', 'cwd', input('cwd', 'text', values.cwd, 'required autocomplete="off" placeholder="/absolute/path"'), 'Absolute path the job runs in')}
+      ${editorField('Runner', 'engine', `<select id="<!--id-->" data-editor-field="engine">${opts(engines, values.engine)}</select>`)}
+      <label>Arguments</label>
+      <div>
+        <div id="editor-args" class="editor-args">${values.args.map(editorArgRow).join('')}</div>
+        <button type="button" class="btn" data-editor-act="add-arg">+ Add argument</button>
+      </div>
+      ${editorField('Session id', 'sessionId', input('sessionId', 'text', values.sessionId, 'autocomplete="off"'), 'Resume this session on every run (implies reuse)')}
+      <label>Reuse session</label>
+      <div><label class="editor-check"><input type="checkbox" data-editor-field="reuseSession"${values.reuseSession ? ' checked' : ''}> Start a session and resume it on later runs</label></div>
+      ${editorField('Timeout (sec)', 'timeoutSec', input('timeoutSec', 'number', values.timeoutSec, 'min="1" step="1"'), 'Blank = unbounded')}
+      ${editorField('Overlap', 'overlap', `<select id="<!--id-->" data-editor-field="overlap">${opts(['skip', 'queue', 'cancel-previous'], values.overlap)}</select>`)}
+      ${editorField('Retry max', 'retryMax', input('retryMax', 'number', values.retryMax, 'min="0" step="1"'))}
+      ${editorField('Description', 'description', input('description', 'text', values.description, 'autocomplete="off"'))}
+    </div>
+    <details class="editor-advanced"><summary>Advanced</summary>
+      <div class="editor-grid">
+        ${editorField('Retry backoff (sec)', 'backoffSec', input('backoffSec', 'number', values.backoffSec, 'min="1" step="1"'), 'Delay between retries')}
+      </div>
+    </details>
+    <div id="editor-trust" class="editor-trust" data-editor-field="trustFolder" hidden></div>`;
+  editorScheduleHook.render(document.getElementById('editor-schedule'), isCreate ? null : editorLoadedJob);
+  applyEditorState();
+}
+
+let editorLoadedJob = null;
+
+function collectEditorValues() {
+  const v = {};
+  for (const f of ['alias', 'prompt', 'cwd', 'engine', 'sessionId', 'timeoutSec', 'overlap', 'retryMax', 'backoffSec', 'description']) {
+    v[f] = editorEl(f)?.value ?? '';
+  }
+  v.reuseSession = Boolean(editorEl('reuseSession')?.checked);
+  v.args = [...editorForm.querySelectorAll('[data-editor-field="args"]')].map((i) => i.value);
+  return v;
+}
+
+function editorDirty() {
+  if (!editorBase) return false;
+  const draft = collectEditorValues();
+  return JSON.stringify(draft) !== JSON.stringify(editorBase) || editorScheduleHook.isDirty();
+}
+
+function applyEditorState() {
+  const v = collectEditorValues();
+  const reuse = editorEl('reuseSession');
+  if (reuse) {
+    reuse.disabled = v.sessionId.trim() !== '';
+    if (reuse.disabled) reuse.checked = false;
+  }
+  const missing = editorMissing(v, editorJobId === null);
+  editorSave.disabled = editorBusy || missing.length > 0 || !editorScheduleHook.isComplete();
+}
+
+function clearEditorFeedback() {
+  editorBanner.hidden = true;
+  editorBanner.textContent = '';
+  editorForm.querySelectorAll('.field-error').forEach((el) => el.classList.remove('field-error'));
+}
+
+function showEditorError(message) {
+  editorBanner.textContent = message;
+  editorBanner.hidden = false;
+}
+
+async function loadEditorMeta() {
+  const res = await fetch('/api/jobs/editor-meta');
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(body?.error?.message || `GET /api/jobs/editor-meta failed (${res.status})`);
+  editorMeta = body;
+}
+
+async function openEditor(jobId) {
+  editorReturnFocus = document.activeElement;
+  editorJobId = jobId || null;
+  editorBase = null;
+  editorBusy = false;
+  editorLoadedJob = null;
+  clearEditorFeedback();
+  document.getElementById('editor-title').textContent = jobId ? 'Edit job' : 'New job';
+  editorForm.innerHTML = '<p class="muted">Loading…</p>';
+  editorSave.disabled = true;
+  jobEditor.hidden = false;
+  jobEditor.querySelector('.modal').focus();
+  try {
+    await loadEditorMeta();
+    if (jobId) {
+      const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { headers: { 'Content-Type': 'application/json' } });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error?.message || `GET /api/jobs/${jobId} failed (${res.status})`);
+      editorLoadedJob = body;
+      editorBase = jobToEditorValues(body);
+    } else {
+      editorBase = blankEditorValues(editorMeta);
+    }
+    renderEditorForm(editorBase, !jobId);
+    editorForm.querySelector(jobId ? '[data-editor-field="prompt"]' : '[data-editor-field="alias"]')?.focus();
+  } catch (err) {
+    editorBase = null;
+    editorForm.innerHTML = '';
+    showEditorError(err.message);
+  }
+}
+
+function closeEditor() {
+  jobEditor.hidden = true;
+  editorBase = null;
+  editorJobId = null;
+  if (editorReturnFocus && document.contains(editorReturnFocus)) editorReturnFocus.focus();
+  editorReturnFocus = null;
+}
+
+/** Cancel / X / backdrop / Esc: dirty confirms with the SP03 string, clean closes immediately. */
+function requestLeaveEditor() {
+  if (editorBusy) return;
+  if (editorDirty() && !window.confirm(DISCARD_MESSAGE)) return;
+  closeEditor();
+}
+
+/**
+ * Server error hook (Task 7 replaces this: INVALID_CWD / JOB_ALREADY_EXISTS / CWD_CHANGE_BREAKS_SESSION /
+ * TRUST_REQUIRED reveal / RUNS_IN_FLIGHT choice / field outlines). `retry(opts)` re-sends with
+ * { trustFolder, inFlight }. Default: show the server message and keep the modal open.
+ */
+function editorHandleSaveError(res, body) {
+  showEditorError(body?.error?.message || `Save failed (${res.status})`);
+}
+
+/** Success hook (Task 7 adds toast/refresh details). */
+async function editorHandleSaveSuccess() {
+  closeEditor();
+  await loadDashboard().catch(() => {});
+}
+
+async function saveEditor(opts = {}) {
+  if (editorBusy || !editorBase || editorSave.disabled) return;
+  const draft = collectEditorValues();
+  const schedule = editorScheduleHook.collect();
+  let url;
+  let method;
+  let payload;
+  if (editorJobId === null) {
+    url = '/api/jobs?prepare=1';
+    method = 'POST';
+    payload = buildCreateBody(draft, schedule);
+  } else {
+    payload = buildEditPatch(editorBase, draft, schedule);
+    if (Object.keys(payload).length === 0) {
+      showToast('No changes to save');
+      closeEditor();
+      return;
+    }
+    url = `/api/jobs/${encodeURIComponent(editorJobId)}?prepare=1`;
+    method = 'PUT';
+  }
+  if (opts.trustFolder) url += '&trustFolder=1';
+  if (opts.inFlight) url += `&inFlight=${encodeURIComponent(opts.inFlight)}`;
+  clearEditorFeedback();
+  editorBusy = true;
+  applyEditorState();
+  try {
+    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const body = await res.json().catch(() => null);
+    if (res.ok) {
+      editorBusy = false;
+      await editorHandleSaveSuccess(body);
+      return;
+    }
+    editorHandleSaveError(res, body, (next) => saveEditor(next));
+  } catch (err) {
+    showEditorError(err.message || 'Save failed');
+  } finally {
+    editorBusy = false;
+    if (!jobEditor.hidden) applyEditorState();
+  }
+}
+
+editorForm.addEventListener('input', (e) => {
+  e.target.classList?.remove('field-error');
+  applyEditorState();
+});
+editorForm.addEventListener('change', applyEditorState);
+editorForm.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-editor-act]');
+  if (!btn) return;
+  const list = document.getElementById('editor-args');
+  if (btn.dataset.editorAct === 'add-arg') {
+    list.insertAdjacentHTML('beforeend', editorArgRow(''));
+    list.lastElementChild.querySelector('input').focus();
+  } else if (btn.dataset.editorAct === 'remove-arg') {
+    btn.closest('.editor-arg-row').remove();
+  }
+  applyEditorState();
+});
+editorSave.addEventListener('click', () => void saveEditor());
+document.getElementById('editor-cancel').addEventListener('click', requestLeaveEditor);
+document.getElementById('editor-close').addEventListener('click', requestLeaveEditor);
+document.getElementById('btn-new-job').addEventListener('click', () => void openEditor(null));
+document.getElementById('drawer-edit').addEventListener('click', () => { if (drawerJobId) void openEditor(drawerJobId); });
+jobEditor.addEventListener('click', (e) => {
+  if (e.target.id === 'job-editor') requestLeaveEditor();
+});
+jobEditor.addEventListener('keydown', (e) => trapTab(e, jobEditor.querySelector('.modal')));
+
 // ── Paused state ────────────────────────────────────────────────────────────
 
 function renderPaused(paused) {
@@ -1250,7 +1635,8 @@ document.getElementById('modal-transcript').addEventListener('click', handleCopy
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (!settingsModal.hidden) requestLeaveSettings();
+  if (!jobEditor.hidden) requestLeaveEditor();
+  else if (!settingsModal.hidden) requestLeaveSettings();
   else if (!document.getElementById('log-modal').hidden) closeRunModal();
   else if (!document.getElementById('job-drawer').hidden) closeDrawer();
   else if (anyMultiOpen()) closeMultiMenus();
