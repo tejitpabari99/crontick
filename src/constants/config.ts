@@ -18,3 +18,9 @@ export const CONFIG_LOCK_RETRY_MS = 25;
 /** Rename-over-existing-file retries (Windows EPERM/EBUSY when another process has the file open). */
 export const CONFIG_RENAME_RETRIES = 5;
 export const CONFIG_RENAME_RETRY_MS = 20;
+
+/** Marker (under the data dir) written while a wait-then-apply config save is pending; found on startup it means the wait was lost. */
+export const PENDING_CONFIG_APPLY_FILE = 'pending-config-apply.json';
+
+/** The two accepted choices when a config save finds runs in flight. */
+export const IN_FLIGHT_CHOICES = ['stop', 'wait'] as const;

@@ -28,6 +28,7 @@ import { checkMutatingRequest, isGuardedRequest } from './request-guard.js';
 import { describeDaemonPort } from './bind-port.js';
 import { loadConfig } from '../config.js';
 import type { CrontickConfig } from '../schemas/config.js';
+import type { LostPendingConfigApply } from './config-apply.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -48,6 +49,8 @@ export interface ApiContext {
   logger?: Logger;
   /** L1: graceful in-process shutdown, wired by index.ts after the HTTP server exists. */
   shutdown?: (signal: string) => Promise<void>;
+  /** A wait-then-apply config save lost with the previous daemon session (null when none). */
+  lostPendingConfigApply?: LostPendingConfigApply | null;
   /** L2: summary of fires missed while the daemon was down, computed once at startup. */
   missedFireSummary?: {
     jobsWithMissedFires: number;
@@ -406,6 +409,7 @@ async function handleRequest(
         uptimeSec: Math.floor((Date.now() - ctx.startedAt.getTime()) / 1000),
         jobs: ctx.store.listJobs().length,
         paused: ctx.scheduler.isPaused(),
+        lostPendingConfigApply: ctx.lostPendingConfigApply ?? null,
         // L2: report-only missed-fire summary computed once at startup.
         missedFires: ctx.missedFireSummary ?? {
           jobsWithMissedFires: 0,

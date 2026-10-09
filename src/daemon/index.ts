@@ -18,6 +18,7 @@ import {
 import { Store } from './store.js';
 import { Scheduler } from './scheduler.js';
 import { Runner } from './runner.js';
+import { consumeLostPendingConfigApply } from './config-apply.js';
 import { createApiServer } from './api.js';
 import { bindPort, preferredDaemonPort } from './bind-port.js';
 import { probeHealth } from './ensure.js';
@@ -355,7 +356,13 @@ if (needsSqliteShim) {
       logger.info(`Reloaded ${reloaded.length} job(s)`);
     }
 
-    const ctx: ApiContext = { store, scheduler, runner, startedAt, port: 0, reload, logger, missedFireSummary, shutdown: () => Promise.resolve() };
+    // A wait-then-apply config save pending when the previous daemon died is lost; report it, never replay it.
+    const lostPendingConfigApply = consumeLostPendingConfigApply(dataDir());
+    if (lostPendingConfigApply) {
+      logger.warn('A pending config save (wait for in-flight runs) was lost on restart; re-apply it if still wanted', lostPendingConfigApply);
+    }
+
+    const ctx: ApiContext = { store, scheduler, runner, startedAt, port: 0, reload, logger, missedFireSummary, lostPendingConfigApply, shutdown: () => Promise.resolve() };
     const server = createApiServer(ctx);
 
     // Bind loopback only (security invariant). Prefer the stable default port;

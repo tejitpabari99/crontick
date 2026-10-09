@@ -98,7 +98,19 @@ function mergeUsageJson(previous: string | undefined, next: string | undefined):
   return JSON.stringify(merge(JSON.parse(previous) as unknown, JSON.parse(next) as unknown));
 }
 
-type QueueEntry = () => Promise<void>;
+interface QueueEntry {
+  runId: string;
+  /** Executes the queued run. */
+  start: () => Promise<void>;
+  /** Drops the run without executing it (finalized `canceled`). */
+  drop: (reason: string) => Promise<void>;
+}
+
+/** A run that is executing, queued behind an overlap=queue run, or adopted from a previous daemon session. */
+export interface InFlightRun {
+  jobId: string;
+  runId: string;
+}
 
 const ACTION_CWD_INVALID_ERROR_CODE = 'ACTION_CWD_INVALID';
 
@@ -196,6 +208,10 @@ export class Runner {
   private draining: Set<string> = new Set();
   /** Poll timers for adopted runs (see adoptRun()), keyed by runId so they can be cleared. */
   private adoptedPolls: Map<string, ReturnType<typeof setInterval>> = new Map();
+  /** runId -> jobId for every run between run()/adoptRun() entry and terminal finalization. */
+  private inFlight: Map<string, string> = new Map();
+  /** Resolvers for waitForIdle(), settled when `inFlight` drains. */
+  private idleWaiters: Array<() => void> = [];
 
   private readonly logger: Logger;
   private readonly jobLogFiles: JobLogFileFactory;
@@ -235,6 +251,7 @@ export class Runner {
    */
   adoptRun(jobId: string, runId: string, pid: number, store: Store): void {
     this.activeRunIds.set(jobId, runId);
+    this.inFlight.set(runId, jobId);
     // Fetched once here (not re-queried every poll tick) since startedAt is
     // immutable for a run; used below to re-verify pid identity on every
     // tick, not just at this initial reconciliation moment.
@@ -287,6 +304,7 @@ export class Runner {
       } catch (err) {
         this.logger.error('Failed to finalize adopted run after exit', { jobId, runId, error: String(err) });
       }
+      this.markSettled(runId);
     }, this.adoptedPollMsOverride ?? ADOPTED_RUN_POLL_MS);
     poll.unref?.();
     this.adoptedPolls.set(runId, poll);
@@ -297,6 +315,15 @@ export class Runner {
    * The run record must already exist in the store (status=queued).
    */
   async run(job: Job, runId: string, store: Store): Promise<void> {
+    this.inFlight.set(runId, job.id);
+    try {
+      await this.runTracked(job, runId, store);
+    } finally {
+      this.markSettled(runId);
+    }
+  }
+
+  private async runTracked(job: Job, runId: string, store: Store): Promise<void> {
     const overlap = job.overlap ?? 'skip';
     const log = new RunLogWriter(this.jobLogFiles.open(job.id), runId);
     this.logger.debug('Starting run orchestration', { jobId: job.id, runId, overlap, retryMax: job.retry?.max ?? 0 });
@@ -330,9 +357,17 @@ export class Runner {
   private enqueue(job: Job, runId: string, store: Store, log: RunLogWriter): Promise<void> {
     return new Promise<void>((resolve) => {
       const queue = this.queues.get(job.id) ?? [];
-      queue.push(async () => {
-        await this.execute(job, runId, store, log);
-        resolve();
+      queue.push({
+        runId,
+        start: async () => {
+          await this.execute(job, runId, store, log);
+          resolve();
+        },
+        drop: async (reason: string) => {
+          log.crontick('queued run dropped', { jobId: job.id, reason });
+          await this.finalizeRun(store, runId, { status: 'canceled', error: reason }, log);
+          resolve();
+        },
       });
       this.queues.set(job.id, queue);
       this.logger.debug('Queued run for overlap policy', { jobId: job.id, runId, queueLength: queue.length });
@@ -351,7 +386,7 @@ export class Runner {
     }
     const next = queue.shift()!;
     try {
-      await next();
+      await next.start();
     } catch {
       // errors handled inside execute
     }
@@ -378,7 +413,10 @@ export class Runner {
         if (attempt > 0) {
           this.logger.debug('Retry backoff before run attempt', { jobId: job.id, runId, attempt, backoffSec });
           this.appendDiagnosticLog(log, 'retry backoff', { attempt, backoffSec });
-          await sleep(backoffSec * 1000);
+          await Promise.race([
+            sleep(backoffSec * 1000),
+            new Promise<void>((res) => ctrl.signal.addEventListener('abort', () => res(), { once: true })),
+          ]);
         }
         // Check abort before each retry attempt (cancel-previous or manual cancel)
         if (ctrl.signal.aborted) {
@@ -948,6 +986,39 @@ export class Runner {
   private appendDiagnosticLog(log: RunLogWriter, message: string, data?: unknown): void {
     if (!this.logger.isDebugEnabled()) return;
     log.crontick(`[debug] ${message}`, data);
+  }
+
+  /** Runs currently executing, queued, or adopted (not yet terminal). */
+  listInFlight(): InFlightRun[] {
+    return [...this.inFlight.entries()].map(([runId, jobId]) => ({ jobId, runId }));
+  }
+
+  /** Resolves once no run is in flight (all finalized). Resolves immediately when already idle. No timeout. */
+  waitForIdle(): Promise<void> {
+    if (this.inFlight.size === 0) return Promise.resolve();
+    return new Promise<void>((resolve) => { this.idleWaiters.push(resolve); });
+  }
+
+  /**
+   * Cancel everything in flight: queued runs are dropped (status `canceled`,
+   * never started), active runs are aborted (status `canceled`, no retry).
+   * Resolves once all of them are finalized.
+   */
+  async cancelAllInFlight(reason = 'canceled: config save stopped in-flight runs'): Promise<void> {
+    for (const [jobId, queue] of this.queues.entries()) {
+      const dropped = queue.splice(0, queue.length);
+      this.queues.delete(jobId);
+      for (const entry of dropped) await entry.drop(reason);
+    }
+    for (const jobId of [...this.activeAborts.keys()]) this.cancelJob(jobId);
+    await this.waitForIdle();
+  }
+
+  private markSettled(runId: string): void {
+    this.inFlight.delete(runId);
+    if (this.inFlight.size > 0) return;
+    const waiters = this.idleWaiters.splice(0, this.idleWaiters.length);
+    for (const w of waiters) w();
   }
 
   /** Cancel any active run for a job. */
