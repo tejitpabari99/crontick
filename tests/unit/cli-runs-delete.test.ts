@@ -97,6 +97,7 @@ beforeEach(async () => {
 afterEach(async () => {
   if (server) await new Promise<void>((r) => server!.close(() => r()));
   server = undefined;
+  store.close();
   rmSync(home, { recursive: true, force: true });
 });
 

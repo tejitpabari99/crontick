@@ -60,6 +60,7 @@ afterEach(async () => {
   server = undefined;
   if (prevHome === undefined) delete process.env['CRONTICK_HOME']; else process.env['CRONTICK_HOME'] = prevHome;
   if (prevUrl === undefined) delete process.env['CRONTICK_DAEMON_URL']; else process.env['CRONTICK_DAEMON_URL'] = prevUrl;
+  store.close();
   rmSync(home, { recursive: true, force: true });
 });
 
