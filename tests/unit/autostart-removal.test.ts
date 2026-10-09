@@ -35,7 +35,10 @@ describe('startup registration guards (autostart is opt-in only)', () => {
     for (const file of walk(root)) {
       const rel = relative(root, file).replace(/\\/g, '/');
       if (!/^(src|plugin|scripts|README\.md|package(?:-lock)?\.json|tsup\.config\.ts)/.test(rel)) continue;
-      const text = readFileSync(file, 'utf-8').toLowerCase();
+      let text = readFileSync(file, 'utf-8').toLowerCase();
+      // Targeted exception: Task Scheduler schema elements AllowStartOnDemand and
+      // DisallowStartIfOnBatteries are unrelated to the removed allowstart surface.
+      if (rel === 'src/autostart/taskxml.ts') text = text.replaceAll('allowstartondemand', '').replaceAll('disallowstartifonbatteries', '');
       for (const needle of [
         'registry' + '-js',
         'reg' + '.exe',
