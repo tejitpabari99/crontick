@@ -43,8 +43,8 @@ describe('startup registration removal guards', () => {
       const rel = relative(root, file).replace(/\\/g, '/');
       if (!/^(src|plugin|scripts|README\.md|package(?:-lock)?\.json|tsup\.config\.ts)/.test(rel)) continue;
       const text = readFileSync(file, 'utf-8').toLowerCase();
+      // SP07 Task 1: the bare 'autostart' needle is dropped (owner-approved reintroduction, AGENTS.md rule 8); full guard rewrite is Task 5.
       for (const needle of [
-        removed,
         'registry' + '-js',
         'reg' + '.exe',
         'login ' + 'item',
