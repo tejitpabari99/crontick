@@ -8,16 +8,16 @@ Source of truth: docs/agent_files/users-tejitpabari-crontick-improvements-202610
 
 | # | Task | Depends on | Status |
 |---|---|---|---|
-| 1 | `webhook` schedule kind, schema, CLI flags, `--relay auto` | - | todo |
-| 2 | Webhook payload util (framing, cap, env, header allowlist) | - | todo |
-| 3 | Hand-written SSE client | - | todo |
-| 4 | Relay manager, `syncRelays` lifecycle, in-memory status | 1, 2, 3 | todo |
-| 5 | Event guards: HMAC, dedupe, burst limit | 2, 4 | todo |
-| 6 | Trigger surfaces: client, CLI, MCP, API, surface parity | 1, 2 | todo |
-| 7 | Redaction and export/import stripping | 1 | todo |
-| 8 | Status and trigger rendering: `jobs get`, `runs get`, `doctor` | 4, 6, 7 | todo |
-| 9 | Dashboard Webhook kind, Create channel, Trigger now | 1, 6, 7, 8 | todo |
-| 10 | Tests, docs, ADR 0036, changeset | 1-9 | todo |
+| 1 | `webhook` schedule kind, schema, CLI flags, `--relay auto` | - | done |
+| 2 | Webhook payload util (framing, cap, env, header allowlist) | - | done |
+| 3 | Hand-written SSE client | - | done |
+| 4 | Relay manager, `syncRelays` lifecycle, in-memory status | 1, 2, 3 | done |
+| 5 | Event guards: HMAC, dedupe, burst limit | 2, 4 | done |
+| 6 | Trigger surfaces: client, CLI, MCP, API, surface parity | 1, 2 | done |
+| 7 | Redaction and export/import stripping | 1 | done |
+| 8 | Status and trigger rendering: `jobs get`, `runs get`, `doctor` | 4, 6, 7 | done |
+| 9 | Dashboard Webhook kind, Create channel, Trigger now | 1, 6, 7, 8 | done |
+| 10 | Tests, docs, ADR 0036, changeset | 1-9 | done |
 
 ## Task 1 — `webhook` schedule kind, schema, CLI flags, `--relay auto`
 What it is / what it means: The job model and CLI input for the new kind (R1, R2, D3).
