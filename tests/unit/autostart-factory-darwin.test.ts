@@ -33,7 +33,6 @@ describe('createAutostartBackend darwin', () => {
   });
 
   it('still returns undefined for unsupported platforms', () => {
-    expect(createAutostartBackend(mkDeps('win32'))).toBeUndefined();
     expect(createAutostartBackend(mkDeps('freebsd'))).toBeUndefined();
   });
 

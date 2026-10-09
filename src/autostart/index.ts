@@ -1,13 +1,15 @@
 import { LaunchdBackend } from './launchd.js';
+import { SchtasksBackend } from './schtasks.js';
 import { SystemdBackend } from './systemd.js';
 import type { AutostartBackend, AutostartDeps } from './types.js';
 
 export type BackendFactory = (deps: AutostartDeps) => AutostartBackend;
 
-/** Per-platform backend constructors. Linux and macOS are registered; Windows by its sub-project. */
+/** Per-platform backend constructors. Linux, macOS and Windows are registered. */
 const DEFAULT_FACTORIES: Partial<Record<NodeJS.Platform, BackendFactory>> = {
   linux: (deps) => new SystemdBackend(deps),
   darwin: (deps) => new LaunchdBackend(deps),
+  win32: (deps) => new SchtasksBackend(deps),
 };
 
 /** Returns the backend for `deps.platform`, or `undefined` when unsupported. */

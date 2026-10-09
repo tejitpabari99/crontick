@@ -12,6 +12,12 @@ export class SchtasksBackend implements AutostartBackend {
 
   constructor(private readonly deps: AutostartDeps) {}
 
+  /** Matches the `Arguments` that `renderTaskXml` writes: `<cli> daemon start [--home <dir>]`. */
+  expectedCommand(spec: AutostartSpec): string[] {
+    const home = spec.env['CRONTICK_HOME'];
+    return [spec.cliScript, 'daemon', 'start', ...(home ? ['--home', home] : [])];
+  }
+
   /** Absolute System32 path; never resolved through PATH. */
   private system32(exe: string): string {
     const root = this.deps.env['SystemRoot'] ?? this.deps.env['windir'] ?? 'C:\\Windows';
