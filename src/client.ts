@@ -84,8 +84,26 @@ export interface CrontickClientOptions extends Omit<EnsureDaemonOptions, 'startD
   logger?: Logger;
 }
 
-/** The client has no synchronous job source (daemon passes `store.getJob`); reserved for `after` resolution. */
-const noLocalJobLookup: ResolveJob = () => undefined;
+/**
+ * The client has no synchronous job source, so an `after` upstream ref is pre-fetched from the daemon
+ * (which resolves id-or-alias) and served to the sync `resolveJob` hook. Non-after inputs need no lookup.
+ */
+async function fetchAfterUpstream(client: CrontickClient, ref: string): Promise<Job | undefined> {
+  try {
+    return await client.getJob(ref);
+  } catch (err) {
+    if (err instanceof CrontickError && (err.code === 'JOB_NOT_FOUND' || err.code === 'NOT_FOUND')) return undefined;
+    throw err;
+  }
+}
+
+async function afterUpstreamLookup(client: CrontickClient, schedule: unknown): Promise<ResolveJob> {
+  const ref = (schedule as { kind?: unknown; jobId?: unknown } | undefined);
+  if (ref?.kind !== 'after' || typeof ref.jobId !== 'string') return () => undefined;
+  const wanted = ref.jobId;
+  const upstream = await fetchAfterUpstream(client, wanted);
+  return (idOrAlias) => (idOrAlias === wanted ? upstream : undefined);
+}
 
 export interface CreateJobOptions extends NormalizeJobInputOptions {
   force?: boolean;
@@ -349,12 +367,19 @@ export class CrontickClient {
 
   async createJob(input: Job | JobCreateInput, options: CreateJobOptions = {}): Promise<Job> {
     const { force, ...prepareInputOptions } = options;
-    const job = prepareCreate(input, { ...this.normalizeOptions(prepareInputOptions), trustFolder: options.trustFolder, resolveJob: noLocalJobLookup });
+    const resolveJob = await afterUpstreamLookup(this, input.schedule);
+    const job = prepareCreate(input, { ...this.normalizeOptions(prepareInputOptions), trustFolder: options.trustFolder, resolveJob });
     return this.request<Job>('POST', force ? '/api/jobs?force=1' : '/api/jobs', job);
   }
 
   /** CLI convenience: builds a Job from raw CLI flags before delegating to createJob. Library-only. */
   async createJobFromCliOptions(input: JobCreateCliOptions): Promise<Job> {
+    // The builder returns a finished (GUID-validated) Job, so an `--after` alias is resolved to the upstream GUID first.
+    if (input.after !== undefined && !input.file) {
+      const upstream = await fetchAfterUpstream(this, input.after);
+      if (!upstream) throw new CrontickError('AFTER_UPSTREAM_NOT_FOUND', `Upstream job ${input.after} not found (id or alias)`);
+      input = { ...input, after: upstream.id };
+    }
     return this.createJob(
       buildJobFromCreateOptions(input, this.normalizeOptions({ cwd: this.options.cwd ?? process.cwd() })),
       { force: input.force, trustFolder: input.trustFolder },
@@ -377,7 +402,8 @@ export class CrontickClient {
       throw new CrontickError('INVALID_IN_FLIGHT_CHOICE', `inFlight must be one of: ${IN_FLIGHT_CHOICES.join(', ')}`, { inFlight });
     }
     const existing = await this.getJob(id);
-    const normalized = prepareUpdate(existing, patch, { ...this.normalizeOptions(normalizeInputOptions), trustFolder, resolveJob: noLocalJobLookup });
+    const resolveJob = await afterUpstreamLookup(this, patch.schedule);
+    const normalized = prepareUpdate(existing, patch, { ...this.normalizeOptions(normalizeInputOptions), trustFolder, resolveJob });
     // The daemon PUT shallow-merges the body onto the stored job, so an absent
     // `description` would be kept; send an explicit null to remove it.
     const body = patch.description === null ? { ...normalized, description: null } : normalized;
@@ -386,7 +412,10 @@ export class CrontickClient {
     return this.request<Job>('PUT', `/api/jobs/${encodeURIComponent(id)}${query}`, body, { noTimeout: inFlight === 'wait' });
   }
 
-  /** `id` accepts either the job's GUID id or its alias. */
+  /**
+   * `id` accepts either the job's GUID id or its alias. A job with `after` dependents is refused
+   * (JOB_HAS_DEPENDENTS) unless `force: true`, which deletes it and disables the dependents.
+   */
   async deleteJob(id?: string, options: { all?: boolean; force?: boolean } = {}): Promise<{ ok: true; canceledRun: boolean; deletedRuns: number } | { ok: true; deleted: number }> {
     if (options.all) {
       if (!options.force) throw new CrontickError('VALIDATION_ERROR', 'Deleting all jobs requires force:true');
@@ -395,7 +424,7 @@ export class CrontickClient {
       return this.request<{ ok: true; deleted: number }>('DELETE', '/api/jobs?force=1');
     }
     if (!id) throw new CrontickError('VALIDATION_ERROR', 'Provide a job id or alias, or set all:true (with force:true) to delete every job');
-    return this.request<{ ok: true; canceledRun: boolean; deletedRuns: number }>('DELETE', `/api/jobs/${encodeURIComponent(id)}`);
+    return this.request<{ ok: true; canceledRun: boolean; deletedRuns: number }>('DELETE', `/api/jobs/${encodeURIComponent(id)}${options.force ? '?force=1' : ''}`);
   }
 
   /** `id` accepts either the job's GUID id or its alias. */

@@ -226,6 +226,8 @@ function commonJobOptions(command: Command): Command {
     .option(`${scheduleFlag('--cron').flag} ${scheduleFlag('--cron').arg}`, scheduleFlag('--cron').description)
     .option(`${scheduleFlag('--every').flag} ${scheduleFlag('--every').arg}`, scheduleFlag('--every').description, parseEveryInterval)
     .option(`${scheduleFlag('--at').flag} ${scheduleFlag('--at').arg}`, scheduleFlag('--at').description)
+    .option(`${scheduleFlag('--after').flag} ${scheduleFlag('--after').arg}`, scheduleFlag('--after').description)
+    .option('--after-status <status>', 'With --after: which upstream outcome triggers this job: success|failure|any (default: success)')
     .option('--dir <path>', 'Directory the job runs in (default: current directory)')
     .option('--trust-folder', 'Trust the working directory in Claude without asking (when it is not trusted yet)')
     .option('--runner <runner>', 'Configured prompt engine name (default: config defaultEngine)')
@@ -255,6 +257,8 @@ function collectJobOptions(engineArgs: string[], passthroughArgs: string[], cliA
     cron: stringOption(opts.cron),
     every: numberOption(opts.every),
     at: stringOption(opts.at),
+    after: stringOption(opts.after),
+    afterStatus: stringOption(opts.afterStatus),
     cwd: stringOption(opts.dir),
     trustFolder: booleanOption(opts.trustFolder),
     prompt: stringOption(opts.prompt),
@@ -280,6 +284,8 @@ function collectPatchOptions(engineArgs: string[], passthroughArgs: string[], cl
     cron: stringOption(opts.cron),
     every: numberOption(opts.every),
     at: stringOption(opts.at),
+    after: stringOption(opts.after),
+    afterStatus: stringOption(opts.afterStatus),
     cwd: stringOption(opts.dir),
     trustFolder: booleanOption(opts.trustFolder),
     prompt: stringOption(opts.prompt),
@@ -507,7 +513,7 @@ jobs.command('schedule <id|alias>')
 
 jobs.command('delete <id|alias>')
   .description('Delete a job (id or alias), or delete all jobs with the reserved `all` keyword and --force')
-  .option('--force', 'Confirm a destructive delete when deleting all jobs')
+  .option('--force', 'Confirm deleting all jobs, or delete a job even though other jobs run after it (they are disabled)')
   .action(async (idOrAlias: string, opts) => {
     try {
       if (idOrAlias === 'all') {
@@ -516,7 +522,7 @@ jobs.command('delete <id|alias>')
         print(await client().deleteJob(undefined, { all: true, force: booleanOption(opts.force) }));
         return;
       }
-      print(await client().deleteJob(idOrAlias));
+      print(await client().deleteJob(idOrAlias, { force: booleanOption(opts.force) }));
     } catch (err) { handleError(err); }
   });
 

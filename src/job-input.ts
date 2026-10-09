@@ -19,7 +19,10 @@ import {
   JobBaseSchema,
   JobSchema,
   PromptActionBaseSchema,
-  ScheduleSchema,
+  AfterScheduleSchema,
+  CronScheduleSchema,
+  IntervalScheduleSchema,
+  OneShotScheduleSchema,
   type Job,
   type JobInput,
 } from './schemas/job.js';
@@ -74,8 +77,20 @@ const RetryPatchSchema = z.object({
   backoffSec: z.number().positive().optional(),
 });
 
+/**
+ * Schedule as accepted from callers: identical to `ScheduleSchema` except an `after` upstream may be a
+ * job id OR alias. It is resolved to the upstream GUID (job-prepare) before the strict `JobSchema` check.
+ */
+const ScheduleInputSchema = z.discriminatedUnion('kind', [
+  CronScheduleSchema,
+  IntervalScheduleSchema,
+  OneShotScheduleSchema,
+  AfterScheduleSchema.extend({ jobId: z.string().min(1).describe('Upstream job id (GUID) or alias; stored as the GUID') }),
+]);
+
 /** Create inputs must leave missing policy fields absent until config defaults are applied. */
 export const JobCreateInputSchema = JobBaseSchema.omit({ action: true }).extend({
+  schedule: ScheduleInputSchema,
   action: ActionInputSchema,
   overlap: z.enum(['skip', 'queue', 'cancel-previous']).optional(),
   retry: RetryPatchSchema.optional(),
@@ -100,7 +115,7 @@ export const JobPatchInputSchema = z.object({
   /** `null` removes the description. */
   description: z.string().nullable().optional(),
   enabled: z.boolean().optional(),
-  schedule: ScheduleSchema.optional(),
+  schedule: ScheduleInputSchema.optional(),
   action: ActionPatchInputSchema.optional(),
   overlap: z.enum(['skip', 'queue', 'cancel-previous']).optional(),
   retry: RetryPatchSchema.optional(),
@@ -141,6 +156,10 @@ export interface JobCreateCliOptions {
   cron?: string;
   every?: number;
   at?: string;
+  /** Upstream job id or alias (`--after`); the job runs when that job finishes. */
+  after?: string;
+  /** Which upstream outcome triggers the run (`--after-status`): success (default), failure, or any. */
+  afterStatus?: string;
   /** Working directory the engine runs in (CLI `--dir`); stored as `action.cwd`. Defaults to the invoking directory on create. */
   cwd?: string;
   /** Trust the job's working directory in Claude without asking (`--trust-folder`). */
@@ -646,14 +665,26 @@ function formatCliFlagList(flags: readonly string[]): string {
 
 function buildSchedule(input: JobCreateCliOptions): JobCreateInput['schedule'] {
   const schedule = maybeBuildSchedule(input);
-  if (!schedule) throw new CrontickError('MISSING_ARG', 'Provide exactly one schedule: --cron <expr>, --every <interval> (seconds, or a s/m/h/d suffix such as 30m), or --at <datetime> (one-shot ISO-8601 time, local timezone unless an offset is given)');
+  if (!schedule) throw new CrontickError('MISSING_ARG', 'Provide exactly one schedule: --cron <expr>, --every <interval> (seconds, or a s/m/h/d suffix such as 30m), --at <datetime> (one-shot ISO-8601 time, local timezone unless an offset is given), or --after <id|alias> (run when another job finishes)');
   return schedule;
 }
 
+const AFTER_STATUSES: readonly string[] = ['success', 'failure', 'any'];
+
 function maybeBuildSchedule(input: JobPatchCliOptions): JobCreateInput['schedule'] | undefined {
-  const count = [input.cron, input.every, input.at].filter((value) => value !== undefined).length;
+  const count = [input.cron, input.every, input.at, input.after].filter((value) => value !== undefined).length;
+  if (input.afterStatus !== undefined && input.after === undefined) {
+    throw new CrontickError('VALIDATION_ERROR', '--after-status requires --after <id|alias>');
+  }
   if (count === 0) return undefined;
-  if (count > 1) throw new CrontickError('VALIDATION_ERROR', 'Provide only one schedule: --cron, --every, or --at (they cannot be combined)');
+  if (count > 1) throw new CrontickError('VALIDATION_ERROR', 'Provide only one schedule: --cron, --every, --at, or --after (they cannot be combined)');
+  if (input.after !== undefined) {
+    const status = input.afterStatus ?? 'success';
+    if (!AFTER_STATUSES.includes(status)) {
+      throw new CrontickError('VALIDATION_ERROR', `--after-status must be one of: success, failure, or any (got "${status}")`);
+    }
+    return { kind: 'after', jobId: input.after, status: status as 'success' | 'failure' | 'any' };
+  }
   if (input.cron !== undefined) return { kind: 'cron', cron: input.cron };
   if (input.every !== undefined) return { kind: 'interval', everySec: input.every };
   if (input.at !== undefined) return { kind: 'one-shot', runAt: input.at };
@@ -724,6 +755,8 @@ function assertFileModeExclusive(opts: JobPatchCliOptions, rawArgs: string[]): v
     || opts.cron !== undefined
     || opts.every !== undefined
     || opts.at !== undefined
+    || opts.after !== undefined
+    || opts.afterStatus !== undefined
     || opts.cwd !== undefined
     || opts.prompt !== undefined
     || opts.promptFile !== undefined

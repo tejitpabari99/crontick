@@ -153,7 +153,7 @@ export function createMcpServer(): McpServer {
     'crontick_job_create',
     {
       description:
-        'Create and schedule a new cron job. This executes an AI prompt on the user\'s machine on a recurring or future schedule that persists and outlives this session -- confirm the job definition (schedule and action) with the user before calling. Provide the job definition: schedule (kind: cron|interval|one-shot) and action (kind: prompt) are required; id (GUID) is generated automatically and should be omitted; alias is the job\'s optional, unique, kebab-case identifier (set via CLI `--alias`) -- when omitted, one is auto-generated. Exactly one schedule is allowed per job: cron (expression), interval (everySec, in seconds), or one-shot (runAt, ISO-8601, interpreted in the machine local timezone unless an offset such as Z or +02:00 is given). Prompt actions use prompt, optional configured engine name, args, sessionId, reuseSession, or cwd. sessionId resumes an existing session (including one created outside crontick) on every run and implies reuse; reuseSession instead starts a new session on the first run and resumes it afterwards. Both require overlap: skip. Always pass action.cwd as the absolute path of the project folder the job should run in: MCP hosts often start this server in an unrelated directory (such as /), which would otherwise become the job\'s working directory. After creating, use crontick_job_schedule to preview the job\'s upcoming fire times.',
+        'Create and schedule a new cron job. This executes an AI prompt on the user\'s machine on a recurring or future schedule that persists and outlives this session -- confirm the job definition (schedule and action) with the user before calling. Provide the job definition: schedule (kind: cron|interval|one-shot|after) and action (kind: prompt) are required; id (GUID) is generated automatically and should be omitted; alias is the job\'s optional, unique, kebab-case identifier (set via CLI `--alias`) -- when omitted, one is auto-generated. Exactly one schedule is allowed per job: cron (expression), interval (everySec, in seconds), one-shot (runAt, ISO-8601, interpreted in the machine local timezone unless an offset such as Z or +02:00 is given), or after (jobId = upstream job id or alias, status = success|failure|any: runs when the upstream job finishes with that outcome; the alias is stored as the upstream GUID). Prompt actions use prompt, optional configured engine name, args, sessionId, reuseSession, or cwd. sessionId resumes an existing session (including one created outside crontick) on every run and implies reuse; reuseSession instead starts a new session on the first run and resumes it afterwards. Both require overlap: skip. Always pass action.cwd as the absolute path of the project folder the job should run in: MCP hosts often start this server in an unrelated directory (such as /), which would otherwise become the job\'s working directory. After creating, use crontick_job_schedule to preview the job\'s upcoming fire times.',
       inputSchema: withVerbose({
         ...JobCreateInputSchema.shape,
         force: z.boolean().optional(),
@@ -192,7 +192,7 @@ export function createMcpServer(): McpServer {
     'crontick_job_update',
     {
       description:
-        'Update an existing job (id or alias). Provide the job identifier and any fields to change (partial update is merged with existing definition); the alias can be changed here (must remain unique). Action is always a prompt action.',
+        'Update an existing job (id or alias). Provide the job identifier and any fields to change (partial update is merged with existing definition; a schedule of kind after takes jobId = upstream id or alias and status = success|failure|any); the alias can be changed here (must remain unique). Action is always a prompt action.',
       inputSchema: withVerbose({
         id: z.string().describe('Job id (GUID) or alias'),
         ...JobPatchInputSchema.shape,
@@ -211,11 +211,11 @@ export function createMcpServer(): McpServer {
     'crontick_job_delete',
     {
       description:
-        'Permanently delete one job definition by id/alias, or delete every job with all:true plus force:true. The job\'s run history and logs are deleted with it (Claude\'s own session transcripts are not touched). This may cancel an in-flight run and cannot be undone -- confirm with the user first.',
+        'Permanently delete one job definition by id/alias (refused with JOB_HAS_DEPENDENTS when other jobs are triggered after it, unless force:true), or delete every job with all:true plus force:true. The job\'s run history and logs are deleted with it (Claude\'s own session transcripts are not touched). This may cancel an in-flight run and cannot be undone -- confirm with the user first.',
       inputSchema: withVerbose({
         id: z.string().describe('Job id (GUID) or alias to delete individually').optional(),
         all: z.boolean().optional().describe('Delete every job. Requires force:true.'),
-        force: z.boolean().optional().describe('Confirm a bulk delete when all:true.'),
+        force: z.boolean().optional().describe('With all:true: confirm a bulk delete. With id: delete the job even though other jobs run after it (they are disabled and keep a dangling upstream ref).'),
       }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
@@ -225,7 +225,7 @@ export function createMcpServer(): McpServer {
         return toolWrap(args, (client) => client.deleteJob(undefined, { all: true, force: args.force }));
       }
       if (!args.id) return errResult(new Error('Provide id, or set all:true with force:true to delete every job'));
-      return toolWrap(args, (client) => client.deleteJob(args.id));
+      return toolWrap(args, (client) => client.deleteJob(args.id, { force: args.force }));
     },
   );
 

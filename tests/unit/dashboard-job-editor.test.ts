@@ -42,7 +42,7 @@ describe('parity with commonJobOptions', () => {
     const block = /function commonJobOptions[\s\S]*?\n}\n/.exec(cliSrc)![0];
     const flags = [...block.matchAll(/\.option\(\s*['`](?:-\w, )?(--[\w-]+)/g)].map((m) => m[1]);
     // scheduleFlag() options use template strings; add them by their literal names.
-    for (const f of ['--cron', '--every', '--at']) if (block.includes(`scheduleFlag('${f}')`)) flags.push(f);
+    for (const f of ['--cron', '--every', '--at', '--after']) if (block.includes(`scheduleFlag('${f}')`)) flags.push(f);
     expect(flags.length).toBeGreaterThan(10);
     for (const f of flags) expect(Object.keys(p.EDITOR_CLI_PARITY), `unmapped CLI flag ${f}`).toContain(f);
   });

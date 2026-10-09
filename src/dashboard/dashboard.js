@@ -1118,6 +1118,8 @@ const EDITOR_CLI_PARITY = {
   '--cron': 'schedule', // schedule controls live behind editorScheduleHook (Task 6)
   '--every': 'schedule',
   '--at': 'schedule',
+  '--after': 'schedule', // dashboard after-schedule UI lands in Task 7
+  '--after-status': 'schedule',
   '--dir': 'cwd',
   '--trust-folder': 'trustFolder', // revealed after TRUST_REQUIRED (Task 7)
   '--runner': 'engine',

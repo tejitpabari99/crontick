@@ -26,7 +26,7 @@ export const SURFACE_CAPABILITIES = [
   { capability: 'update-job', clientMethod: 'updateJob', cliCommand: ['jobs', 'update'], mcpTool: 'crontick_job_update', optionNames: ['trustFolder', 'stopRunning', 'waitRunning'] },
   { capability: 'enable-job', clientMethod: 'enableJob', cliCommand: ['jobs', 'update'], mcpTool: 'crontick_job_enable', optionNames: ['enable'] },
   { capability: 'disable-job', clientMethod: 'disableJob', cliCommand: ['jobs', 'update'], mcpTool: 'crontick_job_disable', optionNames: ['disable'] },
-  { capability: 'delete-job', clientMethod: 'deleteJob', cliCommand: ['jobs', 'delete'], mcpTool: 'crontick_job_delete' },
+  { capability: 'delete-job', clientMethod: 'deleteJob', cliCommand: ['jobs', 'delete'], mcpTool: 'crontick_job_delete', optionNames: ['force'] },
   { capability: 'run-now', clientMethod: 'runNow', cliCommand: ['jobs', 'run-now'], mcpTool: 'crontick_job_run_now' },
   { capability: 'job-schedule', clientMethod: 'jobSchedule', cliCommand: ['jobs', 'schedule'], mcpTool: 'crontick_job_schedule' },
   { capability: 'cancel-run', clientMethod: 'cancelRun', cliCommand: ['runs', 'cancel'], mcpTool: 'crontick_job_cancel_run' },
