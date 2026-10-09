@@ -3,6 +3,8 @@
  * and a sink-based architecture: each surface provides its own sink (file, stderr, array).
  * All log events are sanitized before emission to strip known secret patterns.
  */
+import { CONFIG_REDACTED_MARKER } from './constants/config.js';
+
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
 
 export interface LogEvent {
@@ -73,7 +75,7 @@ type SensitiveAssignmentMatch = {
   quote: SecretAssignmentQuote;
 };
 
-const REDACTED = '[REDACTED]';
+const REDACTED = CONFIG_REDACTED_MARKER;
 const PRIVATE_KEY_BLOCK_PATTERN = /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----/g;
 const PRIVATE_KEY_BEGIN_MARKER_PATTERN = /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----/g;
 const PRIVATE_KEY_END_MARKER_PATTERN = /-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----/g;

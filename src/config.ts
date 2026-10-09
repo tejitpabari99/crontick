@@ -6,11 +6,24 @@
  * Precedence for engine resolution: file config > BUILT_IN_CONFIG.
  * Writes use atomic rename (write-to-tmp, rename) for crash safety.
  */
-import { existsSync, linkSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
 import { CrontickError } from './errors.js';
-import { configPath as defaultConfigPath, ensureDirs } from './paths.js';
+import { configPath as defaultConfigPath, ensureDirs, pidFilePath } from './paths.js';
+import { isProcessAlive } from './process-liveness.js';
+import { sleep } from './utils/sleep.js';
+import {
+  CONFIG_EDIT_NOTICE,
+  CONFIG_LOCK_RETRY_MS,
+  CONFIG_LOCK_STALE_MS,
+  CONFIG_LOCK_TIMEOUT_MS,
+  CONFIG_REDACTED_MARKER,
+  CONFIG_RENAME_RETRIES,
+  CONFIG_RENAME_RETRY_MS,
+  CONFIG_REVISION_ABSENT,
+} from './constants/config.js';
 import { readJsonFile } from './json-file.js';
 import { DEFAULT_MAX_CONSECUTIVE_FAILURES } from './constants/daemon.js';
 import {
@@ -89,6 +102,11 @@ export const BUILT_IN_CONFIG: CrontickConfig = Object.freeze({
 
 export function redactConfigForRead(config: CrontickConfig): CrontickConfig {
   return redactValue(config) as CrontickConfig;
+}
+
+/** Read-side redaction for the raw stored (sparse) config shape. */
+export function redactStoredConfigForRead(stored: PersistedConfig): PersistedConfig {
+  return redactValue(stored) as PersistedConfig;
 }
 
 /** Resolves config file path: explicit `options.path` > `<dataDir>/config.json`. */
@@ -368,7 +386,7 @@ function readConfigJson(filePath: string): unknown {
     if (err instanceof CrontickError && err.code === 'CONFIG_READ_ERROR') {
       throw new CrontickError(
         err.code,
-        `${err.message}. Fix the JSON syntax or run "crontick config init --force" to recreate the default config.`,
+        `${err.message}. Fix the JSON syntax by editing the file by hand.`,
         err.details,
       );
     }
@@ -383,7 +401,7 @@ function configValidationError(filePath: string, error: z.ZodError): CrontickErr
   const expected = first?.message ?? 'valid crontick config';
   return new CrontickError(
     'CONFIG_VALIDATION_ERROR',
-    `Invalid config file ${filePath} at ${key}: ${expected}. Edit ${filePath} so ${key} matches the documented config schema, or run "crontick config init --force" to recreate defaults.`,
+    `Invalid config file ${filePath} at ${key}: ${expected}. Edit ${filePath} so ${key} matches the documented config schema.`,
     { path: filePath, key, issues: error.issues },
   );
 }
@@ -530,4 +548,224 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+// ---------------------------------------------------------------------------
+// Config write core: the single mutator shared by every surface.
+// ---------------------------------------------------------------------------
+
+export type ConfigOp =
+  | { op: 'set'; key: string; value: unknown }
+  | { op: 'unset'; key: string };
+
+export interface ApplyOpsOptions extends ConfigOptions {
+  /** Reject with CONFIG_CONFLICT unless the file's current revision equals this. */
+  ifRevision?: string;
+  /** Injectable daemon-liveness probe (default: live pid in daemon.pid). The API route passes `() => true`. */
+  daemonRunning?: () => boolean;
+  /** Lock acquisition timeout in ms (default 2000). */
+  lockTimeoutMs?: number;
+  /** Age in ms after which an existing lock is broken (default 10000). */
+  lockStaleMs?: number;
+}
+
+export interface ApplyOpsResult {
+  path: string;
+  /** Effective config, redacted. */
+  config: CrontickConfig;
+  /** Raw stored keys, redacted. */
+  stored: PersistedConfig;
+  /** Op keys whose stored value actually changed. */
+  changed: string[];
+  revision: string;
+  notice: string;
+}
+
+/** sha256 of the config file bytes, or `absent` when there is no file. */
+export function getConfigRevision(options: ConfigOptions = {}): string {
+  const filePath = configFilePath(options);
+  if (!existsSync(filePath)) return CONFIG_REVISION_ABSENT;
+  return createHash('sha256').update(readFileSync(filePath)).digest('hex');
+}
+
+/** True when `daemon.pid` names a live process. */
+export function isDaemonProcessRunning(env?: NodeJS.ProcessEnv): boolean {
+  try {
+    const pid = Number.parseInt(readFileSync(pidFilePath(env), 'utf-8').trim(), 10);
+    return Number.isInteger(pid) && pid > 0 && isProcessAlive(pid);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Applies set/unset ops in one locked, validated, atomic write:
+ * lock -> read raw -> revision check -> daemon-key guard -> unredact -> apply on clone ->
+ * validate effective config -> tmp+rename -> unlock. Nothing is written on any error.
+ */
+export async function applyOps(ops: ConfigOp[], options: ApplyOpsOptions = {}): Promise<ApplyOpsResult> {
+  const filePath = configFilePath(options);
+  // Fail fast on malformed ops before touching the lock.
+  const parsedOps = ops.map((op) => ({ op, keyPath: parseKeyPath(op.key) }));
+  const release = await acquireConfigLock(filePath, options);
+  try {
+    const exists = existsSync(filePath);
+    const currentRevision = getConfigRevision(options);
+    if (options.ifRevision !== undefined && options.ifRevision !== currentRevision) {
+      throw new CrontickError(
+        'CONFIG_CONFLICT',
+        `Config file ${filePath} changed since it was read (revision ${currentRevision}). Reload it and retry.`,
+        { path: filePath, revision: currentRevision, ifRevision: options.ifRevision },
+      );
+    }
+    // Refuse on an already-invalid file (unparsable, schema-invalid, or effective-invalid).
+    const stored = exists ? readStoredStrict(filePath) : ({} as PersistedConfig);
+    parseConfig(stored, filePath);
+
+    const daemonUp = parsedOps.some(({ keyPath }) => keyPath[0] === 'daemon')
+      && (options.daemonRunning ?? (() => isDaemonProcessRunning(options.env)))();
+    const updated = cloneRaw(stored);
+    const changed: string[] = [];
+    for (const { op, keyPath } of parsedOps) {
+      if (keyPath[0] === 'daemon' && daemonUp) {
+        throw new CrontickError(
+          'CONFIG_KEY_READ_ONLY',
+          `${op.key} can only be changed while the daemon is stopped: run "crontick daemon stop" first`,
+          { key: op.key },
+        );
+      }
+      const before = JSON.stringify(peekPath(updated, keyPath));
+      if (op.op === 'set') {
+        const value = unredact(op.value, peekPath(updated, keyPath), keyPath[keyPath.length - 1], op.key);
+        writePath(updated as unknown as Record<string, unknown>, keyPath, value);
+      } else {
+        removePath(updated as unknown as Record<string, unknown>, keyPath);
+      }
+      if (before !== JSON.stringify(peekPath(updated, keyPath)) && !changed.includes(op.key)) changed.push(op.key);
+    }
+
+    const persisted = PersistedConfigSchema.safeParse(updated);
+    if (!persisted.success) throw configValidationError(filePath, persisted.error);
+    const effective = parseConfig(updated, filePath);
+
+    const content = `${JSON.stringify(updated, null, 2)}\n`;
+    await writeConfigAtomic(filePath, content, options.env);
+    return {
+      path: filePath,
+      config: redactConfigForRead(effective),
+      stored: redactStoredConfigForRead(updated),
+      changed,
+      revision: createHash('sha256').update(content).digest('hex'),
+      notice: CONFIG_EDIT_NOTICE,
+    };
+  } finally {
+    release();
+  }
+}
+
+function readStoredStrict(filePath: string): PersistedConfig {
+  const parsed = PersistedConfigSchema.safeParse(readConfigJson(filePath));
+  if (!parsed.success) throw configValidationError(filePath, parsed.error);
+  return parsed.data;
+}
+
+function peekPath(target: unknown, keyPath: string[]): unknown {
+  let current = target;
+  for (const key of keyPath) {
+    if (!isRecord(current) || !Object.prototype.hasOwnProperty.call(current, key)) return undefined;
+    current = current[key];
+  }
+  return current;
+}
+
+/**
+ * Restores stored secrets from echoed redacted values. A submitted string equal to the
+ * redacted form of the stored value at the same path/index is replaced by the stored value;
+ * any other string containing the redaction marker is rejected.
+ */
+function unredact(submitted: unknown, stored: unknown, keyHint: string | undefined, fullKey: string): unknown {
+  if (typeof submitted === 'string') {
+    if (typeof stored === 'string') {
+      if (submitted === stored) return stored;
+      if (submitted === redactValue(stored, keyHint)) return stored;
+    }
+    if (submitted.includes(CONFIG_REDACTED_MARKER)) {
+      throw new CrontickError(
+        'CONFIG_REDACTED_VALUE',
+        `Value for ${fullKey} contains the redaction marker "${CONFIG_REDACTED_MARKER}" but does not match a stored secret. Submit the real value instead.`,
+        { key: fullKey },
+      );
+    }
+    return submitted;
+  }
+  if (Array.isArray(submitted)) {
+    const storedArr = Array.isArray(stored) ? stored : [];
+    return submitted.map((item, i) => unredact(item, storedArr[i], undefined, fullKey));
+  }
+  if (isRecord(submitted)) {
+    const storedRec = isRecord(stored) ? stored : {};
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(submitted)) out[k] = unredact(v, storedRec[k], k, fullKey);
+    return out;
+  }
+  return submitted;
+}
+
+/** Exclusive-create lock file with bounded retry; breaks locks older than `lockStaleMs`. */
+async function acquireConfigLock(filePath: string, options: ApplyOpsOptions): Promise<() => void> {
+  ensureDirs(options.env);
+  mkdirSync(dirname(filePath), { recursive: true });
+  const lockPath = `${filePath}.lock`;
+  const timeoutMs = options.lockTimeoutMs ?? CONFIG_LOCK_TIMEOUT_MS;
+  const staleMs = options.lockStaleMs ?? CONFIG_LOCK_STALE_MS;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const fd = openSync(lockPath, 'wx', 0o600);
+      try { writeSync(fd, String(process.pid)); } finally { closeSync(fd); }
+      return () => { try { unlinkSync(lockPath); } catch { /* already gone */ } };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    }
+    try {
+      if (Date.now() - statSync(lockPath).mtimeMs > staleMs) {
+        try { unlinkSync(lockPath); } catch { /* raced with another breaker */ }
+        continue;
+      }
+    } catch { continue; /* lock vanished: retry immediately */ }
+    if (Date.now() >= deadline) {
+      throw new CrontickError(
+        'CONFIG_LOCKED',
+        `Config file ${filePath} is locked by another writer (${lockPath}). Retry shortly; if no other crontick process is writing, delete the lock file.`,
+        { path: filePath, lock: lockPath },
+      );
+    }
+    await sleep(CONFIG_LOCK_RETRY_MS);
+  }
+}
+
+/** tmp + rename, preserving an existing file's mode (new files are 0600) and retrying EPERM/EBUSY. */
+async function writeConfigAtomic(filePath: string, content: string, env?: NodeJS.ProcessEnv): Promise<void> {
+  ensureDirs(env);
+  mkdirSync(dirname(filePath), { recursive: true });
+  let mode = 0o600;
+  try { mode = statSync(filePath).mode & 0o777; } catch { /* new file */ }
+  const tmpPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(tmpPath, content, { encoding: 'utf-8', mode });
+    try { chmodSync(tmpPath, mode); } catch { /* no-op where unsupported */ }
+    for (let attempt = 0; ; attempt++) {
+      try {
+        renameSync(tmpPath, filePath);
+        return;
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if ((code !== 'EPERM' && code !== 'EBUSY') || attempt >= CONFIG_RENAME_RETRIES) throw err;
+        await sleep(CONFIG_RENAME_RETRY_MS * (attempt + 1));
+      }
+    }
+  } catch (err) {
+    try { unlinkSync(tmpPath); } catch { /* best-effort cleanup */ }
+    throw err;
+  }
 }
