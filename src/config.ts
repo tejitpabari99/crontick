@@ -82,6 +82,7 @@ export const BUILT_IN_CONFIG: CrontickConfig = Object.freeze({
     maxLogFiles: DEFAULT_MAX_LOG_FILES,
   }),
   logging: Object.freeze({ fileEnabled: true }),
+  daemon: Object.freeze({}),
   maxConsecutiveFailures: DEFAULT_MAX_CONSECUTIVE_FAILURES,
   defaults: Object.freeze({ overlap: 'skip', retry: Object.freeze({ max: 0, backoffSec: 30 }), timeoutSec: undefined }),
 });

@@ -81,6 +81,17 @@ export const JobDefaultsConfigSchema = z.object({
 }).strict();
 
 /**
+ * Daemon settings. `port` is optional: absent means "unset" (use the default
+ * port with fallback). 0 is valid and means OS-assigned. Read only at daemon
+ * startup.
+ */
+export const DaemonPortSchema = z.number().int().min(0).max(65535);
+
+export const DaemonConfigSchema = z.object({
+  port: DaemonPortSchema.optional(),
+}).strict();
+
+/**
  * Top-level config schema. File config is deep-merged over BUILT_IN_CONFIG
  * (defined in src/config.ts), then validated here. The refinement ensures
  * `defaultEngine` actually exists in `engines`.
@@ -96,6 +107,7 @@ export const ConfigSchema = z.object({
     maxLogFiles: DEFAULT_MAX_LOG_FILES,
   }),
   logging: LoggingConfigSchema.default({ fileEnabled: true }),
+  daemon: DaemonConfigSchema.default({}),
   maxConsecutiveFailures: z.number().int().positive().default(DEFAULT_MAX_CONSECUTIVE_FAILURES),
   defaults: JobDefaultsConfigSchema.default({ overlap: 'skip', retry: { max: 0, backoffSec: 30 } }),
 }).strict().superRefine((config, ctx) => {
@@ -118,6 +130,7 @@ export const ConfigSchema = z.object({
 export type EngineConfig = z.infer<typeof EngineConfigSchema>;
 export type CrontickConfig = z.infer<typeof ConfigSchema>;
 export type RetentionConfig = z.infer<typeof RetentionConfigSchema>;
+export type DaemonConfig = z.infer<typeof DaemonConfigSchema>;
 export type LoggingConfig = z.infer<typeof LoggingConfigSchema>;
 export type JobDefaultsConfig = z.infer<typeof JobDefaultsConfigSchema>;
 
@@ -164,11 +177,16 @@ export const PersistedJobDefaultsConfigSchema = z.object({
   }).strict().optional(),
 }).strict();
 
+export const PersistedDaemonConfigSchema = z.object({
+  port: DaemonPortSchema.optional(),
+}).strict();
+
 export const PersistedConfigSchema = z.object({
   defaultEngine: EngineNameSchema.optional(),
   engines: z.record(EngineNameSchema, PersistedEngineConfigSchema).optional(),
   retention: PersistedRetentionConfigSchema.optional(),
   logging: PersistedLoggingConfigSchema.optional(),
+  daemon: PersistedDaemonConfigSchema.optional(),
   maxConsecutiveFailures: z.number().int().positive().optional(),
   defaults: PersistedJobDefaultsConfigSchema.optional(),
 }).strict();
