@@ -136,4 +136,24 @@ describe('startup catch-up', () => {
     expect(store.listRuns({ jobId: A }).filter((r) => r.status === 'missed')).toHaveLength(3);
     expect(summary.catchUpRuns).toBe(0);
   });
+
+  it('keeps the old watermark for a pending catch-up until dispatch resolves it', () => {
+    mk(A, { catchUp: true });
+    store.recordTick(A, now - 3 * MIN - 1);
+    const { pending } = scan();
+    expect(pending).toHaveLength(1);
+    expect(store.getScheduleState(A)?.lastTickAt).toBe(now - 3 * MIN - 1);
+  });
+
+  it('records fires as missed and advances the watermark when dispatch throws', () => {
+    mk(A, { catchUp: true });
+    store.recordTick(A, now - 3 * MIN - 1);
+    const { summary, pending } = scan();
+    const broken = Object.create(store) as Store;
+    broken.insertRun = () => { throw new Error('store boom'); };
+    dispatchCatchUps({ store: broken, runner: { run: vi.fn() } as never, logger }, pending, summary, now);
+    expect(store.listRuns({ jobId: A }).filter((r) => r.status === 'missed')).toHaveLength(3);
+    expect(store.getScheduleState(A)?.lastTickAt).toBe(now);
+    expect(summary.catchUpRuns).toBe(0);
+  });
 });

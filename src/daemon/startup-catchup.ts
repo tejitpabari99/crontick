@@ -70,6 +70,9 @@ export function scanMissedFires(deps: ScanDeps): { summary: MissedFireSummary; p
       store.recordTick(job.id, nowMs);
       continue;
     }
+    // A pending catch-up keeps its old watermark until dispatchCatchUps resolves it, so a
+    // crash or dispatch failure between scan and dispatch cannot silently drop the fires.
+    let deferTick = false;
     try {
       const result = scheduler.enumerateFiresBetween(job.schedule, state.lastTickAt, nowMs, { cap });
       if (result.fires.length > 0) {
@@ -83,6 +86,7 @@ export function scanMissedFires(deps: ScanDeps): { summary: MissedFireSummary; p
         const target = result.capped
           ? scheduler.latestFireBefore(job.schedule, state.lastTickAt, nowMs) ?? last
           : last;
+        deferTick = true;
         pending.push({
           jobId: job.id,
           plannedAt: new Date(target),
@@ -106,7 +110,7 @@ export function scanMissedFires(deps: ScanDeps): { summary: MissedFireSummary; p
     } catch (err) {
       logger.error('Missed-fire computation failed for job; skipping', { jobId: job.id, error: String(err) });
     }
-    store.recordTick(job.id, nowMs);
+    if (!deferTick) store.recordTick(job.id, nowMs);
   }
   return { summary, pending };
 }
@@ -133,6 +137,7 @@ export function dispatchCatchUps(
         for (const at of p.superseded) store.recordMissedRun(p.jobId, at);
         store.recordMissedRun(p.jobId, p.plannedAt.getTime());
         summary.missedRunsRecorded += p.superseded.length + 1;
+        store.recordTick(p.jobId, nowMs);
         continue;
       }
       summary.catchUpRuns++;
@@ -145,7 +150,15 @@ export function dispatchCatchUps(
       }
       store.recordTick(p.jobId, nowMs);
     } catch (err) {
-      logger.error('Catch-up dispatch failed for job', { jobId: p.jobId, error: String(err) });
+      logger.error('Catch-up dispatch failed for job; recording its fires as missed', { jobId: p.jobId, error: String(err) });
+      try {
+        for (const at of p.superseded) store.recordMissedRun(p.jobId, at);
+        store.recordMissedRun(p.jobId, p.plannedAt.getTime());
+        summary.missedRunsRecorded += p.superseded.length + 1;
+        store.recordTick(p.jobId, nowMs);
+      } catch (err2) {
+        logger.error('Could not record missed fires after catch-up failure', { jobId: p.jobId, error: String(err2) });
+      }
     }
   }
 }

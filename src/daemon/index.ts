@@ -218,8 +218,9 @@ if (needsSqliteShim) {
     const scheduler = new Scheduler(logger);
 
     // ── L2: missed-fire report on startup ─────────────────────────────────────
-    // Report-only: never catch up or re-run a backlog (a 30s health check down
-    // for a month would otherwise replay ~86,400 times). For each enabled job
+    // Report-only by default: never re-run a backlog (a 30s health check down
+    // for a month would otherwise replay ~86,400 times); only opt-in `catchUp`
+    // jobs get ONE catch-up run, dispatched below. For each enabled job
     // with a prior watermark, enumerate fires missed between the watermark and
     // "now" (bounded by MISSED_FIRE_CAP_PER_JOB) and record them as terminal
     // 'missed' runs; jobs with no watermark yet (never observed live) are
@@ -232,7 +233,7 @@ if (needsSqliteShim) {
       store, scheduler, logger, nowMs, cap: MISSED_FIRE_CAP_PER_JOB,
     });
     if (missedFireSummary.missedRunsRecorded > 0) {
-      logger.warn('Recorded missed fires from downtime; these are report-only and were not re-run', missedFireSummary);
+      logger.warn('Recorded missed fires from downtime; these were not re-run (only catchUp jobs get a single catch-up run)', missedFireSummary);
     }
 
     const runner = new Runner(undefined, logger);

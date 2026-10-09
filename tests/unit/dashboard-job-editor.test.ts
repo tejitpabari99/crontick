@@ -141,6 +141,14 @@ describe('editorMissing', () => {
   });
 });
 
+describe('catch-up checkbox visibility', () => {
+  it('has a display:none rule for [hidden] so it beats .editor-check display:flex', () => {
+    expect(css).toMatch(/\.editor-catchup\[hidden\][^{]*\{\s*display:\s*none/);
+    expect(html + js).toContain('editor-catchup');
+    expect(js).toMatch(/label\.hidden = !supported/);
+  });
+});
+
 describe('editor markup + wiring', () => {
   it('"+" button sits before the gear; modal reuses .modal-backdrop', () => {
     expect(html).toMatch(/id="btn-new-job"[^>]*aria-label="New job"/);

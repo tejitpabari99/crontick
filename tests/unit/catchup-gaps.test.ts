@@ -3,7 +3,7 @@
  * timers (like trigger-dispatcher.test.ts); the pure startup math is fake-clock in
  * startup-catchup.test.ts (explicit `nowMs`).
  */
-import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -153,6 +153,29 @@ describe('catch-up with a real runner', () => {
     expect(pending.map((p) => p.jobId)).toEqual([past.id]);
     expect(pending[0].plannedAt.getTime()).toBe(NOW - MIN + 5_000);
     expect(pending[0].missed).toBe(10);
+  });
+
+  it('reload never catches up (behavioral): unscheduleAll + schedule of a catchUp job with missed fires emits no tick', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      const scheduler = new Scheduler(nullLogger);
+      const ticks: unknown[] = [];
+      scheduler.on('tick', (e) => ticks.push(e));
+      scheduler.on('paused-tick', (e) => ticks.push(e));
+      const j = job('0', { schedule: { kind: 'cron', cron: '* * * * *' } });
+      // Hours pass (daemon "down"/busy), then the exact reload sequence: unscheduleAll + schedule.
+      vi.setSystemTime(new Date('2026-01-01T05:00:30Z'));
+      scheduler.unscheduleAll();
+      scheduler.schedule(j);
+      vi.advanceTimersByTime(0);
+      expect(ticks).toHaveLength(0);
+      vi.advanceTimersByTime(60_000); // only the next real fire, never the backlog
+      expect(ticks).toHaveLength(1);
+      scheduler.unscheduleAll();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reload never catches up: the reload path does not reference the startup scan or dispatch', () => {
