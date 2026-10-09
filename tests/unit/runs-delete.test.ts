@@ -76,6 +76,13 @@ describe('Store.deleteRuns', () => {
     expect(outputCount(keep)).toBe(1);
   });
 
+  it('de-duplicates repeated run ids (no double counting)', () => {
+    const j = job('dup'); store.upsertJob(j);
+    const r1 = doneRun(j.id);
+    const res = store.deleteRuns({ runIds: [r1, r1, 'nope', 'nope'] });
+    expect(res).toEqual({ deleted: [r1], skipped: [], notFound: ['nope'], jobLogRemoved: false });
+  });
+
   it('deletes by job alias and by job id', () => {
     const j = job('by-alias'); store.upsertJob(j);
     const r1 = doneRun(j.id);

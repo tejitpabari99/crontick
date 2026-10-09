@@ -615,9 +615,6 @@ runs.command('delete [runIds...]')
   .action(async (runIds: string[], opts) => {
     try {
       const ids = runIds ?? [];
-      if ((opts.job !== undefined) === (ids.length > 0)) {
-        throw new CrontickError('VALIDATION_ERROR', 'Provide run ids or --job <id|alias> (not both).');
-      }
       const dryRun = opts.dryRun === true;
       const result = await deleteRunsWithConfirm(client(), {
         ...(opts.job !== undefined ? { job: opts.job as string } : { runIds: ids }),

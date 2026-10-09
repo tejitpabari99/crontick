@@ -439,7 +439,7 @@ export class Store {
       const targetJobId = this.getJob(opts.jobId)?.id ?? opts.jobId;
       rows.push(...(this.db.prepare('SELECT id, job_id, status FROM runs WHERE job_id = ? ORDER BY started_at, id').all(targetJobId) as typeof rows));
     } else {
-      for (const id of opts.runIds) {
+      for (const id of new Set(opts.runIds)) {
         const row = this.db.prepare('SELECT id, job_id, status FROM runs WHERE id = ?').get(id) as (typeof rows)[number] | undefined;
         if (row) rows.push(row);
         else notFound.push(id);
