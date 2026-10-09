@@ -1,3 +1,4 @@
+import { posix, win32 } from 'node:path';
 import { SUPERVISED_ENV } from '../constants/daemon.js';
 import { CrontickError } from '../errors.js';
 import type {
@@ -41,7 +42,12 @@ export class AutostartService {
   buildSpec(): AutostartSpec {
     const { env } = this.o.deps;
     const out: Record<string, string> = { [SUPERVISED_ENV]: '1' };
-    if (env['CRONTICK_HOME']) out['CRONTICK_HOME'] = env['CRONTICK_HOME'];
+    // A relative home would resolve against the manager's cwd at login (a different data dir): pin it absolute.
+    const home = env['CRONTICK_HOME'];
+    if (home) {
+      const p = this.o.deps.platform === 'win32' ? win32 : posix;
+      out['CRONTICK_HOME'] = p.isAbsolute(home) ? home : p.resolve(process.cwd(), home);
+    }
     if (env['PATH']) out['PATH'] = env['PATH'];
     return {
       nodePath: this.o.nodePath,

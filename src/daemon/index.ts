@@ -32,6 +32,7 @@ import { createLogger, isVerboseEnv, type LogEvent, type Logger } from '../logge
 import { ensureConfigFile, loadConfig } from '../config.js';
 import { createProcessLivenessCheck } from '../process-liveness.js';
 import { SUPERVISED_ENV } from '../constants/daemon.js';
+import { shimExitCode } from '../utils/shim-exit.js';
 
 /** Cap on missed fires recorded per job at startup (see enumerateFiresBetween()). */
 const MISSED_FIRE_CAP_PER_JOB = 500;
@@ -89,8 +90,8 @@ if (needsSqliteShim) {
   for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     process.on(sig, () => { child.kill(sig); });
   }
-  child.on('exit', (code) => {
-    process.exit(code ?? 0);
+  child.on('exit', (code, signal) => {
+    process.exit(shimExitCode(code, signal));
   });
 } else {
   // ── Logger ──────────────────────────────────────────────────────────────────

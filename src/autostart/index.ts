@@ -21,6 +21,7 @@ export function createAutostartBackend(
   return make ? make(deps) : undefined;
 }
 
+export { defaultAutostartDeps } from './defaults.js';
 export { AutostartService } from './service.js';
 export type { AutostartServiceOptions } from './service.js';
 export type * from './types.js';

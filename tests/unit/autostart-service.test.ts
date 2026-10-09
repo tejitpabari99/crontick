@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AutostartService, createAutostartBackend } from '../../src/autostart/index.js';
 import type { AutostartBackend, AutostartDeps, BackendInspection } from '../../src/autostart/types.js';
+import { posix } from 'node:path';
 import { CrontickError } from '../../src/errors.js';
 
 const NODE = '/usr/bin/node';
@@ -58,6 +59,13 @@ const registered = (over: Partial<NonNullable<BackendInspection['command']>> = {
 });
 
 describe('createAutostartBackend', () => {
+  it('buildSpec pins a relative CRONTICK_HOME to an absolute path (systemd cwd differs at login)', () => {
+    const rel = svc({ deps: mkDeps({ env: { PATH: '/usr/bin', CRONTICK_HOME: 'data/ct' } }) }).buildSpec();
+    expect(rel.env['CRONTICK_HOME']).toBe(posix.resolve(process.cwd(), 'data/ct'));
+    const abs = svc({ deps: mkDeps({ env: { CRONTICK_HOME: '/abs/ct' } }) }).buildSpec();
+    expect(abs.env['CRONTICK_HOME']).toBe('/abs/ct');
+  });
+
   it('returns undefined for platforms without a factory', () => {
     expect(createAutostartBackend(mkDeps({ platform: 'freebsd' }))).toBeUndefined();
   });

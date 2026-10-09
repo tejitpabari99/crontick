@@ -75,7 +75,9 @@ describe('unit renderer/parser', () => {
     };
     const u = renderUnit(s);
     expect(u).toContain('50%%');
-    expect(u).toContain('$$x');
+    expect(u).toContain('$$x'); // ExecStart: doubled
+    expect(u).toContain('/e$f:'); // Environment=: systemd does not expand $, so it stays single
+    expect(u).not.toContain('$$f');
     const parsed = parseUnit(u);
     expect(parsed).toEqual({ nodePath: s.nodePath, args: [s.daemonScript], env: s.env });
   });

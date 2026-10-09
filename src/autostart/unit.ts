@@ -2,13 +2,15 @@ import type { AutostartSpec } from './types.js';
 
 /** Pure renderer/parser for the systemd user unit. */
 
-function esc(v: string): string {
-  return v.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/%/g, '%%').replace(/\$/g, '$$$$');
+/** `$` is doubled only in ExecStart words; systemd does no `$` expansion in Environment= values. */
+function esc(v: string, dollar: boolean): string {
+  const e = v.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/%/g, '%%');
+  return dollar ? e.replace(/\$/g, '$$$$') : e;
 }
 
-function quote(v: string): string {
+function quote(v: string, dollar = false): string {
   if (/[\r\n]/.test(v)) throw new Error('Cannot write a value containing a newline into a systemd unit.');
-  return `"${esc(v)}"`;
+  return `"${esc(v, dollar)}"`;
 }
 
 /** Renders the unit text for `spec` (direct node + daemon script, supervised env). */
@@ -20,7 +22,7 @@ export function renderUnit(spec: AutostartSpec): string {
     '',
     '[Service]',
     'Type=simple',
-    `ExecStart=${quote(spec.nodePath)} ${quote(spec.daemonScript)}`,
+    `ExecStart=${quote(spec.nodePath, true)} ${quote(spec.daemonScript, true)}`,
     ...envLines,
     'Restart=on-failure',
     'RestartSec=5',
@@ -32,8 +34,8 @@ export function renderUnit(spec: AutostartSpec): string {
   ].join('\n');
 }
 
-/** Splits a systemd command/assignment line into words, undoing quoting, `\` escapes, `%%` and `$$`. */
-function splitWords(line: string): string[] {
+/** Splits a systemd command/assignment line into words, undoing quoting, `\` escapes, `%%` and (ExecStart only) `$$`. */
+function splitWords(line: string, dollar: boolean): string[] {
   const words: string[] = [];
   let cur = '';
   let inWord = false;
@@ -60,7 +62,7 @@ function splitWords(line: string): string[] {
     }
   }
   if (inWord) words.push(cur);
-  return words.map((w) => w.replace(/%%/g, '%').replace(/\$\$/g, '$'));
+  return words.map((w) => (dollar ? w.replace(/%%/g, '%').replace(/\$\$/g, '$') : w.replace(/%%/g, '%')));
 }
 
 /** Parses a unit back to its command and env; `undefined` when there is no ExecStart. */
@@ -70,9 +72,9 @@ export function parseUnit(text: string): { nodePath: string; args: string[]; env
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (line.startsWith('ExecStart=')) {
-      argv = splitWords(line.slice('ExecStart='.length));
+      argv = splitWords(line.slice('ExecStart='.length), true);
     } else if (line.startsWith('Environment=')) {
-      for (const w of splitWords(line.slice('Environment='.length))) {
+      for (const w of splitWords(line.slice('Environment='.length), false)) {
         const eq = w.indexOf('=');
         if (eq > 0) env[w.slice(0, eq)] = w.slice(eq + 1);
       }
