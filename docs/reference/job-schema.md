@@ -54,6 +54,16 @@ Cron schedules have no `tz` field. New input containing `tz` is rejected; a `tz`
 | `everySec` | `number` | yes | — | Positive | Interval in seconds |
 | `startAt` | `string` | no | — | ISO-8601 datetime | When the first tick fires |
 
+### kind: `after`
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| `kind` | `"after"` | yes | — | Literal | Schedule discriminator |
+| `jobId` | `string` | yes | — | GUID of the upstream job (input may be an id or alias; stored as the GUID) | Job whose finished run triggers this one |
+| `status` | `"success" \| "failure" \| "any"` | no | `success` (CLI/MCP input) | One of the three | Which upstream outcome triggers: `success`; `failure` (`failed` or `timeout`); `any` |
+
+See [Scheduling: After triggers](../concepts/scheduling.md#after-triggers).
+
 ### kind: `one-shot`
 
 | Field | Type | Required | Default | Constraints | Description |

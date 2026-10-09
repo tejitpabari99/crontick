@@ -1,0 +1,5 @@
+---
+"crontick": minor
+---
+
+Add the `after` schedule kind: run a job when another job finishes. `crontick jobs new|update --after <id|alias> [--after-status success|failure|any]` (default `success`), MCP/library schedule `{ kind: 'after', jobId, status }`; the upstream is stored as its GUID. Triggered runs get `CRONTICK_TRIGGER=after` and `CRONTICK_UPSTREAM_RUN_ID|STATUS|JOB_ID|JOB_ALIAS`, and go through the normal overlap/retry/timeout policy (use `overlap: queue` for a fast upstream with a slow downstream; `skip` drops triggers as visible `skipped` runs). Completions missed while the daemon is down are not replayed. Cycles are rejected (`AFTER_CYCLE`), missing upstreams too (`AFTER_UPSTREAM_NOT_FOUND`; on import the job is imported disabled). Deleting a job with dependents needs `--force` / `force: true` (`JOB_HAS_DEPENDENTS`), which disables them; `force` is new on `jobs delete`, `crontick_job_delete` and `deleteJob`. Share export now keeps ids on jobs that another exported job runs `after`, and import remaps them. Lists, `jobs get|schedule` and the dashboard show `after <alias> (on success)`. See ADR 0035.

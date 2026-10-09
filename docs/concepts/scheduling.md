@@ -15,6 +15,7 @@ Every job has exactly one schedule, discriminated by `kind`:
 | `cron` | `cron` | Fires at times matching a cron expression |
 | `interval` | `everySec`, `startAt?` | Fires repeatedly at a fixed interval |
 | `one-shot` | `runAt` | Fires once at a specific ISO-8601 timestamp |
+| `after` | `jobId`, `status` | Fires when another (upstream) job's run finishes; not time-based (see [After triggers](#after-triggers)) |
 
 ## Cron expressions
 
@@ -56,6 +57,20 @@ Previews are exposed for an existing job as `crontick jobs schedule <id|alias>` 
 ## Missed runs when the daemon is down
 
 crontick does **not** catch up on missed ticks. If the daemon was stopped while a cron tick should have fired, that tick is lost. When the daemon restarts it re-registers all enabled jobs from the current moment forward. The scheduler holds no persistent "last fired at" state.
+
+## After triggers
+
+`{ kind: 'after', jobId, status }` runs a job when its **upstream** job finishes a run (`crontick jobs new --after <id|alias> --after-status success|failure|any`; default `success`). `jobId` is always the upstream GUID: an alias given on input is resolved before storage, so renaming the upstream alias keeps the dependent firing.
+
+- **What triggers.** Any terminal run of the upstream, whatever started it (schedule, `run-now`), after its retries are exhausted. `success` fires on `success`; `failure` on `failed` or `timeout`; `any` on either. `canceled`, `skipped` and `missed` never trigger. The run that auto-disables the upstream still triggers `failure`/`any` dependents, and manual runs of a disabled upstream trigger too.
+- **Exactly once.** One dispatch per terminal upstream run, adopted runs included. A disabled downstream is silently not run (no run row).
+- **Chains.** A downstream's own completion triggers its dependents, so A -> B -> C works. Cycles (including self) are rejected with `AFTER_CYCLE`; a missing upstream with `AFTER_UPSTREAM_NOT_FOUND` (create, update, enable). On import a dangling upstream imports the job disabled with that error recorded; a cycle is rejected. A job file edited by hand into a dangling or cyclic graph is loaded but inert (warning logged, shown as broken in `jobs list`).
+- **Environment.** The downstream run gets `CRONTICK_TRIGGER=after`, `CRONTICK_UPSTREAM_RUN_ID`, `CRONTICK_UPSTREAM_STATUS` (`success|failed|timeout`), `CRONTICK_UPSTREAM_JOB_ID` and `CRONTICK_UPSTREAM_JOB_ALIAS` (omitted when the upstream has no alias). These override `action.env`. Fetch upstream output with `crontick runs get "$CRONTICK_UPSTREAM_RUN_ID"`.
+- **No replay.** Completions that happen while the daemon is down, and runs finalized during startup reconciliation, trigger nothing (same stance as missed runs). A chain interrupted by downtime stops; the next upstream run resumes it. An adopted run that exits after the restart does trigger.
+- **No next-run time.** After jobs show `after <alias> (on success)` instead of a time; previews are empty.
+- **Deleting an upstream.** `jobs delete` refuses with `JOB_HAS_DEPENDENTS` (listing aliases) unless `--force`, which disables the dependents; they keep the dangling reference until re-pointed.
+
+**Fast upstream, slow downstream.** The downstream's own `overlap` policy applies to each trigger. With the default `skip`, a trigger that arrives while the downstream is still running is dropped and recorded as a `skipped` run. If every upstream completion must be handled, set the downstream to `overlap: queue`; `cancel-previous` keeps only the newest.
 
 ## Overlap policy when a previous run is still active
 

@@ -109,6 +109,30 @@ class CrontickError extends Error {
 | **Message shape** | `Job "<id>" already exists. Use "crontick jobs update <id>" ... or re-run create with --force / force: true ...` |
 | **Details** | — |
 
+### AFTER_CYCLE
+
+| | |
+|---|---|
+| **When** | A job with an `after` schedule would create a cycle (including pointing at itself) on create, update, enable or import |
+| **Message shape** | Names the cycle |
+| **Details** | — |
+
+### AFTER_UPSTREAM_NOT_FOUND
+
+| | |
+|---|---|
+| **When** | The `after` upstream (id or alias) does not exist on create, update or enable. On import the job is instead imported disabled with this error recorded on its row |
+| **Message shape** | Names the missing upstream |
+| **Details** | — |
+
+### JOB_HAS_DEPENDENTS
+
+| | |
+|---|---|
+| **When** | Deleting a job that other jobs run `after`, without `force` |
+| **Message shape** | Lists the dependents' aliases and mentions `--force` / `force: true` |
+| **Details** | — |
+
 ### PARSE_ERROR
 
 | | |

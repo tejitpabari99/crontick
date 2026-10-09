@@ -34,7 +34,7 @@ correct behavior across regions.
 
 ### Functional requirements
 
-- **R-002-1**: The `schedule.kind` discriminator MUST be one of `cron`, `interval`, `one-shot`.
+- **R-002-1**: The `schedule.kind` discriminator MUST be one of `cron`, `interval`, `one-shot`, `after`.
 - **R-002-2**: A `cron` schedule MUST have a non-empty `cron` string and MUST NOT have a `tz` field: cron expressions fire in the machine local timezone. (New input containing `tz` is rejected with `VALIDATION_ERROR`; a `tz` in an already-stored job file is silently ignored: no warning, log or event.)
 - **R-002-3**: An `interval` schedule MUST have a positive `everySec` number and MAY have a `startAt` ISO-8601 string.
 - **R-002-4**: A `one-shot` schedule MUST have a non-empty `runAt` ISO-8601 string. A date-time without an offset is interpreted in the machine's local timezone.
@@ -50,6 +50,12 @@ correct behavior across regions.
 - **R-002-13**: `validateSchedule()` MUST return `{ ok: true }` for a valid schedule or `{ ok: false, error: string }` for an invalid one.
 - **R-002-14**: `previewNext()` MUST return up to N ISO-8601 timestamps representing the next N scheduled fires.
 - **R-002-15**: `setTimeout` delays exceeding 2^31-1 ms MUST be handled via chained intermediate timeouts (`safeSetTimeout`).
+- **R-002-16**: An `after` schedule is `{ kind: 'after', jobId, status }` with `jobId` an upstream GUID (aliases are resolved to the GUID before storage) and `status` one of `success`, `failure`, `any` (CLI default `success`). `Scheduler.schedule` MUST no-op for it; `previewNext` and `enumerateFiresBetween` MUST return `[]`; `validateSchedule` MUST return ok; the startup missed-fire loop MUST skip it.
+- **R-002-17**: Every terminal run (after retries, adopted runs included, any origin) MUST be offered once to the run-completion hook. A dependent enabled job fires iff the status matches: `success` on `success`; `failure` on `failed`/`timeout`; `any` on either. `canceled`, `skipped` and `missed` MUST NOT trigger. The dispatch goes through the normal runner, so the downstream `overlap`, retry and timeout apply (`skip` records a visible `skipped` run).
+- **R-002-18**: Completions while the daemon was down and runs finalized during startup reconciliation MUST NOT trigger dependents (no replay). Adopted runs that exit after startup MUST.
+- **R-002-19**: A triggered run MUST receive `CRONTICK_TRIGGER=after`, `CRONTICK_UPSTREAM_RUN_ID`, `CRONTICK_UPSTREAM_STATUS`, `CRONTICK_UPSTREAM_JOB_ID` and (when the upstream has an alias) `CRONTICK_UPSTREAM_JOB_ALIAS`, with priority above `action.env`; the run's `trigger_json` MUST record `{ kind: 'after', upstream: <run id> }`. The time-only watermark (`recordTick`) MUST NOT advance.
+- **R-002-20**: Cycles (including self) MUST be rejected with `AFTER_CYCLE` on create, update, enable and import; a missing upstream with `AFTER_UPSTREAM_NOT_FOUND` on create, update and enable. On import a dangling upstream MUST import the job disabled with `AFTER_UPSTREAM_NOT_FOUND` recorded and the rest of the batch proceeds. On reload, dangling or cyclic after-jobs MUST be loaded but inert and flagged broken.
+- **R-002-21**: Deleting a job that other jobs run `after` MUST fail with `JOB_HAS_DEPENDENTS` unless `force`; `force` disables the dependents.
 
 ### Non-functional requirements
 
@@ -101,11 +107,15 @@ removes the entry from the internal map. `unscheduleAll()` iterates all entries.
 - [x] safeSetTimeout chains for large delays (test file: `tests/unit/property.scheduler.test.ts`)
 - [x] Property: arbitrary cron expressions produce sorted future dates (test file: `tests/unit/property.cron.test.ts`)
 - [x] One-shot past-time no-op verified in integration context (test file: `tests/unit/integration.oneshot.test.ts`)
+- [x] After triggers: status x filter table, retries, chains, env, no-replay (test file: `tests/unit/trigger-dispatcher.test.ts`)
+- [x] After triggers: adopted run exit and downstream overlap `skip|queue|cancel-previous` (test file: `tests/unit/after-trigger-gaps.test.ts`)
+- [x] After triggers: cycles, dangling, delete force, import (test files: `tests/unit/store-after.test.ts`, `tests/unit/api-after-guards.test.ts`)
 - [x] A live daemon's real Scheduler auto-fires a cron/interval tick end-to-end into a run, with no manual `/run` trigger (test file: `tests/unit/integration.autofire.test.ts`)
 
 ## Out of scope
 
 - Missed-run catch-up (crontick does not retroactively fire missed ticks after daemon downtime).
+- Replay of upstream completions missed during downtime; multiple upstreams or AND-joins; passing upstream output (use `crontick runs get "$CRONTICK_UPSTREAM_RUN_ID"`); delay/debounce.
 - Persistent schedule state (schedules are re-registered from job definitions on daemon start).
 
 ## Open questions

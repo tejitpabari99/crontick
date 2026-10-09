@@ -48,7 +48,7 @@ NNNN-kebab-case-title.md
 
 | # | Title | Status | Date |
 |---|-------|--------|------|
-| [0001](0001-architecture-and-runtime-model.md) | Architecture and runtime model | Accepted | 2026-09-28 |
+| [0001](0001-architecture-and-runtime-model.md) | Architecture and runtime model | Accepted | 2026-10-09 |
 | [0002](0002-prompt-only-jobs-and-engine-adapters.md) | Prompt-only jobs and the engine adapter framework | Accepted | 2026-09-28 |
 | [0003](0003-toolchain-and-distribution.md) | Toolchain and distribution | Accepted | 2026-10-01 |
 | [0004](0004-config-writes-file-direct-and-pause.md) | File-direct config writes, and pause vs stop | Accepted | 2026-10-09 |
@@ -96,6 +96,7 @@ files, is the historical record.
 | 0032 | Use Claude completion markers only for restart recovery | [0002](0002-prompt-only-jobs-and-engine-adapters.md) |
 | 0033 | Select prompt behavior through engine adapters | [0002](0002-prompt-only-jobs-and-engine-adapters.md) |
 | 0034 | Opt-in login autostart through a platform backend (Linux systemd `--user`, macOS launchd, Windows Task Scheduler) | [0001](0001-architecture-and-runtime-model.md) (section "OS autostart (ADR 0034)") |
+| 0035 | `after` trigger: shared non-time trigger dispatch from the run-completion hook, no replay of completions missed during downtime | [0001](0001-architecture-and-runtime-model.md) (section "Trigger dispatch for non-time schedules (ADR 0035)") |
 
 Tooling notes and dependency-specific rejected alternatives from the pre-consolidation
 ADRs (e.g. `cron-parser` vs. `croner`, `ajv` vs. `zod`) live in the new ADRs' own

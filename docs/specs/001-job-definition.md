@@ -51,7 +51,7 @@ unresolved identifier fails with `JOB_NOT_FOUND`.
 ### Functional requirements
 
 - **R-001-1**: A job `alias`, when supplied, MUST match `^[a-z0-9]+(?:-[a-z0-9]+)*$` (kebab-case). The `id` field is a server-assigned GUID, never validated against this pattern.
-- **R-001-2**: A job MUST have exactly one `schedule` field conforming to one of the schedule kinds (`cron`, `interval`, `one-shot`).
+- **R-001-2**: A job MUST have exactly one `schedule` field conforming to one of the schedule kinds (`cron`, `interval`, `one-shot`, `after`; see spec 002).
 - **R-001-3**: A job MUST have exactly one `action` field; `kind` is a discriminant with a single member, `"prompt"` (see [ADR 0002](../decisions/0002-prompt-only-jobs-and-engine-adapters.md)).
 - **R-001-4**: The `enabled` field MUST default to `true` when omitted.
 - **R-001-5**: The built-in `overlap` default MUST be `"skip"`. Valid values are `skip`, `queue`, `cancel-previous`.
@@ -66,7 +66,7 @@ unresolved identifier fails with `JOB_NOT_FOUND`.
 - **R-001-10**: Deleting a job MUST remove both the JSON file and the SQLite row; the scheduler MUST unschedule the job.
 - **R-001-13**: A `prompt` action MUST have a non-empty `prompt` string. `args` MUST default to `[]` and `reuseSession` MUST default to `false`.
 - **R-001-14**: The action MAY include `cwd`, `env`, `envFile`, and `timeoutSec` fields. On create `cwd` defaults to the caller's directory and is stored as an absolute, existing path.
-- **R-001-14a**: Share files are `{ schema: 1, exportedAt?, crontickVersion?, jobs }` (jobs only, ids omitted on export). Import MUST validate the whole file first (a bare array, missing/other `schema` or invalid job: `VALIDATION_ERROR` naming the path, nothing imported), assign every job a new GUID, never overwrite (alias collisions become `<alias>-2`, `-3`, ... and report `renamedFrom`), and never import runs.
+- **R-001-14a**: Share files are `{ schema: 1, exportedAt?, crontickVersion?, jobs }` (jobs only). Export omits ids except on jobs that another exported job runs `after` (so the chain can be re-linked). Import MUST validate the whole file first (a bare array, missing/other `schema` or invalid job: `VALIDATION_ERROR` naming the path, nothing imported), assign every job a new GUID (remapping `after.jobId` references to the newly minted ids; a reference to a job not in the file is left as is and the job imports disabled with `AFTER_UPSTREAM_NOT_FOUND`), never overwrite (alias collisions become `<alias>-2`, `-3`, ... and report `renamedFrom`), and never import runs.
 - **R-001-15**: The action schema MUST be strict (no unknown keys allowed).
 - **R-001-16**: When a job is persisted, a JSON Schema sidecar (`<GUID id>.schema.json`) MUST be written alongside the job JSON file, keyed by the immutable GUID `id`.
 

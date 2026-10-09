@@ -86,7 +86,7 @@ Create and schedule a new job.
 | `alias` | `string` | no | auto-generated | Unique kebab-case job alias (set via CLI `--alias`/`-a`) |
 | `description` | `string` | no | — | Job description |
 | `enabled` | `boolean` | no | `true` | Whether job is active |
-| `schedule` | `Schedule` | yes | — | Schedule object (see [job-schema.md](job-schema.md)) |
+| `schedule` | `Schedule` | yes | — | Schedule object (see [job-schema.md](job-schema.md)); `{ kind: 'after', jobId: <upstream id or alias>, status: 'success'\|'failure'\|'any' }` runs the job when the upstream finishes (stored as the GUID; errors `AFTER_CYCLE`, `AFTER_UPSTREAM_NOT_FOUND`) |
 | `action` | `ActionInput` | yes | — | Prompt action with `kind: "prompt"` |
 | `overlap` | `"skip"\|"queue"\|"cancel-previous"` | no | config `defaults.overlap`, then `"skip"` | Overlap policy |
 | `retry` | `{ max?: number, backoffSec?: number }` | no | config `defaults.retry`, then `{ max: 0, backoffSec: 30 }` | Retry config |
@@ -137,7 +137,7 @@ Update an existing job by GUID or alias. The patch is merged with the existing d
 | `alias` | `string` | no | — | New human-friendly alias |
 | `description` | `string \| null` | no | — | Job description; `null` removes it |
 | `enabled` | `boolean` | no | — | Enable/disable |
-| `schedule` | `Schedule` | no | — | New schedule |
+| `schedule` | `Schedule` | no | — | New schedule (may be `kind: 'after'`; see `crontick_job_create`) |
 | `action` | `ActionInput` | no | — | New or patched prompt action; `action.timeoutSec` and `action.sessionId` also accept `null` to remove them |
 | `overlap` | `"skip"\|"queue"\|"cancel-previous"` | no | — | Overlap policy |
 | `retry` | `{ max?: number, backoffSec?: number }` | no | — | Retry config |
@@ -187,7 +187,7 @@ Permanently delete one job definition by GUID or alias, or delete every job with
 |-----------|------|----------|---------|-------------|
 | `id` | `string` | no | — | Job GUID or alias for a single delete |
 | `all` | `boolean` | no | `false` | Delete every job |
-| `force` | `boolean` | no | `false` | Required when `all: true` |
+| `force` | `boolean` | no | `false` | Required when `all: true`. With `id`: delete the job even though other jobs run `after` it (they are disabled and keep a dangling upstream); otherwise `JOB_HAS_DEPENDENTS` |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 Deleting a job also deletes its runs, stored run output, schedule state and per-job log file; Claude's session transcripts are untouched.
@@ -307,7 +307,7 @@ Get run statistics for a specific job.
 
 ### crontick_export
 
-Export job definitions as a crontick export file. Jobs only: no run history, and job ids are omitted (an import assigns new ones).
+Export job definitions as a crontick export file. Jobs only: no run history, and job ids are omitted except on jobs another exported job runs `after` (an import assigns new ids and remaps those references).
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|

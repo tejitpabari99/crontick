@@ -1,7 +1,7 @@
 # 0001: Architecture and runtime model
 
 - Status: Accepted
-- Date: 2026-10-01 (amended; originally 2026-09-28)
+- Date: 2026-10-09 (amended; originally 2026-09-28)
 - Supersedes: former ADRs 0001, 0003, 0004, 0005, 0011 (surface-drift portion only; the
   vitest tooling choice moves to [ADR 0003](0003-toolchain-and-distribution.md)), 0012,
   0013, 0014, 0015, 0016, 0017, 0020 (the generic detached-spawn exception only; the
@@ -229,6 +229,24 @@ captured.
 
 **Outcome of items 1-4: pending (owner, real Windows).**
 
+### Trigger dispatch for non-time schedules (ADR 0035, 2026-10-09)
+
+**Status:** accepted.
+
+**Context.** Jobs could only fire on time. Users want "run B when A finishes" without polling or cron offsets, and a later webhook trigger needs the same dispatch path.
+
+**Decision.**
+
+- *New schedule kind `after`* `{ jobId, status: success|failure|any }`. `jobId` is the upstream GUID (aliases are editable; inputs accept an alias and resolve it before storage).
+- *Single completion hook.* `Runner.recordRunOutcome` is the one place every terminal run passes (normal runs after retries, adopted runs, reconciled runs). `Runner.onRunComplete` listeners are invoked from there via `queueMicrotask`, each in try/catch, after auto-disable bookkeeping, so the run that disables the upstream still triggers `failure`/`any` dependents. Overlap-skipped runs never reach it; `canceled`/`skipped`/`missed` are filtered out. `timeout` counts as failure.
+- *Shared `TriggerDispatcher`* (`src/daemon/trigger.ts`): re-reads the job, skips when disabled or when the schedule kind no longer matches the event, inserts the run with `runs.trigger_json`, and runs it through the normal runner (`RunContext.env`, merged last by `buildRunEnv`, so `CRONTICK_*` cannot be shadowed). Overlap, retry and timeout apply unchanged; a `skip` downstream records a visible `skipped` run, so docs recommend `overlap: queue` for a fast upstream with a slow downstream. It never calls `recordTick`: the missed-fire watermark stays time-only. A later webhook trigger reuses it unchanged.
+- *No replay.* The listener is registered after startup reconciliation, so completions during downtime and startup-finalized runs trigger nothing, consistent with report-only missed fires (above). Adopted runs that exit after the restart do trigger. A chain interrupted by downtime stops; the next upstream run resumes it.
+- *Safe graph.* One upstream per node makes cycle detection a pointer walk (`validateAfterGraph`). Cycles and dangling upstreams are rejected on create/update/enable; import reports cycles and imports dangling jobs disabled with `AFTER_UPSTREAM_NOT_FOUND`; hand-edited graphs load but stay inert and flagged broken. Deleting an upstream needs `force` (`JOB_HAS_DEPENDENTS`), which disables dependents. Share export keeps ids only on referenced upstreams and import remaps them.
+
+**Alternatives rejected.** Storing the upstream alias (renames would break chains); an event emitter on the store or polling the runs table (not exactly-once, misses adopted runs); replaying completions on restart (run storms); an after-specific dispatch path (the webhook trigger needs identical steps).
+
+**Consequences.** Easier: chains and failure alerts with no polling; one dispatch path for non-time triggers. Harder: runs lost to downtime never trigger; fast-upstream/slow-downstream under `skip` drops triggers.
+
 <!-- ADR 0034 platform sections: SP08 added "macOS (launchd)" and SP09 added "Windows (Task Scheduler)" above this line, each covering mechanism, registered command, caveats and rejected alternatives. -->
 
 ## Consequences
@@ -254,6 +272,7 @@ creating login persistence from an MCP tool.
 
 ## Revisit when
 
+- Users need multiple upstreams (AND-joins), upstream output passing, or catch-up of completions missed during downtime (ADR 0035).
 - The number of capabilities exceeds ~80-100 and the monolithic client class becomes
   unwieldy, or a surface needs execution semantics that cannot be request/response.
 - Users want autostart on by default or while logged out (linger), or system-wide units; autostart is deliberately opt-in and user-level today (ADR 0034).

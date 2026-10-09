@@ -32,7 +32,7 @@ crontick jobs update <id|alias> [engineArgs...]
 crontick jobs list
 crontick jobs get <id|alias>
 crontick jobs schedule <id|alias> [-n <count>]
-crontick jobs delete <id|alias>
+crontick jobs delete <id|alias> [--force]
 crontick jobs delete all --force
 crontick jobs run-now <id|alias>
 
@@ -91,6 +91,8 @@ crontick jobs new [engineArgs...]
 | `--cron <expr>` | string | — | Schedule: cron expression (for example, `"0 9 * * *"`). Fires in the machine's local timezone |
 | `--every <interval>` | string | — | Schedule: repeat every N seconds, or with an `s`, `m`, `h`, or `d` suffix (for example `30m` = 1800 seconds) |
 | `--at <datetime>` | string | — | Schedule: one-shot run time, ISO-8601 (for example `2026-10-01T09:00`). Interpreted in the machine's local timezone unless an offset (`Z`, `+02:00`) is given. Date-only values (`2026-10-01`) are parsed as UTC midnight, so include a time |
+| `--after <id\|alias>` | string | — | Schedule: run when this upstream job finishes (resolved to its GUID). Cycles: `AFTER_CYCLE`; unknown upstream: `AFTER_UPSTREAM_NOT_FOUND` |
+| `--after-status <status>` | string | `success` | With `--after`: `success`, `failure` (failed or timeout) or `any`. Without an after schedule it is an error |
 | `--dir <path>` | string | the current directory | Directory the job runs in; stored as `action.cwd`. Must be an existing directory (`INVALID_CWD`). See [Working directory and Claude trust](#working-directory-and-claude-trust) |
 | `--trust-folder` | boolean | `false` | Trust the working directory in Claude without asking when it is not trusted yet |
 | `--runner <runner>` | string | config `defaultEngine` | Configured prompt engine name; saved as `action.engine` |
@@ -103,7 +105,7 @@ crontick jobs new [engineArgs...]
 | `--desc <description>` | string | — | Job description |
 | `--force` | boolean | `false` | Replace an existing job when the same alias already exists |
 
-`jobs new --help` ends with a "How to schedule" footer ("Use exactly one of --cron, --every, --at.", generated from `SCHEDULE_FLAGS`); `jobs update --help` has the same option help but no footer. Exactly one schedule source (`--cron`, `--every`, `--at`) and one prompt source (`--prompt`, `--prompt-file`) are required unless `--file` is used. Supplying more than one schedule flag is an error (`VALIDATION_ERROR`: they cannot be combined); supplying none is `MISSING_ARG`. Bare `--every` numbers remain seconds; suffixes `s`, `m`, `h`, and `d` mean seconds, minutes, hours, and days. Unrecognized long flags, with a following value when that token is not flag-shaped, are stored verbatim in `action.args`. The same flags work after `--`, which also accepts positional arguments. Their order is preserved. Short flags before `--` belong to crontick (`-a`, `-p`); after `--` they pass through to the engine (for example `-v`). Flags that crontick manages for the engine (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, and the short forms `-p` and `-r`) are rejected, including `--flag=value` forms. Removed `--engine`, `--job-env-file`, `--tz`, `--cwd` and `-C` switches are rejected as unknown options, including after `--`. If a token after `--` matches a crontick long flag, the CLI rejects it rather than silently storing it as a literal prompt arg.
+`jobs new --help` ends with a "How to schedule" footer ("Use exactly one of --cron, --every, --at, --after.", generated from `SCHEDULE_FLAGS`); `jobs update --help` has the same option help but no footer. Exactly one schedule source (`--cron`, `--every`, `--at`, `--after`) and one prompt source (`--prompt`, `--prompt-file`) are required unless `--file` is used. Supplying more than one schedule flag is an error (`VALIDATION_ERROR`: they cannot be combined); supplying none is `MISSING_ARG`. Bare `--every` numbers remain seconds; suffixes `s`, `m`, `h`, and `d` mean seconds, minutes, hours, and days. Unrecognized long flags, with a following value when that token is not flag-shaped, are stored verbatim in `action.args`. The same flags work after `--`, which also accepts positional arguments. Their order is preserved. Short flags before `--` belong to crontick (`-a`, `-p`); after `--` they pass through to the engine (for example `-v`). Flags that crontick manages for the engine (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, and the short forms `-p` and `-r`) are rejected, including `--flag=value` forms. Removed `--engine`, `--job-env-file`, `--tz`, `--cwd` and `-C` switches are rejected as unknown options, including after `--`. If a token after `--` matches a crontick long flag, the CLI rejects it rather than silently storing it as a literal prompt arg.
 
 Dedicated `--script`, `--exec`, `--arg`, `--shell`, and `--job-env-file` flags are not exposed on the CLI. The job schema supports prompt actions only; `--file` accepts a complete prompt-job definition.
 
@@ -188,13 +190,13 @@ This replaces the old raw `schedule preview` command: schedules are previewed in
 Delete one job, or delete all jobs with explicit confirmation.
 
 ```bash
-crontick jobs delete <id|alias>
+crontick jobs delete <id|alias> [--force]
 crontick jobs delete all --force
 ```
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--force` | boolean | `false` | Required to confirm `jobs delete all` (the reserved `all` keyword) |
+| `--force` | boolean | `false` | Required to confirm `jobs delete all` (the reserved `all` keyword). With a single job: delete it even though other jobs run `--after` it; the dependents are disabled and keep a dangling upstream (without `--force` the delete fails with `JOB_HAS_DEPENDENTS`, listing their aliases) |
 
 Deleting a job cancels its in-flight run, if any, and deletes the job together with its runs, stored run output, schedule state and per-job log file, in one transaction. Nothing of the job remains in `runs list`, `runs get`, stats or the dashboard. Claude's own session transcripts are not touched.
 
@@ -322,11 +324,11 @@ crontick share export [--out <file>] [--only-jobs <id|alias,...>]
 | `--out <file>` | string | stdout | Output file. The name is kept when it ends in `.json` (any case), otherwise `.json` is appended (`backup` becomes `backup.json`, `try_me.txt` becomes `try_me.txt.json`). Prints `Exported N job(s) to <absolute path>` |
 | `--only-jobs <list>` | string | all jobs | Comma-separated ids or aliases, resolved by the daemon. Any unknown entry fails with `JOB_NOT_FOUND` listing every miss, and nothing is written |
 
-The file is `{ "schema": 1, "exportedAt": ..., "crontickVersion": ..., "jobs": [...] }`: jobs only (no run history), with job ids omitted so an import mints new ones. `--include-runs` was removed.
+The file is `{ "schema": 1, "exportedAt": ..., "crontickVersion": ..., "jobs": [...] }`: jobs only (no run history), with job ids omitted (except on jobs another exported job runs `--after`, so chains survive) so an import mints new ones and remaps those references. `--include-runs` was removed.
 
 ### crontick share import
 
-Import jobs from a crontick export file (schema 1). Jobs get new ids.
+Import jobs from a crontick export file (schema 1). Jobs get new ids; `--after` references inside the file are remapped to them. A job whose upstream is not in the file nor known imports disabled with `AFTER_UPSTREAM_NOT_FOUND`; cycles are rejected.
 
 ```bash
 crontick share import <file> [--trust-folder]
