@@ -9,13 +9,13 @@ Source of truth: docs/agent_files/users-tejitpabari-crontick-improvements-202610
 | # | Task | Depends on | Status |
 |---|---|---|---|
 | 1 | `after` schema kind and time-only guards | - | done |
-| 2 | Store: `listDependents`, graph validation, `trigger_json` | 1 | todo |
-| 3 | Runner completion hook, `RunContext`, `buildRunEnv` | 1 | todo |
-| 4 | `TriggerDispatcher` and daemon wiring | 2, 3 | todo |
-| 5 | API guards: create/update/enable/delete/import, validate/preview | 2, 4 | todo |
-| 6 | Prepare, client, CLI, MCP, `SURFACE_CAPABILITIES` | 1, 5 | todo |
-| 7 | Schedule label, display, dashboard entry, share | 5, 6 | todo |
-| 8 | Tests, docs, ADR 0035, changeset | 1-7 | todo |
+| 2 | Store: `listDependents`, graph validation, `trigger_json` | 1 | done |
+| 3 | Runner completion hook, `RunContext`, `buildRunEnv` | 1 | done |
+| 4 | `TriggerDispatcher` and daemon wiring | 2, 3 | done |
+| 5 | API guards: create/update/enable/delete/import, validate/preview | 2, 4 | done |
+| 6 | Prepare, client, CLI, MCP, `SURFACE_CAPABILITIES` | 1, 5 | done |
+| 7 | Schedule label, display, dashboard entry, share | 5, 6 | done |
+| 8 | Tests, docs, ADR 0035, changeset | 1-7 | done |
 
 ## Task 1 — `after` schema kind and time-only guards
 What it is / what it means: The data shape and the guarantee that non-time schedules never reach time-based machinery (R1, R3 status model, D1, Scheduler/startup).
