@@ -10,8 +10,9 @@ import { CrontickError } from './errors.js';
 import { redactValue } from './logger.js';
 import { VERSION } from './version.js';
 import { dataDir } from './paths.js';
-import type { Job, Schedule } from './schemas/job.js';
+import type { Job } from './schemas/job.js';
 import type { Store, Run } from './daemon/store.js';
+import { describeSchedule } from './utils/schedule-label.js';
 import type { Scheduler } from './daemon/scheduler.js';
 
 export interface DashboardOptions {
@@ -303,11 +304,11 @@ function buildDashboardJob(ctx: DashboardContext, job: Job): DashboardJob {
     description: job.description ?? null,
     cwd: job.action.cwd ?? null,
     enabled: job.enabled,
-    scheduleLabel: scheduleLabel(job.schedule),
+    scheduleLabel: describeSchedule(job.schedule, (id) => ctx.store.getJob(id) ?? undefined),
     actionKind: job.action.kind,
     lastStatus: lastRun?.status ?? null,
     lastRunAt: lastRun?.startedAt ?? null,
-    nextRunAt: job.enabled ? (ctx.scheduler.previewNext(job.schedule, { n: 1 })[0] ?? null) : null,
+    nextRunAt: job.enabled && job.schedule.kind !== 'after' ? (ctx.scheduler.previewNext(job.schedule, { n: 1 })[0] ?? null) : null,
     job,
   };
 }
@@ -325,13 +326,6 @@ function toDashboardRun(run: Run, aliasByJobId: ReadonlyMap<string, string | nul
     error: run.error ?? null,
     sessionId: run.sessionId ?? null,
   };
-}
-
-function scheduleLabel(schedule: Schedule): string {
-  if (schedule.kind === 'cron') return schedule.cron;
-  if (schedule.kind === 'interval') return `every ${schedule.everySec}s`;
-  if (schedule.kind === 'after') return `after ${schedule.jobId.slice(0, 8)} (on ${schedule.status})`;
-  return `once at ${schedule.runAt}`;
 }
 
 function normalizeLimit(limit: number | undefined, fallback: number): number {

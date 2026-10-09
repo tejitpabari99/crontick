@@ -1,0 +1,22 @@
+import type { Schedule } from '../schemas/job.js';
+
+/** Minimal upstream info needed to label an `after` schedule. */
+export interface ScheduleLabelTarget {
+  alias?: string | null;
+}
+
+/** Resolves an upstream job GUID to its (optional) alias; undefined when the job no longer exists. */
+export type ScheduleLabelLookup = (jobId: string) => ScheduleLabelTarget | undefined;
+
+/** Human-readable schedule label shared by CLI, MCP and dashboard. */
+export function describeSchedule(schedule: Schedule, lookup: ScheduleLabelLookup): string {
+  if (schedule.kind === 'cron') return schedule.cron;
+  if (schedule.kind === 'interval') return `every ${schedule.everySec}s`;
+  if (schedule.kind === 'after') {
+    const upstream = lookup(schedule.jobId);
+    const id8 = schedule.jobId.slice(0, 8);
+    if (!upstream) return `after ${id8} (missing)`;
+    return `after ${upstream.alias || id8} (on ${schedule.status})`;
+  }
+  return `once at ${schedule.runAt}`;
+}

@@ -1118,7 +1118,7 @@ const EDITOR_CLI_PARITY = {
   '--cron': 'schedule', // schedule controls live behind editorScheduleHook (Task 6)
   '--every': 'schedule',
   '--at': 'schedule',
-  '--after': 'schedule', // dashboard after-schedule UI lands in Task 7
+  '--after': 'schedule', // `after` SCHEDULE_KINDS entry (upstream select)
   '--after-status': 'schedule',
   '--dir': 'cwd',
   '--trust-folder': 'trustFolder', // revealed after TRUST_REQUIRED (Task 7)
@@ -1304,7 +1304,26 @@ const SCHEDULE_KINDS = [
     toSchedule: (v) => (String(v.runAt ?? '').trim() ? { kind: 'one-shot', runAt: v.runAt.trim() } : null),
     fromSchedule: (s) => ({ runAt: toLocalInputValue(s.runAt) }),
   },
+  {
+    kind: 'after',
+    label: 'After another job',
+    fields: [
+      { id: 'jobId', label: 'Upstream job', type: 'select', optionsFrom: 'jobs', required: true, hint: 'Runs when this job finishes' },
+      { id: 'status', label: 'When upstream', type: 'select', options: ['success', 'failure', 'any'], default: 'success' },
+    ],
+    toSchedule: (v) => (String(v.jobId ?? '').trim() ? { kind: 'after', jobId: v.jobId.trim(), status: v.status || 'success' } : null),
+    fromSchedule: (s) => ({ jobId: s.jobId ?? '', status: s.status ?? 'success' }),
+  },
 ];
+
+/** Options for a select field: static strings, or `optionsFrom: 'jobs'` = every job except the one being edited (no self-trigger). */
+function scheduleFieldOptions(f) {
+  if (f.optionsFrom === 'jobs') {
+    const jobs = (lastData?.jobs || []).filter((j) => j.id !== editorJobId);
+    return [{ value: '', label: 'Select a job…' }, ...jobs.map((j) => ({ value: j.id, label: j.alias || j.id.slice(0, 8) }))];
+  }
+  return f.options.map((o) => ({ value: o, label: o }));
+}
 
 function findScheduleKind(id) {
   return SCHEDULE_KINDS.find((k) => k.kind === id);
@@ -1399,7 +1418,7 @@ const editorScheduleHook = (() => {
     const id = `editor-sch-${f.id}`;
     const v = values[f.id] ?? '';
     const control = f.type === 'select'
-      ? `<select id="${id}" data-sched-field="${escHtml(f.id)}">${f.options.map((o) => `<option value="${escHtml(o)}"${o === v ? ' selected' : ''}>${escHtml(o)}</option>`).join('')}</select>`
+      ? `<select id="${id}" data-sched-field="${escHtml(f.id)}">${scheduleFieldOptions(f).map((o) => `<option value="${escHtml(o.value)}"${o.value === v ? ' selected' : ''}>${escHtml(o.label)}</option>`).join('')}</select>`
       : `<input id="${id}" type="${f.type}" data-sched-field="${escHtml(f.id)}" value="${escHtml(v)}"${f.placeholder ? ` placeholder="${escHtml(f.placeholder)}"` : ''}${f.type === 'number' ? ' min="0" step="any"' : ''}${f.required ? ' required' : ''} autocomplete="off">`;
     return `<label for="${id}">${escHtml(f.label)}</label><div>${control}${f.hint ? `<div class="editor-hint">${escHtml(f.hint)}</div>` : ''}</div>`;
   }
@@ -1434,7 +1453,7 @@ const editorScheduleHook = (() => {
       const times = Array.isArray(data.next) ? data.next : [];
       setPreview(times.length
         ? `<div class="editor-preview-title">Next ${times.length} runs (local time)</div><ul>${times.map((t) => `<li>${escHtml(new Date(t).toLocaleString())}</li>`).join('')}</ul>`
-        : '<div class="editor-hint">No upcoming runs</div>', false);
+        : `<div class="editor-hint">${data.trigger ? 'Runs when the upstream job finishes (no scheduled times)' : 'No upcoming runs'}</div>`, false);
     } catch {
       if (mine === seq) setPreview('', false); // preview failure never blocks editing
     }

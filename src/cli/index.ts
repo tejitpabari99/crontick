@@ -23,6 +23,7 @@ import { deleteRunsWithConfirm, formatDeleteRunsSummary, terminalConfirmIo } fro
 import { terminalTrustPromptIo, withTrustPrompt } from './trust-prompt.js';
 import { flattenConfigLines, formatConfigValue, terminalInFlightIo, writeConfigWithInFlight } from './config-write.js';
 import { parseConfigValue } from '../utils/config-value.js';
+import { describeSchedule } from '../utils/schedule-label.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -489,13 +490,20 @@ commonJobOptions(jobs.command('update <id|alias> [engineArgs...]').description('
   });
 
 jobs.command('list').description('List all jobs').action(async () => {
-  try { print(await client().listJobs()); } catch (err) { handleError(err); }
+  try {
+    const list = await client().listJobs();
+    const byId = new Map(list.map((j) => [j.id, j]));
+    print(list.map((j) => ({ ...j, scheduleLabel: describeSchedule(j.schedule, (id) => byId.get(id)) })));
+  } catch (err) { handleError(err); }
 });
 
 jobs.command('get <id|alias>').description('Get a job by id or alias').action(async (id: string) => {
   try {
-    const job = await client().getJob(id);
+    const c = client();
+    const job = await c.getJob(id);
     print(job);
+    const upstream = job.schedule.kind === 'after' ? await c.getJob(job.schedule.jobId).catch(() => undefined) : undefined;
+    if (job.schedule.kind === 'after') stdout(`schedule: ${describeSchedule(job.schedule, () => upstream)}`);
     if (job.action.cwd) stdout(`cwd: ${job.action.cwd}`);
     if (job.action.sessionId) stdout(`Runner Session ID: ${job.action.sessionId}`);
   } catch (err) { handleError(err); }

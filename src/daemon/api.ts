@@ -39,6 +39,7 @@ import {
   readStoredConfigFile,
   type ConfigOp,
 } from '../config.js';
+import { stripExportIds } from '../share.js';
 import type { CrontickConfig } from '../schemas/config.js';
 import { applyConfigWithPolicy, applyJobUpdateWithPolicy, type InFlightChoice, type LostPendingConfigApply } from './config-apply.js';
 
@@ -606,7 +607,7 @@ async function handleRequest(
           }
         }
       }
-      const jobs = selected.map(({ id: _id, ...rest }) => (void _id, rest));
+      const jobs = stripExportIds(selected);
       return sendJson(res, 200, redactValue({ schema: 1, exportedAt: new Date().toISOString(), crontickVersion: VERSION, jobs }));
     }
 

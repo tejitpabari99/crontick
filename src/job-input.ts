@@ -99,7 +99,7 @@ export const JobCreateInputSchema = JobBaseSchema.omit({ action: true }).extend(
 /** One job inside a share export file: a create input whose `id` (if present) is ignored; every import assigns a new GUID. */
 export const ImportJobSchema = JobCreateInputSchema.extend({ id: z.string().optional() });
 
-/** Share export/import file, format version 1 (jobs only; no run history, no ids on export). */
+/** Share export/import file, format version 1 (jobs only; no run history; ids only on jobs that an exported `after` job references). */
 export const ExportFileSchema = z.object({
   schema: z.literal(1),
   exportedAt: z.string().optional(),
@@ -107,7 +107,7 @@ export const ExportFileSchema = z.object({
   jobs: z.array(ImportJobSchema),
 });
 
-export type ExportFile = { schema: 1; exportedAt?: string; crontickVersion?: string; jobs: Array<Omit<Job, 'id'>> };
+export type ExportFile = { schema: 1; exportedAt?: string; crontickVersion?: string; jobs: Array<Omit<Job, 'id'> & { id?: string }> };
 
 export const JobPatchInputSchema = z.object({
   /** Alias is user-editable after creation; `id` (the GUID) is never patchable. */

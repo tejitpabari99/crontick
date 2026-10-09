@@ -70,6 +70,8 @@ import type { InFlightChoice } from './daemon/config-apply.js';
 import type { InFlightRun } from './daemon/runner.js';
 import { createLogger, isVerboseEnv, type Logger, type LogSink } from './logger.js';
 import { dataDir, jobsDir, logsDir, pidFilePath, portFilePath, runsDbPath } from './paths.js';
+import { remapAfterUpstreams } from './share.js';
+import { describeSchedule } from './utils/schedule-label.js';
 import { VERSION } from './version.js';
 
 export interface CrontickClientOptions extends Omit<EnsureDaemonOptions, 'startDaemon' | 'logger'> {
@@ -517,11 +519,12 @@ export class CrontickClient {
     const normalizeOptions = this.normalizeOptions(normalizeInputOptions);
     const failures: ImportResult['results'] = [];
     const jobs: Job[] = [];
+    const oldIds: Array<string | undefined> = [];
     parsed.data.jobs.forEach((entry, index) => {
-      const { id: _ignoredId, ...input } = entry;
-      void _ignoredId;
+      const { id: fileId, ...input } = entry;
       try {
         jobs.push(normalizeJobInput(input as JobCreateInput, normalizeOptions));
+        oldIds.push(fileId);
       } catch (err) {
         if (err instanceof CrontickError && err.code === 'INVALID_CWD') {
           failures.push({ id: '?', alias: entry.alias, ok: false, error: `${err.code}: jobs.${index}: ${err.message}` });
@@ -533,6 +536,7 @@ export class CrontickClient {
         throw err;
       }
     });
+    remapAfterUpstreams(jobs, oldIds);
     ensureFoldersTrusted(jobs, { env: this.effectiveEnv(), cwd: this.options.cwd }, trustFolder === true);
     const applied = jobs.length > 0
       ? await this.request<ImportResult>('POST', '/api/import', { jobs })
@@ -560,6 +564,14 @@ export class CrontickClient {
   async jobSchedule(id: string, options: { n?: number } = {}): Promise<unknown> {
     const job = await this.getJob(id);
     const preview = await this.previewSchedule({ schedule: job.schedule, n: options.n });
+    if (job.schedule.kind === 'after') {
+      const upstreamId = job.schedule.jobId;
+      const upstream = await this.getJob(upstreamId).catch(() => undefined);
+      const label = describeSchedule(job.schedule, () => upstream);
+      const who = upstream ? (upstream.alias || upstreamId.slice(0, 8)) : `${upstreamId.slice(0, 8)} (missing)`;
+      const message = `triggered after ${who} on ${job.schedule.status === 'any' ? 'any outcome' : job.schedule.status}; no scheduled fire times`;
+      return { jobId: job.id, alias: job.alias ?? null, enabled: job.enabled, cwd: job.action.cwd ?? null, schedule: job.schedule, scheduleLabel: label, ...(preview as Record<string, unknown>), message };
+    }
     return { jobId: job.id, alias: job.alias ?? null, enabled: job.enabled, cwd: job.action.cwd ?? null, schedule: job.schedule, ...(preview as Record<string, unknown>) };
   }
 
