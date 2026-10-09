@@ -8,14 +8,14 @@ Source of truth: docs/agent_files/users-tejitpabari-crontick-improvements-202610
 
 | # | Task | Depends on | Status |
 |---|---|---|---|
-| 1 | Extract `job-prepare.ts` (normalize + folder trust) | - | todo |
-| 2 | Null-clears in patch schema and CLI `--unset` | - | todo |
-| 3 | Daemon prepare mode routes and `editor-meta` | 1, 2 | todo |
-| 4 | In-flight run handling on update (stop / wait) | 3 | todo |
-| 5 | Editor modal shell, "+" and pencil, field parity | 3 | todo |
-| 6 | Schedule kind registry and live preview | 5 | todo |
-| 7 | Error mapping, trust reveal, in-flight choice, success flow | 4, 5, 6 | todo |
-| 8 | Tests, docs, reference, changeset | 1-7 | todo |
+| 1 | Extract `job-prepare.ts` (normalize + folder trust) | - | done |
+| 2 | Null-clears in patch schema and CLI `--unset` | - | done |
+| 3 | Daemon prepare mode routes and `editor-meta` | 1, 2 | done |
+| 4 | In-flight run handling on update (stop / wait) | 3 | done |
+| 5 | Editor modal shell, "+" and pencil, field parity | 3 | done |
+| 6 | Schedule kind registry and live preview | 5 | done |
+| 7 | Error mapping, trust reveal, in-flight choice, success flow | 4, 5, 6 | done |
+| 8 | Tests, docs, reference, changeset | 1-7 | done |
 
 ## Task 1 — Extract `job-prepare.ts` (normalize + folder trust)
 What it is / what it means: One shared implementation of "input to finished Job" used by the client and the daemon (D1, Business logic location).

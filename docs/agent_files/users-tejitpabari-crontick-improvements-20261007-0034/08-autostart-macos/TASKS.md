@@ -10,9 +10,9 @@ Source of truth: docs/agent_files/users-tejitpabari-crontick-improvements-202610
 |---|---|---|---|
 | 1 | Plist renderer and parser | - | done |
 | 2 | launchd backend: available, install, uninstall | 1 | done |
-| 3 | launchd inspect and disabled-by-user detection | 1, 2 | in-progress |
-| 4 | Darwin factory case | 2, 3 | todo |
-| 5 | Docs, ADR 0034 macOS section, changeset, validate | 1-4 | todo |
+| 3 | launchd inspect and disabled-by-user detection | 1, 2 | done |
+| 4 | Darwin factory case | 2, 3 | done |
+| 5 | Docs, ADR 0034 macOS section, changeset, validate | 1-4 | done |
 
 ## Task 1 — Plist renderer and parser
 What it is / what it means: The pure, dependency-free plist layer (R6, D3, D4, D5, D6, D9).

@@ -8,13 +8,13 @@ Source of truth: docs/agent_files/users-tejitpabari-crontick-improvements-202610
 
 | # | Task | Depends on | Status |
 |---|---|---|---|
-| 1 | Launcher-survival gate on Windows CI (Open Question 1) | SP07 | todo |
-| 2 | Task XML renderer/parser (pure) | 1 | todo |
-| 3 | schtasks backend: available, install, uninstall | 2 | todo |
-| 4 | Inspect, active/last-result parsing, status hints | 3 | todo |
-| 5 | win32 factory case, `expectedCommand`, `--home` arguments | 3, 4 | todo |
-| 6 | Windows-only integration test and CI wiring | 5 | todo |
-| 7 | Docs, security.md rewrite, ADR 0034 Windows section, changeset, validate | 1-6 | todo |
+| 1 | Launcher-survival gate on Windows CI (Open Question 1) | SP07 | done |
+| 2 | Task XML renderer/parser (pure) | 1 | done |
+| 3 | schtasks backend: available, install, uninstall | 2 | done |
+| 4 | Inspect, active/last-result parsing, status hints | 3 | done |
+| 5 | win32 factory case, `expectedCommand`, `--home` arguments | 3, 4 | done |
+| 6 | Windows-only integration test and CI wiring | 5 | done |
+| 7 | Docs, security.md rewrite, ADR 0034 Windows section, changeset, validate | 1-6 | done |
 
 ## Task 1 — Launcher-survival gate on Windows CI (Open Question 1)
 What it is / what it means: The make-or-break unknown behind D2. If Task Scheduler kills the detached daemon when the launcher's task instance ends, the whole design fails, so this is proven before anything else is built.
