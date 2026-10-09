@@ -297,6 +297,21 @@ export function createMcpServer(): McpServer {
   );
 
   server.registerTool(
+    'crontick_run_delete',
+    {
+      description:
+        'Permanently delete run history (and each run\'s stored output) either by run ids (runIds) or all runs of one job (job: id or alias). Active (queued/running) runs are skipped and listed under skipped; unknown ids are listed under notFound. This cannot be undone -- confirm with the user first, and consider calling with dryRun:true to preview exactly what would be deleted. Returns { deleted, skipped, notFound, jobLogRemoved }.',
+      inputSchema: withVerbose({
+        runIds: z.array(z.string()).min(1).optional().describe('Run ids to delete. Provide this or job, not both.'),
+        job: z.string().optional().describe('Job id (GUID) or alias whose runs are all deleted'),
+        dryRun: z.boolean().optional().describe('Preview only: report what would be deleted without deleting anything.'),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => toolWrap(args, (client) => client.deleteRuns(withoutVerbose(args))),
+  );
+
+  server.registerTool(
     'crontick_job_schedule',
     {
       description:

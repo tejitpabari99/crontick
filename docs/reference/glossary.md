@@ -19,7 +19,7 @@ Short definitions of crontick terms.
 | **capability** | A named operation (e.g., `create-job`) that maps 1:1 across all three surfaces. Defined in `SURFACE_CAPABILITIES`. |
 | **alias** | The unique kebab-case job name; `--alias`/`-a` sets it. The immutable GUID `id` is the primary key; every command and tool that takes a job accepts either an id or an alias. |
 | **Runner Session ID** | Display label for a run's or job's engine session id (`sessionId` in JSON). Shown by `runs get` and `jobs get`. |
-| **working directory (`cwd`)** | The folder a job runs in, stored as `action.cwd` (`--cwd`/`-C`). For Claude jobs it must be trusted in Claude's config; see the CLI reference. |
+| **working directory (`cwd`)** | The folder a job runs in, stored as `action.cwd` (CLI `--dir`). For Claude jobs it must be trusted in Claude's config; see the CLI reference. |
 | **overlap policy** | Controls behavior when a job fires while a previous run is still active: `skip` (drop the new tick), `queue` (wait), or `cancel-previous` (abort the running execution). |
 | **retry** | Automatic re-execution of a failed run up to `retry.max` times with `retry.backoffSec` delay between attempts. |
 | **data directory** | The filesystem root where crontick stores all state: jobs, runs database, config, logs, PID/port files. |

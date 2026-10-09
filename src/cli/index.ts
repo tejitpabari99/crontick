@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { SCHEDULE_FLAGS, scheduleFooter, type ScheduleFlag } from '../constants/cli-schedule.js';
 import { VERSION } from '../version.js';
 import { CrontickError } from '../errors.js';
 import { createClient, type CrontickClient } from '../client.js';
@@ -18,6 +19,7 @@ import { isVerboseEnv, type LogEvent } from '../logger.js';
 import { readJsonFile } from '../json-file.js';
 import { formatJobStats, formatRunDetail, formatRunsTable } from '../run-format.js';
 import { resolveExportPath } from '../share.js';
+import { deleteRunsWithConfirm, formatDeleteRunsSummary, terminalConfirmIo } from './confirm.js';
 import { terminalTrustPromptIo, withTrustPrompt } from './trust-prompt.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -208,15 +210,21 @@ function groupHelp(command: Command): Command {
   return command;
 }
 
+function scheduleFlag(flag: string): ScheduleFlag {
+  const found = SCHEDULE_FLAGS.find((f) => f.flag === flag);
+  if (!found) throw new Error(`Unknown schedule flag: ${flag}`);
+  return found;
+}
+
 function commonJobOptions(command: Command): Command {
   return command
     .option('-a, --alias <alias>', 'Unique kebab-case job alias (auto-generated when omitted)')
     .option('-p, --prompt <text>', 'Prompt text for a prompt action')
     .option('--prompt-file <path>', 'UTF-8 .txt file to read into the prompt')
-    .option('--cron <expr>', 'Schedule (exactly one of --cron/--every/--at): cron expression, e.g. "0 9 * * *"')
-    .option('--every <interval>', 'Schedule (exactly one of --cron/--every/--at): repeat every N seconds, or use an s/m/h/d suffix (e.g. 30m)', parseEveryInterval)
-    .option('--at <datetime>', 'Schedule (exactly one of --cron/--every/--at): one-shot run time, ISO-8601 (e.g. 2026-10-01T09:00)')
-    .option('-C, --cwd <dir>', 'Working directory the job runs in (default: the current directory)')
+    .option(`${scheduleFlag('--cron').flag} ${scheduleFlag('--cron').arg}`, scheduleFlag('--cron').description)
+    .option(`${scheduleFlag('--every').flag} ${scheduleFlag('--every').arg}`, scheduleFlag('--every').description, parseEveryInterval)
+    .option(`${scheduleFlag('--at').flag} ${scheduleFlag('--at').arg}`, scheduleFlag('--at').description)
+    .option('--dir <path>', 'Directory the job runs in (default: current directory)')
     .option('--trust-folder', 'Trust the working directory in Claude without asking (when it is not trusted yet)')
     .option('--runner <runner>', 'Configured prompt engine name (default: config defaultEngine)')
     .option('--session-id <id>', 'Resume an existing session ID on every run (implies reuse)')
@@ -245,7 +253,7 @@ function collectJobOptions(engineArgs: string[], passthroughArgs: string[], cliA
     cron: stringOption(opts.cron),
     every: numberOption(opts.every),
     at: stringOption(opts.at),
-    cwd: stringOption(opts.cwd),
+    cwd: stringOption(opts.dir),
     trustFolder: booleanOption(opts.trustFolder),
     prompt: stringOption(opts.prompt),
     promptFile: stringOption(opts.promptFile),
@@ -270,7 +278,7 @@ function collectPatchOptions(engineArgs: string[], passthroughArgs: string[], cl
     cron: stringOption(opts.cron),
     every: numberOption(opts.every),
     at: stringOption(opts.at),
-    cwd: stringOption(opts.cwd),
+    cwd: stringOption(opts.dir),
     trustFolder: booleanOption(opts.trustFolder),
     prompt: stringOption(opts.prompt),
     promptFile: stringOption(opts.promptFile),
@@ -362,13 +370,16 @@ function splitPromptEngineArgs(engineArgs: string[]): { rawArgs: string[]; passt
         // Removed CLI switches must stay unknown instead of being forwarded
         // to the prompt runner through the generic long-flag passthrough.
         const flag = token.split('=', 1)[0]!;
-        if (flag === '--job-env-file' || flag === '--engine' || flag === '--tz') {
+        if (flag === '--job-env-file' || flag === '--engine' || flag === '--tz' || flag === '--cwd') {
           throw new Error(`unknown option '${flag}'`);
         }
         passthroughArgs.push(token);
         if (!token.includes('=') && i + 1 < tokens.length && !tokens[i + 1]!.startsWith('-')) {
           passthroughArgs.push(tokens[++i]!);
         }
+      } else if (token === '-C') {
+        // Removed short flag: unknown everywhere, including after `--`.
+        throw new Error(`unknown option '${token}'`);
       } else if (tokens === beforeSeparator && token.startsWith('-')) {
         throw new CrontickError('VALIDATION_ERROR', `Unknown short option: ${token}`);
       } else {
@@ -411,6 +422,7 @@ const jobs = groupHelp(program.command('jobs').description('Create, inspect, and
 
 commonJobOptions(jobs.command('new [engineArgs...]').description('Create a new job (alias auto-generated when --alias is omitted)'))
   .allowUnknownOption()
+  .addHelpText('after', scheduleFooter())
   .option('--force', 'Replace an existing job when the same alias already exists')
   .action(async (engineArgs: string[], opts, cmd: Command) => {
     const c = client();
@@ -536,6 +548,30 @@ runs.command('get <runId>')
 runs.command('cancel <runId>').description('Cancel an in-progress run').action(async (runId: string) => {
   try { print(await client().cancelRun(runId)); } catch (err) { handleError(err); }
 });
+
+
+runs.command('delete [runIds...]')
+  .description('Delete runs (and their stored output) by run id, or all runs of a job with --job. Active runs are skipped.')
+  .option('--job <id|alias>', 'Delete every run of this job (id or alias; a deleted job\'s raw id also works)')
+  .option('--force', 'Skip the confirmation prompt (required when not on a terminal)')
+  .option('--dry-run', 'Show what would be deleted without deleting')
+  .option('--json', 'Print the full result as JSON')
+  .action(async (runIds: string[], opts) => {
+    try {
+      const ids = runIds ?? [];
+      if ((opts.job !== undefined) === (ids.length > 0)) {
+        throw new CrontickError('VALIDATION_ERROR', 'Provide run ids or --job <id|alias> (not both).');
+      }
+      const dryRun = opts.dryRun === true;
+      const result = await deleteRunsWithConfirm(client(), {
+        ...(opts.job !== undefined ? { job: opts.job as string } : { runIds: ids }),
+        force: opts.force === true,
+        dryRun,
+      }, terminalConfirmIo());
+      stdout(opts.json ? JSON.stringify(result, null, 2) : formatDeleteRunsSummary(result, dryRun));
+      if (result.notFound.length > 0) process.exitCode = 1;
+    } catch (err) { handleError(err); }
+  });
 
 
 // ── stats ────────────────────────────────────────────────────────────────────

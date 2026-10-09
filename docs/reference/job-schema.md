@@ -11,7 +11,7 @@ Top-level job object.
 | Field | Type | Required | Default | Constraints | Description |
 |-------|------|----------|---------|-------------|-------------|
 | `id` | `string` (GUID) | no (server-assigned) | `randomUUID()` | UUID format | Immutable identifier assigned automatically at creation; never user-supplied. Primary key used internally by the store, `run.jobId`, and the scheduler. |
-| `alias` | `string` | no | auto-generated (`<word>-<1-1000>`) | Regex: `^[a-z0-9]+(?:-[a-z0-9]+)*$` (kebab-case); unique among currently-defined (live) jobs | Optional, user-editable unique **alias** (the one user-facing name for a job; CLI `--alias`/`-a`). Auto-generation regenerates on collision and falls back to a short random suffix. Deleting a job frees its alias for reuse. |
+| `alias` | `string` | no | auto-generated (`<word>-<1-1000>`) | Regex: `^[a-z0-9]+(?:-[a-z0-9]+)*$` (kebab-case); unique among currently-defined (live) jobs | Optional, user-editable unique **alias** (the one user-facing name for a job; CLI `--alias`/`-a`). Auto-generation regenerates on collision and falls back to a short random suffix. Deleting a job frees its alias for reuse. The alias `all` is reserved (`jobs delete all`) and is rejected. |
 | `description` | `string` | no | — | — | Human-readable description |
 | `enabled` | `boolean` | no | `true` | — | Whether the job runs on schedule |
 | `schedule` | `Schedule` | yes | — | Discriminated union on `kind` | When the job runs |
@@ -69,7 +69,7 @@ Discriminated union on `kind`. All action kinds share these common optional fiel
 
 | Field | Type | Required | Default | Constraints | Description |
 |-------|------|----------|---------|-------------|-------------|
-| `cwd` | `string` | no | invoking directory on create | Resolved to an absolute, existing directory (`INVALID_CWD`) | Working directory for execution (CLI `--cwd`/`-C`). For Claude jobs the folder must be trusted in Claude (see [cli.md](cli.md#working-directory-and-claude-trust)) |
+| `cwd` | `string` | no | invoking directory on create | Resolved to an absolute, existing directory (`INVALID_CWD`) | Working directory for execution (CLI `--dir`). For Claude jobs the folder must be trusted in Claude (see [cli.md](cli.md#working-directory-and-claude-trust)) |
 | `env` | `Record<string, string>` | no | — | — | Additional environment variables |
 | `envFile` | `string` | no | — | — | Path to `.env` file for extra env vars |
 | `timeoutSec` | `number` | no | `config.json` `defaults.timeoutSec`, then unset | Positive | Kill the process after this many seconds |

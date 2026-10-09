@@ -26,7 +26,7 @@ Expected: prints the created job with a generated GUID `id` and alias `hello-wor
 crontick jobs new --cron '0 9 * * 1-5' -p 'Write a morning report' --runner claude -a morning-report
 ```
 
-Expected: job with `schedule.kind: "cron"` (fires in the machine's local timezone), `action.kind: "prompt"`, and `action.cwd` set to the current directory. Use `-C <dir>` to run elsewhere; for Claude jobs an untrusted folder prompts `Trust it? (y/N)` (or pass `--trust-folder`).
+Expected: job with `schedule.kind: "cron"` (fires in the machine's local timezone), `action.kind: "prompt"`, and `action.cwd` set to the current directory. Use `--dir <path>` to run elsewhere; for Claude jobs an untrusted folder prompts `Trust it? (y/N)` (or pass `--trust-folder`).
 
 ### Prompt job via JSON file
 

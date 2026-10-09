@@ -347,6 +347,22 @@ export class CrontickClient {
   }
 
 
+  /**
+   * Deletes runs by `runIds` XOR `job` (id, alias, or the raw id of an already
+   * deleted job). Queued/running runs are skipped and reported. `dryRun`
+   * returns the same result without deleting. No confirmation prompt here.
+   */
+  async deleteRuns(options: { runIds?: string[]; job?: string; dryRun?: boolean }): Promise<{ deleted: string[]; skipped: Array<{ id: string; status: string }>; notFound: string[]; jobLogRemoved: boolean }> {
+    const hasIds = (options.runIds?.length ?? 0) > 0;
+    const hasJob = options.job !== undefined && options.job !== '';
+    if (hasIds === hasJob) throw new CrontickError('VALIDATION_ERROR', 'Provide exactly one of runIds or job');
+    const params = new URLSearchParams();
+    if (hasIds) params.set('runId', options.runIds!.join(','));
+    else params.set('jobId', options.job!);
+    if (options.dryRun) params.set('dryRun', '1');
+    return this.request('DELETE', `/api/runs?${params.toString()}`);
+  }
+
   async getRun(runId: string): Promise<RunRecord> {
     return this.request<RunRecord>('GET', `/api/runs/${encodeURIComponent(runId)}`);
   }

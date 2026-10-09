@@ -15,7 +15,7 @@ import { TextDecoder } from 'node:util';
 import { z } from 'zod';
 import { CrontickError } from './errors.js';
 import {
-  JOB_ALIAS_PATTERN,
+  JobAliasSchema,
   JobBaseSchema,
   JobSchema,
   PromptActionBaseSchema,
@@ -93,7 +93,7 @@ export type ExportFile = { schema: 1; exportedAt?: string; crontickVersion?: str
 
 export const JobPatchInputSchema = z.object({
   /** Alias is user-editable after creation; `id` (the GUID) is never patchable. */
-  alias: z.string().regex(JOB_ALIAS_PATTERN, 'Job alias must be kebab-case (e.g. "my-job")').optional().describe('Unique kebab-case job alias (set via CLI --alias)'),
+  alias: JobAliasSchema.optional().describe('Unique kebab-case job alias (set via CLI --alias)'),
   description: z.string().optional(),
   enabled: z.boolean().optional(),
   schedule: ScheduleSchema.optional(),
@@ -137,7 +137,7 @@ export interface JobCreateCliOptions {
   cron?: string;
   every?: number;
   at?: string;
-  /** Working directory the engine runs in (`--cwd`/`-C`); stored as `action.cwd`. Defaults to the invoking directory on create. */
+  /** Working directory the engine runs in (CLI `--dir`); stored as `action.cwd`. Defaults to the invoking directory on create. */
   cwd?: string;
   /** Trust the job's working directory in Claude without asking (`--trust-folder`). */
   trustFolder?: boolean;
@@ -567,10 +567,10 @@ function withResolvedCwd(action: ActionInput, options: NormalizeJobInputOptions,
   try {
     stat = statSync(resolved);
   } catch {
-    throw new CrontickError('INVALID_CWD', `Working directory does not exist: ${resolved}. Pass an existing directory with --cwd/-C (or action.cwd).`, { cwd: resolved });
+    throw new CrontickError('INVALID_CWD', `Working directory does not exist: ${resolved}. Pass an existing directory with --dir (or action.cwd).`, { cwd: resolved });
   }
   if (!stat.isDirectory()) {
-    throw new CrontickError('INVALID_CWD', `Working directory is not a directory: ${resolved}. Pass an existing directory with --cwd/-C (or action.cwd).`, { cwd: resolved });
+    throw new CrontickError('INVALID_CWD', `Working directory is not a directory: ${resolved}. Pass an existing directory with --dir (or action.cwd).`, { cwd: resolved });
   }
   return { ...action, cwd: resolved } as ActionInput;
 }
@@ -640,7 +640,7 @@ function maybeBuildAction(input: JobPatchCliOptions, rawArgs: string[], strictUp
       );
     }
     if (strictUpdate && input.cwd !== undefined) {
-      // `jobs update --cwd` changes only the working directory (and, with
+      // `jobs update --dir` changes only the working directory (and, with
       // --session-id / --reuse-session, the session handling that must go with it).
       return { kind: 'prompt', cwd: input.cwd, sessionId: input.sessionId, reuseSession: input.reuseSession, engine: promptEngine(input.engine) };
     }

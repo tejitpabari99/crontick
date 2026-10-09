@@ -154,7 +154,7 @@ describe('CLI binary (dist/cli/index.js)', () => {
     // `runs logs` / `runs output` were folded into `runs get`.
     expect(cli(['runs', 'logs']).stderr).toContain("unknown command 'logs'");
     expect(cli(['runs', 'output']).stderr).toContain("unknown command 'output'");
-    expect(cli(['runs', 'delete']).stderr).toContain("unknown command 'delete'");
+    expect(cli(['runs', '--help']).stdout).toContain('delete');
     expect(cli(['config']).stderr).toContain("unknown command 'config'");
     const topHelp = cli(['--help']);
     expect(topHelp.stdout).toContain('doctor');

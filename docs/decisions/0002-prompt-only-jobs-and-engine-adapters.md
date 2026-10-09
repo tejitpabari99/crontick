@@ -62,7 +62,7 @@ follow `--`. Prompt engines add flags independently of crontick releases, and a 
 mapping would need a crontick release for every engine flag. (An earlier repeatable
 `--arg <value>` flag was dropped from the CLI in favor of this passthrough; library and
 MCP callers set `action.args` directly.) Short flags before `--` belong to crontick
-(`-a`, `-p`, `-C`); after `--` they pass to the engine. Every source runs through the same
+(`-a`, `-p`); after `--` they pass to the engine. Every source runs through the same
 reserved-argument validation, which rejects crontick-managed flags a job must never
 override, including `--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`,
 `--output-format` and `--settings` (which the Claude adapter itself controls), also in

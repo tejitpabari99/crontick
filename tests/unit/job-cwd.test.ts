@@ -114,7 +114,7 @@ describe('cwd change on a job with a session', () => {
   });
 });
 
-describe('--cwd / -C on the CLI', () => {
+describe('--dir on the CLI', () => {
   function cli(args: string[], home: string, cwd?: string) {
     return spawnSync(process.execPath, [CLI, ...args], {
       encoding: 'utf-8',
@@ -124,7 +124,7 @@ describe('--cwd / -C on the CLI', () => {
     });
   }
 
-  it('stores the invoking directory by default, honors -C/--cwd, rejects missing dirs, and runs start there', async () => {
+  it('stores the invoking directory by default, honors --dir, rejects missing dirs, and runs start there', async () => {
     const home = tmp('crontick-cwd-home-');
     writeFakeEngineConfig(home);
     const invoking = tmp();
@@ -134,15 +134,15 @@ describe('--cwd / -C on the CLI', () => {
     expect(cli(['jobs', 'new', '-a', 'cwd-default', '-p', 'console.log(process.cwd())', ...common], home, invoking).status).toBe(0);
     expect(cli(['jobs', 'get', 'cwd-default'], home).stdout).toContain(`"cwd":${JSON.stringify(invoking)}`);
 
-    expect(cli(['jobs', 'new', '-a', 'cwd-chosen', '-p', 'console.log(process.cwd())', '-C', chosen, ...common], home, invoking).status).toBe(0);
+    expect(cli(['jobs', 'new', '-a', 'cwd-chosen', '-p', 'console.log(process.cwd())', '--dir', chosen, ...common], home, invoking).status).toBe(0);
     expect(cli(['jobs', 'get', 'cwd-chosen'], home).stdout).toContain(`"cwd":${JSON.stringify(chosen)}`);
 
-    const missing = cli(['jobs', 'new', '-a', 'cwd-missing', '-p', 'x', '--cwd', join(chosen, 'nope'), ...common], home, invoking);
+    const missing = cli(['jobs', 'new', '-a', 'cwd-missing', '-p', 'x', '--dir', join(chosen, 'nope'), ...common], home, invoking);
     expect(missing.status).toBe(1);
     expect(missing.stderr).toContain('INVALID_CWD');
     expect(cli(['jobs', 'get', 'cwd-missing'], home).status).toBe(1);
 
-    const moved = cli(['jobs', 'update', 'cwd-default', '--cwd', chosen], home, invoking);
+    const moved = cli(['jobs', 'update', 'cwd-default', '--dir', chosen], home, invoking);
     expect(moved.status, moved.stderr).toBe(0);
     expect(moved.stdout).toContain(`"cwd":${JSON.stringify(chosen)}`);
     expect(moved.stdout).toContain('console.log(process.cwd())');

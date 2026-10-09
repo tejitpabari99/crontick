@@ -75,6 +75,7 @@ local cron daemon, with observability through parsed run output, a per-job log f
 
 ### Non-functional requirements
 
+- **R-003-22a**: Deleting runs (`deleteRuns`, `DELETE /api/runs`) MUST accept exactly one of a run-id list or a job reference, MUST skip and report `queued`/`running` runs without canceling them, MUST delete `run_outputs` then `runs` in one transaction, MUST report unknown ids in `notFound`, and MUST remove the per-job log only when the job no longer exists and no runs for it remain. `dryRun` MUST return the same result without deleting.
 - **R-003-23**: The runner SHOULD NOT block the event loop; all I/O is async or delegated to the child process.
 - **R-003-24**: Log capture SHOULD be streamed incrementally (not buffered until exit).
 

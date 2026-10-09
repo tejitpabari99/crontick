@@ -39,6 +39,7 @@ crontick jobs run-now <id|alias>
 crontick runs list [--job <id|alias>] [--limit <n>] [--since <ms>] [--status <status>]
 crontick runs get <runId> [--json]
 crontick runs cancel <runId>
+crontick runs delete <runId...> | --job <id|alias> [--force] [--dry-run] [--json]
 
 crontick stats summary
 crontick stats job <id|alias>
@@ -55,6 +56,8 @@ crontick daemon status
 crontick daemon reload
 crontick mcp [--no-start-daemon] [--daemon-url <url>]
 ```
+
+The alias `all` is reserved (it is the `jobs delete all` keyword) and is rejected on create, update and import.
 
 Commands accept a job identifier as either the immutable GUID `id` or the job's **alias** (the unique kebab-case name; `--alias`/`-a` sets it). `jobs new` assigns the GUID automatically; pass `--alias <alias>` only when you want to control the alias. Every command that takes a job (`jobs update/get/schedule/delete/run-now`, `stats job`, `runs list --job`, `share export --only-jobs`) resolves an id or an alias the same way. A missing job reports `Job X not found (id or alias)`.
 
@@ -75,10 +78,10 @@ crontick jobs new [engineArgs...]
 | `-a`, `--alias <alias>` | string | auto-generated | Unique kebab-case job alias (saved as the job's `alias` field) |
 | `-p`, `--prompt <text>` | string | — | Prompt text for a prompt action |
 | `--prompt-file <path>` | string | — | UTF-8 text file to read into the prompt |
-| `--cron <expr>` | string | — | Schedule (exactly one of `--cron`/`--every`/`--at`): cron expression (for example, `"0 9 * * *"`). Fires in the machine's local timezone |
-| `--every <interval>` | string | — | Schedule (exactly one of `--cron`/`--every`/`--at`): repeat every N seconds, or with an `s`, `m`, `h`, or `d` suffix (for example `30m` = 1800 seconds) |
-| `--at <datetime>` | string | — | Schedule (exactly one of `--cron`/`--every`/`--at`): one-shot run time, ISO-8601 (for example `2026-10-01T09:00`). Interpreted in the machine's local timezone unless an offset (`Z`, `+02:00`) is given. Date-only values (`2026-10-01`) are parsed as UTC midnight, so include a time |
-| `-C`, `--cwd <dir>` | string | the current directory | Working directory the job runs in; stored as `action.cwd`. Must be an existing directory (`INVALID_CWD`). See [Working directory and Claude trust](#working-directory-and-claude-trust) |
+| `--cron <expr>` | string | — | Schedule: cron expression (for example, `"0 9 * * *"`). Fires in the machine's local timezone |
+| `--every <interval>` | string | — | Schedule: repeat every N seconds, or with an `s`, `m`, `h`, or `d` suffix (for example `30m` = 1800 seconds) |
+| `--at <datetime>` | string | — | Schedule: one-shot run time, ISO-8601 (for example `2026-10-01T09:00`). Interpreted in the machine's local timezone unless an offset (`Z`, `+02:00`) is given. Date-only values (`2026-10-01`) are parsed as UTC midnight, so include a time |
+| `--dir <path>` | string | the current directory | Directory the job runs in; stored as `action.cwd`. Must be an existing directory (`INVALID_CWD`). See [Working directory and Claude trust](#working-directory-and-claude-trust) |
 | `--trust-folder` | boolean | `false` | Trust the working directory in Claude without asking when it is not trusted yet |
 | `--runner <runner>` | string | config `defaultEngine` | Configured prompt engine name; saved as `action.engine` |
 | `--session-id <id>` | string | — | Resume an existing session ID (may be one you started yourself) on every run; implies reuse and requires overlap `skip`; shown as the Runner Session ID |
@@ -90,7 +93,7 @@ crontick jobs new [engineArgs...]
 | `--desc <description>` | string | — | Job description |
 | `--force` | boolean | `false` | Replace an existing job when the same alias already exists |
 
-Exactly one schedule source (`--cron`, `--every`, `--at`) and one prompt source (`--prompt`, `--prompt-file`) are required unless `--file` is used. Supplying more than one schedule flag is an error (`VALIDATION_ERROR`: they cannot be combined); supplying none is `MISSING_ARG`. Bare `--every` numbers remain seconds; suffixes `s`, `m`, `h`, and `d` mean seconds, minutes, hours, and days. Unrecognized long flags, with a following value when that token is not flag-shaped, are stored verbatim in `action.args`. The same flags work after `--`, which also accepts positional arguments. Their order is preserved. Short flags before `--` belong to crontick (`-a`, `-p`, `-C`); after `--` they pass through to the engine (for example `-v`). Flags that crontick manages for the engine (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, and the short forms `-p` and `-r`) are rejected, including `--flag=value` forms. Removed `--engine`, `--job-env-file` and `--tz` switches are rejected as unknown options, including after `--`. If a token after `--` matches a crontick long flag, the CLI rejects it rather than silently storing it as a literal prompt arg.
+`jobs new --help` ends with a "How to schedule" footer ("Use exactly one of --cron, --every, --at.", generated from `SCHEDULE_FLAGS`); `jobs update --help` has the same option help but no footer. Exactly one schedule source (`--cron`, `--every`, `--at`) and one prompt source (`--prompt`, `--prompt-file`) are required unless `--file` is used. Supplying more than one schedule flag is an error (`VALIDATION_ERROR`: they cannot be combined); supplying none is `MISSING_ARG`. Bare `--every` numbers remain seconds; suffixes `s`, `m`, `h`, and `d` mean seconds, minutes, hours, and days. Unrecognized long flags, with a following value when that token is not flag-shaped, are stored verbatim in `action.args`. The same flags work after `--`, which also accepts positional arguments. Their order is preserved. Short flags before `--` belong to crontick (`-a`, `-p`); after `--` they pass through to the engine (for example `-v`). Flags that crontick manages for the engine (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, and the short forms `-p` and `-r`) are rejected, including `--flag=value` forms. Removed `--engine`, `--job-env-file`, `--tz`, `--cwd` and `-C` switches are rejected as unknown options, including after `--`. If a token after `--` matches a crontick long flag, the CLI rejects it rather than silently storing it as a literal prompt arg.
 
 Dedicated `--script`, `--exec`, `--arg`, `--shell`, and `--job-env-file` flags are not exposed on the CLI. The job schema supports prompt actions only; `--file` accepts a complete prompt-job definition.
 
@@ -122,7 +125,7 @@ Unknown long flags use the same argument passthrough as `jobs new`; include `--p
 
 ```bash
 crontick jobs update repo-summary --cron "0 9 * * 1-5"
-crontick jobs update repo-summary --cwd ~/code/other-repo   # changes only the working directory
+crontick jobs update repo-summary --dir ~/code/other-repo   # changes only the working directory
 crontick jobs update repo-summary --disable
 ```
 
@@ -243,6 +246,26 @@ crontick runs cancel <runId>
 
 ---
 
+### crontick runs delete
+
+Delete finished runs and their stored output, by run id or by job.
+
+```bash
+crontick runs delete <runId...> [--force] [--dry-run] [--json]
+crontick runs delete --job <id|alias> [--force] [--dry-run] [--json]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--job <id\|alias>` | Delete all runs of a job. Accepts an id, an alias, or the raw id of an already-deleted job (orphaned runs). Mutually exclusive with run ids |
+| `--force` | Skip the confirmation prompt (required when stdin/stdout is not a TTY; otherwise `CONFIRMATION_REQUIRED`, exit 1) |
+| `--dry-run` | Preview the result; nothing is deleted, no prompt |
+| `--json` | Print the full result `{ deleted, skipped, notFound, jobLogRemoved }` |
+
+Without `--force` the command runs a dry run first, then asks `Delete N run(s)[ of job X]? (y/N)`. `queued`/`running` runs are skipped (not canceled) and listed. Unknown run ids are reported and the exit code is 1 when any are present; other ids are still processed. When the job no longer exists and no runs remain, its per-job log file is removed; a live job's log is kept. Plain output: `Deleted N run(s); skipped M active; not found K.`
+
+---
+
 ## Stats Commands
 
 ### crontick stats summary
@@ -297,7 +320,7 @@ The whole file is validated before anything is imported: a bare array, a missing
 
 ### Working directory and Claude trust
 
-Jobs run in `action.cwd`. `jobs new` stores the invoking directory unless `--cwd`/`-C` is given (library and MCP callers default to the client's `cwd` option or the process directory; MCP agents should pass the project folder). Changing the `cwd` of a job that has a session (`sessionId` or `reuseSession`) is rejected with `CWD_CHANGE_BREAKS_SESSION` because Claude sessions are stored per directory: also pass `--session-id <id>` for a session in the new directory, or `--reuse-session` to start a fresh one.
+Jobs run in `action.cwd`. `jobs new` stores the invoking directory unless `--dir` is given (library and MCP callers default to the client's `cwd` option or the process directory; MCP agents should pass the project folder). Changing the `cwd` of a job that has a session (`sessionId` or `reuseSession`) is rejected with `CWD_CHANGE_BREAKS_SESSION` because Claude sessions are stored per directory: also pass `--session-id <id>` for a session in the new directory, or `--reuse-session` to start a fresh one.
 
 For Claude jobs, crontick checks that the folder is trusted in Claude's config (`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`): the folder or an ancestor must have `hasTrustDialogAccepted: true`. If not, creation fails with `TRUST_REQUIRED` and nothing is saved. On a terminal the CLI asks `Folder X is not trusted by Claude. Trust it? (y/N)` and, on `y`, records the trust and creates the job; otherwise it exits 1. Without a terminal it errors and tells you to re-run with `--trust-folder`, which answers yes. Only that one flag of `.claude.json` is changed (all other keys are preserved); an unparsable file aborts with `CLAUDE_CONFIG_UNREADABLE`. Engines without a trust concept (raw engines) skip the check. Note that `claude -p` itself skips Claude's interactive trust dialog; the persisted flag still governs project-scoped settings and hooks, so this check is a guardrail for your intent rather than a hard Claude requirement.
 

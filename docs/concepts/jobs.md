@@ -17,7 +17,7 @@ Every job has an immutable `id`: a GUID (`node:crypto` `randomUUID()`) assigned 
 
 Every job also has an optional, user-editable **alias** (the one user-facing name; the CLI flag is `--alias`/`-a`): a kebab-case (`/^[a-z0-9]+(?:-[a-z0-9]+)*$/`) name, unique among all currently-defined (non-deleted) jobs. When you don't supply one on create, crontick auto-generates `<word>-<1-1000>` from a small built-in word list, retrying on collision (after many collisions a short random suffix is used, and a create race that trips the alias UNIQUE index is retried with a fresh alias). You can rename a job by editing its `alias` later via `update` -- no delete/recreate required.
 
-Anywhere a job identifier is accepted (CLI positional `<id|alias>`, MCP `id` params, HTTP path segments), you may pass EITHER the GUID `id` OR the `alias`; crontick resolves an exact GUID match first, then falls back to an alias lookup, and returns `JOB_NOT_FOUND` ("Job X not found (id or alias)") if neither matches.
+Anywhere a job identifier is accepted (CLI positional `<id|alias>`, MCP `id` params, HTTP path segments), you may pass EITHER the GUID `id` OR the `alias`; crontick resolves an exact GUID match first, then falls back to an alias lookup, and returns `JOB_NOT_FOUND` ("Job X not found (id or alias)") if neither matches. All lookups share one resolver. The alias `all` is reserved (it is the `jobs delete all` keyword) and is rejected on create, update and import.
 
 ## The job's action: `prompt`
 
@@ -71,7 +71,7 @@ When a create input omits `overlap`, `timeoutSec`, or `retry`, crontick fills th
 
 ## Working directory
 
-A job runs in `action.cwd`. `jobs new` records the invoking directory (or `--cwd`/`-C`), resolved to an absolute existing path (`INVALID_CWD` otherwise); library and MCP callers default to the client's `cwd` option or the process directory, so MCP agents should pass the project folder. For Claude jobs the folder must be trusted in Claude's config: creation fails with `TRUST_REQUIRED` unless the folder is trusted, the user answers `y` at the CLI prompt, or `--trust-folder`/`trustFolder: true` is given. (`claude -p` itself skips its trust dialog; the check is a guardrail for the owner's intent.) Claude sessions are stored per directory, so moving a job that has a session to another cwd needs `--session-id` or `--reuse-session` (`CWD_CHANGE_BREAKS_SESSION`). See [cli.md](../reference/cli.md#working-directory-and-claude-trust).
+A job runs in `action.cwd`. `jobs new` records the invoking directory (or `--dir`), resolved to an absolute existing path (`INVALID_CWD` otherwise); library and MCP callers default to the client's `cwd` option or the process directory, so MCP agents should pass the project folder. For Claude jobs the folder must be trusted in Claude's config: creation fails with `TRUST_REQUIRED` unless the folder is trusted, the user answers `y` at the CLI prompt, or `--trust-folder`/`trustFolder: true` is given. (`claude -p` itself skips its trust dialog; the check is a guardrail for the owner's intent.) Claude sessions are stored per directory, so moving a job that has a session to another cwd needs `--session-id` or `--reuse-session` (`CWD_CHANGE_BREAKS_SESSION`). See [cli.md](../reference/cli.md#working-directory-and-claude-trust).
 
 ## What is persisted vs derived
 

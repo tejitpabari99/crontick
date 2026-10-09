@@ -67,6 +67,7 @@ The command-tree reorganization intentionally narrowed some exposure without rem
 | `cancel-run` | `cancelRun` | `crontick runs cancel` | `crontick_job_cancel_run` |
 | `list-runs` | `listRuns` | `crontick runs list` | `crontick_run_list` |
 | `get-run` | `getRun` | `crontick runs get` | `crontick_run_get` |
+| `delete-runs` | `deleteRuns` | `crontick runs delete` | `crontick_run_delete` |
 | `stats-summary` | `statsSummary` | `crontick stats summary` | `crontick_stats_summary` |
 | `stats-job` | `statsJob` | `crontick stats job` | `crontick_stats_job` |
 | `export` | `exportJobs` | `crontick share export` | `crontick_export` |

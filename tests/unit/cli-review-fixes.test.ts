@@ -36,7 +36,7 @@ describe('jobs new help and schedule errors', () => {
     }
     expect(help).not.toContain('--tz');
     expect(help).not.toMatch(/timezone/i);
-    expect(help).toContain('Schedule (exactly one of --cron/--every/--at)');
+    expect(help).toContain('--cron <expr> Schedule: cron expression');
     expect(help).toContain('-a, --alias <alias> Unique kebab-case job alias (auto-generated when omitted)');
     expect(help).toContain('-p, --prompt <text>');
     expect(help).toContain('--session-id <id> Resume an existing session ID on every run (implies reuse)');

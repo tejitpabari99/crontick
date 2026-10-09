@@ -186,7 +186,7 @@ describe('MCP server — full contract', () => {
       expect(byName.get(name)?.annotations?.readOnlyHint, `${name} should be readOnlyHint`).toBe(true);
     }
 
-    const destructiveTools = ['crontick_job_create', 'crontick_job_update', 'crontick_job_run_now', 'crontick_job_delete', 'crontick_import', 'crontick_daemon_stop'];
+    const destructiveTools = ['crontick_job_create', 'crontick_job_update', 'crontick_job_run_now', 'crontick_job_delete', 'crontick_run_delete', 'crontick_import', 'crontick_daemon_stop'];
     for (const name of destructiveTools) {
       const annotations = byName.get(name)?.annotations;
       expect(annotations?.readOnlyHint === true, `${name} should not be readOnlyHint`).toBe(false);
@@ -730,6 +730,28 @@ describe('MCP server — full contract', () => {
     expect(names).not.toContain('crontick_run_output');
   }, 10_000);
 
+
+  it('crontick_run_delete: description says confirm first + dryRun; dryRun previews, unknown ids are notFound, bad input errors', async () => {
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'crontick_run_delete');
+    expect(tool?.description).toMatch(/confirm/i);
+    expect(tool?.description).toContain('dryRun');
+    expect(tool?.annotations?.destructiveHint).toBe(true);
+    expect(tool?.annotations?.idempotentHint).toBe(true);
+
+    const { json: listJson } = await callTool(client, 'crontick_run_list', { jobId: testJobId, limit: 1 });
+    const runId = (listJson as Array<{ id: string }>)[0].id;
+    const { json, isError } = await callTool(client, 'crontick_run_delete', { runIds: [runId, 'no-such-run'], dryRun: true });
+    expect(isError).toBe(false);
+    const res = json as { deleted: string[]; skipped: unknown[]; notFound: string[] };
+    // A still-active run is skipped instead of deleted; either way it is accounted for and nothing is removed.
+    expect([...res.deleted, ...res.skipped.map((s) => (s as { id: string }).id)]).toEqual([runId]);
+    expect(res.notFound).toEqual(['no-such-run']);
+    const { isError: stillThere } = await callTool(client, 'crontick_run_get', { id: runId });
+    expect(stillThere).toBe(false);
+
+    const bad = await callTool(client, 'crontick_run_delete', {});
+    expect(bad.isError).toBe(true);
+  }, 15_000);
 
   it('crontick_run_list filters by status', async () => {
     // A dedicated fake-node-engine job so the run deterministically succeeds,
