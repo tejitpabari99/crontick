@@ -1307,6 +1307,72 @@ const SCHEDULE_KINDS = [
 function findScheduleKind(id) {
   return SCHEDULE_KINDS.find((k) => k.kind === id);
 }
+/** Server `details` path (zod format() key path, dot-joined, array indexes dropped) -> form field id. */
+const EDITOR_ERROR_PATHS = {
+  alias: 'alias', description: 'description', schedule: 'schedule', overlap: 'overlap',
+  'retry.max': 'retryMax', 'retry.backoffSec': 'backoffSec',
+  'action.prompt': 'prompt', 'action.cwd': 'cwd', cwd: 'cwd', 'action.engine': 'engine', 'action.args': 'args',
+  'action.sessionId': 'sessionId', 'action.reuseSession': 'reuseSession', 'action.timeoutSec': 'timeoutSec',
+};
+
+/** Walks zod `format()` details (`{_errors, key: {...}}`) plus flat `{field: 'message'}` entries into dotted paths. */
+function collectErrorPaths(node, prefix, out) {
+  if (!node || typeof node !== 'object') return;
+  for (const [key, child] of Object.entries(node)) {
+    if (key === '_errors') {
+      if (Array.isArray(child) && child.length && prefix) out.push(prefix);
+      continue;
+    }
+    const path = /^\d+$/.test(key) ? prefix : (prefix ? `${prefix}.${key}` : key);
+    if (typeof child === 'string') out.push(path);
+    else collectErrorPaths(child, path, out);
+  }
+}
+
+/** Server error response -> { code, message, fields (form field ids to outline), folders (trust), runs (in-flight) }. */
+function mapEditorError(status, body) {
+  const error = body?.error;
+  const code = error?.code || 'UNKNOWN';
+  const details = error?.details;
+  const fields = [];
+  const add = (...ids) => { for (const id of ids) if (!fields.includes(id)) fields.push(id); };
+  if (code === 'INVALID_CWD') add('cwd');
+  else if (code === 'JOB_ALREADY_EXISTS') add('alias');
+  else if (code === 'CWD_CHANGE_BREAKS_SESSION') add('cwd', 'sessionId', 'reuseSession');
+  else if (code === 'VALIDATION_ERROR') {
+    const paths = [];
+    collectErrorPaths(details, '', paths);
+    for (const path of paths) {
+      const id = EDITOR_ERROR_PATHS[path] || EDITOR_ERROR_PATHS[path.split('.').slice(0, 2).join('.')] || EDITOR_ERROR_PATHS[path.split('.')[0]];
+      if (id) add(id);
+    }
+  }
+  return {
+    code,
+    message: error?.message || `Save failed (${status})`,
+    fields,
+    folders: Array.isArray(details?.folders) ? details.folders.map(String) : [],
+    runs: Array.isArray(details?.runs) ? details.runs : [],
+  };
+}
+
+/** Trust is offered only after TRUST_REQUIRED and only for engines whose adapter can trust folders. */
+function shouldRevealTrust(mapped, meta, engine) {
+  if (mapped.code !== 'TRUST_REQUIRED') return false;
+  return Boolean((meta?.engines || []).find((e) => e.name === engine)?.supportsTrust);
+}
+
+/** Changing engine or directory invalidates a revealed trust prompt. */
+function editorTrustKey(v) {
+  return `${v.engine}\n${String(v.cwd).trim()}`;
+}
+
+function appendSaveOptions(url, opts) {
+  let out = url;
+  if (opts.trustFolder) out += '&trustFolder=1';
+  if (opts.inFlight) out += `&inFlight=${encodeURIComponent(opts.inFlight)}`;
+  return out;
+}
 // </editor-pure>
 
 /**
@@ -1493,7 +1559,10 @@ function renderEditorForm(values, isCreate) {
         ${editorField('Retry backoff (sec)', 'backoffSec', input('backoffSec', 'number', values.backoffSec, 'min="1" step="1"'), 'Delay between retries')}
       </div>
     </details>
-    <div id="editor-trust" class="editor-trust" data-editor-field="trustFolder" hidden></div>`;
+    <div id="editor-trust" class="editor-trust" hidden>
+      <label class="editor-check"><input type="checkbox" data-editor-field="trustFolderCheck"> <span id="editor-trust-label"></span></label>
+      <div class="editor-hint">Lets Claude run in this folder without asking. Never granted unless you tick this box.</div>
+    </div>`;
   editorScheduleHook.render(document.getElementById('editor-schedule'), isCreate ? null : editorLoadedJob);
   applyEditorState();
 }
@@ -1551,7 +1620,10 @@ async function openEditor(jobId) {
   editorBase = null;
   editorBusy = false;
   editorLoadedJob = null;
+  editorTrustShownKey = null;
+  editorInflightRetry = null;
   clearEditorFeedback();
+  clearEditorInflight();
   document.getElementById('editor-title').textContent = jobId ? 'Edit job' : 'New job';
   editorForm.innerHTML = '<p class="muted">Loading…</p>';
   editorSave.disabled = true;
@@ -1592,18 +1664,83 @@ function requestLeaveEditor() {
   closeEditor();
 }
 
-/**
- * Server error hook (Task 7 replaces this: INVALID_CWD / JOB_ALREADY_EXISTS / CWD_CHANGE_BREAKS_SESSION /
- * TRUST_REQUIRED reveal / RUNS_IN_FLIGHT choice / field outlines). `retry(opts)` re-sends with
- * { trustFolder, inFlight }. Default: show the server message and keep the modal open.
- */
-function editorHandleSaveError(res, body) {
-  showEditorError(body?.error?.message || `Save failed (${res.status})`);
+let editorTrustShownKey = null;
+let editorInflightRetry = null;
+const editorInflight = document.getElementById('editor-inflight');
+
+function hideEditorTrust() {
+  editorTrustShownKey = null;
+  const box = document.getElementById('editor-trust');
+  if (!box) return;
+  box.hidden = true;
+  const cb = box.querySelector('input');
+  if (cb) cb.checked = false;
 }
 
-/** Success hook (Task 7 adds toast/refresh details). */
+function showEditorTrust(folders) {
+  const box = document.getElementById('editor-trust');
+  if (!box) return;
+  document.getElementById('editor-trust-label').textContent = `Trust this folder in Claude: ${folders.join(', ')}`;
+  const cb = box.querySelector('input');
+  cb.checked = false;
+  box.hidden = false;
+  editorTrustShownKey = editorTrustKey(collectEditorValues());
+  cb.focus();
+}
+
+function clearEditorInflight() {
+  editorInflight.hidden = true;
+  editorInflight.innerHTML = '';
+}
+
+function showEditorInflight(runs) {
+  const list = runs.map((r) => `<code>${escHtml(String(r.id || '').slice(0, 8))}</code>`).join(', ');
+  editorInflight.innerHTML = `
+    <div>${escHtml(String(runs.length))} run(s) in flight${list ? `: ${list}` : ''}. How should this save proceed?</div>
+    <div class="row">
+      <button type="button" class="btn" data-editor-inflight="stop">Stop running jobs, then save</button>
+      <button type="button" class="btn" data-editor-inflight="wait">Pause and wait for runs, then save</button>
+      <button type="button" class="btn" data-editor-inflight="cancel">Cancel save</button>
+    </div>`;
+  editorInflight.hidden = false;
+  editorInflight.querySelector('button')?.focus();
+}
+
+function outlineEditorFields(fields) {
+  for (const id of fields) {
+    const els = id === 'schedule'
+      ? [document.getElementById('editor-schedule')]
+      : [...editorForm.querySelectorAll(`[data-editor-field="${id}"]`)];
+    els.forEach((el) => el?.classList.add('field-error'));
+  }
+  const first = fields.length ? (editorForm.querySelector(`[data-editor-field="${fields[0]}"]`) || document.getElementById('editor-schedule')) : null;
+  first?.scrollIntoView?.({ block: 'center' });
+}
+
+/**
+ * Server error -> UI state; edits are never cleared. `retry(opts)` re-sends with { trustFolder, inFlight }.
+ * TRUST_REQUIRED reveals the (unchecked) trust box; RUNS_IN_FLIGHT shows the stop / wait / cancel panel.
+ */
+function editorHandleSaveError(res, body, retry) {
+  const mapped = mapEditorError(res.status, body);
+  if (mapped.code === 'RUNS_IN_FLIGHT') {
+    editorInflightRetry = retry;
+    showEditorInflight(mapped.runs);
+    return;
+  }
+  showEditorError(mapped.message);
+  if (mapped.code === 'TRUST_REQUIRED' && shouldRevealTrust(mapped, editorMeta, collectEditorValues().engine)) {
+    showEditorTrust(mapped.folders);
+    return;
+  }
+  outlineEditorFields(mapped.fields);
+}
+
+/** Success: toast, close, refresh the dashboard (re-renders an open drawer for the job). */
 async function editorHandleSaveSuccess() {
+  const created = editorJobId === null;
   closeEditor();
+  showToast(created ? 'Job created' : 'Job updated');
   await loadDashboard().catch(() => {});
 }
 
@@ -1628,11 +1765,16 @@ async function saveEditor(opts = {}) {
     url = `/api/jobs/${encodeURIComponent(editorJobId)}?prepare=1`;
     method = 'PUT';
   }
-  if (opts.trustFolder) url += '&trustFolder=1';
-  if (opts.inFlight) url += `&inFlight=${encodeURIComponent(opts.inFlight)}`;
+  const trusted = opts.trustFolder ?? Boolean(document.querySelector('#editor-trust:not([hidden]) input')?.checked);
+  url = appendSaveOptions(url, { trustFolder: trusted, inFlight: opts.inFlight });
   clearEditorFeedback();
+  clearEditorInflight();
   editorBusy = true;
   applyEditorState();
+  if (opts.inFlight) {
+    editorInflight.innerHTML = `<div>${opts.inFlight === 'wait' ? 'Paused; waiting for in-flight runs to finish, then saving…' : 'Stopping in-flight runs and saving…'}</div>`;
+    editorInflight.hidden = false;
+  }
   try {
     const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const body = await res.json().catch(() => null);
@@ -1650,11 +1792,25 @@ async function saveEditor(opts = {}) {
   }
 }
 
+function syncEditorTrust() {
+  if (editorTrustShownKey !== null && editorTrustKey(collectEditorValues()) !== editorTrustShownKey) hideEditorTrust();
+}
 editorForm.addEventListener('input', (e) => {
   e.target.classList?.remove('field-error');
+  e.target.closest?.('.field-error')?.classList.remove('field-error');
+  syncEditorTrust();
   applyEditorState();
 });
-editorForm.addEventListener('change', applyEditorState);
+editorForm.addEventListener('change', () => { syncEditorTrust(); applyEditorState(); });
+editorInflight.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-editor-inflight]');
+  if (!btn) return;
+  const choice = btn.dataset.editorInflight;
+  const retry = editorInflightRetry;
+  clearEditorInflight();
+  if (choice === 'cancel' || !retry) return;
+  void retry({ inFlight: choice });
+});
 editorForm.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-editor-act]');
   if (!btn) return;
