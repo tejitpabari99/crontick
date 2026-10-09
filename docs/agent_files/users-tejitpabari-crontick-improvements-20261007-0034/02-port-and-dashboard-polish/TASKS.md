@@ -8,14 +8,14 @@ Source of truth: docs/agent_files/users-tejitpabari-crontick-improvements-202610
 
 | # | Task | Depends on | Status |
 |---|---|---|---|
-| 1 | `daemon.port` config schema | - | todo |
-| 2 | Port resolution and bind semantics | 1 | todo |
-| 3 | Daemon startup wiring and failure surfacing | 2 | todo |
-| 4 | Port reporting in status, info, doctor | 2 | todo |
-| 5 | Remove env var and isolate tests per home | 1-4 | todo |
-| 6 | Dashboard rem scale | - | todo |
-| 7 | Dashboard header trim and error badge | 6 | todo |
-| 8 | Docs, changeset, full validation | 1-7 | todo |
+| 1 | `daemon.port` config schema | - | done |
+| 2 | Port resolution and bind semantics | 1 | done |
+| 3 | Daemon startup wiring and failure surfacing | 2 | done |
+| 4 | Port reporting in status, info, doctor | 2 | done |
+| 5 | Remove env var and isolate tests per home | 1-4 | done |
+| 6 | Dashboard rem scale | - | done |
+| 7 | Dashboard header trim and error badge | 6 | done |
+| 8 | Docs, changeset, full validation | 1-7 | done |
 
 ## Task 1 — `daemon.port` config schema
 What it is / what it means: The port becomes a config-file setting instead of an env var; `daemon` becomes a known, strictly validated config section (R1, D2, D6; RESOLVED-1).
