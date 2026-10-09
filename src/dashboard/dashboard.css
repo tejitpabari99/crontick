@@ -579,3 +579,9 @@ a.btn { text-decoration: none; display: inline-block; }
 .editor-advanced summary { cursor: pointer; color: var(--muted); font-size: 0.8333rem; margin-bottom: 0.5556rem; }
 .editor-schedule:empty { display: none; }
 @media (max-width: 40rem) { .editor-grid { grid-template-columns: 1fr; } }
+.editor-schedule { margin-bottom: 0.6667rem; }
+.editor-preview { margin: 0 0 0.6667rem 0; font-size: 0.8333rem; color: var(--muted); }
+.editor-preview:empty { display: none; }
+.editor-preview ul { margin: 0.2222rem 0 0 1.1111rem; padding: 0; color: var(--text); }
+.editor-preview-title { font-weight: 600; }
+.editor-preview-error { color: var(--error); }

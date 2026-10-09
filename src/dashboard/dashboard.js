@@ -1234,19 +1234,210 @@ function buildEditPatch(base, draft, schedule) {
   if (Object.keys(retry).length) patch.retry = retry;
   return patch;
 }
+const INTERVAL_UNIT_SECONDS = { s: 1, m: 60, h: 3600, d: 86400 };
+
+/** Count + unit (s/m/h/d) -> seconds; null when the count is not a positive number. */
+function everySecFromInterval(count, unit) {
+  const text = String(count ?? '').trim();
+  const n = Number(text);
+  const mult = INTERVAL_UNIT_SECONDS[unit];
+  if (!text || !Number.isFinite(n) || n <= 0 || !mult) return null;
+  return n * mult;
+}
+
+/** Seconds -> the largest unit that divides evenly (falls back to seconds). */
+function intervalFromEverySec(sec) {
+  for (const unit of ['d', 'h', 'm']) {
+    const mult = INTERVAL_UNIT_SECONDS[unit];
+    if (sec >= mult && sec % mult === 0) return { count: String(sec / mult), unit };
+  }
+  return { count: String(sec), unit: 's' };
+}
+
+/** ISO instant -> datetime-local text (YYYY-MM-DDTHH:mm) in the browser's local time; '' when unparseable. */
+function toLocalInputValue(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
+
+/**
+ * Schedule kind registry: the single extension point for the schedule section (SP05 `after`, SP06 `webhook`,
+ * SP10 catch-up add one entry / field descriptor; the form shell never branches on kind).
+ * fields[]: { id, label, type: text|number|select|datetime-local, options?, placeholder?, hint?, required?, default? }
+ * toSchedule(values) -> Schedule object, or null while incomplete; fromSchedule(schedule) -> values;
+ * validate?(values) -> error text ('' = fine).
+ */
+const SCHEDULE_KINDS = [
+  {
+    kind: 'cron',
+    label: 'Cron expression',
+    fields: [{ id: 'cron', label: 'Expression', type: 'text', required: true, placeholder: '0 9 * * *', hint: 'Fires in the machine local time zone' }],
+    toSchedule: (v) => (String(v.cron ?? '').trim() ? { kind: 'cron', cron: v.cron.trim() } : null),
+    fromSchedule: (s) => ({ cron: s.cron ?? '' }),
+  },
+  {
+    kind: 'interval',
+    label: 'Every N units',
+    fields: [
+      { id: 'count', label: 'Every', type: 'number', required: true, placeholder: '30' },
+      { id: 'unit', label: 'Unit', type: 'select', options: ['s', 'm', 'h', 'd'], default: 'm' },
+      { id: 'startAt', label: 'Starting at (optional)', type: 'datetime-local' },
+    ],
+    toSchedule: (v) => {
+      const everySec = everySecFromInterval(v.count, v.unit);
+      if (everySec === null) return null;
+      const schedule = { kind: 'interval', everySec };
+      if (String(v.startAt ?? '').trim()) schedule.startAt = v.startAt.trim();
+      return schedule;
+    },
+    fromSchedule: (s) => ({ ...intervalFromEverySec(s.everySec), startAt: s.startAt ? toLocalInputValue(s.startAt) : '' }),
+    validate: (v) => (String(v.count ?? '').trim() && everySecFromInterval(v.count, v.unit) === null ? 'Interval must be a positive number' : ''),
+  },
+  {
+    kind: 'one-shot',
+    label: 'One time',
+    fields: [{ id: 'runAt', label: 'Run at', type: 'datetime-local', required: true, hint: 'Local time, same as --at' }],
+    toSchedule: (v) => (String(v.runAt ?? '').trim() ? { kind: 'one-shot', runAt: v.runAt.trim() } : null),
+    fromSchedule: (s) => ({ runAt: toLocalInputValue(s.runAt) }),
+  },
+];
+
+function findScheduleKind(id) {
+  return SCHEDULE_KINDS.find((k) => k.kind === id);
+}
 // </editor-pure>
 
 /**
- * Schedule section hook (Task 6 replaces this stub with the SCHEDULE_KINDS-driven controls).
- * render(container, job|null): draw into #editor-schedule; collect(): Schedule object or undefined (unchanged/none);
- * isComplete(): schedule inputs are syntactically complete; isDirty(): schedule edited.
+ * Schedule section: kind select + field panel rendered purely from SCHEDULE_KINDS, with a debounced live preview.
+ * render(container, job|null); collect(): Schedule or undefined (unchanged/none); isComplete(); isDirty().
  */
-const editorScheduleHook = {
-  render() {},
-  collect() { return undefined; },
-  isComplete() { return true; },
-  isDirty() { return false; },
-};
+const editorScheduleHook = (() => {
+  const PREVIEW_DEBOUNCE_MS = 400;
+  let box = null;
+  let kindId = SCHEDULE_KINDS[0].kind;
+  let values = {};
+  let baseline = '';
+  let timer = null;
+  let seq = 0;
+
+  const kindDef = () => findScheduleKind(kindId);
+  const defaultsFor = (def) => Object.fromEntries(def.fields.map((f) => [f.id, f.default ?? '']));
+  const snapshot = () => JSON.stringify([kindId, values]);
+  const currentSchedule = () => kindDef().toSchedule(values);
+
+  function fieldHtml(f) {
+    const id = `editor-sch-${f.id}`;
+    const v = values[f.id] ?? '';
+    const control = f.type === 'select'
+      ? `<select id="${id}" data-sched-field="${escHtml(f.id)}">${f.options.map((o) => `<option value="${escHtml(o)}"${o === v ? ' selected' : ''}>${escHtml(o)}</option>`).join('')}</select>`
+      : `<input id="${id}" type="${f.type}" data-sched-field="${escHtml(f.id)}" value="${escHtml(v)}"${f.placeholder ? ` placeholder="${escHtml(f.placeholder)}"` : ''}${f.type === 'number' ? ' min="0" step="any"' : ''}${f.required ? ' required' : ''} autocomplete="off">`;
+    return `<label for="${id}">${escHtml(f.label)}</label><div>${control}${f.hint ? `<div class="editor-hint">${escHtml(f.hint)}</div>` : ''}</div>`;
+  }
+
+  function drawPanel() {
+    box.querySelector('.editor-sched-panel').innerHTML = `<div class="editor-grid">${kindDef().fields.map(fieldHtml).join('')}</div>`;
+  }
+
+  function setPreview(html, isError) {
+    const el = box?.querySelector('.editor-preview');
+    if (!el) return;
+    el.classList.toggle('editor-preview-error', Boolean(isError));
+    el.innerHTML = html;
+  }
+
+  async function postJson(url, body) {
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    return { res, data };
+  }
+
+  async function runPreview() {
+    const mine = ++seq;
+    const problem = kindDef().validate?.(values);
+    if (problem) return setPreview(escHtml(problem), true);
+    const schedule = currentSchedule();
+    if (!schedule) return setPreview('', false);
+    try {
+      const { res, data } = await postJson('/api/schedules/preview', { schedule, n: 5 });
+      if (mine !== seq) return;
+      if (!res.ok) return setPreview(escHtml(data?.error?.message || 'Preview unavailable'), true);
+      const times = Array.isArray(data.next) ? data.next : [];
+      setPreview(times.length
+        ? `<div class="editor-preview-title">Next ${times.length} runs (local time)</div><ul>${times.map((t) => `<li>${escHtml(new Date(t).toLocaleString())}</li>`).join('')}</ul>`
+        : '<div class="editor-hint">No upcoming runs</div>', false);
+    } catch {
+      if (mine === seq) setPreview('', false); // preview failure never blocks editing
+    }
+  }
+
+  async function runValidate() {
+    const mine = ++seq;
+    const schedule = currentSchedule();
+    if (!schedule) return;
+    try {
+      const { data } = await postJson('/api/schedules/validate', schedule);
+      if (mine !== seq) return;
+      if (data && data.ok === false) setPreview(escHtml(data.error || 'Invalid schedule'), true);
+      else void runPreview();
+    } catch { /* validation is advisory */ }
+  }
+
+  function schedulePreview() {
+    clearTimeout(timer);
+    timer = setTimeout(runPreview, PREVIEW_DEBOUNCE_MS);
+  }
+
+  function onField(e) {
+    const id = e.target?.dataset?.schedField;
+    if (!id) return;
+    values[id] = e.target.value;
+    schedulePreview();
+  }
+
+  function onKindChange(e) {
+    const def = findScheduleKind(e.target.value);
+    if (!def) return;
+    kindId = def.kind;
+    values = defaultsFor(def);
+    drawPanel();
+    setPreview('', false);
+    schedulePreview();
+  }
+
+  return {
+    render(container, job) {
+      clearTimeout(timer);
+      seq += 1;
+      box = container;
+      const def = (job && findScheduleKind(job.schedule?.kind)) || SCHEDULE_KINDS[0];
+      kindId = def.kind;
+      values = { ...defaultsFor(def), ...(job ? def.fromSchedule(job.schedule) : {}) };
+      baseline = snapshot();
+      box.innerHTML = `<div class="editor-grid"><label for="editor-sch-kind">Schedule</label><div><select id="editor-sch-kind" data-sched-kind>${SCHEDULE_KINDS.map((k) => `<option value="${escHtml(k.kind)}"${k.kind === kindId ? ' selected' : ''}>${escHtml(k.label)}</option>`).join('')}</select></div></div><div class="editor-sched-panel"></div><div class="editor-preview" aria-live="polite"></div>`;
+      drawPanel();
+      box.oninput = onField;
+      box.onchange = (e) => (e.target?.matches?.('[data-sched-kind]') ? onKindChange(e) : onField(e));
+      box.addEventListener('focusout', (e) => {
+        if (e.target?.dataset?.schedField) { clearTimeout(timer); void runValidate(); }
+      });
+      if (job) void runPreview();
+    },
+    collect() {
+      if (!box || (editorJobId !== null && !this.isDirty())) return undefined;
+      return currentSchedule() ?? undefined;
+    },
+    isComplete() {
+      if (!box) return true;
+      if (editorJobId !== null && !this.isDirty()) return true;
+      return currentSchedule() !== null && !kindDef().validate?.(values);
+    },
+    isDirty() {
+      return Boolean(box) && snapshot() !== baseline;
+    },
+  };
+})();
 
 const jobEditor = document.getElementById('job-editor');
 const editorForm = document.getElementById('editor-form');
