@@ -15,7 +15,7 @@ import {
  * the client and the daemon. Internal: not exported from the public index.
  */
 
-/** Looks a job up by id or alias; client = API lookup, daemon = `store.getJob`. Reserved for `after` resolution. */
+/** Looks a job up by id or alias; client = API lookup, daemon = `store.getJob`. Resolves `after` upstream refs. */
 export type ResolveJob = (idOrAlias: string) => Job | undefined;
 
 export interface PrepareOptions extends NormalizeJobInputOptions {
@@ -78,20 +78,29 @@ export function ensureFoldersTrusted(jobs: Job[], ctx: TrustContext, trustFolder
   for (const target of targets) target.adapter.trustFolder!(target.cwd, { env });
 }
 
+/** Replaces an `after` schedule's alias-or-id upstream ref with the upstream GUID (R1); unknown ref -> AFTER_UPSTREAM_NOT_FOUND. */
+function resolveAfterRef<T extends { schedule?: unknown }>(input: T, resolveJob: ResolveJob | undefined): T {
+  const schedule = input.schedule as { kind?: unknown; jobId?: unknown } | undefined;
+  if (!resolveJob || schedule?.kind !== 'after' || typeof schedule.jobId !== 'string') return input;
+  const upstream = resolveJob(schedule.jobId);
+  if (!upstream) {
+    throw new CrontickError('AFTER_UPSTREAM_NOT_FOUND', `Upstream job ${schedule.jobId} not found (id or alias)`);
+  }
+  return { ...input, schedule: { ...schedule, jobId: upstream.id } };
+}
+
 /** Normalizes a create input into a finished Job and enforces folder trust. */
 export function prepareCreate(input: Job | JobCreateInput, options: PrepareOptions = {}): Job {
-  const { trustFolder, resolveJob: _resolveJob, ...normalizeOptions } = options;
-  void _resolveJob;
-  const job = normalizeJobInput(input as JobCreateInput, normalizeOptions);
+  const { trustFolder, resolveJob, ...normalizeOptions } = options;
+  const job = normalizeJobInput(resolveAfterRef(input, resolveJob) as JobCreateInput, normalizeOptions);
   ensureFoldersTrusted([job], { env: normalizeOptions.env, cwd: normalizeOptions.cwd }, trustFolder === true);
   return job;
 }
 
 /** Merges a patch over `existing`, re-validates, and enforces folder trust only when the engine/folder key changed. */
 export function prepareUpdate(existing: Job, patch: JobPatchInput, options: PrepareOptions = {}): Job {
-  const { trustFolder, resolveJob: _resolveJob, ...normalizeOptions } = options;
-  void _resolveJob;
-  const normalized = normalizeJobPatch(existing.id, existing, patch, normalizeOptions);
+  const { trustFolder, resolveJob, ...normalizeOptions } = options;
+  const normalized = normalizeJobPatch(existing.id, existing, resolveAfterRef(patch, resolveJob), normalizeOptions);
   const ctx = { env: normalizeOptions.env, cwd: normalizeOptions.cwd };
   if (trustTarget(existing, ctx)?.key !== trustTarget(normalized, ctx)?.key) {
     ensureFoldersTrusted([normalized], ctx, trustFolder === true);

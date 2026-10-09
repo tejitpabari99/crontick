@@ -4,7 +4,7 @@ import http from 'node:http';
 import { createReadStream, existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { URL } from 'node:url';
-import type { Store } from './store.js';
+import { validateAfterGraph, type Store } from './store.js';
 import type { RunStatus } from './store.js';
 import type { Scheduler } from './scheduler.js';
 import type { Runner } from './runner.js';
@@ -199,6 +199,7 @@ async function handleRequest(
         job = { ...job, id: collision.id };
       }
       if (!validateJobSchedule(res, ctx.scheduler, job.schedule)) return;
+      if (!checkAfterGraph(res, ctx.store, job)) return;
       readEnvFileForAction(job.action);
       // A concurrent create can claim the same auto-generated alias between the
       // collision check above and this insert; the alias UNIQUE index then
@@ -291,6 +292,7 @@ async function handleRequest(
           }
         }
         if (!validateJobSchedule(res, ctx.scheduler, updatedJob.schedule)) return;
+        if (!checkAfterGraph(res, ctx.store, updatedJob)) return;
         readEnvFileForAction(updatedJob.action);
         // Everything above validated the update; only now may in-flight runs be stopped / waited for.
         const inFlightParam = url.searchParams.get('inFlight');
@@ -327,6 +329,25 @@ async function handleRequest(
 
       if (method === 'DELETE' && sub === '') {
         if (!job) return sendJobNotFoundError(res, requestedId);
+        // Jobs triggered `after` this one: refuse unless force (then disable them; their ref stays, inert).
+        const dependents = ctx.store.listDependents(job.id).filter((d) => d.id !== job.id);
+        if (dependents.length > 0) {
+          if (!forceParam(url)) {
+            const names = dependents.map((d) => d.alias ?? d.id);
+            return sendError(
+              res,
+              409,
+              'JOB_HAS_DEPENDENTS',
+              `Job ${job.alias ?? job.id} has dependent job(s) triggered after it: ${names.join(', ')}. Re-run with --force to delete it and disable them.`,
+              { dependents: names },
+            );
+          }
+          for (const dep of dependents) {
+            if (!dep.enabled) continue;
+            ctx.store.upsertJob({ ...dep, enabled: false });
+            ctx.scheduler.unschedule(dep.id);
+          }
+        }
         // Stop everything that could still touch the job first: the schedule,
         // then any in-flight run (unlike a daemon stop, where a detached child
         // surviving is deliberate, L8, deleting a job removes the definition
@@ -343,6 +364,7 @@ async function handleRequest(
       if (method === 'POST' && sub === '/enable') {
         if (!job) return sendJobNotFoundError(res, requestedId);
         const updated = { ...job, enabled: true };
+        if (!checkAfterGraph(res, ctx.store, updated)) return;
         ctx.store.upsertJob(updated);
         ctx.store.resetConsecutiveFailures(job.id);
         ctx.scheduler.schedule(updated);
@@ -448,6 +470,13 @@ async function handleRequest(
         return sendJson(res, 200, { ok: false, error: JSON.stringify(parsed.error.format()) });
       }
       const result = ctx.scheduler.validateSchedule(parsed.data);
+      if (result.ok && parsed.data.kind === 'after') {
+        // Probe job: with ?jobId= it stands in for that job (cycle check); otherwise a fresh id.
+        const subject = url.searchParams.get('jobId') ? ctx.store.getJob(url.searchParams.get('jobId')!) : undefined;
+        const probe = { ...(subject ?? ({ id: randomUUID() } as Job)), schedule: parsed.data } as Job;
+        const graph = validateAfterGraph(probe, ctx.store.listJobs());
+        if (graph) return sendJson(res, 200, { ok: false, error: `${graph.code}: ${graph.message}` });
+      }
       return sendJson(res, 200, result);
     }
 
@@ -457,6 +486,9 @@ async function handleRequest(
       const scheduleResult = ScheduleSchema.safeParse(body?.schedule ?? body);
       if (!scheduleResult.success) {
         return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid schedule');
+      }
+      if (scheduleResult.data.kind === 'after') {
+        return sendJson(res, 200, { next: [], fires: [], trigger: scheduleResult.data });
       }
       const n = typeof body?.n === 'number' ? body.n : 5;
       const next = ctx.scheduler.previewNext(scheduleResult.data, { n });
@@ -588,6 +620,11 @@ async function handleRequest(
       const jobs = Array.isArray(body?.jobs) ? body.jobs : [];
       const results: Array<{ id: string; alias?: string; ok: boolean; renamedFrom?: string; error?: string }> = [];
       const usedAliases = new Set<string>();
+      // Schema-valid batch jobs, so an after-job sees upstreams that appear later in the same file.
+      const batchJobs: Job[] = jobs.flatMap((raw: unknown) => {
+        const p = JobSchema.safeParse(raw);
+        return p.success ? [p.data] : [];
+      });
       for (const raw of jobs) {
         const parsed = JobSchema.safeParse(raw);
         if (!parsed.success) {
@@ -613,11 +650,20 @@ async function handleRequest(
           const schedule = ctx.scheduler.validateSchedule(job.schedule);
           if (!schedule.ok) throw new CrontickError('VALIDATION_ERROR', `Invalid schedule: ${schedule.error ?? 'unknown'}`);
           job = ctx.store.prepareImportedJob(job);
+          // Graph check on the merged store + batch graph (batch jobs not yet applied count as upstreams).
+          const graph = validateAfterGraph(job, [...ctx.store.listJobs(), ...batchJobs.filter((b) => b.id !== job.id)]);
+          let importError: string | undefined;
+          if (graph?.code === 'AFTER_CYCLE') throw new CrontickError(graph.code, `${graph.code}: ${graph.message}`);
+          if (graph) {
+            // Dangling upstream: import disabled with the error recorded; the rest of the batch proceeds.
+            job = { ...job, enabled: false };
+            importError = `${graph.code}: ${graph.message}`;
+          }
           ctx.store.upsertJob(job);
-          ctx.scheduler.schedule(job);
+          if (job.enabled) ctx.scheduler.schedule(job);
           ctx.store.recordTick(job.id);
           usedAliases.add(alias);
-          results.push({ id: job.id, alias, ok: true, ...(renamedFrom ? { renamedFrom } : {}) });
+          results.push({ id: job.id, alias, ok: true, ...(renamedFrom ? { renamedFrom } : {}), ...(importError ? { error: importError, disabled: true } : {}) });
         } catch (err) {
           results.push({ id: job.id, alias, ok: false, error: err instanceof Error ? err.message : String(err) });
         }
@@ -731,6 +777,14 @@ function sendDuplicateCreateError(res: http.ServerResponse, jobId: string): void
     'JOB_ALREADY_EXISTS',
     `Job "${jobId}" already exists. Use "crontick update ${jobId}" to change it, or re-run create with --force (CLI) or force: true (library/MCP) to intentionally replace it.`,
   );
+}
+
+/** Daemon-side graph guard (R4): dangling upstream or cycle -> 400 with AFTER_* code. */
+function checkAfterGraph(res: http.ServerResponse, store: Store, job: Job): boolean {
+  const err = validateAfterGraph(job, store.listJobs());
+  if (!err) return true;
+  sendError(res, 400, err.code, err.message);
+  return false;
 }
 
 function validateJobSchedule(
