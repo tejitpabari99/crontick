@@ -35,6 +35,7 @@ crontick jobs schedule <id|alias> [-n <count>]
 crontick jobs delete <id|alias> [--force]
 crontick jobs delete all --force
 crontick jobs run-now <id|alias>
+crontick jobs trigger <id|alias> [--payload <json>|@file|->]
 
 crontick runs list [--job <id|alias>] [--limit <n>] [--since <ms>] [--status <status>]
 crontick runs get <runId> [--json]
@@ -44,7 +45,7 @@ crontick runs delete <runId...> | --job <id|alias> [--force] [--dry-run] [--json
 crontick stats summary
 crontick stats job <id|alias>
 
-crontick share export [--out <file>] [--only-jobs <id|alias,...>]
+crontick share export [--out <file>] [--only-jobs <id|alias,...>] [--include-secrets]
 crontick share import <file> [--trust-folder]
 
 crontick config list [--json]
@@ -93,6 +94,9 @@ crontick jobs new [engineArgs...]
 | `--at <datetime>` | string | — | Schedule: one-shot run time, ISO-8601 (for example `2026-10-01T09:00`). Interpreted in the machine's local timezone unless an offset (`Z`, `+02:00`) is given. Date-only values (`2026-10-01`) are parsed as UTC midnight, so include a time |
 | `--after <id\|alias>` | string | — | Schedule: run when this upstream job finishes (resolved to its GUID). Cycles: `AFTER_CYCLE`; unknown upstream: `AFTER_UPSTREAM_NOT_FOUND` |
 | `--after-status <status>` | string | `success` | With `--after`: `success`, `failure` (failed or timeout) or `any`. Without an after schedule it is an error |
+| `--webhook` | boolean | `false` | Schedule: run on webhook events (via `--relay`) or local `jobs trigger`. See [Webhooks](../concepts/webhooks.md) |
+| `--relay <url\|auto>` | string | — | With `--webhook`: relay channel URL (smee.io protocol; `http://` only for loopback hosts), or `auto` to create a smee.io channel (printed once; treat as a secret). Omit for local-trigger-only. Without `--webhook` it is an error |
+| `--webhook-secret <secret>` | string | — | With `--webhook`: require a valid `x-hub-signature-256` on relay events. HMAC over smee is unverified against real GitHub deliveries (see [Webhooks](../concepts/webhooks.md#guards-relay-events-only)). Without `--webhook` it is an error |
 | `--dir <path>` | string | the current directory | Directory the job runs in; stored as `action.cwd`. Must be an existing directory (`INVALID_CWD`). See [Working directory and Claude trust](#working-directory-and-claude-trust) |
 | `--trust-folder` | boolean | `false` | Trust the working directory in Claude without asking when it is not trusted yet |
 | `--runner <runner>` | string | config `defaultEngine` | Configured prompt engine name; saved as `action.engine` |
@@ -105,7 +109,7 @@ crontick jobs new [engineArgs...]
 | `--desc <description>` | string | — | Job description |
 | `--force` | boolean | `false` | Replace an existing job when the same alias already exists |
 
-`jobs new --help` ends with a "How to schedule" footer ("Use exactly one of --cron, --every, --at, --after.", generated from `SCHEDULE_FLAGS`); `jobs update --help` has the same option help but no footer. Exactly one schedule source (`--cron`, `--every`, `--at`, `--after`) and one prompt source (`--prompt`, `--prompt-file`) are required unless `--file` is used. Supplying more than one schedule flag is an error (`VALIDATION_ERROR`: they cannot be combined); supplying none is `MISSING_ARG`. Bare `--every` numbers remain seconds; suffixes `s`, `m`, `h`, and `d` mean seconds, minutes, hours, and days. Unrecognized long flags, with a following value when that token is not flag-shaped, are stored verbatim in `action.args`. The same flags work after `--`, which also accepts positional arguments. Their order is preserved. Short flags before `--` belong to crontick (`-a`, `-p`); after `--` they pass through to the engine (for example `-v`). Flags that crontick manages for the engine (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, and the short forms `-p` and `-r`) are rejected, including `--flag=value` forms. Removed `--engine`, `--job-env-file`, `--tz`, `--cwd` and `-C` switches are rejected as unknown options, including after `--`. If a token after `--` matches a crontick long flag, the CLI rejects it rather than silently storing it as a literal prompt arg.
+`jobs new --help` ends with a "How to schedule" footer ("Use exactly one of --cron, --every, --at, --after, --webhook.", generated from `SCHEDULE_FLAGS`); `jobs update --help` has the same option help but no footer. Exactly one schedule source (`--cron`, `--every`, `--at`, `--after`, `--webhook`) and one prompt source (`--prompt`, `--prompt-file`) are required unless `--file` is used. Supplying more than one schedule flag is an error (`VALIDATION_ERROR`: they cannot be combined); supplying none is `MISSING_ARG`. Bare `--every` numbers remain seconds; suffixes `s`, `m`, `h`, and `d` mean seconds, minutes, hours, and days. Unrecognized long flags, with a following value when that token is not flag-shaped, are stored verbatim in `action.args`. The same flags work after `--`, which also accepts positional arguments. Their order is preserved. Short flags before `--` belong to crontick (`-a`, `-p`); after `--` they pass through to the engine (for example `-v`). Flags that crontick manages for the engine (`--prompt`, `--session-id`, `--resume`, `--continue`, `--connect`, `--output-format`, `--settings`, and the short forms `-p` and `-r`) are rejected, including `--flag=value` forms. Removed `--engine`, `--job-env-file`, `--tz`, `--cwd` and `-C` switches are rejected as unknown options, including after `--`. If a token after `--` matches a crontick long flag, the CLI rejects it rather than silently storing it as a literal prompt arg.
 
 Dedicated `--script`, `--exec`, `--arg`, `--shell`, and `--job-env-file` flags are not exposed on the CLI. The job schema supports prompt actions only; `--file` accepts a complete prompt-job definition.
 
@@ -161,7 +165,7 @@ crontick jobs list
 
 ### crontick jobs get
 
-Get a job by GUID or alias. The output includes `cwd` and, when set, the `Runner Session ID`.
+Get a job by GUID or alias. The output includes `cwd` and, when set, the `Runner Session ID`. This is the only command that prints a webhook job's full relay URL and secret in clear (every other output masks them: `https://smee.io/Uk…Sd`, `secret: set`). For a webhook job with a relay it also prints a `relay:` line with the redacted URL, state (`connecting|connected|backoff|error`), event count, last event time and last error (`relay: not connected (daemon not running or job disabled)` otherwise). `jobs update --relay auto` rotates the channel but prints the masked URL; use `jobs get` to read the new one.
 
 ```bash
 crontick jobs get <id|alias>
@@ -216,6 +220,22 @@ Run-now does not enable a disabled job and does not alter or reschedule anything
 
 ---
 
+### crontick jobs trigger
+
+Fire a webhook job once, right now, with an optional JSON payload. Same path as a relay event except there is no signature, dedupe or burst check. Returns `{ runId }`.
+
+```bash
+crontick jobs trigger <id|alias> [--payload <json>|@file|->]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--payload <json\|@file\|->` | string | none | Any JSON value: inline, `@path` to read a file, or `-` for stdin. Invalid or unreadable: `INVALID_PAYLOAD` |
+
+Only webhook jobs: others fail with `NOT_WEBHOOK_JOB` (use `run-now`); a disabled job fails with `JOB_DISABLED`. The payload reaches the run as untrusted data (`CRONTICK_EVENT`, fenced prompt suffix); see [Webhooks](../concepts/webhooks.md).
+
+---
+
 ## Run Commands
 
 ### crontick runs list
@@ -246,7 +266,7 @@ Show a run and its cleaned output. This command replaces the former `runs logs` 
 crontick runs get <runId> [--json]
 ```
 
-The default output is one `Label: value` line per run field with local ISO-8601 timestamps (`Run ID`, `Job ID`, `Status` (printed once), `Started`, `Ended`, `Duration`, `Exit code`, `Engine status`, the resolved redacted `Command`, `Runner Session ID`, and for Claude runs `Cost (USD)` and `Turns`), then `Transcript:` (Claude's session file, absolute path) with `Log file:` directly below it (each followed by `(file not found)` when the file does not exist on disk), a blank line, and the cleaned output: the `Error:` (if any), the engine's final answer and `[stderr]` only when there is no error. Tool calls, interim assistant text, thinking blocks and hook payloads are never kept. The command shows `--settings <session-end-hook>` in place of the hook JSON.
+The default output is one `Label: value` line per run field with local ISO-8601 timestamps (`Run ID`, `Job ID`, `Status` (printed once), `Started`, `Ended`, `Duration`, `Exit code`, `Engine status`, the resolved redacted `Command`, `Runner Session ID`, and for Claude runs `Cost (USD)` and `Turns`), for webhook-triggered runs a `Trigger:` line (`webhook (relay|local) at <time>, delivery <id>`) with the payload beneath it (smee URLs masked), then `Transcript:` (Claude's session file, absolute path) with `Log file:` directly below it (each followed by `(file not found)` when the file does not exist on disk), a blank line, and the cleaned output: the `Error:` (if any), the engine's final answer and `[stderr]` only when there is no error. Tool calls, interim assistant text, thinking blocks and hook payloads are never kept. The command shows `--settings <session-end-hook>` in place of the hook JSON.
 
 `Log file` is the absolute path of the job's single log file, which carries crontick's own lifecycle events (start, timeout, retry, exit) for all runs of the job (`(file logging is disabled)` when `logging.fileEnabled` is false). The same path is the run record's `logFile`.
 
@@ -322,6 +342,7 @@ crontick share export [--out <file>] [--only-jobs <id|alias,...>]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--out <file>` | string | stdout | Output file. The name is kept when it ends in `.json` (any case), otherwise `.json` is appended (`backup` becomes `backup.json`, `try_me.txt` becomes `try_me.txt.json`). Prints `Exported N job(s) to <absolute path>` |
+| `--include-secrets` | boolean | `false` | Keep webhook `relay` URLs and `secret`s (bearer secrets) in the file; by default they are stripped, so an imported webhook job is local-trigger-only |
 | `--only-jobs <list>` | string | all jobs | Comma-separated ids or aliases, resolved by the daemon. Any unknown entry fails with `JOB_NOT_FOUND` listing every miss, and nothing is written |
 
 The file is `{ "schema": 1, "exportedAt": ..., "crontickVersion": ..., "jobs": [...] }`: jobs only (no run history), with job ids omitted (except on jobs another exported job runs `--after`, so chains survive) so an import mints new ones and remaps those references. `--include-runs` was removed.
@@ -331,8 +352,10 @@ The file is `{ "schema": 1, "exportedAt": ..., "crontickVersion": ..., "jobs": [
 Import jobs from a crontick export file (schema 1). Jobs get new ids; `--after` references inside the file are remapped to them. A job whose upstream is not in the file nor known imports disabled with `AFTER_UPSTREAM_NOT_FOUND`; cycles are rejected.
 
 ```bash
-crontick share import <file> [--trust-folder]
+crontick share import <file> [--trust-folder] [--include-secrets]
 ```
+
+`--include-secrets` keeps webhook `relay` and `secret` values present in the file; by default they are dropped on import.
 
 The whole file is validated before anything is imported: a bare array, a missing or different `schema`, or an invalid job fails with `VALIDATION_ERROR` naming the path (for example `jobs.2.schedule`) and imports nothing. Optional fields (description, retry, overlap, args, ...) are filled like on create. Every imported job gets a **new GUID** and imports never overwrite: when an alias is already used by a live job or by an earlier job in the same file it becomes `<alias>-2`, `-3`, ... and the result row reports `renamedFrom`. Run history is never imported. A job whose working directory does not exist fails on its own row (`INVALID_CWD`) while the others import; Claude folder trust is checked once per distinct folder (see below). An imported Claude job with an unverified stored session starts a fresh session; raw-engine session IDs are preserved.
 
@@ -417,7 +440,7 @@ Check system health.
 crontick doctor
 ```
 
-Exits with code `1` if any check fails. Checks include Node.js version, SQLite availability, data directory (path shown), config file (path shown; reports when it has not been created yet and defaults are in use), daemon connectivity, daemon port (default vs fallback; flags a foreign process on the default port while no daemon runs), dashboard reachability, and MCP server availability.
+Exits with code `1` if any check fails. Checks include Node.js version, SQLite availability, data directory (path shown), config file (path shown; reports when it has not been created yet and defaults are in use), daemon connectivity, daemon port (default vs fallback; flags a foreign process on the default port while no daemon runs), dashboard reachability, MCP server availability, and a `relay:` check per webhook relay (state, event count; a WARN, never a failure, when a relay is in persistent error).
 
 ### crontick daemon start
 
@@ -537,6 +560,7 @@ job/run actions through the existing `/api/*` routes.
   uptime badge (hover for a "daemon uptime" tooltip).
 - **Job editor** — a **+** button in the header (before the gear) opens a create modal; a pencil in each job row and in the details drawer opens it for editing. The form mirrors `jobs new`/`jobs update`: alias, prompt, schedule (Cron / Every / At, with a live preview of the next fires from `POST /api/schedules/preview`; `At` is interpreted in local time), working directory (free-text absolute path, required on create, no default), runner (defaults to `defaultEngine`), and under *Advanced* args, session id, reuse session, timeout, overlap, retry max and backoff, description. Defaults come from `GET /api/jobs/editor-meta`. Create sends `POST /api/jobs?prepare=1`; edit loads the job and sends only changed fields to `PUT /api/jobs/:id?prepare=1` (cleared optional fields are sent as `null`; `env`/`envFile` are not shown and are preserved). Server errors appear in a banner with edits kept and the offending field highlighted. For an untrusted folder with a Claude runner a **Trust this folder** checkbox appears (never pre-checked; sends `trustFolder=1`). If the job has runs in flight, Save asks to stop them or pause and wait (`inFlight=stop|wait`). Cancel/Esc/backdrop on a dirty form asks "Discard unsaved changes?". Not in the editor: directory autocomplete, duplicate job, env editing.
 - **Settings** — a gear button at the far right of the header opens a modal over `GET`/`PATCH /api/config`. It opens read-only; **Edit** enables the inputs (General, Job defaults, Retention, Logging, Engines with command/type/args rows/env rows and add/remove, Daemon). `daemon.port` is shown but never editable (stop the daemon and use `crontick config set daemon.port <n>`). **Save** sends only the changed keys plus the loaded `revision`; zero changes sends nothing. Errors show in a banner with edits intact; a `409` offers **Reload form**. If runs are in flight, Save asks whether to stop them or pause and wait. Cancel/Esc/backdrop on a dirty form asks "Discard unsaved changes?".
+- **Webhook jobs** — the editor has a Webhook kind: relay URL (with a **Create channel** button calling `POST /api/relay/new`), secret (password input) and a read-only relay with **Copy** in the drawer (fetches the full job). The drawer shows a relay status dot and a **Trigger now** button with an optional JSON payload; the run-log modal shows the trigger source, delivery id and a collapsible payload.
 - **Pause** — a Pause/Resume button and a "Paused" badge in the header drive `POST /api/daemon/pause|resume`.
 - **Theme** — an icon-only System (monitor) / Light (sun) / Dark (moon) radio group in the header (each button has an `aria-label` and `title`). Colors are CSS custom properties
   on `:root`; by default the dashboard follows `prefers-color-scheme`. Choosing Light or Dark

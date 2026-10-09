@@ -59,6 +59,8 @@ Single repo-wide futures list (not per-branch): deferred ideas across crontick i
 
 - Event filtering (e.g. match header/JSON path before firing).
 - Public inbound listener with HMAC as an alternative to the relay.
+- **Raw-body relay (HMAC fallback).** `--webhook-secret` verifies `x-hub-signature-256` over `JSON.stringify(body)`, but smee delivers the body already parsed, so it may differ from the bytes GitHub signed (escaped `<`/`>`/`&`, key order, whitespace). Real-GitHub verification is pending the owner. If a real delivery fails verification, ship/document without `--webhook-secret` and add a raw-body-capable relay (a self-hosted relay forwarding the raw bytes, or a small relay protocol extension) so HMAC runs over the exact signed bytes.
+- Provider-specific verifiers (Stripe `stripe-signature`, GitLab `x-gitlab-token`) and header allowlists; multiple relays per job; event replay.
 
 ## Catch-up max-age (stale prompt guard)
 

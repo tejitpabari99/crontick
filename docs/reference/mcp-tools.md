@@ -66,7 +66,7 @@ Tools that expose run rows or log text apply the shared redaction contract befor
 
 ## Tool Inventory
 
-The MCP server exposes 28 `crontick_*` tools, matching `SURFACE_CAPABILITIES` except for the deliberate exemption below.
+The MCP server exposes 29 `crontick_*` tools, matching `SURFACE_CAPABILITIES` except for the deliberate exemption below.
 
 **Autostart exception:** only `crontick_autostart_status` (read-only) is exposed. `autostart enable` and `autostart disable` are intentionally not MCP tools: an agent must not be able to create login persistence. They remain available on the CLI and the library (see [ADR 0001](../decisions/0001-architecture-and-runtime-model.md), "OS autostart").
 
@@ -86,7 +86,7 @@ Create and schedule a new job.
 | `alias` | `string` | no | auto-generated | Unique kebab-case job alias (set via CLI `--alias`/`-a`) |
 | `description` | `string` | no | — | Job description |
 | `enabled` | `boolean` | no | `true` | Whether job is active |
-| `schedule` | `Schedule` | yes | — | Schedule object (see [job-schema.md](job-schema.md)); `{ kind: 'after', jobId: <upstream id or alias>, status: 'success'\|'failure'\|'any' }` runs the job when the upstream finishes (stored as the GUID; errors `AFTER_CYCLE`, `AFTER_UPSTREAM_NOT_FOUND`) |
+| `schedule` | `Schedule` | yes | — | Schedule object (see [job-schema.md](job-schema.md)); `{ kind: 'webhook', relay?, secret? }` runs the job on webhook events (see `crontick_job_trigger` and [Webhooks](../concepts/webhooks.md)); `{ kind: 'after', jobId: <upstream id or alias>, status: 'success'\|'failure'\|'any' }` runs the job when the upstream finishes (stored as the GUID; errors `AFTER_CYCLE`, `AFTER_UPSTREAM_NOT_FOUND`) |
 | `action` | `ActionInput` | yes | — | Prompt action with `kind: "prompt"` |
 | `overlap` | `"skip"\|"queue"\|"cancel-previous"` | no | config `defaults.overlap`, then `"skip"` | Overlap policy |
 | `retry` | `{ max?: number, backoffSec?: number }` | no | config `defaults.retry`, then `{ max: 0, backoffSec: 30 }` | Retry config |
@@ -209,6 +209,22 @@ Run a job once immediately, even if it is disabled. Does not enable the job or c
 
 ---
 
+### crontick_job_trigger
+
+Fire a webhook-kind job once, right now, with an optional JSON payload delivered to the run as untrusted event data (`CRONTICK_EVENT`). Same path as a relay event but local: no signature, dedupe or burst checks. This executes the job's prompt on the user's machine; confirm with the user before calling. Returns `{ runId }`; follow it with `crontick_run_get`.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `id` | `string` | yes | — | Job GUID or alias of a webhook job |
+| `payload` | any JSON | no | none | Event payload |
+| `verbose` | `boolean` | no | `false` | Include diagnostics |
+
+**Result:** `{ runId: string }`. Errors: `NOT_WEBHOOK_JOB` (use `crontick_job_run_now`), `JOB_DISABLED`, `INVALID_PAYLOAD`, `JOB_NOT_FOUND`.
+
+All MCP results redact webhook values: a relay becomes `https://smee.io/Uk…Sd`, a `secret` becomes `set`, and smee URLs in free text (such as notices) are masked.
+
+---
+
 ### crontick_job_schedule
 
 Show upcoming fire times for an existing job.
@@ -312,6 +328,7 @@ Export job definitions as a crontick export file. Jobs only: no run history, and
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `onlyJobs` | `string[]` | no | all jobs | Ids or aliases to export. Any unknown entry fails with `JOB_NOT_FOUND` listing every miss |
+| `includeSecrets` | `boolean` | no | `false` | Keep webhook relay URLs and secrets in the export (default: stripped). They are bearer secrets and appear in this tool result |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `{ schema: 1, exportedAt, crontickVersion, jobs }`.
@@ -328,6 +345,7 @@ Import jobs from a crontick export file (pass the object `crontick_export` retur
 | `jobs` | `unknown[]` | yes | — | Job definitions |
 | `exportedAt` | `string` | no | — | Informational |
 | `crontickVersion` | `string` | no | — | Informational |
+| `includeSecrets` | `boolean` | no | `false` | Keep webhook relay URLs and secrets present in the file (default: stripped on import) |
 | `trustFolder` | `boolean` | no | `false` | Trust the jobs' working directories in Claude when needed (see `crontick_job_create`) |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 

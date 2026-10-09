@@ -61,7 +61,8 @@ observable behavior without updating relevant docs is incomplete.
 | File | Description |
 |------|-------------|
 | [jobs.md](concepts/jobs.md) | What a job is: identity, prompt action, lifecycle |
-| [scheduling.md](concepts/scheduling.md) | Cron, interval, and one-shot schedule behavior |
+| [scheduling.md](concepts/scheduling.md) | Cron, interval, one-shot, after and webhook schedule behavior |
+| [webhooks.md](concepts/webhooks.md) | Webhook jobs: relay, GitHub setup, guards, security |
 | [execution.md](concepts/execution.md) | How a run happens: spawn, overlap, timeouts, retries |
 | [daemon-lifecycle.md](concepts/daemon-lifecycle.md) | Demand-start, shutdown, no supervision |
 | [state-and-storage.md](concepts/state-and-storage.md) | Where state lives, SQLite WAL, JSON files |

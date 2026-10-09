@@ -16,6 +16,7 @@ Every job has exactly one schedule, discriminated by `kind`:
 | `interval` | `everySec`, `startAt?` | Fires repeatedly at a fixed interval |
 | `one-shot` | `runAt` | Fires once at a specific ISO-8601 timestamp |
 | `after` | `jobId`, `status` | Fires when another (upstream) job's run finishes; not time-based (see [After triggers](#after-triggers)) |
+| `webhook` | `relay?`, `secret?` | Fires on an event from an outbound relay or `jobs trigger`; not time-based (see [Webhook triggers](#webhook-triggers)) |
 
 ## Cron expressions
 
@@ -71,6 +72,10 @@ crontick does **not** catch up on missed ticks. If the daemon was stopped while 
 - **Deleting an upstream.** `jobs delete` refuses with `JOB_HAS_DEPENDENTS` (listing aliases) unless `--force`, which disables the dependents; they keep the dangling reference until re-pointed.
 
 **Fast upstream, slow downstream.** The downstream's own `overlap` policy applies to each trigger. With the default `skip`, a trigger that arrives while the downstream is still running is dropped and recorded as a `skipped` run. If every upstream completion must be handled, set the downstream to `overlap: queue`; `cancel-previous` keeps only the newest.
+
+## Webhook triggers
+
+`{ kind: 'webhook', relay?, secret? }` (`crontick jobs new --webhook [--relay <url|auto>] [--webhook-secret <s>]`) runs a job per event. The daemon holds one outbound SSE connection per distinct relay URL; `crontick jobs trigger <job>` fires it locally. Like `after`, it is not time-based: no next-run time, no tick, nothing reported as missed, and events that arrive while the daemon is down are lost (no replay). Triggered runs get `CRONTICK_TRIGGER=webhook`, `CRONTICK_EVENT`, `CRONTICK_EVENT_SOURCE` and `CRONTICK_EVENT_ID`, the payload is appended to the prompt as fenced untrusted data, and the normal overlap, retry and timeout policy applies (relay events are additionally HMAC-checked, deduplicated and limited to 10 runs/minute). Full guide, GitHub setup and security: [Webhooks](webhooks.md).
 
 ## Overlap policy when a previous run is still active
 

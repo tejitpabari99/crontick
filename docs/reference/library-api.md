@@ -46,13 +46,15 @@ Every method below that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `enableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
 | `disableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
 | `runNow` | `(id: string): Promise<{ runId: string }>` (runs once now, even if disabled; does not enable the job or alter the schedule) | `{ runId }` | `CrontickError` |
+| `triggerJob` | `(id: string, options?: { payload?: unknown }): Promise<{ runId: string }>` (fires a webhook job once with an optional JSON payload; no signature/dedupe/burst checks) | `{ runId }` | `CrontickError` (`NOT_WEBHOOK_JOB`, `JOB_DISABLED`, `INVALID_PAYLOAD`, `JOB_NOT_FOUND`) |
+| `getRelayStatus` | `(): Promise<RelayStatusView[]>` (library-only, no CLI/MCP twin; in-memory relay health) | `{ urlRedacted, state: 'connecting' \| 'connected' \| 'backoff' \| 'error', jobIds, lastEventAt, lastError, eventCount }[]` | `CrontickError` |
 | `cancelRun` | `(runId: string): Promise<{ ok: true; canceled: boolean }>` | Cancel result | `CrontickError` |
 | `getRun` | `(runId: string): Promise<RunRecord>` | Run object | `CrontickError` |
 | `listRuns` | `(options?: { jobId?: string; limit?: number; since?: number; status?: string }): Promise<RunRecord[]>` | Array of runs | `CrontickError` |
 | `deleteRuns` | `(options: { runIds?: string[]; job?: string; dryRun?: boolean }): Promise<{ deleted: string[]; skipped: Array<{ id: string; status: string }>; notFound: string[]; jobLogRemoved: boolean }>` (exactly one of `runIds` or `job`; `job` is an id, an alias, or the raw id of an already-deleted job; `queued`/`running` runs are skipped and reported, never canceled; `dryRun` returns the same shape without deleting; no confirmation prompt, the CLI prompts. If the job no longer exists and no runs remain, its per-job log is removed (`jobLogRemoved`); a live job's log is kept) | `{ deleted, skipped, notFound, jobLogRemoved }` | `CrontickError` (`VALIDATION_ERROR` for neither/both inputs) |
 | `getOutput` | `(runId: string): Promise<RunOutput>` (cleaned output view; library-only, shown by `crontick runs get` and `crontick_run_get`; the file of crontick-side events is `getRun().logFile`; crontick stores no raw engine log) | `RunOutput` | `CrontickError` (`NOT_FOUND`) |
-| `exportJobs` | `(options?: { onlyJobs?: string[] }): Promise<ExportFile>` | Share file `{ schema: 1, exportedAt, crontickVersion, jobs }` (jobs only; ids omitted except on jobs another exported job runs `after`) | `CrontickError` (`JOB_NOT_FOUND` listing every unknown `onlyJobs` entry) |
-| `importJobs` | `(file: unknown, options?: NormalizeJobInputOptions & { trustFolder?: boolean }): Promise<ImportResult>` | `{ imported, results }`; each row `{ id, alias, ok, renamedFrom?, error? }`. Every job gets a new GUID (`after` upstream references inside the file are remapped to them; a dangling upstream imports the job disabled with `AFTER_UPSTREAM_NOT_FOUND`), alias collisions get `-2`, `-3`, ... | `CrontickError` (`VALIDATION_ERROR` for a bad file or wrong `schema`, nothing imported; `TRUST_REQUIRED`) |
+| `exportJobs` | `(options?: { onlyJobs?: string[]; includeSecrets?: boolean }): Promise<ExportFile>` | Share file `{ schema: 1, exportedAt, crontickVersion, jobs }` (jobs only; ids omitted except on jobs another exported job runs `after`) | `CrontickError` (`JOB_NOT_FOUND` listing every unknown `onlyJobs` entry) |
+| `importJobs` | `(file: unknown, options?: NormalizeJobInputOptions & { trustFolder?: boolean; includeSecrets?: boolean }): Promise<ImportResult>` | `{ imported, results }`; each row `{ id, alias, ok, renamedFrom?, error? }`. Every job gets a new GUID (`after` upstream references inside the file are remapped to them; a dangling upstream imports the job disabled with `AFTER_UPSTREAM_NOT_FOUND`), alias collisions get `-2`, `-3`, ... | `CrontickError` (`VALIDATION_ERROR` for a bad file or wrong `schema`, nothing imported; `TRUST_REQUIRED`) |
 | `validateSchedule` | `(schedule: Schedule): Promise<unknown>` | Validation result | `CrontickError` |
 | `previewSchedule` | `(input: { schedule: Schedule; n?: number }): Promise<unknown>` | Fire times | `CrontickError` |
 | `jobSchedule` | `(id: string, options?: { n?: number }): Promise<unknown>` | Upcoming fire times for an existing job (id or alias); returns `{ jobId, alias, enabled, cwd, schedule, next }`; powers `crontick jobs schedule` and `crontick_job_schedule` | `CrontickError` (`JOB_NOT_FOUND`) |
@@ -110,6 +112,8 @@ and leave previously stored job state unchanged.
 Cron expressions fire in the machine's local timezone; passing `tz` is rejected on create/update input, and a `tz` in an already-stored job file is silently ignored.
 
 ---
+
+Webhook jobs: `createJob`/`updateJob` accept `schedule: { kind: 'webhook', relay?, secret? }`; the CLI-options builders accept `webhook`, `relay` (a URL or `'auto'`, resolved to a fresh smee.io channel by the client, with a one-time secret notice) and `webhookSecret`. Returned jobs from `listJobs`/`updateJob` have `relay` masked and `secret` as `set`; `getJob` and the `createJob` result carry the full values. `exportJobs`/`importJobs` strip `relay` and `secret` unless `includeSecrets` is true. See [Webhooks](../concepts/webhooks.md).
 
 ### CrontickError
 

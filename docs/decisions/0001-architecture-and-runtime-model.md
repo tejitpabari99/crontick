@@ -247,6 +247,24 @@ captured.
 
 **Consequences.** Easier: chains and failure alerts with no polling; one dispatch path for non-time triggers. Harder: runs lost to downtime never trigger; fast-upstream/slow-downstream under `skip` drops triggers.
 
+### Outbound relay vs loopback-only (ADR 0036, 2026-10-09)
+
+**Status:** accepted. Narrows "Loopback HTTP as the only IPC transport" (above) for one new, opt-in case.
+
+**Context.** External systems (GitHub, Stripe) cannot reach a loopback-only, demand-started daemon, yet users want "run this prompt when a push or PR event happens". Node 22 has no global `EventSource` and rule 1 forbids a new runtime dependency.
+
+**Decision.**
+
+- *Outbound relay, still no listener.* New schedule kind `webhook` `{ relay?, secret? }`. The daemon opens one outbound SSE connection per distinct relay URL (smee.io protocol, default smee.io, any smee-compatible server via `--relay <url>`), only while an enabled webhook job with a `relay` exists, to a URL the user chose. The daemon never listens beyond loopback; the HTTP API surface and host/origin guard are unchanged. `--relay auto` is explicit (one call to `smee.io/new`); omitting `--relay` means local-trigger-only, so no third-party contact is ever implicit.
+- *Hand-written SSE over `fetch`* (`src/daemon/sse.ts`), no dependency. `RelayManager` shares a connection per URL by refcount, reconnects with 1s to 60s jittered backoff, aborts after 90s without bytes (smee pings about every 30s), and is synced idempotently from startup, job mutations and reload. No replay and no `Last-Event-ID`: the relay stores nothing and ids are per connection.
+- *Reuse of `TriggerDispatcher`* (ADR 0035): relay and `jobs trigger` events dispatch through the same path, `CRONTICK_*` env cannot be shadowed, and the schedule watermark stays time-only.
+- *Events are untrusted data.* Payload is appended as fenced JSON after an untrusted-data preamble, capped at 64KB, headers allowlisted. Relay events additionally pass HMAC (`x-hub-signature-256` over `JSON.stringify(body)`), a per-job dedupe LRU (256 / 10 min) and a 10 per minute burst limit recorded as one `skipped` run per minute. Local triggers (the owner) skip these.
+- *The relay URL is a bearer secret.* Redacted everywhere except `jobs get`, the create response and the dashboard Copy; export/import strip `relay` and `secret` unless `--include-secrets`. Stored in plaintext in the job file (mode 0600), no keychain.
+
+**Alternatives rejected.** ngrok / Cloudflare Tunnel or any public inbound listener (exposes the loopback API, breaks the loopback tenet); Hookdeck or Webhook Relay built in (own protocol and account; usable by forwarding to `jobs trigger`); `--experimental-eventsource` or the npm `eventsource` package (flag / new dependency); auto-creating a channel silently (unrequested third-party call); one connection per job.
+
+**Consequences.** Easier: GitHub-style event jobs with zero inbound ports. Harder: smee.io has no SLA, so events are silently lost while the daemon, relay or connection is down (docs recommend autostart and self-hosting a smee server); anyone holding the URL can cause runs, so docs require restricted engine permissions for webhook jobs; smee re-serializes the body, so HMAC may not match GitHub's raw-body signature (unverified against real deliveries, owner test pending; fallback recorded in futures). A first, new class of outbound connection from the daemon now exists and must stay opt-in.
+
 <!-- ADR 0034 platform sections: SP08 added "macOS (launchd)" and SP09 added "Windows (Task Scheduler)" above this line, each covering mechanism, registered command, caveats and rejected alternatives. -->
 
 ## Consequences

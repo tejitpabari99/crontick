@@ -34,7 +34,7 @@ correct behavior across regions.
 
 ### Functional requirements
 
-- **R-002-1**: The `schedule.kind` discriminator MUST be one of `cron`, `interval`, `one-shot`, `after`.
+- **R-002-1**: The `schedule.kind` discriminator MUST be one of `cron`, `interval`, `one-shot`, `after`, `webhook`.
 - **R-002-2**: A `cron` schedule MUST have a non-empty `cron` string and MUST NOT have a `tz` field: cron expressions fire in the machine local timezone. (New input containing `tz` is rejected with `VALIDATION_ERROR`; a `tz` in an already-stored job file is silently ignored: no warning, log or event.)
 - **R-002-3**: An `interval` schedule MUST have a positive `everySec` number and MAY have a `startAt` ISO-8601 string.
 - **R-002-4**: A `one-shot` schedule MUST have a non-empty `runAt` ISO-8601 string. A date-time without an offset is interpreted in the machine's local timezone.
@@ -56,6 +56,11 @@ correct behavior across regions.
 - **R-002-19**: A triggered run MUST receive `CRONTICK_TRIGGER=after`, `CRONTICK_UPSTREAM_RUN_ID`, `CRONTICK_UPSTREAM_STATUS`, `CRONTICK_UPSTREAM_JOB_ID` and (when the upstream has an alias) `CRONTICK_UPSTREAM_JOB_ALIAS`, with priority above `action.env`; the run's `trigger_json` MUST record `{ kind: 'after', upstream: <run id> }`. The time-only watermark (`recordTick`) MUST NOT advance.
 - **R-002-20**: Cycles (including self) MUST be rejected with `AFTER_CYCLE` on create, update, enable and import; a missing upstream with `AFTER_UPSTREAM_NOT_FOUND` on create, update and enable. On import a dangling upstream MUST import the job disabled with `AFTER_UPSTREAM_NOT_FOUND` recorded and the rest of the batch proceeds. On reload, dangling or cyclic after-jobs MUST be loaded but inert and flagged broken.
 - **R-002-21**: Deleting a job that other jobs run `after` MUST fail with `JOB_HAS_DEPENDENTS` unless `force`; `force` disables the dependents.
+- **R-002-22**: A `webhook` schedule is `{ kind: 'webhook', relay?, secret? }`; `relay` is an https URL (http only for loopback hosts), exclusive with every other kind. `Scheduler.schedule` MUST no-op for it, previews are empty and no missed fire is ever enumerated. `--relay`/`--webhook-secret` without `--webhook` MUST be rejected.
+- **R-002-23**: The daemon MUST open one outbound SSE connection per distinct relay URL of enabled webhook jobs, shared by refcount, and none otherwise; it MUST NOT add an inbound listener. Reconnect backoff is 1s to 60s with jitter; 90s without data aborts and reconnects; no events are processed after stop; events lost while disconnected are never replayed.
+- **R-002-24**: A relay event MUST pass, in order, HMAC (when `secret` is set: `x-hub-signature-256` over `JSON.stringify(body)`, constant-time compare), dedupe (per job, 256 entries / 10 minutes, keyed delivery id, else `x-request-id`, else body hash) and a 10 per minute per-job burst limit (drops recorded as one `skipped` run per minute with `RATE_LIMITED (n dropped)`). Local triggers MUST skip all three.
+- **R-002-25**: A triggered run MUST receive `CRONTICK_TRIGGER=webhook`, `CRONTICK_EVENT` (capped at 64KB with a truncation marker), `CRONTICK_EVENT_SOURCE=relay|local` and, when known, `CRONTICK_EVENT_ID`, above `action.env`; the prompt MUST get the untrusted-data preamble and the payload in a fence longer than any backtick run in it. Relay payload headers MUST be allowlisted.
+- **R-002-26**: `jobs trigger`, `crontick_job_trigger`, `triggerJob` and `POST /api/jobs/:id/trigger` MUST fire only enabled webhook jobs (`NOT_WEBHOOK_JOB`, `JOB_DISABLED`) and reject non-JSON payloads (`INVALID_PAYLOAD`). Relay URLs and secrets MUST be redacted except in `jobs get`, `GET /api/jobs/:id`, the create response and the dashboard Copy.
 
 ### Non-functional requirements
 
@@ -110,11 +115,18 @@ removes the entry from the internal map. `unscheduleAll()` iterates all entries.
 - [x] After triggers: status x filter table, retries, chains, env, no-replay (test file: `tests/unit/trigger-dispatcher.test.ts`)
 - [x] After triggers: adopted run exit and downstream overlap `skip|queue|cancel-previous` (test file: `tests/unit/after-trigger-gaps.test.ts`)
 - [x] After triggers: cycles, dangling, delete force, import (test files: `tests/unit/store-after.test.ts`, `tests/unit/api-after-guards.test.ts`)
+- [x] Webhook schedule: schema, flags, `--relay auto`, no-tick/no-missed (test file: `tests/unit/webhook-schedule.test.ts`)
+- [x] Webhook relay: SSE parser, connection sharing, backoff, idle watchdog, stop, stale events (test files: `tests/unit/sse.test.ts`, `tests/unit/relay.test.ts`)
+- [x] Webhook guards: HMAC, dedupe, burst limit (test file: `tests/unit/relay-guard.test.ts`)
+- [x] Webhook payload framing, truncation, env, allowlist (test file: `tests/unit/webhook-payload.test.ts`)
+- [x] Webhook relay event to a real run, end to end (test file: `tests/unit/webhook-e2e-gaps.test.ts`)
+- [x] Trigger surfaces and errors (test file: `tests/unit/webhook-trigger-surface.test.ts`); redaction and export (`tests/unit/webhook-redaction.test.ts`); status rendering (`tests/unit/webhook-status-render.test.ts`); dashboard (`tests/unit/dashboard-webhook.test.ts`)
 - [x] A live daemon's real Scheduler auto-fires a cron/interval tick end-to-end into a run, with no manual `/run` trigger (test file: `tests/unit/integration.autofire.test.ts`)
 
 ## Out of scope
 
 - Missed-run catch-up (crontick does not retroactively fire missed ticks after daemon downtime).
+- Replay of webhook events missed while the daemon or relay is down; event filtering; provider-specific verifiers other than GitHub `x-hub-signature-256`; multiple relays per job.
 - Replay of upstream completions missed during downtime; multiple upstreams or AND-joins; passing upstream output (use `crontick runs get "$CRONTICK_UPSTREAM_RUN_ID"`); delay/debounce.
 - Persistent schedule state (schedules are re-registered from job definitions on daemon start).
 

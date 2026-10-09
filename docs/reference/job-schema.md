@@ -64,6 +64,16 @@ Cron schedules have no `tz` field. New input containing `tz` is rejected; a `tz`
 
 See [Scheduling: After triggers](../concepts/scheduling.md#after-triggers).
 
+### kind: `webhook`
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| `kind` | `"webhook"` | yes | — | Literal | Schedule discriminator |
+| `relay` | `string` | no | — | `https://` URL (`http://` only for loopback hosts) | smee.io-protocol channel the daemon listens to over an outbound SSE connection. Omit for local-trigger-only (`jobs trigger`). A bearer secret: redacted everywhere except `jobs get`, create output and the dashboard Copy button |
+| `secret` | `string` | no | — | — | If set, relay events must carry a valid `x-hub-signature-256` (HMAC-SHA256 over `JSON.stringify(body)`). Redacted as `set`. Stored in plaintext in the job file |
+
+Exclusive with `cron`/`every`/`at`/`after`. See [Webhooks](../concepts/webhooks.md).
+
 ### kind: `one-shot`
 
 | Field | Type | Required | Default | Constraints | Description |

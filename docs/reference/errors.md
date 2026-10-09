@@ -125,6 +125,30 @@ class CrontickError extends Error {
 | **Message shape** | Names the missing upstream |
 | **Details** | — |
 
+### NOT_WEBHOOK_JOB
+
+| | |
+|---|---|
+| **When** | `jobs trigger`, `crontick_job_trigger`, `triggerJob` or `POST /api/jobs/:id/trigger` targets a job whose schedule is not `webhook` (HTTP 400) |
+| **Message shape** | Says the job is not a webhook job and to use run-now |
+| **Details** | — |
+
+### JOB_DISABLED
+
+| | |
+|---|---|
+| **When** | Triggering a disabled webhook job (HTTP 409). `run-now` is unaffected |
+| **Message shape** | `Job <id> is disabled` |
+| **Details** | — |
+
+### INVALID_PAYLOAD
+
+| | |
+|---|---|
+| **When** | A trigger payload is not valid JSON, `--payload @file` is unreadable, or the HTTP body is not valid JSON on a trigger route |
+| **Message shape** | Names the source (inline, file, stdin) or says the body must be valid JSON |
+| **Details** | — |
+
 ### JOB_HAS_DEPENDENTS
 
 | | |
