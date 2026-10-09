@@ -220,6 +220,7 @@ async function tryGracefulHttpStop(env: NodeJS.ProcessEnv, logger: Logger): Prom
     const baseUrl = await resolveDaemonBaseUrl({ env, logger });
     const res = await fetch(`${baseUrl}/api/daemon/stop`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(HTTP_STOP_TIMEOUT_MS),
     });
     if (!res.ok) return { accepted: false };

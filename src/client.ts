@@ -780,9 +780,10 @@ export class CrontickClient {
       const headers: Record<string, string> = {
         Accept: 'application/json',
         Connection: 'close',
+        // Always sent: the daemon's request guard requires it on every mutating request, bodyless included.
+        'Content-Type': 'application/json',
       };
       if (payload !== undefined) {
-        headers['Content-Type'] = 'application/json';
         headers['Content-Length'] = String(Buffer.byteLength(payload));
       }
 

@@ -318,7 +318,7 @@ describe('runner setup failures finalize exactly once', () => {
       });
       const port = (server.address() as AddressInfo).port;
 
-      const response = await fetch(`http://127.0.0.1:${port}/api/jobs/${job.id}/run`, { method: 'POST' });
+      const response = await fetch(`http://127.0.0.1:${port}/api/jobs/${job.id}/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
       expect(response.status).toBe(202);
       await new Promise((resolve) => setTimeout(resolve, 0));
 

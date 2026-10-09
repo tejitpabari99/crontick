@@ -160,20 +160,20 @@ describe('DELETE /api/runs', () => {
     const port = await start();
     const j = job('api-j'); store.upsertJob(j);
     const r1 = doneRun(j.id); const r2 = doneRun(j.id);
-    let res = await fetch(`http://127.0.0.1:${port}/api/runs?runId=${r1},${r2}&dryRun=1`, { method: 'DELETE' });
+    let res = await fetch(`http://127.0.0.1:${port}/api/runs?runId=${r1},${r2}&dryRun=1`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' } });
     expect(res.status).toBe(200);
     expect((await res.json() as { deleted: string[] }).deleted).toEqual([r1, r2]);
     expect(store.getRun(r1)).toBeDefined();
-    res = await fetch(`http://127.0.0.1:${port}/api/runs?runId=${r1}`, { method: 'DELETE' });
+    res = await fetch(`http://127.0.0.1:${port}/api/runs?runId=${r1}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' } });
     expect((await res.json() as { deleted: string[] }).deleted).toEqual([r1]);
-    res = await fetch(`http://127.0.0.1:${port}/api/runs?jobId=api-j`, { method: 'DELETE' });
+    res = await fetch(`http://127.0.0.1:${port}/api/runs?jobId=api-j`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' } });
     expect((await res.json() as { deleted: string[] }).deleted).toEqual([r2]);
   });
 
   it('returns VALIDATION_ERROR for neither or both inputs', async () => {
     const port = await start();
     for (const qs of ['', '?runId=a&jobId=b', '?runId=']) {
-      const res = await fetch(`http://127.0.0.1:${port}/api/runs${qs}`, { method: 'DELETE' });
+      const res = await fetch(`http://127.0.0.1:${port}/api/runs${qs}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' } });
       expect(res.status).toBe(400);
       expect(((await res.json()) as { error: { code: string } }).error.code).toBe('VALIDATION_ERROR');
     }

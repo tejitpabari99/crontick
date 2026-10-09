@@ -367,7 +367,7 @@ function handleCopyClick(e) {
 // ── Job actions ─────────────────────────────────────────────────────────────
 
 async function apiAction(method, path) {
-  const res = await fetch(path, { method });
+  const res = await fetch(path, { method, headers: { 'Content-Type': 'application/json' } });
   let body = null;
   try { body = await res.json(); } catch { /* no body */ }
   if (!res.ok) throw new Error(body?.error?.message || `${method} ${path} failed (${res.status})`);

@@ -24,6 +24,7 @@ import { buildRunOutput } from '../run-output.js';
 import { nullLogger, redactValue, type Logger } from '../logger.js';
 import { readEnvFileForAction } from './env-file.js';
 import { resolveJobLogPath } from './job-log-file.js';
+import { checkMutatingRequest, isGuardedRequest } from './request-guard.js';
 import { describeDaemonPort } from './bind-port.js';
 import { loadConfig } from '../config.js';
 import type { CrontickConfig } from '../schemas/config.js';
@@ -91,6 +92,15 @@ async function handleRequest(
   });
 
   try {
+    // Central guard: every mutating /api route, including unknown ones, before any handler runs.
+    if (isGuardedRequest(method, path)) {
+      const rejection = checkMutatingRequest(req);
+      if (rejection) {
+        req.resume();
+        return sendError(res, rejection.status, 'REQUEST_REJECTED', rejection.message);
+      }
+    }
+
     // ── Health ───────────────────────────────────────────────────────────────
     if (method === 'GET' && path === '/health') {
       return sendJson(res, 200, buildDashboardData({ ...ctx, pid: process.pid }, { runsLimit: 1 }).health);
