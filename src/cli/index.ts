@@ -716,6 +716,12 @@ daemon.command('status').description('Show whether the daemon is running').actio
 daemon.command('reload').description('Reload jobs from disk').action(async () => {
   try { print(await client().daemonReload()); } catch (err) { handleError(err); }
 });
+daemon.command('pause').description('Pause scheduling: the daemon stays up but starts no new runs; fires due while paused are recorded as skipped').action(async () => {
+  try { print(await client().daemonPause()); } catch (err) { handleError(err); }
+});
+daemon.command('resume').description('Resume scheduling after a pause').action(async () => {
+  try { print(await client().daemonResume()); } catch (err) { handleError(err); }
+});
 
 // ── dashboard ────────────────────────────────────────────────────────────────
 // The dashboard has no dedicated command group: it is always served by the

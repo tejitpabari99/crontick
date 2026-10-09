@@ -36,6 +36,8 @@ export const SURFACE_CAPABILITIES = [
   { capability: 'import', clientMethod: 'importJobs', cliCommand: ['share', 'import'], mcpTool: 'crontick_import', optionNames: ['trustFolder'] },
   { capability: 'daemon-stop', clientMethod: 'daemonStop', cliCommand: ['daemon', 'stop'], mcpTool: 'crontick_daemon_stop' },
   { capability: 'daemon-reload', clientMethod: 'daemonReload', cliCommand: ['daemon', 'reload'], mcpTool: 'crontick_daemon_reload' },
+  { capability: 'daemon-pause', clientMethod: 'daemonPause', cliCommand: ['daemon', 'pause'], mcpTool: 'crontick_daemon_pause' },
+  { capability: 'daemon-resume', clientMethod: 'daemonResume', cliCommand: ['daemon', 'resume'], mcpTool: 'crontick_daemon_resume' },
   { capability: 'doctor', clientMethod: 'doctor', cliCommand: ['doctor'], mcpTool: 'crontick_doctor' },
   { capability: 'info', clientMethod: 'info', cliCommand: ['info'], mcpTool: 'crontick_info' },
 ] as const satisfies readonly SurfaceCapability[];

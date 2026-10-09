@@ -74,6 +74,8 @@ The command-tree reorganization intentionally narrowed some exposure without rem
 | `import` | `importJobs` | `crontick share import` | `crontick_import` |
 | `daemon-stop` | `daemonStop` | `crontick daemon stop` | `crontick_daemon_stop` |
 | `daemon-reload` | `daemonReload` | `crontick daemon reload` | `crontick_daemon_reload` |
+| `daemon-pause` | `daemonPause` | `crontick daemon pause` | `crontick_daemon_pause` |
+| `daemon-resume` | `daemonResume` | `crontick daemon resume` | `crontick_daemon_resume` |
 | `doctor` | `doctor` | `crontick doctor` | `crontick_doctor` |
 | `info` | `info` | `crontick info` | `crontick_info` |
 

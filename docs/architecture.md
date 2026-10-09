@@ -28,7 +28,7 @@ Key public categories: the `CrontickClient`/`createClient` core; `CrontickError`
 |-----------|--------|------|
 | **CrontickClient** (core) | `src/client.ts` | The single source of business logic. Every operation (job CRUD, run management, daemon lifecycle, config, stats, dashboard, doctor) is a method here. Handles daemon connectivity (`ensureDaemon()`), issues HTTP requests, surfaces `CrontickError`. See [implementation/core-client.md](implementation/core-client.md). |
 | **CLI shim** | `src/cli/index.ts` | Commander v12 program: parses flags, calls `CrontickClient`, renders output. Zero business logic. See [implementation/shims.md](implementation/shims.md). |
-| **MCP server shim** | `src/mcp/index.ts` | Stdio MCP server registering 21 tools + one resource (`crontick://schemas/job`). See [implementation/shims.md](implementation/shims.md). |
+| **MCP server shim** | `src/mcp/index.ts` | Stdio MCP server registering 23 tools + one resource (`crontick://schemas/job`). See [implementation/shims.md](implementation/shims.md). |
 | **Library API shim** | `src/index.ts` | Re-export facade; `import { createClient } from 'crontick'`. |
 | **Daemon** | `src/daemon/index.ts`, `api.ts`, `ensure.ts` | Long-running process bound to `127.0.0.1`; owns the scheduler, runner, and store behind a loopback HTTP API. See [implementation/daemon.md](implementation/daemon.md) and [concepts/daemon-lifecycle.md](concepts/daemon-lifecycle.md). |
 | **Scheduler** | `src/daemon/scheduler.ts` | `EventEmitter` managing per-job timers for `cron` (croner v9), `interval`, and `one-shot` schedules; emits `tick`. See [implementation/scheduler.md](implementation/scheduler.md). |

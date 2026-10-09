@@ -83,6 +83,8 @@ crontick daemon status # running or not
 crontick daemon restart
 crontick daemon stop   # stop the daemon when you really need a restart cycle
 crontick daemon reload # reload jobs from disk after manual edits
+crontick daemon pause  # stop starting new runs (due fires recorded skipped); daemon stays up
+crontick daemon resume # undo pause
 ```
 
 The dashboard (job/run browser) is served by the daemon; open the `dashboardUrl` from `crontick info` (default `http://127.0.0.1:47615/dashboard`; a free fallback port is used when 47615 is taken).
@@ -211,6 +213,7 @@ crontick also ships an MCP server that mirrors these commands one-to-one (tool p
 | `crontick_info` | `info` |
 | `crontick_daemon_stop` | `daemon stop` |
 | `crontick_daemon_reload` | `daemon reload` |
+| `crontick_daemon_pause` / `crontick_daemon_resume` | `daemon pause` / `daemon resume` |
 
 MCP differences: pass `action.cwd` (absolute project folder) when creating jobs, the engine is `action.engine` (CLI `--runner`), and for Claude jobs in an untrusted folder a `TRUST_REQUIRED` error means ask the user, then retry with `trustFolder: true` (CLI `--trust-folder`). Create/update/import tools take `trustFolder`.
 

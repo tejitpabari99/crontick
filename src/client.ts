@@ -182,6 +182,8 @@ export interface DaemonStatus {
   portNote: string | null;
   uptimeSec: number;
   jobs: number;
+  /** True while the scheduler is paused (in-memory; a restart comes up unpaused). */
+  paused: boolean;
   missedFires: DaemonMissedFiresSummary;
 }
 
@@ -486,6 +488,14 @@ export class CrontickClient {
 
   async daemonReload(): Promise<{ ok: true }> {
     return this.request<{ ok: true }>('POST', '/api/daemon/reload');
+  }
+
+  async daemonPause(): Promise<{ ok: true; paused: true }> {
+    return this.request<{ ok: true; paused: true }>('POST', '/api/daemon/pause');
+  }
+
+  async daemonResume(): Promise<{ ok: true; paused: false }> {
+    return this.request<{ ok: true; paused: false }>('POST', '/api/daemon/resume');
   }
 
   async daemonStatus(): Promise<DaemonStatus> {

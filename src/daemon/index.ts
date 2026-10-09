@@ -307,6 +307,18 @@ if (needsSqliteShim) {
       }
     });
 
+    // Fires that come due while paused are recorded 'skipped' (not run, not replayed on resume).
+    scheduler.on('paused-tick', ({ jobId, plannedAt }) => {
+      try {
+        const job = store.getJob(jobId);
+        if (!job || !job.enabled) return;
+        store.recordSkippedRun(jobId, plannedAt.getTime());
+        store.recordTick(jobId, plannedAt.getTime());
+      } catch (err) {
+        logger.error('Failed to record skipped run while paused', { jobId, error: String(err) });
+      }
+    });
+
     async function reload(): Promise<void> {
       logger.info('Reloading jobs from disk');
       // Read+validate everything that can throw (config) BEFORE mutating the

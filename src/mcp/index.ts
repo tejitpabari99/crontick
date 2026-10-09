@@ -375,6 +375,27 @@ export function createMcpServer(): McpServer {
   );
 
 
+  server.registerTool(
+    'crontick_daemon_pause',
+    {
+      description:
+        'Pause scheduling: the daemon (HTTP API + dashboard) stays up but starts no new runs. Fires that come due while paused are not run and not replayed; each is recorded as a run with status skipped. In-flight runs continue. Paused state is not persisted: a daemon restart comes up unpaused. Undo with crontick_daemon_resume.',
+      inputSchema: withVerbose({}),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => toolWrap(args, (client) => client.daemonPause()),
+  );
+
+  server.registerTool(
+    'crontick_daemon_resume',
+    {
+      description: 'Resume scheduling after crontick_daemon_pause. Fires skipped while paused are not replayed.',
+      inputSchema: withVerbose({}),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => toolWrap(args, (client) => client.daemonResume()),
+  );
+
   // ── Admin ──────────────────────────────────────────────────────────────────
 
   server.registerTool(

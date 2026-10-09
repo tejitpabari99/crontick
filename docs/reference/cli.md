@@ -394,6 +394,15 @@ Reload job definitions from disk without restarting the daemon.
 crontick daemon reload
 ```
 
+### crontick daemon pause / resume
+
+`pause` keeps the daemon (API + dashboard) up but starts no new runs; fires that come due while paused are not run, not replayed on resume, and are recorded as runs with status `skipped`. In-flight runs continue. `resume` restores scheduling. Paused state is in-memory only (a daemon restart comes up unpaused) and is shown as `paused` in `crontick daemon status`. `stop` is unchanged.
+
+```bash
+crontick daemon pause
+crontick daemon resume
+```
+
 Running `crontick daemon` with no subcommand prints help. The former hidden `crontick info daemon` / `info doctor` aliases were removed. Config edits normally do not require reload; see [configuration.md](configuration.md#when-config-edits-take-effect).
 
 ---

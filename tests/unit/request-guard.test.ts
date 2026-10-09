@@ -40,6 +40,8 @@ const MUTATING_ROUTES: Array<[string, string]> = [
   ['POST', '/api/schedules/preview'],
   ['POST', '/api/daemon/reload'],
   ['POST', '/api/daemon/stop'],
+  ['POST', '/api/daemon/pause'],
+  ['POST', '/api/daemon/resume'],
   ['POST', '/api/import'],
 ];
 

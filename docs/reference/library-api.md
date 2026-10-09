@@ -62,6 +62,8 @@ Every method below that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `daemonStop` | `(): Promise<DaemonStopResult>` | Stop result — see [DaemonStopResult](#daemonstopresult) | `CrontickError` |
 | `daemonRestart` | `(): Promise<DaemonRestartResult>` | `{ ok: true, baseUrl, port?, pid?, started, stopped, previousPid? }` — library-only after round-2 simplification; the stop phase escalates internally the same way as `daemonStop`, but only `stopped`/`previousPid` are surfaced (no `mode`/`activeRuns`) | `CrontickError` |
 | `daemonReload` | `(): Promise<{ ok: true }>` | `{ ok: true }` | `CrontickError` |
+| `daemonPause` | `(): Promise<{ ok: true; paused: true }>` | Pause scheduling; due fires are recorded `skipped`; in-memory, not persisted | `CrontickError` |
+| `daemonResume` | `(): Promise<{ ok: true; paused: false }>` | Resume scheduling | `CrontickError` |
 | `daemonStatus` | `(): Promise<DaemonStatus>` | `DaemonStatus` — library-only after round-2 simplification | `CrontickError` |
 | `doctor` | `(options?: DoctorOptions): Promise<DoctorResult>` | `DoctorResult` | `CrontickError` |
 | `dashboardStatus` | `(): Promise<DashboardStatus>` | `DashboardStatus` — library-only; the dashboard is served by the daemon | `CrontickError` |

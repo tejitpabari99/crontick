@@ -66,7 +66,7 @@ Tools that expose run rows or log text apply the shared redaction contract befor
 
 ## Tool Inventory
 
-The MCP server exposes 21 `crontick_*` tools, matching `SURFACE_CAPABILITIES`.
+The MCP server exposes 23 `crontick_*` tools, matching `SURFACE_CAPABILITIES`.
 
 Removed tools are not present: the `crontick_config_*` get/set/unset/init/validate/engine tools, `crontick_schedule_validate`, `crontick_schedule_preview`, `crontick_dashboard_data`, `crontick_run_logs_tail` and `crontick_run_output` (folded into `crontick_run_get`), and the `crontick_daemon_start`/`crontick_daemon_status`/`crontick_daemon_restart` plus `crontick_dashboard_start`/`crontick_dashboard_status`/`crontick_dashboard_stop` tools. The dashboard is always served by the daemon; call `crontick_info`, read `configPath`, and open its `dashboardUrl`. Use `crontick_job_schedule` to preview an existing job's upcoming fire times.
 
@@ -351,6 +351,18 @@ Reload job definitions from disk without restarting.
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `{ ok: true }`
+
+---
+
+### crontick_daemon_pause
+
+Pause scheduling (daemon stays up; due fires are recorded `skipped`; not persisted across restart). Parameter: `verbose`. **Result:** `{ ok: true, paused: true }`
+
+---
+
+### crontick_daemon_resume
+
+Resume scheduling after a pause. Parameter: `verbose`. **Result:** `{ ok: true, paused: false }`
 
 ---
 

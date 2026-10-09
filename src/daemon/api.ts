@@ -405,6 +405,7 @@ async function handleRequest(
         portNote: describeDaemonPort(ctx.port, currentConfigOrEmpty()),
         uptimeSec: Math.floor((Date.now() - ctx.startedAt.getTime()) / 1000),
         jobs: ctx.store.listJobs().length,
+        paused: ctx.scheduler.isPaused(),
         // L2: report-only missed-fire summary computed once at startup.
         missedFires: ctx.missedFireSummary ?? {
           jobsWithMissedFires: 0,
@@ -413,6 +414,16 @@ async function handleRequest(
           capPerJob: 0,
         },
       });
+    }
+
+    if (method === 'POST' && path === '/api/daemon/pause') {
+      ctx.scheduler.pause();
+      return sendJson(res, 200, { ok: true, paused: true });
+    }
+
+    if (method === 'POST' && path === '/api/daemon/resume') {
+      ctx.scheduler.resume();
+      return sendJson(res, 200, { ok: true, paused: false });
     }
 
     if (method === 'POST' && path === '/api/daemon/reload') {

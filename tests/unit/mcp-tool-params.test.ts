@@ -25,6 +25,8 @@ const EXPECTED_TOOL_PARAMS = {
   crontick_stats_job: ['id'],
   crontick_daemon_stop: [],
   crontick_daemon_reload: [],
+  crontick_daemon_pause: [],
+  crontick_daemon_resume: [],
   crontick_export: ['onlyJobs'],
   crontick_import: ['schema', 'jobs', 'exportedAt', 'crontickVersion', 'trustFolder'],
   crontick_doctor: [],
@@ -140,7 +142,7 @@ describe('MCP parameter naming', () => {
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
 
     expect(tools.map((tool) => tool.name).sort()).toEqual([...MCP_TOOLS].sort());
-    expect(tools).toHaveLength(21);
+    expect(tools).toHaveLength(23);
 
     for (const [name, expectedParams] of Object.entries(EXPECTED_TOOL_PARAMS)) {
       const tool = byName.get(name);
