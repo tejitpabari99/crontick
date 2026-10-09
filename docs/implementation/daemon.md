@@ -67,8 +67,9 @@ non-loopback gets 403 `FORBIDDEN`.
 | Method | Path | Purpose | Status |
 |--------|------|---------|--------|
 | GET | `/health` | Health/readiness check | 200 |
-| GET/POST | `/api/jobs[/:id]` | List/create/get job | 200/201/404 |
-| PUT/DELETE | `/api/jobs/:id` | Update/delete job (delete cancels an in-flight run: `canceledRun`) | 200/404 |
+| GET/POST | `/api/jobs[/:id]` | List/create/get job. `POST ?prepare=1` runs the shared `job-prepare.ts` pipeline (normalize, config defaults, alias autogen, `INVALID_CWD`, Claude folder trust) on a partial body, as the dashboard editor does; `trustFolder=1` trusts an untrusted folder instead of failing with `TRUST_REQUIRED` (`details.folders`). Without `prepare` the body is stored as given | 200/201/404 |
+| GET | `/api/jobs/editor-meta` | Dashboard editor bootstrap: `{ engines: [{ name, type, supportsTrust }], defaultEngine, defaults: { overlap, retry, timeoutSec? }, aliasPattern }`. Registered before `/api/jobs/:id` so it is not read as a job id | 200 |
+| PUT/DELETE | `/api/jobs/:id` | Update/delete job (delete cancels an in-flight run: `canceledRun`). `PUT` accepts `?prepare=1` (field-wise patch merge via `normalizeJobPatch`, `null` clears `timeoutSec`/`sessionId`/`description`, trust checked only when engine or folder changed, `trustFolder=1`) and `?inFlight=stop\|wait` (see [R-004-27](../specs/004-daemon.md)) | 200/404/409 |
 | POST | `/api/jobs/:id/enable\|disable` | Enable/disable a job | 200/404 |
 | GET | `/api/runs/:id/output` | Cleaned output view (`RunOutput`): final result, error, full stderr, plus `logFile` (path of the per-job crontick log file) | 200/404 |
 | POST | `/api/jobs/:id/run-now` (alias `/run`) | Run a job once now, even if disabled, without changing `enabled` or the schedule; overlap policy applies. `202 { runId }` | 202/404 |

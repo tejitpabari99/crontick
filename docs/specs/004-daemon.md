@@ -72,6 +72,8 @@ on time even when no interactive session is open, without requiring OS service r
 - **R-004-32**: `POST /api/jobs` MUST reject a duplicate job ID with HTTP 409 / `JOB_ALREADY_EXISTS` unless `force` is passed. Both create and update MUST validate the schedule and, when `action.envFile` is present, preflight it before any call to `Store.upsertJob()`.
 - **R-004-33**: `crontick daemon stop`/`reload` MUST emit human-readable output; the CLI has no global `--json` mode.
 
+- **R-004-34**: `POST /api/jobs` and `PUT /api/jobs/:id` MUST accept `?prepare=1`, which runs the shared `src/job-prepare.ts` pipeline (the same normalization as `createJobFromCliOptions`/`updateJob`: config defaults, alias autogen, `INVALID_CWD`, field-wise patch merge with `null` clears, `CWD_CHANGE_BREAKS_SESSION`). For an engine with a folder-trust concept an untrusted folder MUST fail with `TRUST_REQUIRED` (`details.folders`) unless `trustFolder=1`; update checks trust only when the engine or folder changed; engines without trust never return it. Without `prepare` behavior is unchanged. `GET /api/jobs/editor-meta` MUST return `{ engines, defaultEngine, defaults, aliasPattern }` for the dashboard job editor. Tests: `tests/unit/api-prepare.test.ts`, `tests/unit/job-prepare.test.ts`.
+
 ### Non-functional requirements
 
 - **R-004-25**: Daemon startup SHOULD complete within 5 seconds on typical hardware.
@@ -127,6 +129,8 @@ Pause: `POST /api/daemon/pause|resume` toggle the in-memory scheduler pause (see
 - [x] Reload reschedules all jobs from disk, aborting cleanly on invalid config (test file: `tests/unit/integration.daemon-lifecycle.test.ts`)
 - [x] `crontick daemon stop`/`reload` use human-readable CLI output (test file: `tests/unit/cli-daemon-json.test.ts`)
 
+- [x] Prepare-mode create/update, `trustFolder`, null-clears and `editor-meta` behave per R-004-34, and prepare create equals the CLI create pipeline (test files: `tests/unit/api-prepare.test.ts`, `tests/unit/job-prepare.test.ts`)
+- [x] Dashboard job editor: every `commonJobOptions` flag maps to a form field, body/patch building, schedule kinds + preview, error mapping, trust reveal and in-flight choice (test files: `tests/unit/dashboard-job-editor.test.ts`, `tests/unit/dashboard-schedule-kinds.test.ts`, `tests/unit/dashboard-editor-errors.test.ts`)
 - [x] Mutating `/api` requests with a wrong Host, non-JSON Content-Type or foreign Origin are rejected with `REQUEST_REJECTED` and execute nothing (test file: `tests/unit/request-guard.test.ts`)
 
 ## Out of scope

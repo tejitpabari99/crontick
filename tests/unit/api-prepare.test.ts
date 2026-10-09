@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { startApiHarness, type ApiHarness } from '../helpers/api-harness.js';
 import { prepareCreate } from '../../src/job-prepare.js';
+import { buildJobFromCreateOptions } from '../../src/job-input.js';
 
 const dirs: string[] = [];
 function tmp(prefix: string): string {
@@ -56,6 +57,28 @@ describe('daemon prepare mode + editor-meta', () => {
     expect(r.data.alias).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
     expect({ ...r.data, id: 'x', alias: 'x' }).toEqual({ ...expected, id: 'x', alias: 'x' });
     expect((await h.call('GET', `/api/jobs/${r.data.id}`)).status).toBe(200);
+  });
+
+  it.each([
+    ['cron', { cron: '0 9 * * *' }, { kind: 'cron', cron: '0 9 * * *' }],
+    ['every', { every: 1800 }, { kind: 'interval', everySec: 1800 }],
+  ])('prepare create (%s) equals the CLI create pipeline', async (_n, cli, schedule) => {
+    const cwd = tmp('ap-eq-');
+    const viaCli = prepareCreate(
+      buildJobFromCreateOptions({ ...cli, prompt: 'hi', alias: 'eq-job', cwd, timeoutSec: 90, overlap: 'queue', retry: 2 } as never, { env: process.env }),
+      { env: process.env, trustFolder: true },
+    );
+    const r = await h.call('POST', '/api/jobs?prepare=1&trustFolder=1', {
+      alias: `eq-api-${_n}`,
+      schedule,
+      timeoutSec: 90,
+      overlap: 'queue',
+      retry: { max: 2 },
+      action: { kind: 'prompt', prompt: 'hi', cwd },
+    });
+    expect(r.status).toBe(201);
+    const strip = (j: Record<string, unknown>) => ({ ...j, id: 'x', alias: 'x', createdAt: 'x', updatedAt: 'x' });
+    expect(strip(r.data)).toEqual(strip(viaCli as never));
   });
 
   it('prepare create requires action.cwd and rejects nonexistent dirs', async () => {

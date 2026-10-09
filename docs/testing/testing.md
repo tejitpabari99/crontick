@@ -11,6 +11,10 @@
 | Packaging | `tests/unit/smoke.test.ts`, `tests/unit/build-sqlite.test.ts`, `tests/unit/rebrand.test.ts` | Package exports resolve; dist builds are valid |
 | **E2E (on-demand)** | `tests/integration/` | Real pack+install; drives CLI/API/MCP as a real user would; never part of `npm run validate` |
 
+### Known coverage gap: dashboard DOM behavior
+
+There is no DOM harness (no jsdom/happy-dom; AGENTS.md forbids new runtime deps and none was added for dev). Dashboard tests (`tests/unit/dashboard-*.test.ts`) are string/HTTP-level (served markup and script, CSS rules, wiring strings) plus tests of the pure helpers extracted from `dashboard.js` (`// <editor-pure>` blocks: body/patch building, error mapping, schedule kinds). Click-through behavior of the job editor (modal focus trap, live preview rendering, banner and trust/in-flight panels) was verified manually in headless Chromium during implementation, not in CI. Deferred: add a DOM harness if dashboard logic grows.
+
 ## Running tests locally
 
 ```powershell
