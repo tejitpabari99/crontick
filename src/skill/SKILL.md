@@ -122,7 +122,7 @@ crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident qu
 | **jobs** | `jobs new [options] [engineArgs...]` | Create a job (alias auto-generated) |
 | | `jobs list` | List all jobs |
 | | `jobs get <id\|alias>` | Show one job |
-| | `jobs update <id\|alias> [--enable\|--disable\|…]` | Update fields / enable / disable |
+| | `jobs update <id\|alias> [--enable\|--disable\|--stop-running\|--wait-running\|…]` | Update fields / enable / disable |
 | | `jobs schedule <id\|alias> -n <count>` | Preview upcoming fire times |
 | | `jobs run-now <id\|alias>` | Trigger an immediate run |
 | | `jobs delete <id\|alias>` | Delete one job |

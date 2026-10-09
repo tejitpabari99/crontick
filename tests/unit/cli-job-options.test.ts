@@ -51,7 +51,7 @@ describe('jobs new / jobs update option parity', () => {
     const onlyNew = [...created].filter((flag) => !updated.has(flag)).sort();
     const onlyUpdate = [...updated].filter((flag) => !created.has(flag)).sort();
     expect(onlyNew).toEqual(['--force']);
-    expect(onlyUpdate).toEqual(['--disable', '--enable', '--unset']);
+    expect(onlyUpdate).toEqual(['--disable', '--enable', '--stop-running', '--unset', '--wait-running']);
     // Guard against the parser silently matching nothing.
     expect(created.size).toBeGreaterThan(10);
     expect(created.has('-a, --alias')).toBe(true);

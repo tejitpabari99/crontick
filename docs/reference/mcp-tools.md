@@ -142,6 +142,7 @@ Update an existing job by GUID or alias. The patch is merged with the existing d
 | `overlap` | `"skip"\|"queue"\|"cancel-previous"` | no | — | Overlap policy |
 | `retry` | `{ max?: number, backoffSec?: number }` | no | — | Retry config |
 | `trustFolder` | `boolean` | no | `false` | See `crontick_job_create`; checked only when `action.cwd` or the engine changes |
+| `inFlight` | `"stop"\|"wait"` | no | — | Needed only when the job has runs in flight (else the call fails with `RUNS_IN_FLIGHT`, listing them): `stop` cancels them and drops queued ones, then applies; `wait` pauses the job, applies once they finish, then resumes it. Ask the user which before choosing |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Updated `Job` object.

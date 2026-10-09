@@ -26,6 +26,8 @@ export async function writeConfigWithInFlight<T>(
   write: (inFlight?: InFlightChoice) => Promise<T>,
   flags: InFlightFlags,
   io: InFlightIo,
+  /** `daemon` (config saves, default) or `job` (job updates): only changes the wording of the prompt. */
+  options: { subject?: 'daemon' | 'job' } = {},
 ): Promise<T> {
   if (flags.stopRunning && flags.waitRunning) {
     throw new CrontickError('VALIDATION_ERROR', 'Use only one of --stop-running and --wait-running.');
@@ -44,12 +46,13 @@ export async function writeConfigWithInFlight<T>(
       );
     }
     const runs = (err.details as { runs?: unknown[] } | undefined)?.runs ?? [];
+    const paused = options.subject === 'job' ? 'job paused' : 'daemon paused';
     const answer = (await io.ask(
-      `${runs.length} run(s) in flight. [s]top them and apply, [w]ait for them (daemon paused) then apply, or [c]ancel? (s/w/C) `,
+      `${runs.length} run(s) in flight. [s]top them and apply, [w]ait for them (${paused}) then apply, or [c]ancel? (s/w/C) `,
     )).trim().toLowerCase();
     if (answer === 's' || answer === 'stop') return write('stop');
     if (answer === 'w' || answer === 'wait') return write('wait');
-    throw new CrontickError('CONFIRMATION_DECLINED', 'Not confirmed; the config was not changed.');
+    throw new CrontickError('CONFIRMATION_DECLINED', `Not confirmed; the ${options.subject === 'job' ? 'job' : 'config'} was not changed.`);
   }
 }
 

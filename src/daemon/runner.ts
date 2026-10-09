@@ -211,7 +211,7 @@ export class Runner {
   /** runId -> jobId for every run between run()/adoptRun() entry and terminal finalization. */
   private inFlight: Map<string, string> = new Map();
   /** Resolvers for waitForIdle(), settled when `inFlight` drains. */
-  private idleWaiters: Array<() => void> = [];
+  private idleWaiters: Array<{ jobId?: string; resolve: () => void }> = [];
 
   private readonly logger: Logger;
   private readonly jobLogFiles: JobLogFileFactory;
@@ -988,37 +988,43 @@ export class Runner {
     log.crontick(`[debug] ${message}`, data);
   }
 
-  /** Runs currently executing, queued, or adopted (not yet terminal). */
-  listInFlight(): InFlightRun[] {
-    return [...this.inFlight.entries()].map(([runId, jobId]) => ({ jobId, runId }));
+  /** Runs currently executing, queued, or adopted (not yet terminal); optionally only one job's. */
+  listInFlight(jobId?: string): InFlightRun[] {
+    return [...this.inFlight.entries()]
+      .filter(([, j]) => jobId === undefined || j === jobId)
+      .map(([runId, j]) => ({ jobId: j, runId }));
   }
 
-  /** Resolves once no run is in flight (all finalized). Resolves immediately when already idle. No timeout. */
-  waitForIdle(): Promise<void> {
-    if (this.inFlight.size === 0) return Promise.resolve();
-    return new Promise<void>((resolve) => { this.idleWaiters.push(resolve); });
+  /** Resolves once no run (of `jobId`, when given) is in flight. Resolves immediately when already idle. No timeout. */
+  waitForIdle(jobId?: string): Promise<void> {
+    if (this.listInFlight(jobId).length === 0) return Promise.resolve();
+    return new Promise<void>((resolve) => { this.idleWaiters.push({ jobId, resolve }); });
   }
 
   /**
-   * Cancel everything in flight: queued runs are dropped (status `canceled`,
-   * never started), active runs are aborted (status `canceled`, no retry).
-   * Resolves once all of them are finalized.
+   * Cancel everything in flight (or only `jobId`'s): queued runs are dropped
+   * (status `canceled`, never started), active runs are aborted (status
+   * `canceled`, no retry). Resolves once all of them are finalized.
    */
-  async cancelAllInFlight(reason = 'canceled: config save stopped in-flight runs'): Promise<void> {
-    for (const [jobId, queue] of this.queues.entries()) {
+  async cancelAllInFlight(reason = 'canceled: config save stopped in-flight runs', jobId?: string): Promise<void> {
+    for (const [queuedJobId, queue] of [...this.queues.entries()]) {
+      if (jobId !== undefined && queuedJobId !== jobId) continue;
       const dropped = queue.splice(0, queue.length);
-      this.queues.delete(jobId);
+      this.queues.delete(queuedJobId);
       for (const entry of dropped) await entry.drop(reason);
     }
-    for (const jobId of [...this.activeAborts.keys()]) this.cancelJob(jobId);
-    await this.waitForIdle();
+    for (const activeJobId of [...this.activeAborts.keys()]) {
+      if (jobId === undefined || activeJobId === jobId) this.cancelJob(activeJobId);
+    }
+    await this.waitForIdle(jobId);
   }
 
   private markSettled(runId: string): void {
     this.inFlight.delete(runId);
-    if (this.inFlight.size > 0) return;
-    const waiters = this.idleWaiters.splice(0, this.idleWaiters.length);
-    for (const w of waiters) w();
+    const ready = this.idleWaiters.filter((w) => this.listInFlight(w.jobId).length === 0);
+    if (ready.length === 0) return;
+    this.idleWaiters = this.idleWaiters.filter((w) => !ready.includes(w));
+    for (const w of ready) w.resolve();
   }
 
   /** Cancel any active run for a job. */

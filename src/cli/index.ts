@@ -453,6 +453,8 @@ commonJobOptions(jobs.command('update <id|alias> [engineArgs...]').description('
   .option('--enable', 'Enable the job')
   .option('--disable', 'Disable the job')
   .option('--unset <field>', 'Remove an optional field: timeout, session-id, desc (repeatable or comma-separated)', collectOption, [] as string[])
+  .option('--stop-running', 'If the job has runs in flight, cancel them (and drop queued ones), then apply (prompts on a terminal when neither flag is given)')
+  .option('--wait-running', 'If the job has runs in flight, pause the job, wait for them to finish, apply, then resume it')
   .action(async (id: string, engineArgs: string[], opts, cmd: Command) => {
     const c = client();
     const notices: string[] = [];
@@ -464,9 +466,14 @@ commonJobOptions(jobs.command('update <id|alias> [engineArgs...]').description('
         cwd: process.cwd(),
         onNotice: (message) => notices.push(message),
       });
-      const result = await withTrustPrompt(
-        (trustFolder) => c.updateJob(id, patch, { trustFolder }),
-        { trustFolder: patchOptions.trustFolder, io: terminalTrustPromptIo() },
+      const result = await writeConfigWithInFlight(
+        (inFlight) => withTrustPrompt(
+          (trustFolder) => c.updateJob(id, patch, { trustFolder, inFlight }),
+          { trustFolder: patchOptions.trustFolder, io: terminalTrustPromptIo() },
+        ),
+        { stopRunning: booleanOption(opts.stopRunning), waitRunning: booleanOption(opts.waitRunning) },
+        terminalInFlightIo(),
+        { subject: 'job' },
       );
       printNotices(c, notices);
       print(result);

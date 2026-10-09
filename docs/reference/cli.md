@@ -130,6 +130,10 @@ crontick jobs update <id|alias> [engineArgs...]
 | `--enable` | boolean | — | Enable the job |
 | `--disable` | boolean | — | Disable the job |
 | `--unset <field>` | `timeout` \| `session-id` \| `desc` | — | Remove an optional field (repeatable and/or comma-separated, e.g. `--unset timeout,desc`). Maps to `null` in the patch. An unknown field, or `--unset X` together with the setter flag for X (`--timeout`, `--session-id`, `--desc`), is a usage error (`VALIDATION_ERROR`) |
+| `--stop-running` | boolean | — | If the job has runs in flight, cancel them (status `canceled`, no retry, queued runs dropped, `--after` dependents not triggered), then apply |
+| `--wait-running` | boolean | — | If the job has runs in flight, pause that job (other jobs keep firing), wait for them to finish with no timeout, apply, then resume it automatically |
+
+With runs in flight and neither flag, a terminal prompts (stop / wait / cancel); a non-interactive session fails with `RUNS_IN_FLIGHT` listing the runs. The two flags are mutually exclusive.
 
 Omitted options leave the existing job unchanged. `--enable` and `--disable` are mutually exclusive. A job that failed 3 consecutive runs is auto-disabled (see [execution concepts](../concepts/execution.md#auto-disable-after-consecutive-failures)); `--enable` re-enables it and resets the failure count.
 Unknown long flags use the same argument passthrough as `jobs new`; include `--prompt` or `--prompt-file` when updating the runner or engine arguments.

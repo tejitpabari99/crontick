@@ -41,7 +41,7 @@ Every method below that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `createJobFromCliOptions` | `(input: JobCreateCliOptions): Promise<Job>` | Created `Job` | `CrontickError` |
 | `listJobs` | `(): Promise<Job[]>` | Array of `Job` | `CrontickError` |
 | `getJob` | `(id: string): Promise<Job>` | `Job` | `CrontickError` (`JOB_NOT_FOUND`) |
-| `updateJob` | `(id: string, patch: JobPatchInput, options?: UpdateJobOptions): Promise<Job>` | Updated `Job` | `CrontickError` (`VALIDATION_ERROR`, `INVALID_CWD`, `CWD_CHANGE_BREAKS_SESSION`, `TRUST_REQUIRED`, `ENV_FILE_ERROR`, `JOB_NOT_FOUND`, `DAEMON_REQUEST_FAILED`) |
+| `updateJob` | `(id: string, patch: JobPatchInput, options?: UpdateJobOptions): Promise<Job>` | Updated `Job` | `CrontickError` (`VALIDATION_ERROR`, `INVALID_CWD`, `CWD_CHANGE_BREAKS_SESSION`, `TRUST_REQUIRED`, `ENV_FILE_ERROR`, `JOB_NOT_FOUND`, `RUNS_IN_FLIGHT`, `INVALID_IN_FLIGHT_CHOICE`, `DAEMON_REQUEST_FAILED`) |
 | `deleteJob` | `(id?: string, options?: { all?: boolean; force?: boolean }): Promise<{ ok: true; canceledRun: boolean; deletedRuns: number } \| { ok: true; deleted: number }>` | `{ ok, canceledRun, deletedRuns }` for a single delete (the job's runs, logs and schedule state are deleted with it), or `{ ok: true, deleted }` when `all` is set (requires `force`) | `CrontickError` (`VALIDATION_ERROR`, `JOB_NOT_FOUND`) |
 | `enableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
 | `disableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
@@ -256,6 +256,8 @@ interface CreateJobOptions extends NormalizeJobInputOptions {
 
 interface UpdateJobOptions extends NormalizeJobInputOptions {
   trustFolder?: boolean;
+  /** Runs in flight for this job: 'stop' cancels them (and drops queued ones) then applies; 'wait' pauses the job, applies after they finish, then resumes. Omitted with runs in flight -> RUNS_IN_FLIGHT (details.runs). */
+  inFlight?: 'stop' | 'wait';
 }
 ```
 

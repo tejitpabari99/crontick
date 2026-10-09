@@ -76,6 +76,7 @@ on time even when no interactive session is open, without requiring OS service r
 
 - **R-004-25**: Daemon startup SHOULD complete within 5 seconds on typical hardware.
 - **R-004-26**: The daemon SHOULD NOT require elevated/administrator privileges.
+- **R-004-27**: `PUT /api/jobs/:id` MUST accept `?inFlight=stop|wait`. After the update is fully validated: with none of that job's runs in flight it applies immediately; with runs in flight and no choice it MUST fail with HTTP 409 `RUNS_IN_FLIGHT` (`details.runs`) and change nothing; `stop` cancels that job's active runs (status `canceled`, no retry) and drops its queued runs before applying; `wait` pauses only that job (no new fires or queued starts), applies once its runs finish (no timeout), then resumes it, leaving a user-requested pause in place. Other jobs' runs are never affected.
 
 ## Behavior
 

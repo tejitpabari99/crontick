@@ -233,7 +233,7 @@ class CrontickError extends Error {
 
 | | |
 |---|---|
-| **When** | A config save found runs executing or queued and no `inFlight` choice (`stop`/`wait`; CLI `--stop-running`/`--wait-running`) was given (HTTP 409) |
+| **When** | A config save or job update found runs executing or queued (for a job update: that job's runs) and no `inFlight` choice (`stop`/`wait`; CLI `--stop-running`/`--wait-running`) was given (HTTP 409) |
 | **Message shape** | Lists the in-flight runs |
 | **Details** | `{ runs }` |
 

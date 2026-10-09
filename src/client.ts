@@ -64,7 +64,7 @@ import {
   type ConfigValidationResult,
   type CrontickConfig,
 } from './config.js';
-import { CONFIG_EDIT_NOTICE } from './constants/config.js';
+import { CONFIG_EDIT_NOTICE, IN_FLIGHT_CHOICES } from './constants/config.js';
 import type { PersistedConfig } from './schemas/config.js';
 import type { InFlightChoice } from './daemon/config-apply.js';
 import type { InFlightRun } from './daemon/runner.js';
@@ -96,6 +96,12 @@ export interface CreateJobOptions extends NormalizeJobInputOptions {
 export interface UpdateJobOptions extends NormalizeJobInputOptions {
   /** Mark the job's working directory as trusted in Claude when it is not yet (otherwise TRUST_REQUIRED is thrown). */
   trustFolder?: boolean;
+  /**
+   * What to do when the job has runs in flight: `stop` cancels them (and drops queued ones) then applies;
+   * `wait` pauses the job, applies once they finish, then resumes it. Without a choice and with runs in
+   * flight the call fails with `RUNS_IN_FLIGHT` (details.runs lists them).
+   */
+  inFlight?: InFlightChoice;
 }
 
 // Bundled layout: client.ts's compiled chunk and index.js both live directly
@@ -366,13 +372,18 @@ export class CrontickClient {
 
   /** Fetches the existing job first so the patch is applied over the current state. `id` accepts either the job's GUID id or its alias -- the daemon resolves it (see docs/concepts/jobs.md#identity). */
   async updateJob(id: string, patch: JobPatchInput, options: UpdateJobOptions = {}): Promise<Job> {
-    const { trustFolder, ...normalizeInputOptions } = options;
+    const { trustFolder, inFlight, ...normalizeInputOptions } = options;
+    if (inFlight !== undefined && !IN_FLIGHT_CHOICES.includes(inFlight)) {
+      throw new CrontickError('INVALID_IN_FLIGHT_CHOICE', `inFlight must be one of: ${IN_FLIGHT_CHOICES.join(', ')}`, { inFlight });
+    }
     const existing = await this.getJob(id);
     const normalized = prepareUpdate(existing, patch, { ...this.normalizeOptions(normalizeInputOptions), trustFolder, resolveJob: noLocalJobLookup });
     // The daemon PUT shallow-merges the body onto the stored job, so an absent
     // `description` would be kept; send an explicit null to remove it.
     const body = patch.description === null ? { ...normalized, description: null } : normalized;
-    return this.request<Job>('PUT', `/api/jobs/${encodeURIComponent(id)}`, body);
+    const query = inFlight !== undefined ? `?inFlight=${inFlight}` : '';
+    // `wait` blocks until the job's runs finish, so it is exempt from the request timeout.
+    return this.request<Job>('PUT', `/api/jobs/${encodeURIComponent(id)}${query}`, body, { noTimeout: inFlight === 'wait' });
   }
 
   /** `id` accepts either the job's GUID id or its alias. */
@@ -820,7 +831,7 @@ export class CrontickClient {
     method: string,
     path: string,
     body?: unknown,
-    options: { ensure?: boolean } = {},
+    options: { ensure?: boolean; noTimeout?: boolean } = {},
   ): Promise<T> {
     const ensure = options.ensure ?? true;
     const baseUrl = await this.baseUrl({ ensure });
@@ -828,7 +839,7 @@ export class CrontickClient {
     const startedAt = Date.now();
     this.logger.debug('HTTP request', { method, path, baseUrl, ensure });
     try {
-      res = await this.fetchRequest(baseUrl, method, path, body);
+      res = await this.fetchRequest(baseUrl, method, path, body, options.noTimeout);
     } catch (err) {
       // No retry when: ensure disabled, startDaemon off, or explicit daemonUrl (user-managed).
       if (!ensure || !this.shouldStartDaemon() || this.options.daemonUrl) {
@@ -840,7 +851,7 @@ export class CrontickClient {
       const restarted = await this.ensure();
       await boundedBackoff();
       try {
-        res = await this.fetchRequest(restarted.baseUrl, method, path, body);
+        res = await this.fetchRequest(restarted.baseUrl, method, path, body, options.noTimeout);
       } catch (retryErr) {
         this.logger.debug('HTTP retry failed', { method, path, baseUrl: restarted.baseUrl, error: errorMessage(retryErr), durationMs: Date.now() - startedAt });
         throw this.daemonRequestError(restarted.baseUrl, method, path, retryErr);
@@ -908,6 +919,7 @@ export class CrontickClient {
     method: string,
     path: string,
     body: unknown,
+    noTimeout = false,
   ): Promise<HttpTextResponse> {
     return new Promise((resolve, reject) => {
       const url = new URL(path, baseUrl);
@@ -947,10 +959,12 @@ export class CrontickClient {
         res.on('error', (err) => finish(reject, err));
       });
 
-      const timeout = setTimeout(() => {
-        req.destroy(new Error(`Request timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-      timeout.unref?.();
+      const timeout = noTimeout
+        ? undefined
+        : setTimeout(() => {
+          req.destroy(new Error(`Request timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      timeout?.unref?.();
 
       req.on('error', (err) => finish(reject, err));
       if (payload !== undefined) req.write(payload);

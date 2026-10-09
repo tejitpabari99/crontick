@@ -40,7 +40,7 @@ import {
   type ConfigOp,
 } from '../config.js';
 import type { CrontickConfig } from '../schemas/config.js';
-import { applyConfigWithPolicy, type InFlightChoice, type LostPendingConfigApply } from './config-apply.js';
+import { applyConfigWithPolicy, applyJobUpdateWithPolicy, type InFlightChoice, type LostPendingConfigApply } from './config-apply.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -292,15 +292,37 @@ async function handleRequest(
         }
         if (!validateJobSchedule(res, ctx.scheduler, updatedJob.schedule)) return;
         readEnvFileForAction(updatedJob.action);
-        ctx.store.upsertJob(updatedJob);
-        if (updatedJob.enabled && !job.enabled) ctx.store.resetConsecutiveFailures(job.id);
-        const stored = ctx.store.getJob(job.id) ?? updatedJob;
-        ctx.scheduler.schedule(stored);
-        // L2: same watermark seed as job creation — an update can re-enable a
-        // job or change its schedule, both of which should compute missed
-        // fires forward from now, not from a stale pre-update state.
-        ctx.store.recordTick(stored.id);
-        return sendJson(res, 200, redactValue(stored));
+        // Everything above validated the update; only now may in-flight runs be stopped / waited for.
+        const inFlightParam = url.searchParams.get('inFlight');
+        if (inFlightParam !== null && !(IN_FLIGHT_CHOICES as readonly string[]).includes(inFlightParam)) {
+          return sendError(res, 400, 'VALIDATION_ERROR', `inFlight must be one of: ${IN_FLIGHT_CHOICES.join(', ')}`);
+        }
+        try {
+          const { result } = await applyJobUpdateWithPolicy(
+            { runner: ctx.runner, scheduler: ctx.scheduler },
+            {
+              jobId: job.id,
+              ...(inFlightParam !== null ? { inFlight: inFlightParam as InFlightChoice } : {}),
+              apply: () => {
+                ctx.store.upsertJob(updatedJob);
+                if (updatedJob.enabled && !job.enabled) ctx.store.resetConsecutiveFailures(job.id);
+                const stored = ctx.store.getJob(job.id) ?? updatedJob;
+                ctx.scheduler.schedule(stored);
+                // L2: same watermark seed as job creation — an update can re-enable a
+                // job or change its schedule, both of which should compute missed
+                // fires forward from now, not from a stale pre-update state.
+                ctx.store.recordTick(stored.id);
+                return stored;
+              },
+            },
+          );
+          return sendJson(res, 200, redactValue(result));
+        } catch (err) {
+          if (err instanceof CrontickError && err.code === 'RUNS_IN_FLIGHT') {
+            return sendError(res, 409, err.code, err.message, err.details);
+          }
+          throw err;
+        }
       }
 
       if (method === 'DELETE' && sub === '') {

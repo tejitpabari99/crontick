@@ -38,6 +38,8 @@ export class Scheduler extends EventEmitter {
   private readonly logger: Logger;
   /** In-memory only (never persisted): while true, fires emit 'paused-tick' instead of 'tick'. */
   private paused = false;
+  /** In-memory only: jobs paused individually (a pending job update waiting on in-flight runs). */
+  private pausedJobs: Set<string> = new Set();
 
   constructor(logger: Logger = nullLogger) {
     super();
@@ -56,6 +58,19 @@ export class Scheduler extends EventEmitter {
 
   isPaused(): boolean {
     return this.paused;
+  }
+
+  /** Pause a single job: its due fires emit 'paused-tick' while other jobs keep ticking. Idempotent. */
+  pauseJob(jobId: string): void {
+    this.pausedJobs.add(jobId);
+  }
+
+  resumeJob(jobId: string): void {
+    this.pausedJobs.delete(jobId);
+  }
+
+  isJobPaused(jobId: string): boolean {
+    return this.pausedJobs.has(jobId);
   }
 
   /** Register a timer for a job. Calls unschedule first (idempotent re-schedule without leaking timers). */
@@ -197,7 +212,7 @@ export class Scheduler extends EventEmitter {
   // ── Private helpers ────────────────────────────────────────────────────────
 
   private fireTick(jobId: string, plannedAt: Date): void {
-    this.emit(this.paused ? 'paused-tick' : 'tick', { jobId, plannedAt } satisfies TickEvent);
+    this.emit(this.paused || this.pausedJobs.has(jobId) ? 'paused-tick' : 'tick', { jobId, plannedAt } satisfies TickEvent);
   }
 
   private scheduleCron(

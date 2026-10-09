@@ -73,26 +73,41 @@ function describeRuns(runs: InFlightRun[]): string {
   return runs.map((r) => `${r.jobId} (run ${r.runId})`).join(', ');
 }
 
-export async function applyConfigWithPolicy(deps: ConfigApplyDeps, req: ConfigApplyRequest): Promise<ConfigApplyResult> {
-  if (req.inFlight !== undefined && !IN_FLIGHT_CHOICES.includes(req.inFlight)) {
-    throw new CrontickError('INVALID_IN_FLIGHT_CHOICE', `inFlight must be one of: ${IN_FLIGHT_CHOICES.join(', ')}`, { inFlight: req.inFlight });
+/** Pause/resume handle the policy flow holds while it drains runs (global for config, per-job for a job update). */
+interface SchedulerHold {
+  isHeld(): boolean;
+  hold(): void;
+  release(): void;
+}
+
+interface InFlightPolicyOptions<T> {
+  runner: Pick<Runner, 'listInFlight' | 'cancelAllInFlight' | 'waitForIdle'>;
+  hold: SchedulerHold;
+  /** Restrict the in-flight scope to one job; omitted = every run. */
+  jobId?: string;
+  choice?: InFlightChoice;
+  /** Runs before anything is stopped, only when runs are in flight (bad input must not cancel work). */
+  validate?: () => Promise<unknown> | unknown;
+  /** Runs right before waiting for in-flight runs to finish (wait choice only). */
+  onWait?: (affected: InFlightRun[]) => void;
+  /** Always runs after the policy flow ends (success or failure), before the hold is released. */
+  onSettled?: () => void;
+  apply: (policy: 'none' | InFlightChoice, affected: InFlightRun[]) => Promise<T> | T;
+}
+
+/**
+ * Shared stop/wait flow (config save and job update): nothing in flight applies
+ * straight away; runs in flight with no choice is a RUNS_IN_FLIGHT error;
+ * `stop` cancels them first; `wait` holds the scheduler and waits (no timeout).
+ */
+async function runWithInFlightPolicy<T>(o: InFlightPolicyOptions<T>): Promise<T> {
+  if (o.choice !== undefined && !IN_FLIGHT_CHOICES.includes(o.choice)) {
+    throw new CrontickError('INVALID_IN_FLIGHT_CHOICE', `inFlight must be one of: ${IN_FLIGHT_CHOICES.join(', ')}`, { inFlight: o.choice });
   }
-  const apply = deps.applyOps ?? applyOps;
-  const applyOptions: ApplyOpsOptions = {
-    // This code runs inside the daemon, so the daemon is by definition running.
-    daemonRunning: () => true,
-    ...(req.ifRevision !== undefined ? { ifRevision: req.ifRevision } : {}),
-  };
-  const finish = async (policy: ConfigApplyResult['inFlightPolicy'], affected: InFlightRun[]): Promise<ConfigApplyResult> => {
-    const result = await apply(req.ops, applyOptions);
-    await deps.reload();
-    return { ...result, inFlightPolicy: policy, affectedRuns: affected };
-  };
+  const inFlight = o.jobId === undefined ? o.runner.listInFlight() : o.runner.listInFlight(o.jobId);
+  if (inFlight.length === 0) return o.apply('none', []);
 
-  const inFlight = deps.runner.listInFlight();
-  if (inFlight.length === 0) return finish('none', []);
-
-  if (req.inFlight === undefined) {
+  if (o.choice === undefined) {
     throw new CrontickError(
       'RUNS_IN_FLIGHT',
       `Runs are in flight: ${describeRuns(inFlight)}. Choose inFlight "stop" (cancel them, then apply) or "wait" (pause, let them finish, then apply and resume).`,
@@ -100,30 +115,92 @@ export async function applyConfigWithPolicy(deps: ConfigApplyDeps, req: ConfigAp
     );
   }
 
-  // Validate (revision, daemon guard, schema) before disturbing any run: a bad batch must not cancel work.
-  await apply(req.ops, { ...applyOptions, dryRun: true });
+  await o.validate?.();
 
   // Hold the scheduler so no new run starts between draining and applying.
-  const wasPaused = deps.scheduler.isPaused();
-  deps.scheduler.pause();
-  const marker = markerPath(deps.dataDir);
+  const wasHeld = o.hold.isHeld();
+  o.hold.hold();
   try {
-    if (req.inFlight === 'stop') {
-      await deps.runner.cancelAllInFlight();
+    if (o.choice === 'stop') {
+      if (o.jobId === undefined) await o.runner.cancelAllInFlight();
+      else await o.runner.cancelAllInFlight(undefined, o.jobId);
     } else {
+      o.onWait?.(inFlight);
+      if (o.jobId === undefined) await o.runner.waitForIdle();
+      else await o.runner.waitForIdle(o.jobId);
+    }
+    return await o.apply(o.choice, inFlight);
+  } finally {
+    o.onSettled?.();
+    // Only undo a hold this flow introduced; a user-requested pause stays.
+    if (!wasHeld) o.hold.release();
+  }
+}
+
+export async function applyConfigWithPolicy(deps: ConfigApplyDeps, req: ConfigApplyRequest): Promise<ConfigApplyResult> {
+  const apply = deps.applyOps ?? applyOps;
+  const applyOptions: ApplyOpsOptions = {
+    // This code runs inside the daemon, so the daemon is by definition running.
+    daemonRunning: () => true,
+    ...(req.ifRevision !== undefined ? { ifRevision: req.ifRevision } : {}),
+  };
+  const marker = markerPath(deps.dataDir);
+  return runWithInFlightPolicy<ConfigApplyResult>({
+    runner: deps.runner,
+    hold: { isHeld: () => deps.scheduler.isPaused(), hold: () => deps.scheduler.pause(), release: () => deps.scheduler.resume() },
+    choice: req.inFlight,
+    // Validate (revision, daemon guard, schema) before disturbing any run: a bad batch must not cancel work.
+    validate: () => apply(req.ops, { ...applyOptions, dryRun: true }),
+    onWait: (affected) => {
       const pending: LostPendingConfigApply = {
         startedAt: (deps.now ?? Date.now)(),
         keys: req.ops.map((o) => o.key),
-        runIds: inFlight.map((r) => r.runId),
+        runIds: affected.map((r) => r.runId),
       };
       mkdirSync(deps.dataDir, { recursive: true });
       writeFileSync(marker, JSON.stringify(pending), 'utf-8');
-      await deps.runner.waitForIdle();
-    }
-    return await finish(req.inFlight, inFlight);
-  } finally {
-    rmSync(marker, { force: true });
-    // Only undo a pause this flow introduced; a user-requested pause stays.
-    if (!wasPaused) deps.scheduler.resume();
-  }
+    },
+    onSettled: () => rmSync(marker, { force: true }),
+    apply: async (policy, affected) => {
+      const result = await apply(req.ops, applyOptions);
+      await deps.reload();
+      return { ...result, inFlightPolicy: policy, affectedRuns: affected };
+    },
+  });
+}
+
+export interface JobUpdateApplyDeps {
+  runner: Pick<Runner, 'listInFlight' | 'cancelAllInFlight' | 'waitForIdle'>;
+  scheduler: Pick<Scheduler, 'pauseJob' | 'resumeJob' | 'isJobPaused'>;
+}
+
+export interface JobUpdateApplyRequest<T> {
+  jobId: string;
+  inFlight?: InFlightChoice;
+  /** Dry-run style validation, run before any run is stopped. */
+  validate?: () => Promise<unknown> | unknown;
+  /** Persists the job update; runs once the job's in-flight runs are gone. */
+  apply: () => Promise<T> | T;
+}
+
+export interface JobUpdateApplyResult<T> {
+  result: T;
+  inFlightPolicy: 'none' | InFlightChoice;
+  affectedRuns: InFlightRun[];
+}
+
+/** Job-update variant of the config flow: scope is one job's runs, and only that job is paused while waiting. */
+export async function applyJobUpdateWithPolicy<T>(deps: JobUpdateApplyDeps, req: JobUpdateApplyRequest<T>): Promise<JobUpdateApplyResult<T>> {
+  return runWithInFlightPolicy<JobUpdateApplyResult<T>>({
+    runner: deps.runner,
+    hold: {
+      isHeld: () => deps.scheduler.isJobPaused(req.jobId),
+      hold: () => deps.scheduler.pauseJob(req.jobId),
+      release: () => deps.scheduler.resumeJob(req.jobId),
+    },
+    jobId: req.jobId,
+    choice: req.inFlight,
+    validate: req.validate,
+    apply: async (policy, affected) => ({ result: await req.apply(), inFlightPolicy: policy, affectedRuns: affected }),
+  });
 }
