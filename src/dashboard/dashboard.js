@@ -41,6 +41,7 @@ async function loadDashboard() {
   clearInlineError();
   lastData = data;
   renderDashboard(data);
+  void refreshPaused();
   if (drawerJobId && !document.getElementById('job-drawer').hidden) void renderDrawer(drawerJobId, { silent: true });
 }
 
@@ -652,6 +653,481 @@ function trapTab(e, container) {
   }
 }
 
+// ── Settings modal (config API) ─────────────────────────────────────────────
+
+// <settings-pure>
+const SETTINGS_SCALARS = [
+  'defaultEngine', 'maxConsecutiveFailures',
+  'defaults.overlap', 'defaults.timeoutSec', 'defaults.retry.max', 'defaults.retry.backoffSec',
+  'retention.maxRunsPerJob', 'retention.maxOutputBytesPerRun', 'retention.maxLogFiles',
+  'logging.fileEnabled', 'logging.dir',
+];
+
+function getPath(obj, path) {
+  return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+
+function jsonEqual(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** Text of a numeric input -> number; blank -> undefined (optional) or '' (required, so the server reports it); junk stays text. */
+function parseNumberField(text, optional) {
+  const t = String(text ?? '').trim();
+  if (t === '') return optional ? undefined : '';
+  const n = Number(t);
+  return Number.isFinite(n) ? n : t;
+}
+
+/**
+ * PATCH op batch of ONLY the changed leaves (never daemon.*; redacted values echoed back unchanged
+ * are not leaves that changed). Order: engine adds, scalars, engine leaf edits, engine removals.
+ */
+function buildSettingsOps(base, draft) {
+  const adds = [];
+  const edits = [];
+  const removals = [];
+  const scalars = [];
+  const baseEngines = (base && base.engines) || {};
+  const draftEngines = (draft && draft.engines) || {};
+  for (const name of Object.keys(draftEngines)) {
+    const e = draftEngines[name];
+    if (!(name in baseEngines)) {
+      adds.push({ op: 'set', key: `engines.${name}`, value: { command: e.command, args: e.args || [], env: e.env || {}, type: e.type } });
+      continue;
+    }
+    const b = baseEngines[name];
+    if (e.command !== b.command) edits.push({ op: 'set', key: `engines.${name}.command`, value: e.command });
+    if (e.type !== b.type) edits.push({ op: 'set', key: `engines.${name}.type`, value: e.type });
+    if (!jsonEqual(e.args || [], b.args || [])) edits.push({ op: 'set', key: `engines.${name}.args`, value: e.args || [] });
+    const be = b.env || {};
+    const de = e.env || {};
+    for (const k of Object.keys(de)) {
+      if (!(k in be) || de[k] !== be[k]) edits.push({ op: 'set', key: `engines.${name}.env.${k}`, value: de[k] });
+    }
+    for (const k of Object.keys(be)) {
+      if (!(k in de)) edits.push({ op: 'unset', key: `engines.${name}.env.${k}` });
+    }
+  }
+  for (const name of Object.keys(baseEngines)) {
+    if (!(name in draftEngines)) removals.push({ op: 'unset', key: `engines.${name}` });
+  }
+  for (const key of SETTINGS_SCALARS) {
+    const a = getPath(base, key);
+    const b = getPath(draft, key);
+    if (jsonEqual(a, b)) continue;
+    scalars.push(b === undefined ? { op: 'unset', key } : { op: 'set', key, value: b });
+  }
+  return [...adds, ...scalars, ...edits, ...removals];
+}
+
+/** Inputs an error key maps to: exact matches, else fields on the same path (error deeper or shallower than the field). */
+function matchFieldKeys(errorKey, fields) {
+  if (!errorKey) return [];
+  const exact = fields.filter((f) => f === errorKey);
+  if (exact.length) return exact;
+  return fields.filter((f) => errorKey.startsWith(`${f}.`) || f.startsWith(`${errorKey}.`));
+}
+// </settings-pure>
+
+const DISCARD_MESSAGE = 'Discard unsaved changes? Changes will be lost.';
+const ENGINE_NAME_RE = /^[A-Za-z0-9_-]+$/;
+const OVERLAP_CHOICES = ['skip', 'queue', 'cancel-previous'];
+let settingsBase = null;
+let settingsEditing = false;
+let settingsBusy = false;
+let settingsReturnFocus = null;
+let pausedState = false;
+
+const settingsModal = document.getElementById('settings-modal');
+const settingsForm = document.getElementById('settings-form');
+const settingsSave = document.getElementById('settings-save');
+const settingsEditBtn = document.getElementById('settings-edit');
+const settingsBanner = document.getElementById('settings-banner');
+const settingsInflight = document.getElementById('settings-inflight');
+
+function cloneJson(v) {
+  return v === undefined ? undefined : JSON.parse(JSON.stringify(v));
+}
+
+function setPath(obj, path, value) {
+  const parts = path.split('.');
+  let o = obj;
+  for (const p of parts.slice(0, -1)) {
+    if (o[p] == null || typeof o[p] !== 'object') o[p] = {};
+    o = o[p];
+  }
+  o[parts[parts.length - 1]] = value;
+}
+
+function inputHtml(key, kind, value, choices) {
+  const k = escHtml(key);
+  if (kind === 'bool') return `<input type="checkbox" data-key="${k}" data-field="${k}" data-kind="bool"${value ? ' checked' : ''}>`;
+  if (kind === 'select') {
+    return `<select data-key="${k}" data-field="${k}" data-kind="select">${choices.map((c) => `<option value="${escHtml(c)}"${c === value ? ' selected' : ''}>${escHtml(c)}</option>`).join('')}</select>`;
+  }
+  const num = kind === 'number' || kind === 'optnumber';
+  return `<input type="${num ? 'number' : 'text'}"${num ? ' step="any"' : ''} data-key="${k}" data-field="${k}" data-kind="${kind}" value="${escHtml(value ?? '')}">`;
+}
+
+function gridRow(label, key, kind, cfg, choices, hint) {
+  return `<label>${escHtml(label)}</label><div>${inputHtml(key, kind, getPath(cfg, key), choices)}${hint ? `<div class="settings-hint">${escHtml(hint)}</div>` : ''}</div>`;
+}
+
+function engineCardHtml(name, e, isDefault) {
+  const n = escHtml(name);
+  const args = (e.args || []).map((a, i) => `<div class="kv-row args-row"><input type="text" data-field="engines.${n}.args" aria-label="Argument ${i + 1}" value="${escHtml(a)}"><button type="button" class="icon-btn" data-act="remove-arg" aria-label="Remove argument">✕</button></div>`).join('');
+  const env = Object.entries(e.env || {}).map(([k, v]) => `<div class="kv-row env-row"><input type="text" class="env-key" data-field="engines.${n}.env.${escHtml(k)}" aria-label="Variable name" value="${escHtml(k)}"><input type="text" class="env-val" data-field="engines.${n}.env.${escHtml(k)}" aria-label="Value of ${escHtml(k)}" value="${escHtml(v)}"><button type="button" class="icon-btn" data-act="remove-env" aria-label="Remove variable">✕</button></div>`).join('');
+  return `
+    <div class="engine-card" data-engine="${n}">
+      <div class="engine-card-head">
+        <span><strong>${n}</strong>${isDefault ? ' <span class="badge badge-ok engine-tag">default engine</span>' : ''}</span>
+        <button type="button" class="btn" data-act="remove-engine" title="Remove engine">Remove</button>
+      </div>
+      <div class="settings-grid">
+        <label>Command</label><input type="text" class="eng-command" data-field="engines.${n}.command" value="${escHtml(e.command)}">
+        <label>Type</label><select class="eng-type" data-field="engines.${n}.type">${['claude', 'raw'].map((t) => `<option value="${t}"${t === e.type ? ' selected' : ''}>${t}</option>`).join('')}</select>
+        <label>Args</label><div class="kv-rows">${args}<div><button type="button" class="btn" data-act="add-arg">+ Add arg</button></div></div>
+        <label>Env</label><div class="kv-rows">${env}<div><button type="button" class="btn" data-act="add-env">+ Add variable</button></div></div>
+      </div>
+    </div>`;
+}
+
+function renderSettingsForm(cfg) {
+  const engineNames = Object.keys(cfg.engines || {});
+  const port = cfg.daemon && cfg.daemon.port != null ? String(cfg.daemon.port) : 'default';
+  settingsForm.innerHTML = `
+    <section class="settings-section"><h4>General</h4><div class="settings-grid">
+      ${gridRow('Default engine', 'defaultEngine', 'select', cfg, engineNames)}
+      ${gridRow('Max consecutive failures', 'maxConsecutiveFailures', 'number', cfg)}
+    </div></section>
+    <section class="settings-section"><h4>Job defaults</h4><div class="settings-grid">
+      ${gridRow('Overlap', 'defaults.overlap', 'select', cfg, OVERLAP_CHOICES)}
+      ${gridRow('Timeout (sec)', 'defaults.timeoutSec', 'optnumber', cfg, null, 'Leave blank for no default timeout.')}
+      ${gridRow('Retry max', 'defaults.retry.max', 'number', cfg)}
+      ${gridRow('Retry backoff (sec)', 'defaults.retry.backoffSec', 'number', cfg)}
+    </div></section>
+    <section class="settings-section"><h4>Retention</h4><div class="settings-grid">
+      ${gridRow('Max runs per job', 'retention.maxRunsPerJob', 'number', cfg)}
+      ${gridRow('Max output bytes per run', 'retention.maxOutputBytesPerRun', 'number', cfg)}
+      ${gridRow('Max daemon log files', 'retention.maxLogFiles', 'number', cfg)}
+    </div></section>
+    <section class="settings-section"><h4>Logging</h4><div class="settings-grid">
+      ${gridRow('Per-job log files', 'logging.fileEnabled', 'bool', cfg)}
+      ${gridRow('Log directory', 'logging.dir', 'optstring', cfg, null, 'Leave blank for the default logs folder.')}
+    </div></section>
+    <section class="settings-section"><h4>Engines</h4>
+      <div id="settings-engines">${engineNames.map((n) => engineCardHtml(n, cfg.engines[n], n === cfg.defaultEngine)).join('')}</div>
+      <div class="settings-add-engine"><input type="text" id="new-engine-name" aria-label="New engine name" placeholder="new engine name"><button type="button" class="btn" data-act="add-engine">+ Add engine</button></div>
+    </section>
+    <section class="settings-section settings-port"><h4>Daemon</h4><div class="settings-grid">
+      <label>Port</label><div><code id="settings-port">${escHtml(port)}</code>
+      <div class="settings-hint">Read-only here: stop the daemon, then run <code>crontick config set daemon.port &lt;n&gt;</code> or hand-edit config.json.</div></div>
+    </div></section>`;
+  applyEditable();
+}
+
+/** Draft config assembled from the form controls (same shape as the effective config). */
+function collectDraft() {
+  const draft = cloneJson(settingsBase.config);
+  settingsForm.querySelectorAll('[data-key]').forEach((el) => {
+    const key = el.dataset.key;
+    const kind = el.dataset.kind;
+    let value;
+    if (kind === 'bool') value = el.checked;
+    else if (kind === 'number') value = parseNumberField(el.value, false);
+    else if (kind === 'optnumber') value = parseNumberField(el.value, true);
+    else if (kind === 'optstring') value = el.value.trim() === '' ? undefined : el.value;
+    else value = el.value;
+    setPath(draft, key, value);
+  });
+  const engines = {};
+  settingsForm.querySelectorAll('.engine-card').forEach((card) => {
+    const env = {};
+    card.querySelectorAll('.env-row').forEach((row) => {
+      const k = row.querySelector('.env-key').value.trim();
+      if (k) env[k] = row.querySelector('.env-val').value;
+    });
+    engines[card.dataset.engine] = {
+      command: card.querySelector('.eng-command').value,
+      type: card.querySelector('.eng-type').value,
+      args: [...card.querySelectorAll('.args-row input')].map((i) => i.value).filter((v) => v !== ''),
+      env,
+    };
+  });
+  draft.engines = engines;
+  return draft;
+}
+
+function settingsDirty() {
+  return settingsEditing && buildSettingsOps(settingsBase.config, collectDraft()).length > 0;
+}
+
+/** Inputs follow edit mode; the default engine (and the last engine) can't be removed. */
+function applyEditable() {
+  settingsForm.querySelectorAll('input, select, button').forEach((el) => { el.disabled = !settingsEditing; });
+  const cards = settingsForm.querySelectorAll('.engine-card');
+  const defaultEngine = settingsForm.querySelector('[data-key="defaultEngine"]')?.value;
+  cards.forEach((card) => {
+    const rm = card.querySelector('[data-act="remove-engine"]');
+    const isDefault = card.dataset.engine === defaultEngine;
+    const tag = card.querySelector('.engine-tag');
+    if (tag) tag.hidden = !isDefault;
+    if (isDefault || cards.length <= 1) {
+      rm.disabled = true;
+      rm.title = isDefault ? 'The default engine cannot be removed: pick another default first' : 'At least one engine is required';
+    } else {
+      rm.title = 'Remove engine';
+    }
+  });
+  settingsSave.disabled = !settingsEditing || settingsBusy;
+  settingsEditBtn.hidden = settingsEditing;
+}
+
+function clearSettingsFeedback() {
+  settingsBanner.hidden = true;
+  settingsBanner.textContent = '';
+  settingsInflight.hidden = true;
+  settingsInflight.innerHTML = '';
+  settingsForm.querySelectorAll('.field-error').forEach((el) => el.classList.remove('field-error'));
+}
+
+function showSettingsError(message, key, extraHtml) {
+  settingsBanner.innerHTML = `<span>${escHtml(message)}</span>${extraHtml || ''}`;
+  settingsBanner.hidden = false;
+  settingsForm.querySelectorAll('.field-error').forEach((el) => el.classList.remove('field-error'));
+  if (key) {
+    const fields = [...settingsForm.querySelectorAll('[data-field]')];
+    const hits = matchFieldKeys(key, fields.map((f) => f.dataset.field));
+    fields.filter((f) => hits.includes(f.dataset.field)).forEach((f) => f.classList.add('field-error'));
+    settingsForm.querySelector('.field-error')?.scrollIntoView?.({ block: 'center' });
+  }
+}
+
+async function loadSettings() {
+  const res = await fetch('/api/config');
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(body?.error?.message || `GET /api/config failed (${res.status})`);
+  settingsBase = { path: body.path, revision: body.revision, config: body.config, notice: body.notice };
+  document.getElementById('settings-path').textContent = body.path || '';
+  renderSettingsForm(settingsBase.config);
+}
+
+async function openSettings() {
+  settingsReturnFocus = document.activeElement;
+  settingsEditing = false;
+  settingsBusy = false;
+  clearSettingsFeedback();
+  settingsForm.innerHTML = '<p class="muted">Loading…</p>';
+  settingsModal.hidden = false;
+  settingsModal.querySelector('.modal').focus();
+  applyEditable();
+  try {
+    await loadSettings();
+  } catch (err) {
+    showSettingsError(err.message);
+  }
+}
+
+function closeSettings() {
+  settingsModal.hidden = true;
+  settingsEditing = false;
+  if (settingsReturnFocus && document.contains(settingsReturnFocus)) settingsReturnFocus.focus();
+  settingsReturnFocus = null;
+}
+
+function exitEdit() {
+  settingsEditing = false;
+  clearSettingsFeedback();
+  if (settingsBase) renderSettingsForm(settingsBase.config);
+  else applyEditable();
+}
+
+/** Cancel / ✕ / backdrop / Esc: dirty edit confirms; clean edit leaves edit mode; read-only closes. */
+function requestLeaveSettings() {
+  if (settingsBusy) return;
+  if (settingsEditing) {
+    if (settingsDirty() && !window.confirm(DISCARD_MESSAGE)) return;
+    exitEdit();
+  } else {
+    closeSettings();
+  }
+}
+
+function showInflightChoice(runs) {
+  const list = runs.map((r) => `<code>${escHtml(String(r.id || '').slice(0, 8))}</code>`).join(', ');
+  settingsInflight.innerHTML = `
+    <div>${escHtml(String(runs.length))} run(s) in flight${list ? `: ${list}` : ''}. How should this save proceed?</div>
+    <div class="row">
+      <button type="button" class="btn" data-inflight="stop">Stop running jobs, then save</button>
+      <button type="button" class="btn" data-inflight="wait">Pause and wait for runs, then save</button>
+      <button type="button" class="btn" data-inflight="cancel">Cancel save</button>
+    </div>`;
+  settingsInflight.hidden = false;
+}
+
+async function saveSettings(choice) {
+  if (!settingsEditing || settingsBusy) return;
+  const ops = buildSettingsOps(settingsBase.config, collectDraft());
+  clearSettingsFeedback();
+  if (ops.length === 0) {
+    showToast('No changes to save');
+    exitEdit();
+    return;
+  }
+  settingsBusy = true;
+  applyEditable();
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ops, ifRevision: settingsBase.revision, ...(choice ? { inFlight: choice } : {}) }),
+    });
+    const body = await res.json().catch(() => null);
+    if (res.ok) {
+      settingsBusy = false;
+      settingsEditing = false;
+      await loadSettings();
+      showToast(`Settings saved. ${body?.notice || settingsBase.notice || ''}`.trim());
+      void loadDashboard().catch(() => {});
+      void refreshPaused();
+      return;
+    }
+    const err = body?.error || {};
+    if (res.status === 409 && err.code === 'RUNS_IN_FLIGHT') {
+      showInflightChoice(err.details?.runs || []);
+    } else if (res.status === 409 && err.code === 'CONFIG_CONFLICT') {
+      showSettingsError('Config changed on disk', null, '<button type="button" class="btn" data-act="reload-form">Reload form</button>');
+    } else {
+      showSettingsError(err.message || `Save failed (${res.status})`, err.details?.key);
+    }
+  } catch (err) {
+    showSettingsError(err.message || 'Save failed');
+  } finally {
+    settingsBusy = false;
+    applyEditable();
+  }
+}
+
+function addEngineCard() {
+  const input = document.getElementById('new-engine-name');
+  const name = input.value.trim();
+  if (!ENGINE_NAME_RE.test(name)) {
+    showSettingsError('Engine names can contain letters, numbers, underscore and dash.');
+    input.classList.add('field-error');
+    return;
+  }
+  const draft = collectDraft();
+  if (draft.engines[name]) {
+    showSettingsError(`Engine "${name}" already exists.`);
+    input.classList.add('field-error');
+    return;
+  }
+  draft.engines[name] = { command: '', type: 'raw', args: [], env: {} };
+  clearSettingsFeedback();
+  renderSettingsForm(draft);
+  settingsForm.querySelector(`.engine-card[data-engine="${name}"] .eng-command`)?.focus();
+}
+
+settingsForm.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-act]');
+  if (!btn || !settingsEditing) return;
+  const act = btn.dataset.act;
+  const card = btn.closest('.engine-card');
+  if (act === 'add-engine') return addEngineCard();
+  const draft = collectDraft();
+  if (act === 'remove-engine') {
+    delete draft.engines[card.dataset.engine];
+  } else if (act === 'add-arg') {
+    draft.engines[card.dataset.engine].args.push('');
+  } else if (act === 'remove-arg') {
+    const rows = [...card.querySelectorAll('.args-row')];
+    const idx = rows.indexOf(btn.closest('.args-row'));
+    const args = [...card.querySelectorAll('.args-row input')].map((i) => i.value);
+    args.splice(idx, 1);
+    draft.engines[card.dataset.engine].args = args;
+  } else if (act === 'add-env' || act === 'remove-env') {
+    const eng = draft.engines[card.dataset.engine];
+    if (act === 'add-env') {
+      let n = 1;
+      while (`NEW_VAR_${n}` in eng.env) n += 1;
+      eng.env[`NEW_VAR_${n}`] = '';
+    } else {
+      delete eng.env[btn.closest('.env-row').querySelector('.env-key').value.trim()];
+    }
+  } else {
+    return;
+  }
+  renderSettingsForm(draft);
+});
+settingsForm.addEventListener('input', (e) => e.target.classList?.remove('field-error'));
+settingsForm.addEventListener('change', (e) => {
+  if (e.target.dataset?.key === 'defaultEngine') applyEditable();
+});
+
+settingsEditBtn.addEventListener('click', () => {
+  if (!settingsBase) return;
+  settingsEditing = true;
+  clearSettingsFeedback();
+  applyEditable();
+  settingsForm.querySelector('input, select')?.focus();
+});
+settingsSave.addEventListener('click', () => void saveSettings());
+document.getElementById('settings-cancel').addEventListener('click', requestLeaveSettings);
+document.getElementById('settings-close').addEventListener('click', requestLeaveSettings);
+document.getElementById('btn-settings').addEventListener('click', () => void openSettings());
+settingsModal.addEventListener('click', (e) => {
+  if (e.target.id === 'settings-modal') requestLeaveSettings();
+});
+settingsModal.addEventListener('keydown', (e) => trapTab(e, settingsModal.querySelector('.modal')));
+settingsBanner.addEventListener('click', async (e) => {
+  if (!e.target.closest('[data-act="reload-form"]')) return;
+  try {
+    clearSettingsFeedback();
+    await loadSettings(); // discards the edits; stays in edit mode on the fresh values
+  } catch (err) {
+    showSettingsError(err.message);
+  }
+});
+settingsInflight.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-inflight]');
+  if (!btn) return;
+  const choice = btn.dataset.inflight;
+  if (choice === 'cancel') {
+    settingsInflight.hidden = true;
+    return;
+  }
+  settingsInflight.innerHTML = `<div>${choice === 'wait' ? 'Paused; waiting for in-flight runs to finish, then saving…' : 'Stopping in-flight runs and saving…'}</div>`;
+  void saveSettings(choice);
+});
+
+// ── Paused state ────────────────────────────────────────────────────────────
+
+function renderPaused(paused) {
+  pausedState = Boolean(paused);
+  document.getElementById('paused-badge').hidden = !pausedState;
+  const btn = document.getElementById('btn-pause');
+  btn.textContent = pausedState ? 'Resume' : 'Pause';
+  btn.title = pausedState ? 'Resume the scheduler' : 'Pause the scheduler (no new runs start)';
+}
+
+async function refreshPaused() {
+  try {
+    const res = await fetch('/api/daemon/status');
+    if (res.ok) renderPaused((await res.json()).paused);
+  } catch { /* status is best-effort */ }
+}
+
+document.getElementById('btn-pause').addEventListener('click', async () => {
+  try {
+    const body = await apiAction('POST', pausedState ? '/api/daemon/resume' : '/api/daemon/pause');
+    renderPaused(body?.paused);
+    showToast(body?.paused ? 'Scheduler paused: no new runs will start' : 'Scheduler resumed');
+  } catch (err) {
+    showToast(err.message, true);
+  }
+});
+
 // ── Event wiring ────────────────────────────────────────────────────────────
 
 document.getElementById('btn-refresh').addEventListener('click', () => void reloadWithErrors());
@@ -774,7 +1250,8 @@ document.getElementById('modal-transcript').addEventListener('click', handleCopy
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (!document.getElementById('log-modal').hidden) closeRunModal();
+  if (!settingsModal.hidden) requestLeaveSettings();
+  else if (!document.getElementById('log-modal').hidden) closeRunModal();
   else if (!document.getElementById('job-drawer').hidden) closeDrawer();
   else if (anyMultiOpen()) closeMultiMenus();
 });
