@@ -24,7 +24,7 @@ binary detached, and poll the port file until `/health` responds or `startupTime
 
 The daemon listens on `127.0.0.1` port `47615` by default; when that port is taken it prints which kind of
 process holds it (another crontick daemon or a foreign process) and binds an OS-assigned free port instead.
-The real port is always in `daemon.port`. Non-loopback gets HTTP 403.
+The real port is always in `daemon.port`. Non-loopback gets HTTP 403. Only `Host` values `localhost`, `127.0.0.1` and `[::1]` (with the daemon port) are accepted on `/api`; `0.0.0.0`, `127.1` and other aliases get 403.
 `GET /health` returns `{ ok, product: "crontick", pid, port }`; the client validates all four
 fields, to avoid accidentally connecting to a different service on the same port.
 

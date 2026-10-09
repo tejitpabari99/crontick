@@ -551,7 +551,7 @@ stop`, and `crontick dashboard data` CLI commands have been removed.
 
 ### Dashboard web UI
 
-Every `/api` call, reads included, is rejected with `REQUEST_REJECTED` unless the request has a loopback `Host` with the daemon port and, if an `Origin` header is sent, the daemon's own origin (DNS-rebinding defense: `GET /api/jobs/:id` and `GET /api/export?includeSecrets=1` return webhook relay URLs and secrets). Mutating calls (POST/PUT/PATCH/DELETE) additionally need `Content-Type: application/json` (even with no body, e.g. `DELETE /api/jobs/:id`). Anyone calling the HTTP API directly must send a loopback Host (curl does by default) and, for writes, the JSON header. `/health` is not guarded. See [specs/004-daemon.md](../specs/004-daemon.md#api-request-guard).
+Every `/api` call, reads included, is rejected with `REQUEST_REJECTED` unless the request has a `Host` of exactly `localhost`, `127.0.0.1` or `[::1]` with the daemon port (other spellings such as `0.0.0.0` or `127.1` get 403, so open the dashboard via one of the three) and, if an `Origin` header is sent, the daemon's own origin (DNS-rebinding defense: `GET /api/jobs/:id` and `GET /api/export?includeSecrets=1` return webhook relay URLs and secrets). Mutating calls (POST/PUT/PATCH/DELETE) additionally need `Content-Type: application/json` (even with no body, e.g. `DELETE /api/jobs/:id`). Anyone calling the HTTP API directly must send a loopback Host (curl does by default) and, for writes, the JSON header. `/health` is not guarded. See [specs/004-daemon.md](../specs/004-daemon.md#api-request-guard).
 
 The dashboard is a dependency-free web page served on the daemon's loopback origin
 (`/` and `/dashboard`). It renders live snapshots from `GET /api/dashboard` and drives

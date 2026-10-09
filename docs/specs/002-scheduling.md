@@ -117,7 +117,7 @@ removes the entry from the internal map. `unscheduleAll()` iterates all entries.
 - [x] After triggers: cycles, dangling, delete force, import (test files: `tests/unit/store-after.test.ts`, `tests/unit/api-after-guards.test.ts`)
 - [x] Webhook schedule: schema, flags, `--relay auto`, no-tick/no-missed (test file: `tests/unit/webhook-schedule.test.ts`)
 - [x] Webhook relay: SSE parser, connection sharing, backoff, idle watchdog, stop, stale events (test files: `tests/unit/sse.test.ts`, `tests/unit/relay.test.ts`)
-- [x] Webhook guards: HMAC, dedupe, burst limit (test file: `tests/unit/relay-guard.test.ts`)
+- [x] Webhook guards: HMAC, dedupe (signed jobs dedupe on signature: identical signed bodies within the 10-min window collapse to one; memory is in-process), burst limit (test file: `tests/unit/relay-guard.test.ts`)
 - [x] Webhook payload framing, truncation, env, allowlist (test file: `tests/unit/webhook-payload.test.ts`)
 - [x] Webhook relay event to a real run, end to end (test file: `tests/unit/webhook-e2e-gaps.test.ts`)
 - [x] Trigger surfaces and errors (test file: `tests/unit/webhook-trigger-surface.test.ts`); redaction and export (`tests/unit/webhook-redaction.test.ts`); status rendering (`tests/unit/webhook-status-render.test.ts`); dashboard (`tests/unit/dashboard-webhook.test.ts`)

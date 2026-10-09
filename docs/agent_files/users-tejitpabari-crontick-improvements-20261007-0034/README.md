@@ -189,6 +189,25 @@ Legend: **O** = owner decision, **V** = verify during implementation. Status: RE
 | Decide channel hygiene (treat relay URL as secret, rotate) / optionally self-host smee | 06 |
 | Screenshot review of dashboard scale (0.8), Settings modal, job editor at rem scale; try Claude create against untrusted dir (trust flow) | 02/03/04 |
 
+## Review artifacts
+
+Post-implementation reviews (dev-review / dev-security-review) per sub-project, plus the cross-cutting fix re-review.
+
+| SP | Review | Security review |
+|---|---|---|
+| 01 | [review-2026-10-09-1615.md](01-cli-polish/review-2026-10-09-1615.md) | [security-review-2026-10-09-1615.md](01-cli-polish/security-review-2026-10-09-1615.md) |
+| 02 | [review-2026-10-09-1619.md](02-port-and-dashboard-polish/review-2026-10-09-1619.md) | [security-review-2026-10-09-1619.md](02-port-and-dashboard-polish/security-review-2026-10-09-1619.md) |
+| 03 | [review-2026-10-09-1622.md](03-config-surfaces-and-settings/review-2026-10-09-1622.md) | [security-review-2026-10-09-1622.md](03-config-surfaces-and-settings/security-review-2026-10-09-1622.md) |
+| 04 | [review-2026-10-09-1645.md](04-dashboard-job-editor/review-2026-10-09-1645.md) | [security-review-2026-10-09-1645.md](04-dashboard-job-editor/security-review-2026-10-09-1645.md) |
+| 05 | [review-2026-10-09-1649.md](05-after-trigger/review-2026-10-09-1649.md) | [security-review-2026-10-09-1649.md](05-after-trigger/security-review-2026-10-09-1649.md) |
+| 06 | [review-2026-10-09-1719.md](06-webhook-trigger/review-2026-10-09-1719.md) | [security-review-2026-10-09-1719.md](06-webhook-trigger/security-review-2026-10-09-1719.md) |
+| 07 | [review-2026-10-09-1730.md](07-autostart-core-linux/review-2026-10-09-1730.md) | [security-review-2026-10-09-1730.md](07-autostart-core-linux/security-review-2026-10-09-1730.md) |
+| 08 | [review-2026-10-09-1735.md](08-autostart-macos/review-2026-10-09-1735.md) | [security-review-2026-10-09-1735.md](08-autostart-macos/security-review-2026-10-09-1735.md) |
+| 09 | [review-2026-10-09-1735.md](09-autostart-windows/review-2026-10-09-1735.md) | [security-review-2026-10-09-1735.md](09-autostart-windows/security-review-2026-10-09-1735.md) |
+| 10 | [review-2026-10-09-1739.md](10-catch-up/review-2026-10-09-1739.md) | [security-review-2026-10-09-1739.md](10-catch-up/security-review-2026-10-09-1739.md) |
+
+Fix re-review (all review-fix commits, PASS, 0 must-fix, 3 notes resolved): [review-fixes-2026-10-09-1750.md](review-fixes-2026-10-09-1750.md).
+
 ## Next step
 
 SP05-SP10 OPEN items deferred to implementation (owner, 2026-10-08); SP03 request guard approved. No owner decisions remain (SP05 import with unresolved upstream: import disabled). Next: run `dev-tasks` to generate TASKS.md for SP05-SP10.

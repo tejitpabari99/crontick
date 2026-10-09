@@ -297,7 +297,7 @@ class CrontickError extends Error {
 
 | | |
 |---|---|
-| **When** | Any `/api` request (reads included) has a non-loopback `Host` or a mismatching `Origin`, or a mutating one (POST/PUT/PATCH/DELETE) has a `Content-Type` other than `application/json` (required even when bodyless). Nothing is executed. HTTP 403 (Host/Origin) or 415 (Content-Type) |
+| **When** | Any `/api` request (reads included) has a `Host` other than `localhost` / `127.0.0.1` / `[::1]` (with the daemon port; `0.0.0.0` and `127.1` are rejected) or a mismatching `Origin`, or a mutating one (POST/PUT/PATCH/DELETE) has a `Content-Type` other than `application/json` (required even when bodyless). Nothing is executed. HTTP 403 (Host/Origin) or 415 (Content-Type) |
 | **Message shape** | `Rejected: ...` |
 | **Details** | — |
 
