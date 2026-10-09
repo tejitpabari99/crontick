@@ -1,5 +1,5 @@
-import { join } from 'node:path';
-import { dataDir, logsDir } from '../paths.js';
+import { posix } from 'node:path';
+import { dataDir } from '../paths.js';
 import type { AutostartSpec } from './types.js';
 
 /** Pure, dependency-free renderer/parser for the launchd LaunchAgent plist. */
@@ -13,7 +13,9 @@ export interface PlistPaths {
 
 /** Derives log/data dirs from the spec's `CRONTICK_HOME` (or the platform default when unset). */
 export function plistPaths(spec: AutostartSpec): PlistPaths {
-  return { logsDir: logsDir(spec.env), dataDir: dataDir(spec.env) };
+  const data = dataDir(spec.env);
+  // launchd only exists on macOS: always POSIX-join, even when running on a Windows host.
+  return { logsDir: posix.join(data, 'logs'), dataDir: data };
 }
 
 function esc(v: string): string {
@@ -74,9 +76,9 @@ export function renderPlist(spec: AutostartSpec, label: string, paths: PlistPath
     '\t<key>AbandonProcessGroup</key>',
     '\t<true/>',
     '\t<key>StandardOutPath</key>',
-    `\t${str(join(paths.logsDir, 'launchd.out.log'))}`,
+    `\t${str(posix.join(paths.logsDir, 'launchd.out.log'))}`,
     '\t<key>StandardErrorPath</key>',
-    `\t${str(join(paths.logsDir, 'launchd.err.log'))}`,
+    `\t${str(posix.join(paths.logsDir, 'launchd.err.log'))}`,
     '\t<key>WorkingDirectory</key>',
     `\t${str(paths.dataDir)}`,
     '</dict>',

@@ -1,4 +1,4 @@
-import { dirname, join } from 'node:path';
+import { posix } from 'node:path';
 import { CrontickError } from '../errors.js';
 import { PLIST_LABEL, parsePlist, plistPaths, renderPlist } from './plist.js';
 import type { AutostartBackend, AutostartDeps, AutostartSpec, BackendInspection } from './types.js';
@@ -24,7 +24,7 @@ export class LaunchdBackend implements AutostartBackend {
   ) {}
 
   private get plistPath(): string {
-    return join(this.deps.homedir, 'Library', 'LaunchAgents', `${PLIST_LABEL}.plist`);
+    return posix.join(this.deps.homedir, 'Library', 'LaunchAgents', `${PLIST_LABEL}.plist`);
   }
 
   private uid(): number {
@@ -58,7 +58,7 @@ export class LaunchdBackend implements AutostartBackend {
     const target = `${domain}/${PLIST_LABEL}`;
     const path = this.plistPath;
     const paths = plistPaths(spec);
-    await this.deps.fs.mkdir(dirname(path), { recursive: true });
+    await this.deps.fs.mkdir(posix.dirname(path), { recursive: true });
     await this.deps.fs.mkdir(paths.logsDir, { recursive: true });
     await this.deps.fs.writeFile(path, renderPlist(spec, PLIST_LABEL, paths), { mode: 0o644 });
 

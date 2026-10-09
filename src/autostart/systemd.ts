@@ -1,4 +1,4 @@
-import { dirname, join } from 'node:path';
+import { posix } from 'node:path';
 import type { AutostartBackend, AutostartDeps, AutostartSpec, BackendInspection } from './types.js';
 import { parseUnit, renderUnit } from './unit.js';
 
@@ -14,8 +14,8 @@ export class SystemdBackend implements AutostartBackend {
 
   private get unitPath(): string {
     const xdg = this.deps.env['XDG_CONFIG_HOME'];
-    const base = xdg ? xdg : join(this.deps.homedir, '.config');
-    return join(base, 'systemd', 'user', UNIT_NAME);
+    const base = xdg ? xdg : posix.join(this.deps.homedir, '.config');
+    return posix.join(base, 'systemd', 'user', UNIT_NAME);
   }
 
   private ctl(...args: string[]) {
@@ -50,7 +50,7 @@ export class SystemdBackend implements AutostartBackend {
     }
     const changed = previous !== content;
     const wasActive = changed && (await this.isActive());
-    await this.deps.fs.mkdir(dirname(path), { recursive: true });
+    await this.deps.fs.mkdir(posix.dirname(path), { recursive: true });
     await this.deps.fs.writeFile(path, content, { mode: 0o644 });
     await this.ctlOrThrow('daemon-reload');
     await this.ctlOrThrow('enable', '--now', UNIT_NAME);
