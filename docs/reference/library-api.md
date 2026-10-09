@@ -365,6 +365,7 @@ interface DaemonStatus {
     missedRunsRecorded: number;
     jobsCapped: number;
     capPerJob: number;
+    catchUpRuns: number; // catch-up runs started at daemon startup
   };
 }
 ```

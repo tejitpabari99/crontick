@@ -24,6 +24,7 @@ type StatusPayload = {
     missedRunsRecorded: number;
     jobsCapped: number;
     capPerJob: number;
+    catchUpRuns: number;
   };
 };
 
@@ -178,6 +179,7 @@ describe('daemon status discovery fields', () => {
         missedRunsRecorded: expect.any(Number),
         jobsCapped: expect.any(Number),
         capPerJob: expect.any(Number),
+        catchUpRuns: expect.any(Number),
       },
     });
 

@@ -2,6 +2,7 @@
 // Re-execs with --experimental-sqlite on Node < 24 when the flag is absent.
 // See docs/implementation/daemon.md
 import { dispatchTimeRun } from './time-dispatch.js';
+import { scanMissedFires, dispatchCatchUps } from './startup-catchup.js';
 import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, unlinkSync, existsSync, appendFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -31,7 +32,6 @@ import { createLogger, isVerboseEnv, type LogEvent, type Logger } from '../logge
 import { ensureConfigFile, loadConfig } from '../config.js';
 import { createProcessLivenessCheck } from '../process-liveness.js';
 import { SUPERVISED_ENV } from '../constants/daemon.js';
-import { isTimeSchedule } from '../schemas/job.js';
 
 /** Cap on missed fires recorded per job at startup (see enumerateFiresBetween()). */
 const MISSED_FIRE_CAP_PER_JOB = 500;
@@ -224,52 +224,13 @@ if (needsSqliteShim) {
     // 'missed' runs; jobs with no watermark yet (never observed live) are
     // skipped. The watermark is always advanced to "now" afterward so the next
     // restart computes forward from here, not from a stale point in the past.
-    let jobsWithMissedFires = 0;
-    let missedRunsRecorded = 0;
-    let jobsCapped = 0;
     const nowMs = startedAt.getTime();
-    for (const job of jobs) {
-      if (!job.enabled) continue;
-      if (!isTimeSchedule(job.schedule)) continue; // event-driven kinds have no fire times to miss
-      const state = store.getScheduleState(job.id);
-      if (!state) {
-        store.recordTick(job.id, nowMs);
-        continue;
-      }
-      try {
-        const result = scheduler.enumerateFiresBetween(job.schedule, state.lastTickAt, nowMs, {
-          cap: MISSED_FIRE_CAP_PER_JOB,
-        });
-        if (result.capped) {
-          jobsCapped++;
-          jobsWithMissedFires++;
-          missedRunsRecorded++;
-          const earliest = new Date(result.fires[0]).toISOString();
-          const latest = new Date(result.fires[result.fires.length - 1]).toISOString();
-          store.recordMissedRun(
-            job.id,
-            result.fires[result.fires.length - 1],
-            `MISSED: ${result.fires.length}+ fires missed between ${earliest} and ${latest} (capped at ${MISSED_FIRE_CAP_PER_JOB}, only a summary recorded)`,
-          );
-        } else if (result.fires.length > 0) {
-          jobsWithMissedFires++;
-          for (const plannedAt of result.fires) {
-            store.recordMissedRun(job.id, plannedAt);
-          }
-          missedRunsRecorded += result.fires.length;
-        }
-      } catch (err) {
-        logger.error('Missed-fire computation failed for job; skipping', { jobId: job.id, error: String(err) });
-      }
-      store.recordTick(job.id, nowMs);
-    }
-    const missedFireSummary = {
-      jobsWithMissedFires,
-      missedRunsRecorded,
-      jobsCapped,
-      capPerJob: MISSED_FIRE_CAP_PER_JOB,
-    };
-    if (missedRunsRecorded > 0) {
+    // SP10: opt-in `catchUp` jobs are collected as pending and dispatched below, once the
+    // runner, orphan reconciliation and tick/after listeners exist. Reload never catches up.
+    const { summary: missedFireSummary, pending: pendingCatchUps } = scanMissedFires({
+      store, scheduler, logger, nowMs, cap: MISSED_FIRE_CAP_PER_JOB,
+    });
+    if (missedFireSummary.missedRunsRecorded > 0) {
       logger.warn('Recorded missed fires from downtime; these are report-only and were not re-run', missedFireSummary);
     }
 
@@ -363,6 +324,13 @@ if (needsSqliteShim) {
         logger.error('Failed to record skipped run while paused', { jobId, error: String(err) });
       }
     });
+
+    // SP10 catch-up: everything a run depends on (runner, reconciliation, tick + after
+    // listeners, schedules) exists now, so dispatch the pending catch-up runs.
+    dispatchCatchUps({ store, runner, logger }, pendingCatchUps, missedFireSummary, nowMs);
+    if (missedFireSummary.catchUpRuns > 0) {
+      logger.info(`Started ${missedFireSummary.catchUpRuns} catch-up run(s) for fires missed during downtime`);
+    }
 
     async function reload(): Promise<void> {
       logger.info('Reloading jobs from disk');

@@ -238,6 +238,8 @@ interface DaemonMissedFiresSummary {
   missedRunsRecorded: number;
   jobsCapped: number;
   capPerJob: number;
+  /** Catch-up runs started at daemon startup (SP10). */
+  catchUpRuns: number;
 }
 
 export interface DaemonStatus {

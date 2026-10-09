@@ -91,6 +91,7 @@ export interface ApiContext {
     missedRunsRecorded: number;
     jobsCapped: number;
     capPerJob: number;
+    catchUpRuns: number;
   };
 }
 
@@ -617,6 +618,7 @@ async function handleRequest(
           missedRunsRecorded: 0,
           jobsCapped: 0,
           capPerJob: 0,
+          catchUpRuns: 0,
         },
       });
     }

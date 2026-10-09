@@ -458,6 +458,7 @@ describe('Daemon HTTP API', () => {
     expect(typeof missedFires.missedRunsRecorded).toBe('number');
     expect(typeof missedFires.jobsCapped).toBe('number');
     expect(typeof missedFires.capPerJob).toBe('number');
+    expect(typeof missedFires.catchUpRuns).toBe('number');
   });
 
   // ── Export / Import ────────────────────────────────────────────────────────────
