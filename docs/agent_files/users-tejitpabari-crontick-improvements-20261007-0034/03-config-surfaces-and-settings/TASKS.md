@@ -8,15 +8,15 @@ Source of truth: docs/agent_files/users-tejitpabari-crontick-improvements-202610
 
 | # | Task | Depends on | Status |
 |---|---|---|---|
-| 1 | API request guard on all mutating routes | - | todo |
-| 2 | Config write core: `applyOps`, lock, revision, secrets, daemon guard | - | todo |
-| 3 | Daemon pause/resume state and surfaces | - | todo |
-| 4 | In-flight run choice (stop vs wait) on config save | 2, 3 | todo |
-| 5 | Client config methods, reload, engine warning, old API removal | 1, 2, 4 | todo |
-| 6 | `GET/PATCH /api/config` routes | 1, 2, 4 | todo |
-| 7 | CLI `config` group, MCP tools, surface entries | 3, 5 | todo |
-| 8 | Dashboard Settings modal and paused state | 3, 6 | todo |
-| 9 | Tests, docs, reference, spec, changeset | 1-8 | todo |
+| 1 | API request guard on all mutating routes | - | done |
+| 2 | Config write core: `applyOps`, lock, revision, secrets, daemon guard | - | done |
+| 3 | Daemon pause/resume state and surfaces | - | done |
+| 4 | In-flight run choice (stop vs wait) on config save | 2, 3 | done |
+| 5 | Client config methods, reload, engine warning, old API removal | 1, 2, 4 | done |
+| 6 | `GET/PATCH /api/config` routes | 1, 2, 4 | done |
+| 7 | CLI `config` group, MCP tools, surface entries | 3, 5 | done |
+| 8 | Dashboard Settings modal and paused state | 3, 6 | done |
+| 9 | Tests, docs, reference, spec, changeset | 1-8 | done |
 
 ## Task 1 — API request guard on all mutating routes
 What it is / what it means: Config PATCH can set an engine command the daemon spawns, so DNS-rebinding or cross-site requests must be blocked on every mutating route (R15, Risks resolved items 1 and 8).
