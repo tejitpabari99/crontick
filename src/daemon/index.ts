@@ -23,6 +23,7 @@ import { createApiServer } from './api.js';
 import { bindPort, preferredDaemonPort } from './bind-port.js';
 import { probeHealth } from './ensure.js';
 import type { ApiContext } from './api.js';
+import { RelayGuard } from './relay-guard.js';
 import { RelayManager } from './relay.js';
 import { TriggerDispatcher, registerAfterTrigger } from './trigger.js';
 import { createLogger, isVerboseEnv, type LogEvent, type Logger } from '../logger.js';
@@ -309,7 +310,19 @@ if (needsSqliteShim) {
     });
     registerAfterTrigger({ runner, store, dispatcher: triggerDispatcher, logger });
     // Webhook relays: one idempotent sync wired to startup, job mutations and reload.
-    const relays = new RelayManager({ dispatcher: triggerDispatcher, logger });
+    const relayGuard = new RelayGuard({
+      logger,
+      getSecret: (id) => {
+        const sch = store.getJob(id)?.schedule;
+        return sch?.kind === 'webhook' ? sch.secret : undefined;
+      },
+      recordRateLimited: (jobId, error, runId, at) => {
+        if (runId === undefined) return store.recordSkippedRun(jobId, at, error).id;
+        store.updateRun(runId, { error });
+        return runId;
+      },
+    });
+    const relays = new RelayManager({ dispatcher: triggerDispatcher, logger, guard: relayGuard.guard });
     const syncRelays = (): void => {
       try { relays.sync(store.listJobs()); } catch (err) { logger.error('Relay sync failed', { error: String(err) }); }
     };
