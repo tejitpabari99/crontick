@@ -69,7 +69,7 @@ Discriminated union on `kind`. All action kinds share these common optional fiel
 
 | Field | Type | Required | Default | Constraints | Description |
 |-------|------|----------|---------|-------------|-------------|
-| `cwd` | `string` | no | invoking directory on create | Resolved to an absolute, existing directory (`INVALID_CWD`) | Working directory for execution (CLI `--cwd`/`-C`). For Claude jobs the folder must be trusted in Claude (see [cli.md](cli.md#working-directory-and-claude-trust)) |
+| `cwd` | `string` | no | invoking directory on create | Resolved to an absolute, existing directory (`INVALID_CWD`) | Working directory for execution (CLI `--dir`). For Claude jobs the folder must be trusted in Claude (see [cli.md](cli.md#working-directory-and-claude-trust)) |
 | `env` | `Record<string, string>` | no | — | — | Additional environment variables |
 | `envFile` | `string` | no | — | — | Path to `.env` file for extra env vars |
 | `timeoutSec` | `number` | no | `config.json` `defaults.timeoutSec`, then unset | Positive | Kill the process after this many seconds |

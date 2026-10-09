@@ -223,7 +223,7 @@ function commonJobOptions(command: Command): Command {
     .option(`${scheduleFlag('--cron').flag} ${scheduleFlag('--cron').arg}`, scheduleFlag('--cron').description)
     .option(`${scheduleFlag('--every').flag} ${scheduleFlag('--every').arg}`, scheduleFlag('--every').description, parseEveryInterval)
     .option(`${scheduleFlag('--at').flag} ${scheduleFlag('--at').arg}`, scheduleFlag('--at').description)
-    .option('-C, --cwd <dir>', 'Working directory the job runs in (default: the current directory)')
+    .option('--dir <path>', 'Directory the job runs in (default: current directory)')
     .option('--trust-folder', 'Trust the working directory in Claude without asking (when it is not trusted yet)')
     .option('--runner <runner>', 'Configured prompt engine name (default: config defaultEngine)')
     .option('--session-id <id>', 'Resume an existing session ID on every run (implies reuse)')
@@ -252,7 +252,7 @@ function collectJobOptions(engineArgs: string[], passthroughArgs: string[], cliA
     cron: stringOption(opts.cron),
     every: numberOption(opts.every),
     at: stringOption(opts.at),
-    cwd: stringOption(opts.cwd),
+    cwd: stringOption(opts.dir),
     trustFolder: booleanOption(opts.trustFolder),
     prompt: stringOption(opts.prompt),
     promptFile: stringOption(opts.promptFile),
@@ -277,7 +277,7 @@ function collectPatchOptions(engineArgs: string[], passthroughArgs: string[], cl
     cron: stringOption(opts.cron),
     every: numberOption(opts.every),
     at: stringOption(opts.at),
-    cwd: stringOption(opts.cwd),
+    cwd: stringOption(opts.dir),
     trustFolder: booleanOption(opts.trustFolder),
     prompt: stringOption(opts.prompt),
     promptFile: stringOption(opts.promptFile),
@@ -369,13 +369,16 @@ function splitPromptEngineArgs(engineArgs: string[]): { rawArgs: string[]; passt
         // Removed CLI switches must stay unknown instead of being forwarded
         // to the prompt runner through the generic long-flag passthrough.
         const flag = token.split('=', 1)[0]!;
-        if (flag === '--job-env-file' || flag === '--engine' || flag === '--tz') {
+        if (flag === '--job-env-file' || flag === '--engine' || flag === '--tz' || flag === '--cwd') {
           throw new Error(`unknown option '${flag}'`);
         }
         passthroughArgs.push(token);
         if (!token.includes('=') && i + 1 < tokens.length && !tokens[i + 1]!.startsWith('-')) {
           passthroughArgs.push(tokens[++i]!);
         }
+      } else if (token === '-C') {
+        // Removed short flag: unknown everywhere, including after `--`.
+        throw new Error(`unknown option '${token}'`);
       } else if (tokens === beforeSeparator && token.startsWith('-')) {
         throw new CrontickError('VALIDATION_ERROR', `Unknown short option: ${token}`);
       } else {

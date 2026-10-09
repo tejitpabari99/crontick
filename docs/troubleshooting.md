@@ -230,7 +230,7 @@ stop whatever holds it (or the other crontick daemon) and run `crontick daemon r
 ### `TRUST_REQUIRED` when creating a Claude job
 
 `jobs new`/`jobs update`/`share import` fail with `TRUST_REQUIRED` (nothing is saved) when the job's working
-directory (`--cwd`/`-C`, default: the folder you ran the command in) is not trusted in Claude's config
+directory (`--dir`, default: the folder you ran the command in) is not trusted in Claude's config
 (`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`). On a terminal crontick asks `Trust it? (y/N)`; in scripts or
 without a TTY re-run with `--trust-folder` (library/MCP: `trustFolder: true`), or open the folder once in Claude and
 accept its trust dialog. `CLAUDE_CONFIG_UNREADABLE` means that file is not valid JSON; fix it by hand. Changing the

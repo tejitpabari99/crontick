@@ -123,9 +123,9 @@ unknown-exit fallback ([ADR 0002](../decisions/0002-prompt-only-jobs-and-engine-
 ## CLI and surface behavior
 
 `jobs new` and `jobs update` use `--alias`/`-a` for schema `alias`, `-p` for
-`--prompt`, `-C`/`--cwd` for `action.cwd` and `--runner` for `action.engine`; both
+`--prompt`, `--dir` for `action.cwd` and `--runner` for `action.engine`; both
 commands are built from one shared option list. There is no `--tz` (cron fires in
-machine local time); `--tz` and `--engine` fail as unknown
+machine local time); `--tz`, `--engine`, `--cwd` and `-C` fail as unknown
 options, including after `--`; short flags after `--` pass through to the engine. `--every` accepts bare seconds or `s`/`m`/`h`/`d` suffixes.
 Unknown long flags, with a following value when that token is not flag-shaped,
 pass through to `action.args` in argv order with or without `--`. Positional

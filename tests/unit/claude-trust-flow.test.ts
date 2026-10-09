@@ -158,10 +158,10 @@ describe('--trust-folder on the CLI (non-interactive)', () => {
     expect(readClaude(sb).projects[sb.project]?.hasTrustDialogAccepted).toBe(true);
 
     const other = tmp('crontick-trust-cli-other-');
-    const upd = cli(sb, ['jobs', 'update', 'cli-trust', '--cwd', other]);
+    const upd = cli(sb, ['jobs', 'update', 'cli-trust', '--dir', other]);
     expect(upd.status).toBe(1);
     expect(upd.stderr).toContain('TRUST_REQUIRED');
-    const upd2 = cli(sb, ['jobs', 'update', 'cli-trust', '--cwd', other, '--trust-folder']);
+    const upd2 = cli(sb, ['jobs', 'update', 'cli-trust', '--dir', other, '--trust-folder']);
     expect(upd2.status, upd2.stderr).toBe(0);
   }, 90_000);
 

@@ -153,7 +153,7 @@ crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident qu
 
 ### Working directory and Claude trust
 
-A job runs in its working directory: `--cwd <dir>` / `-C <dir>` (default: the directory you run `jobs new` from; MCP and library callers should pass the project folder). For Claude jobs the folder must be trusted in Claude's config. If it is not, `jobs new`/`jobs update`/`share import` ask `Folder X is not trusted by Claude. Trust it? (y/N)` on a terminal; without one, they fail with `TRUST_REQUIRED` unless you pass `--trust-folder`. Changing `--cwd` of a job that has a session (`--session-id` or `--reuse-session`) is rejected (`CWD_CHANGE_BREAKS_SESSION`) unless you also set a new session.
+A job runs in its working directory: `--dir <path>` (default: the directory you run `jobs new` from; MCP and library callers should pass the project folder). For Claude jobs the folder must be trusted in Claude's config. If it is not, `jobs new`/`jobs update`/`share import` ask `Folder X is not trusted by Claude. Trust it? (y/N)` on a terminal; without one, they fail with `TRUST_REQUIRED` unless you pass `--trust-folder`. Changing `--dir` of a job that has a session (`--session-id` or `--reuse-session`) is rejected (`CWD_CHANGE_BREAKS_SESSION`) unless you also set a new session.
 
 See [docs/reference/configuration.md](docs/reference/configuration.md) for the full schema, environment variables (`CRONTICK_HOME`, `CRONTICK_DAEMON_URL`, `CRONTICK_VERBOSE`), and precedence.
 

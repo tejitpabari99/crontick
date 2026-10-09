@@ -88,6 +88,40 @@ describe('short flags -a and -p', () => {
   }, 30_000);
 });
 
+describe('--dir replaces -C/--cwd', () => {
+  const base = ['jobs', 'new', '-p', 'x', '--every', '1h'];
+
+  it('--dir is documented on new/update and -C/--cwd are gone from help', () => {
+    const home = newHome();
+    for (const sub of ['new', 'update']) {
+      const help = cli(['jobs', sub, '--help'], home).stdout.replace(/\s+/g, ' ');
+      expect(help, sub).toContain('--dir <path> Directory the job runs in (default: current directory)');
+      expect(help, sub).not.toContain('--cwd');
+      expect(help, sub).not.toContain('-C,');
+    }
+  });
+
+  it.each([
+    [['--cwd', '/tmp'], '--cwd'],
+    [['-C', '/tmp'], '-C'],
+    [['--', '--cwd', '/tmp'], '--cwd'],
+    [['--', '--cwd=/tmp'], '--cwd'],
+    [['--', '-C', '/tmp'], '-C'],
+  ])('rejects %j as an unknown option', (extra, flag) => {
+    const home = newHome();
+    const result = cli([...base, ...extra], home);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`unknown option '${flag}'`);
+  }, 30_000);
+
+  it('-d is never consumed and passes to the engine after --', () => {
+    const home = newHome();
+    const created = cli([...base, '-a', 'dash-d', '--', '-d'], home);
+    expect(created.status, created.stderr).toBe(0);
+    expect(cli(['jobs', 'get', 'dash-d'], home).stdout).toContain('"args":["-d"]');
+  }, 60_000);
+});
+
 describe('cron fires in machine local time', () => {
   const original = process.env['TZ'];
   afterEach(() => {

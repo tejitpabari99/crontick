@@ -36,7 +36,7 @@ crontick jobs new --desc "release reminder" --at "2026-08-01T09:00:00" --prompt 
 No `id` is needed — crontick assigns the GUID and auto-generates an `alias`. Options:
 
 - `-a, --alias <alias>` — set a memorable kebab-case alias instead of the generated one.
-- `-C, --cwd <dir>` — folder the job runs in (default: the current directory). For Claude jobs an untrusted folder asks `Trust it? (y/N)`; pass `--trust-folder` to answer yes non-interactively.
+- `--dir <path>` — folder the job runs in (default: the current directory). For Claude jobs an untrusted folder asks `Trust it? (y/N)`; pass `--trust-folder` to answer yes non-interactively.
 - `--runner <name>` — pick a configured engine (default: `claude`).
 - `--prompt-file <path>` — read the prompt from a UTF-8 `.txt` file instead of `--prompt` (mutually exclusive with `--prompt`; contents are stored, not the path).
 - `--timeout <sec>`, `--overlap skip|queue|cancel-previous`, `--retry <max>` — defaults come from `config.json` `defaults` (built-in: no timeout, `skip`, `0`). Precedence: CLI flag > per-job JSON (`--file`) > `config.json` `defaults` > built-in; the resolved values are saved on the job.
@@ -102,7 +102,7 @@ At run time the `claude` adapter builds the full invocation (`claude -p "<prompt
 
 **Multi-turn continuity** (carry the AI session across runs) — use at most one:
 
-- `--session-id <id>` — resume an existing session id on every run. Any session works, including one you started yourself outside crontick; it implies reuse (no need to also pass `--reuse-session`) and requires `--overlap skip` (the default). For Claude the session transcript must exist on disk (under the job's `--cwd`), otherwise the run fails with `SESSION_NOT_FOUND`.
+- `--session-id <id>` — resume an existing session id on every run. Any session works, including one you started yourself outside crontick; it implies reuse (no need to also pass `--reuse-session`) and requires `--overlap skip` (the default). For Claude the session transcript must exist on disk (under the job's `--dir`), otherwise the run fails with `SESSION_NOT_FOUND`.
 - `--reuse-session` — start a new session and capture its id from the first completed run and reuse it thereafter. Requires `--overlap skip` (the default); other overlap policies are rejected. For Claude, resuming needs the session transcript on disk, otherwise the run fails with `SESSION_NOT_FOUND`.
 
 ```sh
