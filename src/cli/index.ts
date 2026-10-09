@@ -17,7 +17,7 @@ import { createClient, type CrontickClient } from '../client.js';
 import { buildJobPatchFromUpdateOptions, type JobCreateCliOptions, type JobPatchCliOptions } from '../job-input.js';
 import { isVerboseEnv, type LogEvent } from '../logger.js';
 import { readJsonFile } from '../json-file.js';
-import { formatJobStats, formatRunDetail, formatRunsTable } from '../run-format.js';
+import { formatJobStats, formatRelayStatusLine, formatRunDetail, formatRunsTable } from '../run-format.js';
 import { resolveExportPath } from '../share.js';
 import { resolvePayloadArg } from './payload-source.js';
 import { deleteRunsWithConfirm, formatDeleteRunsSummary, terminalConfirmIo } from './confirm.js';
@@ -514,6 +514,11 @@ jobs.command('get <id|alias>').description('Get a job by id or alias').action(as
     print(job);
     const upstream = job.schedule.kind === 'after' ? await c.getJob(job.schedule.jobId).catch(() => undefined) : undefined;
     if (job.schedule.kind === 'after') stdout(`schedule: ${describeSchedule(job.schedule, () => upstream)}`);
+    if (job.schedule.kind === 'webhook' && job.schedule.relay) {
+      const mine = (await c.getRelayStatus().catch(() => [])).filter((s) => s.jobIds.includes(job.id));
+      for (const s of mine) stdout(`relay: ${formatRelayStatusLine(s)}`);
+      if (mine.length === 0) stdout('relay: not connected (daemon not running or job disabled)');
+    }
     if (job.action.cwd) stdout(`cwd: ${job.action.cwd}`);
     if (job.action.sessionId) stdout(`Runner Session ID: ${job.action.sessionId}`);
   } catch (err) { handleError(err); }
@@ -770,7 +775,7 @@ async function runDoctor(): Promise<void> {
   try {
     const result = await client(false).doctor({ mcpScript: mcpScript() });
     for (const check of result.checks) {
-      stdout(`${check.ok ? '✓' : '✗'} ${check.name}${check.note ? ` (${check.note})` : ''}`);
+      stdout(`${check.warn ? 'WARN' : check.ok ? '✓' : '✗'} ${check.name}${check.note ? ` (${check.note})` : ''}`);
     }
     if (!result.ok) process.exitCode = 1;
   } catch (err) { handleError(err); }

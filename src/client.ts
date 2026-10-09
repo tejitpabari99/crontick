@@ -74,6 +74,7 @@ import { remapAfterUpstreams, stripWebhookSecrets } from './share.js';
 import { redactWebhookDeep } from './utils/webhook-redact.js';
 import { describeSchedule } from './utils/schedule-label.js';
 import { createRelayChannel } from './utils/relay-url.js';
+import type { RelayStatusView } from './utils/webhook-redact.js';
 import { VERSION } from './version.js';
 
 export interface CrontickClientOptions extends Omit<EnsureDaemonOptions, 'startDaemon' | 'logger'> {
@@ -214,6 +215,8 @@ export interface RunRecord {
   logFileExists?: boolean;
   /** Whether the file at `transcriptPath` exists on disk. Only set by getRun(), when `transcriptPath` is set. */
   transcriptExists?: boolean;
+  /** What triggered a non-time run (webhook: `{source, deliveryId?, receivedAt, payload}`; after: `{kind, upstream}`). Only set by getRun(). */
+  trigger?: Record<string, unknown>;
 }
 
 export interface JobStats {
@@ -503,6 +506,11 @@ export class CrontickClient {
     else params.set('jobId', options.job!);
     if (options.dryRun) params.set('dryRun', '1');
     return this.request('DELETE', `/api/runs?${params.toString()}`);
+  }
+
+  /** Webhook relay connection status (redacted URLs, in-memory on the daemon). Used by `jobs get`; not a separate CLI/MCP capability. */
+  async getRelayStatus(): Promise<RelayStatusView[]> {
+    return this.request<RelayStatusView[]>('GET', '/api/relays', undefined, { ensure: false });
   }
 
   async getRun(runId: string): Promise<RunRecord> {

@@ -50,3 +50,31 @@ export function restoreRedactedWebhook<S>(incoming: S, stored: unknown): S {
   if (out['secret'] === 'set' && typeof stored['secret'] === 'string') out['secret'] = stored['secret'];
   return out as S;
 }
+
+/** Display form of one relay connection status (URL masked, error text scrubbed of smee URLs). */
+export interface RelayStatusView {
+  urlRedacted: string;
+  state: 'connecting' | 'connected' | 'backoff' | 'error';
+  jobIds: string[];
+  lastEventAt: string | null;
+  lastError: string | null;
+  eventCount: number;
+}
+
+export function toRelayStatusView(s: { url: string; state: RelayStatusView['state']; jobIds: string[]; lastEventAt: string | null; lastError: string | null; eventCount: number }): RelayStatusView {
+  return {
+    urlRedacted: redactRelayUrl(s.url),
+    state: s.state,
+    jobIds: s.jobIds,
+    lastEventAt: s.lastEventAt,
+    lastError: s.lastError === null ? null : redactSmeeUrlsInText(s.lastError),
+    eventCount: s.eventCount,
+  };
+}
+
+/** Parsed run trigger with free-text payload scrubbed of smee channel URLs. */
+export function redactTriggerMeta(trigger: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...trigger };
+  if (typeof out['payload'] === 'string') out['payload'] = redactSmeeUrlsInText(out['payload']);
+  return out;
+}

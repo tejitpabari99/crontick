@@ -17,6 +17,8 @@ const NON_PARITY_CLIENT_METHODS = new Set([
   'health',
   'createJobFromCliOptions',
   'resolveRelayAuto',
+  // Relay health is shown inside `jobs get` (CLI) and `doctor` (all surfaces); not its own capability.
+  'getRelayStatus',
   'jobJsonSchema',
   'getConfig',
   'writeConfig',

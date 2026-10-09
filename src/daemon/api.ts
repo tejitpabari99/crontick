@@ -28,6 +28,7 @@ import { redactWebhookDeep, restoreRedactedWebhook } from '../utils/webhook-reda
 import { readEnvFileForAction } from './env-file.js';
 import { resolveJobLogPath } from './job-log-file.js';
 import { TriggerDispatcher, type TriggerSkipReason } from './trigger.js';
+import { toRelayStatusView, redactTriggerMeta } from '../utils/webhook-redact.js';
 import { buildWebhookContext, buildWebhookPayload } from '../utils/webhook-payload.js';
 import { checkMutatingRequest, isGuardedRequest } from './request-guard.js';
 import { describeDaemonPort } from './bind-port.js';
@@ -74,6 +75,8 @@ export interface ApiContext {
   reload: () => Promise<void>;
   /** Re-diff relay subscriptions against the stored jobs (idempotent). */
   syncRelays?: () => void;
+  /** In-memory relay connection status (raw URLs; redacted before leaving the API). */
+  relayStatus?: () => Array<Parameters<typeof toRelayStatusView>[0]>;
   logger?: Logger;
   /** L1: graceful in-process shutdown, wired by index.ts after the HTTP server exists. */
   shutdown?: (signal: string) => Promise<void>;
@@ -160,6 +163,10 @@ async function handleRequest(
     // ── Health ───────────────────────────────────────────────────────────────
     if (method === 'GET' && path === '/health') {
       return sendJson(res, 200, buildDashboardData({ ...ctx, pid: process.pid }, { runsLimit: 1 }).health);
+    }
+
+    if (method === 'GET' && path === '/api/relays') {
+      return sendJson(res, 200, (ctx.relayStatus?.() ?? []).map(toRelayStatusView));
     }
 
     // ── Jobs ─────────────────────────────────────────────────────────────────
@@ -495,8 +502,10 @@ async function handleRequest(
         if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
         // Per-job (not per-run) mirror file; null when file logging is disabled.
         const logFile = resolveJobLogPath(run.jobId);
+        const trigger = ctx.store.getRunTrigger(run.id);
         return sendJson(res, 200, redactPublic({
           ...run,
+          ...(trigger ? { trigger: redactTriggerMeta(trigger) } : {}),
           logFile,
           ...(logFile !== null ? { logFileExists: existsSync(logFile) } : {}),
           ...(run.transcriptPath ? { transcriptExists: existsSync(run.transcriptPath) } : {}),

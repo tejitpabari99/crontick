@@ -4,6 +4,7 @@
  * prints the result. Machine consumers use the raw records (`--json`).
  */
 import type { RunRecord } from './client.js';
+import type { RelayStatusView } from './utils/webhook-redact.js';
 
 /** Longest error text shown in the table before it is truncated (full text is in `--json` / `runs get`). */
 export const RUN_TABLE_ERROR_MAX = 60;
@@ -52,6 +53,14 @@ export function formatRunsTable(runs: readonly RunRecord[]): string {
 }
 
 /** Run output view as returned by `getOutput` (only the fields the detail view prints). */
+/** One-line relay health summary shown by `jobs get`. Pure. */
+export function formatRelayStatusLine(s: RelayStatusView): string {
+  const parts = [`${s.urlRedacted} ${s.state}`, `events=${s.eventCount}`];
+  if (s.lastEventAt) parts.push(`lastEvent=${s.lastEventAt}`);
+  if (s.lastError) parts.push(`lastError=${s.lastError}`);
+  return parts.join(' ');
+}
+
 export interface RunDetailOutput {
   error: string | null;
   result: string | null;
@@ -87,6 +96,12 @@ export function formatRunDetail(run: RunRecord, out: RunDetailOutput): string {
   const missing = (exists: boolean | undefined): string => (exists === false ? '  (file not found)' : '');
   if (run.transcriptPath) lines.push(`Transcript: ${run.transcriptPath}${missing(run.transcriptExists)}`);
   if (run.logFile !== undefined) lines.push(`Log file: ${run.logFile === null ? '(file logging is disabled)' : `${run.logFile}${missing(run.logFileExists)}`}`);
+  const trig = run.trigger;
+  if (trig && (trig['source'] === 'relay' || trig['source'] === 'local')) {
+    const delivery = typeof trig['deliveryId'] === 'string' && trig['deliveryId'] !== '' ? `, delivery ${trig['deliveryId']}` : '';
+    lines.push(`Triggered by webhook (${trig['source']}) at ${String(trig['receivedAt'] ?? '-')}${delivery}`);
+    if (typeof trig['payload'] === 'string' && trig['payload'] !== '') lines.push(`Payload: ${trig['payload']}`);
+  }
   const body: string[] = [];
   if (out.error) body.push(`Error: ${out.error}`);
   const text = out.result;

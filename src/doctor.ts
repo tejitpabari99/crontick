@@ -9,12 +9,15 @@ import { configFilePath, loadConfig } from './config.js';
 import type { CrontickConfig } from './schemas/config.js';
 import net from 'node:net';
 import { probeHealth, readPortFile, resolveDaemonBaseUrl } from './daemon/ensure.js';
+import type { RelayStatusView } from './utils/webhook-redact.js';
 import { describeDaemonPort, preferredDaemonPort } from './daemon/bind-port.js';
 
 export interface DoctorCheck {
   name: string;
   ok: boolean;
   note?: string;
+  /** Advisory only: the check passes (`ok`) but should be flagged (printed as WARN). */
+  warn?: boolean;
 }
 
 export interface DoctorOptions {
@@ -97,6 +100,15 @@ export async function runDoctorChecks(options: DoctorOptions = {}): Promise<Doct
     checks.push({ name: 'dashboard reachable', ok: false, note: 'daemon not running or no dashboard' });
   }
 
+  if (daemonReachable && baseUrl) {
+    try {
+      const res = await fetch(`${baseUrl}/api/relays`, { signal: AbortSignal.timeout(2_000) });
+      if (res.ok) checks.push(...relayDoctorChecks((await res.json()) as RelayStatusView[]));
+    } catch {
+      // Relay status is advisory; an unreachable endpoint adds no check.
+    }
+  }
+
   if (options.mcpScript) {
     checks.push({ name: 'MCP server binary', ok: existsSync(options.mcpScript), note: options.mcpScript });
     if (options.checkMcpHelp ?? true) {
@@ -157,5 +169,16 @@ function isPortListening(port: number): Promise<boolean> {
     socket.setTimeout(1_000, () => done(false));
     socket.once('connect', () => done(true));
     socket.once('error', () => done(false));
+  });
+}
+
+/** One `relay:` check per relay; a relay in `error`, or retrying after an error, is a WARN (never fails doctor). */
+export function relayDoctorChecks(statuses: readonly RelayStatusView[]): DoctorCheck[] {
+  return statuses.map((s) => {
+    const failing = s.state === 'error' || (s.state === 'backoff' && s.lastError !== null);
+    const base = `${s.state}, ${s.eventCount} event(s)${s.lastEventAt ? `, last ${s.lastEventAt}` : ''}`;
+    return failing
+      ? { name: `relay: ${s.urlRedacted}`, ok: true, warn: true, note: `${base}; ${s.lastError ?? 'error'}` }
+      : { name: `relay: ${s.urlRedacted}`, ok: true, note: base };
   });
 }

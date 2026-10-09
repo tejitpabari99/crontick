@@ -412,7 +412,7 @@ if (needsSqliteShim) {
       logger.warn('A pending config save (wait for in-flight runs) was lost on restart; re-apply it if still wanted', lostPendingConfigApply);
     }
 
-    const ctx: ApiContext = { store, scheduler, runner, startedAt, port: 0, reload, syncRelays, logger, missedFireSummary, lostPendingConfigApply, shutdown: () => Promise.resolve() };
+    const ctx: ApiContext = { store, scheduler, runner, startedAt, port: 0, reload, syncRelays, relayStatus: () => relays.status(), logger, missedFireSummary, lostPendingConfigApply, shutdown: () => Promise.resolve() };
     const server = createApiServer(ctx);
 
     // Bind loopback only (security invariant). Prefer the stable default port;
