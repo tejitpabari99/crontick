@@ -396,6 +396,62 @@ export function createMcpServer(): McpServer {
     async (args) => toolWrap(args, (client) => client.daemonResume()),
   );
 
+  // ── Config ─────────────────────────────────────────────────────────────────
+
+  const IN_FLIGHT_INPUT = z.enum(['stop', 'wait']).optional().describe(
+    'Only needed when runs are in flight (the call then fails with RUNS_IN_FLIGHT listing them): "stop" cancels them then applies; "wait" pauses the daemon, waits for them to finish, applies, then resumes. Ask the user which before choosing.',
+  );
+
+  server.registerTool(
+    'crontick_config_list',
+    {
+      description:
+        'Return the effective crontick config (defaults merged with the config file; secrets redacted) plus the keys stored in the file (stored), the file revision, and read-only keys. Works with the daemon down.',
+      inputSchema: withVerbose({}),
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => toolWrap(args, async (client) => client.configList(), false),
+  );
+
+  server.registerTool(
+    'crontick_config_get',
+    {
+      description: 'Return one effective config value by dotted key (e.g. defaults.timeoutSec, engines.claude.command). Secrets are redacted. Unknown key fails with CONFIG_KEY_NOT_FOUND.',
+      inputSchema: withVerbose({ key: z.string().describe('Dotted config key') }),
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => toolWrap(args, async (client) => ({ key: args.key, value: client.configGet(args.key) }), false),
+  );
+
+  server.registerTool(
+    'crontick_config_set',
+    {
+      description:
+        'Set one config value by dotted key. value is typed JSON (number, boolean, string, array, object), not parsed text. Engines: key engines.<name> with an object value such as {"command":"...","type":"raw"}. The change is validated and written atomically, then the running daemon is reloaded; the result lists changed keys, reload status, warnings and a notice. daemon.* keys are rejected while a daemon is running. This changes how future jobs run (including which commands engines execute) -- confirm with the user before calling.',
+      inputSchema: withVerbose({
+        key: z.string().describe('Dotted config key'),
+        value: z.any().describe('New value, as typed JSON'),
+        inFlight: IN_FLIGHT_INPUT,
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => toolWrap(args, (client) => client.configSet(args.key, args.value, { inFlight: args.inFlight }), false),
+  );
+
+  server.registerTool(
+    'crontick_config_unset',
+    {
+      description:
+        'Remove one config key from the config file so it reverts to its default (engines: key engines.<name> removes that engine). Validated and written atomically, then the running daemon is reloaded; the result lists changed keys, reload status, warnings and a notice. Removing the default engine or the last engine is rejected.',
+      inputSchema: withVerbose({
+        key: z.string().describe('Dotted config key'),
+        inFlight: IN_FLIGHT_INPUT,
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => toolWrap(args, (client) => client.configUnset(args.key, { inFlight: args.inFlight }), false),
+  );
+
   // ── Admin ──────────────────────────────────────────────────────────────────
 
   server.registerTool(

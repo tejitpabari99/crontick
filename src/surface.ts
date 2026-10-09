@@ -38,6 +38,10 @@ export const SURFACE_CAPABILITIES = [
   { capability: 'daemon-reload', clientMethod: 'daemonReload', cliCommand: ['daemon', 'reload'], mcpTool: 'crontick_daemon_reload' },
   { capability: 'daemon-pause', clientMethod: 'daemonPause', cliCommand: ['daemon', 'pause'], mcpTool: 'crontick_daemon_pause' },
   { capability: 'daemon-resume', clientMethod: 'daemonResume', cliCommand: ['daemon', 'resume'], mcpTool: 'crontick_daemon_resume' },
+  { capability: 'config-list', clientMethod: 'configList', cliCommand: ['config', 'list'], mcpTool: 'crontick_config_list' },
+  { capability: 'config-get', clientMethod: 'configGet', cliCommand: ['config', 'get'], mcpTool: 'crontick_config_get' },
+  { capability: 'config-set', clientMethod: 'configSet', cliCommand: ['config', 'set'], mcpTool: 'crontick_config_set', optionNames: ['string', 'stopRunning', 'waitRunning'] },
+  { capability: 'config-unset', clientMethod: 'configUnset', cliCommand: ['config', 'unset'], mcpTool: 'crontick_config_unset', optionNames: ['stopRunning', 'waitRunning'] },
   { capability: 'doctor', clientMethod: 'doctor', cliCommand: ['doctor'], mcpTool: 'crontick_doctor' },
   { capability: 'info', clientMethod: 'info', cliCommand: ['info'], mcpTool: 'crontick_info' },
 ] as const satisfies readonly SurfaceCapability[];

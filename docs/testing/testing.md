@@ -234,7 +234,7 @@ npx @modelcontextprotocol/inspector node dist/mcp/index.js
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"crontick_info","arguments":{}}}
 ```
 
-Expected: `tools/list` returns all 23 `crontick_*` tools; `crontick_info` returns a JSON text content block.
+Expected: `tools/list` returns all 27 `crontick_*` tools; `crontick_info` returns a JSON text content block.
 
 **Key tools to smoke-test:** `crontick_job_create`, `crontick_job_list`, `crontick_info`, `crontick_job_schedule`, `crontick_doctor`.
 

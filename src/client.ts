@@ -608,9 +608,8 @@ export class CrontickClient {
 
   /**
    * Returns the config file path plus a note on how edits take effect. The
-   * config file is edited directly by the user; crontick has no set/unset
-   * commands. Library-friendly; surfaced directly by `info` and kept as a
-   * library-only helper after the command simplification.
+   * config file can be edited by hand or with `crontick config set`/`unset`
+   * (see configSet/configUnset). Library-friendly; surfaced directly by `info`.
    */
   configPath(): ConfigPathInfo {
     return {

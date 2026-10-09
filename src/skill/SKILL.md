@@ -85,6 +85,10 @@ crontick daemon stop   # stop the daemon when you really need a restart cycle
 crontick daemon reload # reload jobs from disk after manual edits
 crontick daemon pause  # stop starting new runs (due fires recorded skipped); daemon stays up
 crontick daemon resume # undo pause
+crontick config list [--json]  # effective config, keys not in config.json tagged (default)
+crontick config get <key>      # dotted key, e.g. defaults.timeoutSec
+crontick config set <key> <value> [--string] [--stop-running|--wait-running]  # value: JSON, else string
+crontick config unset <key>    # revert to default; engines: set/unset engines.<name>
 ```
 
 The dashboard (job/run browser) is served by the daemon; open the `dashboardUrl` from `crontick info` (default `http://127.0.0.1:47615/dashboard`; a free fallback port is used when 47615 is taken).
@@ -214,6 +218,8 @@ crontick also ships an MCP server that mirrors these commands one-to-one (tool p
 | `crontick_daemon_stop` | `daemon stop` |
 | `crontick_daemon_reload` | `daemon reload` |
 | `crontick_daemon_pause` / `crontick_daemon_resume` | `daemon pause` / `daemon resume` |
+| `crontick_config_list` / `crontick_config_get` | `config list` / `config get` |
+| `crontick_config_set` / `crontick_config_unset` | `config set` / `config unset` (typed JSON `value`; `inFlight` = `stop`/`wait` instead of the CLI flags) |
 
 MCP differences: pass `action.cwd` (absolute project folder) when creating jobs, the engine is `action.engine` (CLI `--runner`), and for Claude jobs in an untrusted folder a `TRUST_REQUIRED` error means ask the user, then retry with `trustFolder: true` (CLI `--trust-folder`). Create/update/import tools take `trustFolder`.
 

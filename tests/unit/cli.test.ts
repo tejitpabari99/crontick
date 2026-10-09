@@ -157,7 +157,8 @@ describe('CLI binary (dist/cli/index.js)', () => {
     expect(cli(['runs', 'logs']).stderr).toContain("unknown command 'logs'");
     expect(cli(['runs', 'output']).stderr).toContain("unknown command 'output'");
     expect(cli(['runs', '--help']).stdout).toContain('delete');
-    expect(cli(['config']).stderr).toContain("unknown command 'config'");
+    expect(cli(['config', 'init']).stderr).toContain("unknown command 'init'");
+    expect(cli(['config', '--help']).stdout).toMatch(/list[\s\S]*get[\s\S]*set[\s\S]*unset/);
     const topHelp = cli(['--help']);
     expect(topHelp.stdout).toContain('doctor');
     expect(topHelp.stdout).toContain('daemon');

@@ -17,11 +17,6 @@ const NON_PARITY_CLIENT_METHODS = new Set([
   'createJobFromCliOptions',
   'jobJsonSchema',
   'getConfig',
-  // TEMPORARY (SP03 Task 7 removes these): config methods until their CLI/MCP/SURFACE_CAPABILITIES rows land.
-  'configList',
-  'configGet',
-  'configSet',
-  'configUnset',
   'writeConfig',
   'probeDaemon',
   'engineRemovalWarnings',
