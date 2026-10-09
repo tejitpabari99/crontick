@@ -29,6 +29,8 @@ const MUTATING_ROUTES: Array<[string, string]> = [
   ['POST', '/api/jobs'],
   ['DELETE', '/api/jobs'],
   ['PUT', '/api/jobs/x'],
+  ['POST', '/api/jobs?prepare=1&trustFolder=1'], // prepare variant: same source condition as POST /api/jobs
+  ['PUT', '/api/jobs/x?prepare=1&trustFolder=1'], // prepare variant: same source condition as PUT /api/jobs/:id
   ['DELETE', '/api/jobs/x'],
   ['POST', '/api/jobs/x/enable'],
   ['POST', '/api/jobs/x/disable'],
@@ -60,7 +62,7 @@ describe('API request guard', () => {
   it('route list covers every mutating route in api.ts source', () => {
     const src = readFileSync('src/daemon/api.ts', 'utf8');
     const count = (src.match(/method === '(POST|PUT|PATCH|DELETE)'/g) ?? []).length;
-    const aliases = MUTATING_ROUTES.filter(([, p]) => p.endsWith('/run-now')).length;
+    const aliases = MUTATING_ROUTES.filter(([, p]) => p.endsWith('/run-now') || p.includes('?prepare=1')).length;
     expect(count).toBe(MUTATING_ROUTES.length - aliases);
   });
 

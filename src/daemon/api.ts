@@ -8,10 +8,12 @@ import type { Store } from './store.js';
 import type { RunStatus } from './store.js';
 import type { Scheduler } from './scheduler.js';
 import type { Runner } from './runner.js';
-import { JobSchema } from '../schemas/job.js';
+import { JobSchema, JOB_ALIAS_PATTERN, type Job } from '../schemas/job.js';
 import { CrontickError } from '../errors.js';
 import { VERSION } from '../version.js';
-import { applyConfigDefaults, generateAlias } from '../job-input.js';
+import { applyConfigDefaults, generateAlias, type JobCreateInput, type JobPatchInput } from '../job-input.js';
+import { prepareCreate, prepareUpdate } from '../job-prepare.js';
+import { getEngineAdapter } from '../engines/registry.js';
 import {
   averageDurationMs,
   msToSec,
@@ -70,6 +72,31 @@ export interface ApiContext {
   };
 }
 
+/** True when `?name=1` (or `true`) is present. */
+function flagParam(url: URL, name: string): boolean {
+  const v = url.searchParams.get(name);
+  return v === '1' || v === 'true';
+}
+
+/** Dashboard editor form metadata, read from config so the form never hardcodes defaults. */
+function buildEditorMeta(): unknown {
+  const config = loadConfig();
+  const engines = Object.entries(config.engines).map(([name, engine]) => {
+    const adapter = getEngineAdapter(engine.type);
+    return { name, type: engine.type, supportsTrust: Boolean(adapter.isFolderTrusted && adapter.trustFolder) };
+  });
+  return {
+    engines,
+    defaultEngine: config.defaultEngine,
+    defaults: {
+      overlap: config.defaults.overlap,
+      ...(config.defaults.timeoutSec !== undefined ? { timeoutSec: config.defaults.timeoutSec } : {}),
+      retry: config.defaults.retry,
+    },
+    aliasPattern: JOB_ALIAS_PATTERN.source,
+  };
+}
+
 // ── Server factory ────────────────────────────────────────────────────────────
 
 /** Create the daemon HTTP server. Enforces loopback-only access on every request. */
@@ -124,13 +151,34 @@ async function handleRequest(
       return sendJson(res, 200, redactValue(ctx.store.listJobs()));
     }
 
+    // Form metadata for the dashboard editor; registered before /api/jobs/:id so it is not read as a job ref.
+    if (method === 'GET' && path === '/api/jobs/editor-meta') {
+      return sendJson(res, 200, buildEditorMeta());
+    }
+
     if (method === 'POST' && path === '/api/jobs') {
       const body = await readBody(req);
-      const parsed = JobSchema.safeParse(body);
-      if (!parsed.success) {
-        return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid job', parsed.error.format());
+      const prepare = flagParam(url, 'prepare');
+      let jobData: Job;
+      if (prepare) {
+        // Prepare mode: body is a JobCreateInput; same normalize + trust pipeline as the client.
+        const action = (body as { action?: { cwd?: unknown } }).action;
+        if (typeof action?.cwd !== 'string' || action.cwd.length === 0) {
+          return sendError(res, 400, 'VALIDATION_ERROR', 'action.cwd is required', { cwd: 'action.cwd is required' });
+        }
+        jobData = prepareCreate(body as unknown as JobCreateInput, {
+          env: process.env,
+          trustFolder: flagParam(url, 'trustFolder'),
+          resolveJob: (idOrAlias) => ctx.store.getJob(idOrAlias),
+        });
+      } else {
+        const parsed = JobSchema.safeParse(body);
+        if (!parsed.success) {
+          return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid job', parsed.error.format());
+        }
+        jobData = parsed.data;
       }
-      let job = applyConfigDefaults(parsed.data);
+      let job = applyConfigDefaults(jobData);
       const force = forceParam(url);
       // Auto-generate a unique alias when the caller didn't supply one (see
       // generateAlias in job-input.ts): word + random 1-1000, retried on
@@ -217,14 +265,24 @@ async function handleRequest(
       if (method === 'PUT' && sub === '') {
         if (!job) return sendJobNotFoundError(res, requestedId);
         const body = await readBody(req);
-        const merged: Record<string, unknown> = { ...job, ...body, id: job.id };
-        // `description: null` removes the stored description (null-clears, see JobPatchInputSchema).
-        if ((body as { description?: unknown }).description === null) delete merged['description'];
-        const parsed = JobSchema.safeParse(merged);
-        if (!parsed.success) {
-          return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid job', parsed.error.format());
+        let updatedJob: Job;
+        if (flagParam(url, 'prepare')) {
+          // Prepare mode: body is a JobPatchInput; field-wise merge + cwd-session rule + trust on key change.
+          updatedJob = applyConfigDefaults(prepareUpdate(job, body as unknown as JobPatchInput, {
+            env: process.env,
+            trustFolder: flagParam(url, 'trustFolder'),
+            resolveJob: (idOrAlias) => ctx.store.getJob(idOrAlias),
+          }));
+        } else {
+          const merged: Record<string, unknown> = { ...job, ...body, id: job.id };
+          // `description: null` removes the stored description (null-clears, see JobPatchInputSchema).
+          if ((body as { description?: unknown }).description === null) delete merged['description'];
+          const parsed = JobSchema.safeParse(merged);
+          if (!parsed.success) {
+            return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid job', parsed.error.format());
+          }
+          updatedJob = applyConfigDefaults(parsed.data);
         }
-        const updatedJob = applyConfigDefaults(parsed.data);
         // Renaming the alias must not collide with any OTHER live job's id/alias.
         if (updatedJob.alias && updatedJob.alias !== job.alias) {
           const collision = ctx.store.getJob(updatedJob.alias);
