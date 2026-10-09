@@ -36,7 +36,7 @@ PRAGMA foreign_keys=ON;` are set on every `open()`.
 | Table | Key columns |
 |-------|-------------|
 | `jobs` | `id` (PK GUID), `alias` (nullable, unique via `idx_jobs_alias`), `json`, `updated_at` |
-| `runs` | `id` (PK UUID), `job_id`, `started_at`, `ended_at`, `status`, `exit_code`, `error`, `duration_ms`, `pid` (nullable, absent for `missed`), `output_truncated`, `session_id`, `command`, `claude_result_completed` (internal resume-eligibility flag), `cost_usd`, `turns`, `usage_json`, `transcript_path`, `engine_status` |
+| `runs` | `id` (PK UUID), `job_id`, `started_at`, `ended_at`, `status`, `exit_code`, `error`, `duration_ms`, `pid` (nullable, absent for `missed`), `output_truncated`, `session_id`, `command`, `claude_result_completed` (internal resume-eligibility flag), `cost_usd`, `turns`, `usage_json`, `transcript_path`, `engine_status`, `trigger_json` (nullable; `{kind, upstream}` for `after` runs, set via `setRunTrigger`) |
 | `run_outputs` | `run_id` (PK), `format` (`claude-stream-json`/`text`), `result`, `engine_error`, `stderr` -- the parsed engine output written when a run finishes. The engine's raw stdout/stderr is never stored |
 | `job_failure_state` | `job_id` (PK), `consecutive_failures` -- consecutive failed runs per job (absent = 0); drives auto-disable |
 | `job_schedule_state` | `job_id` (PK), `last_tick_at`, `updated_at` -- one row per job that has ticked live at least once |
@@ -68,6 +68,9 @@ class Store {
   listRuns(opts?): Run[];                   // opts.status filters to one RunStatus
   recordMissedRun(jobId, firedAt): Run;
   setRunOutput(runId, out: EngineOutput): void; getRunOutput(runId): EngineOutput | undefined;
+  listDependents(upstreamId): Job[];        // jobs whose `after` schedule targets upstreamId (full scan)
+  getBrokenJobs(): Map<id, AfterGraphError>; isJobBroken(id): boolean;  // set by loadJobsFromDisk's post-pass
+  setRunTrigger(runId, trigger): void; getRunTrigger(runId): object | undefined;
   recordTick(jobId, tickAt): void; getScheduleState(jobId): { lastTickAt } | undefined;
   reconcileOrphanRuns(check?): { canceled: number; adopted: number };
   setRunRetentionCap(cap): void; pruneAllJobsRunHistory(cap?): number;
@@ -80,6 +83,10 @@ directly; the public default is `BUILT_IN_CONFIG.retention.maxRunsPerJob`.
 **Access pattern**: single writer (only the daemon opens `runs.db`); WAL allows concurrent reads.
 `upsertJob()` writes both SQLite and the JSON file, which stays the source of truth
 (`loadJobsFromDisk()` re-syncs SQLite from it on every startup).
+
+## After-trigger graph
+
+`validateAfterGraph(job, jobs)` (exported from `store.ts`) walks `after.jobId` pointers: `AFTER_CYCLE` when the walk reaches the job's own id (or loops on corrupt data), `AFTER_UPSTREAM_NOT_FOUND` when the first upstream is absent. `loadJobsFromDisk` still loads such jobs but records them in `getBrokenJobs()` with a warn log; they must not fire.
 
 ## Orphan reconciliation
 

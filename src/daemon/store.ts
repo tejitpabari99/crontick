@@ -116,6 +116,8 @@ export class Store {
   private jobsPath: string;
   private logger: Logger;
   private runRetentionCap: number;
+  /** After-jobs with a dangling or cyclic upstream, recomputed on every loadJobsFromDisk(); inert until repaired. */
+  private brokenJobs = new Map<string, AfterGraphError>();
 
   constructor(
     dbPath?: string,
@@ -192,7 +194,8 @@ export class Store {
         turns INTEGER,
         usage_json TEXT,
         transcript_path TEXT,
-        engine_status TEXT
+        engine_status TEXT,
+        trigger_json TEXT
       );
 
       -- Parsed engine output (final answer, error, full stderr) for a run. The engine's raw stdout/stderr is never stored: the runner keeps
@@ -338,6 +341,32 @@ export class Store {
     }>;
     this.logger.debug('Listed jobs', { count: rows.length });
     return rows.map((r) => JSON.parse(r.json) as Job);
+  }
+
+  /** Enabled-or-not jobs whose `after` schedule points at `upstreamId` (full scan; N is small). */
+  listDependents(upstreamId: string): Job[] {
+    return this.listJobs().filter((j) => j.schedule.kind === 'after' && j.schedule.jobId === upstreamId);
+  }
+
+  /** After-jobs flagged broken (dangling/cyclic upstream) by the last loadJobsFromDisk(), keyed by job id. */
+  getBrokenJobs(): ReadonlyMap<string, AfterGraphError> {
+    return this.brokenJobs;
+  }
+
+  isJobBroken(id: string): boolean {
+    return this.brokenJobs.has(id);
+  }
+
+  /** Persists what triggered a non-time run (SP05 stores `{kind, upstream}`; rendering is SP06). */
+  setRunTrigger(runId: string, trigger: Record<string, unknown>): void {
+    this.db.prepare('UPDATE runs SET trigger_json = ? WHERE id = ?').run(JSON.stringify(trigger), runId);
+  }
+
+  getRunTrigger(runId: string): Record<string, unknown> | undefined {
+    const row = this.db.prepare('SELECT trigger_json FROM runs WHERE id = ?').get(runId) as
+      | { trigger_json: string | null }
+      | undefined;
+    return row?.trigger_json ? (JSON.parse(row.trigger_json) as Record<string, unknown>) : undefined;
   }
 
   /** Accepts either the GUID `id` or the `alias` (see getJob) and deletes the resolved job together with its runs, run outputs and schedule state. */
@@ -541,7 +570,20 @@ export class Store {
         this.logger.warn('Skipped unreadable or malformed job file', { filePath, reason: err instanceof Error ? err.message : String(err) });
       }
     }
+    this.flagBrokenAfterJobs();
     this.logger.debug('Loaded jobs from disk', { jobsPath: this.jobsPath, files: files.length, loaded });
+  }
+
+  /** Post-pass of loadJobsFromDisk: marks after-jobs with a dangling/cyclic upstream as broken (still loaded, never fired). */
+  private flagBrokenAfterJobs(): void {
+    this.brokenJobs = new Map();
+    const jobs = this.listJobs();
+    for (const job of jobs) {
+      const err = validateAfterGraph(job, jobs);
+      if (!err) continue;
+      this.brokenJobs.set(job.id, err);
+      this.logger.warn('Job is broken and will not fire', { jobId: job.id, code: err.code, reason: err.message });
+    }
   }
 
 
@@ -1059,6 +1101,47 @@ export class Store {
       this.logger.info(`Pruned run history on startup: ${total} run(s) removed across ${jobIds.length} job(s) (cap ${cap})`, { jobsScanned: jobIds.length, evicted: total, cap });
     }
     return total;
+  }
+}
+
+// ── After-trigger graph validation ────────────────────────────────────────────
+
+export interface AfterGraphError {
+  code: 'AFTER_CYCLE' | 'AFTER_UPSTREAM_NOT_FOUND';
+  message: string;
+}
+
+/**
+ * Validates the `after` upstream chain of a (proposed) job against `jobs`. Each node has one
+ * upstream, so this is a pointer walk: a cycle iff the walk reaches `job.id`; a visited set
+ * guards against corrupt data that loops without including `job`. The proposed `job` replaces
+ * any stored job with the same id. Only the first hop is checked for existence (a missing
+ * ancestor is that ancestor's own problem). Returns undefined when valid or not an after-job.
+ */
+export function validateAfterGraph(job: Job, jobs: readonly Job[]): AfterGraphError | undefined {
+  if (job.schedule.kind !== 'after') return undefined;
+  const byId = new Map(jobs.map((j) => [j.id, j] as const));
+  byId.set(job.id, job);
+  const visited = new Set<string>();
+  let cur: string = job.schedule.jobId;
+  let first = true;
+  for (;;) {
+    if (cur === job.id) {
+      return { code: 'AFTER_CYCLE', message: `After-trigger cycle: job ${job.id} is (transitively) its own upstream` };
+    }
+    if (visited.has(cur)) {
+      return { code: 'AFTER_CYCLE', message: `After-trigger cycle in the upstream chain of job ${job.id} (at ${cur})` };
+    }
+    visited.add(cur);
+    const next = byId.get(cur);
+    if (!next) {
+      return first
+        ? { code: 'AFTER_UPSTREAM_NOT_FOUND', message: `Upstream job ${cur} not found` }
+        : undefined;
+    }
+    first = false;
+    if (next.schedule.kind !== 'after') return undefined;
+    cur = next.schedule.jobId;
   }
 }
 
