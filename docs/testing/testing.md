@@ -206,7 +206,7 @@ Expected: `list` shows the job enabled, `runs list` shows at least one `success`
 
 ### MCP server
 
-**Automated coverage:** `tests/unit/mcp.test.ts` (starts real daemon + MCP server, drives all 21 tools via `@modelcontextprotocol/sdk` client over stdio). `tests/unit/surface-drift.test.ts` verifies every tool is registered.
+**Automated coverage:** `tests/unit/mcp.test.ts` (starts real daemon + MCP server, drives all 22 tools via `@modelcontextprotocol/sdk` client over stdio). `tests/unit/surface-drift.test.ts` verifies every tool is registered.
 
 **Launch command:**
 
@@ -234,7 +234,7 @@ npx @modelcontextprotocol/inspector node dist/mcp/index.js
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"crontick_info","arguments":{}}}
 ```
 
-Expected: `tools/list` returns all 21 `crontick_*` tools; `crontick_info` returns a JSON text content block.
+Expected: `tools/list` returns all 22 `crontick_*` tools; `crontick_info` returns a JSON text content block.
 
 **Key tools to smoke-test:** `crontick_job_create`, `crontick_job_list`, `crontick_info`, `crontick_job_schedule`, `crontick_doctor`.
 

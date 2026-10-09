@@ -718,6 +718,42 @@ daemon.command('reload').description('Reload jobs from disk').action(async () =>
   try { print(await client().daemonReload()); } catch (err) { handleError(err); }
 });
 
+// ── autostart ────────────────────────────────────────────────────────────────
+// Opt-in login registration with the OS user service manager. `daemon start`
+// never registers anything; only `autostart enable` does. No daemon needed.
+
+const autostart = groupHelp(program.command('autostart').description('Start the daemon automatically at login (opt-in)'));
+autostart.command('enable').description('Register the daemon to start at login (idempotent)').action(async () => {
+  try {
+    const r = await client(false).autostartEnable();
+    stdout(`Autostart enabled (${r.mechanism})`);
+    stdout(`definition  ${r.definitionPath}`);
+    for (const hint of r.hints) stdout(`Note: ${hint}`);
+  } catch (err) { handleError(err); }
+});
+autostart.command('disable').description('Remove the login registration (idempotent)').action(async () => {
+  try {
+    const r = await client(false).autostartDisable();
+    stdout(r.removed ? 'Autostart disabled' : 'Autostart was not enabled; nothing to remove');
+  } catch (err) { handleError(err); }
+});
+autostart.command('status').description('Show whether the daemon is registered to start at login').action(async () => {
+  try {
+    const s = await client(false).autostartStatus();
+    stdout(`autostart  ${!s.supported ? 'unsupported' : s.enabled ? 'enabled' : 'disabled'}`);
+    if (s.mechanism) stdout(`mechanism  ${s.mechanism}`);
+    if (s.definitionPath) stdout(`definition ${s.definitionPath}`);
+    if (s.command) stdout(`command    ${s.command}`);
+    if (s.active !== undefined) stdout(`active     ${s.active ? 'yes' : 'no'}`);
+    if (s.reason) stdout(`reason     ${s.reason}`);
+    if (s.stale) {
+      stdout('stale      yes');
+      for (const reason of s.staleReasons) stdout(`  - ${reason}`);
+    }
+    for (const hint of s.hints) stdout(`Note: ${hint}`);
+  } catch (err) { handleError(err); }
+});
+
 // ── dashboard ────────────────────────────────────────────────────────────────
 // The dashboard has no dedicated command group: it is always served by the
 // daemon on its loopback port (routes '/', '/dashboard', '/dashboard/*'). Run

@@ -209,6 +209,7 @@ crontick also ships an MCP server that mirrors these commands one-to-one (tool p
 | `crontick_export` / `crontick_import` | `share export` / `share import` |
 | `crontick_doctor` | `doctor` |
 | `crontick_info` | `info` |
+| `crontick_autostart_status` | `autostart status` (read-only; `autostart enable`/`disable` are CLI-only) |
 | `crontick_daemon_stop` | `daemon stop` |
 | `crontick_daemon_reload` | `daemon reload` |
 

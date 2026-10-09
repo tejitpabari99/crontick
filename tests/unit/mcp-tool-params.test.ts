@@ -29,6 +29,7 @@ const EXPECTED_TOOL_PARAMS = {
   crontick_import: ['schema', 'jobs', 'exportedAt', 'crontickVersion', 'trustFolder'],
   crontick_doctor: [],
   crontick_info: [],
+  crontick_autostart_status: [],
 } as const;
 
 type ToolCallJson = { error?: string; [key: string]: unknown };
@@ -140,7 +141,7 @@ describe('MCP parameter naming', () => {
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
 
     expect(tools.map((tool) => tool.name).sort()).toEqual([...MCP_TOOLS].sort());
-    expect(tools).toHaveLength(21);
+    expect(tools).toHaveLength(22);
 
     for (const [name, expectedParams] of Object.entries(EXPECTED_TOOL_PARAMS)) {
       const tool = byName.get(name);
