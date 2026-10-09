@@ -66,7 +66,9 @@ Tools that expose run rows or log text apply the shared redaction contract befor
 
 ## Tool Inventory
 
-The MCP server exposes 21 `crontick_*` tools, matching `SURFACE_CAPABILITIES`.
+The MCP server exposes 22 `crontick_*` tools, matching `SURFACE_CAPABILITIES` except for the deliberate exemption below.
+
+**Autostart exception:** only `crontick_autostart_status` (read-only) is exposed. `autostart enable` and `autostart disable` are intentionally not MCP tools: an agent must not be able to create login persistence. They remain available on the CLI and the library (see [ADR 0001](../decisions/0001-architecture-and-runtime-model.md), "OS autostart").
 
 Removed tools are not present: the `crontick_config_*` get/set/unset/init/validate/engine tools, `crontick_schedule_validate`, `crontick_schedule_preview`, `crontick_dashboard_data`, `crontick_run_logs_tail` and `crontick_run_output` (folded into `crontick_run_get`), and the `crontick_daemon_start`/`crontick_daemon_status`/`crontick_daemon_restart` plus `crontick_dashboard_start`/`crontick_dashboard_status`/`crontick_dashboard_stop` tools. The dashboard is always served by the daemon; call `crontick_info`, read `configPath`, and open its `dashboardUrl`. Use `crontick_job_schedule` to preview an existing job's upcoming fire times.
 
@@ -375,6 +377,18 @@ Return crontick environment info.
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** `{ version, node, platform, configPath, paths, daemon, dashboardUrl }`, where `configPath` repeats `paths.configFile` for convenience, `paths` includes `dataDir`, `jobsDir`, `runsDb`, `logsDir`, `configFile`, `portFile`, and `pidFile`, `daemon` reports `{ running, pid?, port? }`, and `dashboardUrl` is the daemon-served dashboard URL when the daemon is running (otherwise `null`).
+
+---
+
+### crontick_autostart_status
+
+Report whether crontick is registered to start at login (read-only). Cannot enable or disable autostart.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `verbose` | `boolean` | no | `false` | Include diagnostics |
+
+**Result:** `AutostartStatus`: `{ supported, enabled, mechanism?, definitionPath?, command?, active?, stale, staleReasons, reason?, hints }`. Works with the daemon down and never starts it. On an unsupported platform it returns `supported: false` with a `reason` rather than an error. Lifecycle caveat: without systemd linger, jobs pause while the user is fully logged out.
 
 ---
 

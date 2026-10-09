@@ -297,6 +297,46 @@ See [troubleshooting.md](../troubleshooting.md#trust_required-when-creating-a-cl
 | **Message shape** | `Dashboard asset path is outside the dashboard directory...` |
 | **Details** | `{ requestedPath, action }` |
 
+### AUTOSTART_UNSUPPORTED
+
+| | |
+|---|---|
+| **When** | `autostartEnable()` / `autostartDisable()` on a platform with no autostart backend (only Linux systemd `--user` today). `autostartStatus()` never throws; it returns `supported: false` with a reason |
+| **Message shape** | Names the platform and what to do instead |
+| **Details** | — |
+
+### AUTOSTART_UNAVAILABLE
+
+| | |
+|---|---|
+| **When** | The backend exists but the service manager is not usable (no `systemctl`, no user bus: WSL1, containers). Nothing is written |
+| **Message shape** | `Autostart is unavailable: <reason>` |
+| **Details** | `{ mechanism }` |
+
+### AUTOSTART_SCRIPT_MISSING
+
+| | |
+|---|---|
+| **When** | `autostartEnable()` and the daemon script (`dist/daemon/index.js`) does not exist (unbuilt or dev checkout) |
+| **Message shape** | `Refusing to enable autostart: daemon script not found at <path>. ...` |
+| **Details** | `{ daemonScript }` |
+
+### AUTOSTART_EPHEMERAL_PATH
+
+| | |
+|---|---|
+| **When** | `autostartEnable()` and the daemon script lives in a temporary location (e.g. an `_npx` cache) |
+| **Message shape** | `Refusing to enable autostart: the daemon script is in a temporary location (<path>). ...` |
+| **Details** | `{ daemonScript }` |
+
+### AUTOSTART_FAILED
+
+| | |
+|---|---|
+| **When** | The backend threw while enabling or disabling (e.g. a `systemctl` call failed) |
+| **Message shape** | `Failed to enable autostart: <cause>` / `Failed to disable autostart: <cause>` |
+| **Details** | — |
+
 ### INTERNAL_ERROR
 
 | | |

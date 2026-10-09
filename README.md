@@ -227,6 +227,7 @@ Full API in [docs/reference/library-api.md](docs/reference/library-api.md); runn
 | **info** | `info` (version, paths, daemon status, dashboard URL) |
 | **doctor** | `doctor` (system health check) |
 | **daemon** | `daemon start` · `daemon stop` · `daemon restart` · `daemon status` · `daemon reload` (the daemon also starts on demand) |
+| **autostart** | `autostart enable` · `autostart disable` · `autostart status` (opt-in start at login; Linux systemd `--user`; disable before uninstalling) |
 | **mcp** | `mcp` (start the MCP server on stdio) |
 
 Full CLI reference: [docs/reference/cli.md](docs/reference/cli.md).

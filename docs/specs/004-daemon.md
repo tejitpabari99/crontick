@@ -2,7 +2,7 @@
 
 - Status: Active
 - Owner: crontick maintainers
-- Last reviewed: 2026-09-28
+- Last reviewed: 2026-10-09
 
 Audience: contributors changing the daemon process, its HTTP API, or its lifecycle.
 Non-duplication: this spec is the normative contract. For the demand-start/shutdown narrative
@@ -59,7 +59,8 @@ on time even when no interactive session is open, without requiring OS service r
 - **R-004-19**: The health probe MUST validate `product === "crontick"`, that `pid`/`port` are positive integers, and that `port` matches the expected port.
 - **R-004-20**: The daemon MUST log to `<dataDir>/logs/daemon-YYYY-MM-DD.log` (JSON lines).
 - **R-004-21**: `POST /api/daemon/reload` MUST re-read config, unschedule all jobs, reload from disk, apply any changed retention caps, and reschedule enabled jobs. A config read failure MUST abort the reload with the prior schedule intact.
-- **R-004-35**: The CLI MUST offer an explicit `crontick daemon start [--foreground]` (plus `daemon stop|restart|status|reload`). It is a manual, one-off start of the same demand-started daemon: it MUST NOT register the daemon with the OS to run at login or boot (that removed capability stays removed; see `tests/unit/autostart-removal.test.ts`). `daemon start`, `status`, and `restart` are CLI conveniences over library-only client methods (`daemonStart`, `daemonStatus`, `daemonRestart`) and are intentionally not MCP tools, because MCP clients already demand-start the daemon.
+- **R-004-35**: The CLI MUST offer an explicit `crontick daemon start [--foreground] [--home <dir>]` (plus `daemon stop|restart|status|reload`). It is a manual, one-off start of the same demand-started daemon: it MUST NOT register the daemon with the OS to run at login or boot. Only the explicit, opt-in `crontick autostart enable` registers the daemon (ADR 0034; `autostart disable|status` complete the group, and `autostart` has no daemon API route). `--home <dir>` sets `CRONTICK_HOME` for the daemon `daemon start` spawns. `daemon start`, `status`, and `restart` are CLI conveniences over library-only client methods (`daemonStart`, `daemonStatus`, `daemonRestart`) and are intentionally not MCP tools, because MCP clients already demand-start the daemon.
+- **R-004-35a**: When `CRONTICK_SUPERVISED=1` is set in the daemon's environment (autostart registrations set it), a daemon start that finds another daemon already running MUST log and exit `0`; without it that start MUST exit non-zero. A SIGTERM-initiated shutdown MUST exit `0`. Regression tests: `tests/unit/autostart-supervised.test.ts`.
 - **R-004-22**: `stopDaemon()` MUST prefer the graceful `POST /api/daemon/stop` route, escalating to `SIGTERM` then `SIGKILL` if the route stalls or is unreachable. It MUST report which path was used via `mode: 'already-stopped' | 'graceful' | 'hard-kill'`, and include `activeRuns` whenever available.
 - **R-004-23**: `startDaemon=false` (option or env `CRONTICK_MCP_START_DAEMON=0`) MUST prevent demand-start from spawning; it MUST throw `DAEMON_NOT_RUNNING` instead.
 - **R-004-24**: Stale lock files (older than `lockTimeoutMs` or held by a dead process) MUST be cleaned up by waiting clients.
@@ -121,7 +122,7 @@ a fallback only) are described in
 
 ## Out of scope
 
-- OS service registration (autostart was removed).
+- Automatic OS service registration: `daemon start` never registers; only the explicit opt-in `crontick autostart enable` does (system-wide/root units, linger management and start-before-login are out of scope).
 - Remote/network access (loopback only by design).
 - TLS/authentication (trust boundary is localhost).
 

@@ -49,11 +49,14 @@ crontick share import <file> [--trust-folder]
 
 crontick info
 crontick doctor
-crontick daemon start [--foreground]
+crontick daemon start [--foreground] [--home <dir>]
 crontick daemon stop
 crontick daemon restart
 crontick daemon status
 crontick daemon reload
+crontick autostart enable
+crontick autostart disable
+crontick autostart status
 crontick mcp [--no-start-daemon] [--daemon-url <url>]
 ```
 
@@ -365,10 +368,34 @@ Exits with code `1` if any check fails. Checks include Node.js version, SQLite a
 Start the daemon explicitly. The daemon also starts automatically on first use, so this is optional.
 
 ```bash
-crontick daemon start [--foreground]
+crontick daemon start [--foreground] [--home <dir>]
 ```
 
-By default the daemon is started in the background and the command prints its PID and URL (plus `Note: started on fallback port N; default 47615 is in use` when port 47615 was taken) (or reports it is already running). `--foreground` runs the daemon in the current terminal until it exits. This is an explicit, one-off start; it does not register the daemon to start at login or boot.
+By default the daemon is started in the background and the command prints its PID and URL (plus `Note: started on fallback port N; default 47615 is in use` when port 47615 was taken) (or reports it is already running). `--foreground` runs the daemon in the current terminal until it exits. This is an explicit, one-off start; it never registers the daemon to start at login or boot (use [`crontick autostart enable`](#crontick-autostart-enable) for that). `--home <dir>` sets `CRONTICK_HOME` (the data directory) for the daemon this command starts. When the environment variable `CRONTICK_SUPERVISED=1` is set (autostart registrations set it), starting a daemon while one is already running exits `0` instead of `1`, so a service manager does not crash-loop when you demand-started first.
+
+### crontick autostart enable
+
+Opt in to starting the daemon at login by registering it with the OS user-level service manager. Idempotent: it rewrites the definition, reloads the manager and ensures it is enabled. Needs no daemon, no admin rights and no new dependencies.
+
+```bash
+crontick autostart enable
+```
+
+On Linux this writes `${XDG_CONFIG_HOME:-~/.config}/systemd/user/crontick.service` and runs `systemctl --user enable --now crontick.service`. The unit is a plain file you can read; it launches `node <dist>/daemon/index.js` with `Restart=on-failure`, `KillMode=process` (running jobs survive a daemon stop) and an environment of `CRONTICK_SUPERVISED=1`, `CRONTICK_HOME` (only if set when you ran `enable`) and a `PATH` snapshot taken at enable time. Re-run `enable` after you install an engine, change Node versions, or update crontick.
+
+Refuses (see [errors](errors.md)) when systemd `--user` is unavailable, the daemon script does not exist (unbuilt checkout), or the install path is ephemeral (`_npx`). Only Linux (systemd `--user`) is supported today; other platforms fail with `AUTOSTART_UNSUPPORTED`.
+
+**Lifecycle caveat:** without systemd "linger", the user manager stops when you fully log out and stops the daemon, so jobs pause while you are logged out (a demand-started daemon survives logout; this differs). `status` prints the `loginctl enable-linger` hint; crontick does not change linger itself.
+
+**Before uninstalling the package, run `crontick autostart disable`.** Uninstalling leaves the unit behind, and it would keep trying (bounded by systemd start limits) to launch a script that no longer exists.
+
+### crontick autostart disable
+
+Remove the registration (`systemctl --user disable --now`, delete the unit file, reload). Idempotent: when nothing is registered it prints `Autostart was not enabled; nothing to remove` and exits `0`.
+
+### crontick autostart status
+
+Show `autostart` (`enabled`, `disabled` or `unsupported`), `mechanism`, `definition` path, registered `command`, whether the service is `active`, and a `stale` flag with reasons when the registered node path, daemon script path or `CRONTICK_HOME` differs from what `enable` would write now (fix: re-run `crontick autostart enable`). Never throws on an unsupported platform (prints a `reason`) and never starts the daemon.
 
 ### crontick daemon status
 

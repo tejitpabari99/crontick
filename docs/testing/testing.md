@@ -114,7 +114,7 @@ tests/
     security.test.ts         API auth/binding/traversal hardening
     perf.test.ts             Advisory perf baselines (not gated)
     smoke.test.ts            Package export sanity
-    autostart-removal.test.ts  Guard: removed autostart-registration strings do not reappear
+    autostart-removal.test.ts  Guard: banned autostart mechanisms (registry-js, reg.exe, Run key, .vbs shim) do not reappear
                                 in shipped product files (src/plugin/scripts/README/package.json)
     claude-adapter / raw-adapter / engine-registry .test.ts   Engine adapter framework
     run-usage-*.test.ts, prompt-session.test.ts, prompt-resolution.test.ts   Run usage fields, session handling

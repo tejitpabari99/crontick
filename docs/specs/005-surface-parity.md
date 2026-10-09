@@ -10,7 +10,7 @@ is the normative contract; for the design rationale see
 
 ## Summary
 
-Every user-facing capability in crontick MUST be available on all three parity surfaces: CLI, MCP server, and library API (`CrontickClient`). A canonical table (`SURFACE_CAPABILITIES` in `src/surface.ts`) encodes this mapping and an automated drift test enforces it. The current table contains 20 capabilities.
+Every user-facing capability in crontick MUST be available on all three parity surfaces: CLI, MCP server, and library API (`CrontickClient`). A canonical table (`SURFACE_CAPABILITIES` in `src/surface.ts`) encodes this mapping and an automated drift test enforces it. The current table contains 24 capabilities.
 
 When a change extends an existing capability rather than adding a new one (for example the `create-job` capability's `force` option), the same table MAY annotate the parity-coupled option names.
 
@@ -34,7 +34,7 @@ The command-tree reorganization intentionally narrowed some exposure without rem
 ### Functional requirements
 
 - **R-005-1**: `SURFACE_CAPABILITIES` MUST be defined in `src/surface.ts` as a readonly array of `SurfaceCapability` objects.
-- **R-005-2**: Each `SurfaceCapability` MUST have: `capability` (kebab-case name), `clientMethod` (`CrontickClient` method name), `cliCommand` (array of CLI command segments), and `mcpTool` (MCP tool name). It MAY additionally document parity-coupled option names with `optionNames`.
+- **R-005-2**: Each `SurfaceCapability` MUST have: `capability` (kebab-case name), `clientMethod` (`CrontickClient` method name), `cliCommand` (array of CLI command segments), and `mcpTool` (MCP tool name) unless it carries an `mcpExemption` (see R-005-13). It MAY additionally document parity-coupled option names with `optionNames`.
 - **R-005-3**: For every entry in `SURFACE_CAPABILITIES`, `CrontickClient.prototype` MUST have a matching method with name equal to `clientMethod`.
 - **R-005-4**: For every entry in `SURFACE_CAPABILITIES`, the built CLI MUST register a command matching `cliCommand` (verified via `--help` exit code 0).
 - **R-005-5**: For every entry in `SURFACE_CAPABILITIES`, the MCP server MUST register a tool with name equal to `mcpTool`.
@@ -44,6 +44,7 @@ The command-tree reorganization intentionally narrowed some exposure without rem
 - **R-005-9**: The non-parity exclusion set MUST be explicitly declared in the drift test.
 - **R-005-10**: When adding a new parity capability, the developer MUST add it to `SURFACE_CAPABILITIES` and implement it on all three surfaces in the same change. When extending an existing capability with a user-visible option, the developer MUST update the CLI flag(s), library options, MCP schema/input, and any documented `optionNames` on that existing capability row in the same change.
 - **R-005-10a**: Parameter-name normalizations MUST keep shared behavior explicit in docs and tests. Reference docs, schemas, and regression tests MUST use the current parameter name consistently on every surface.
+- **R-005-13**: A capability MAY omit `mcpTool` only by declaring a non-empty `mcpExemption` string that states why it is deliberately not exposed over MCP. The drift test MUST accept exactly that exception and still fail on any other missing surface. Today the only exemptions are `autostart-enable` and `autostart-disable` (an agent must not create login persistence); `autostart-status` is exposed as `crontick_autostart_status`. The client, CLI and `SURFACE_CAPABILITIES` requirements (R-005-3, R-005-4, R-005-6) still apply to them.
 - **R-005-10b**: Capabilities MAY share a CLI command path when the CLI expresses distinct operations as options on one command. `enable-job` and `disable-job` are the canonical example: both use `crontick jobs update` with `--enable` or `--disable`.
 
 ### Non-functional requirements
@@ -76,6 +77,9 @@ The command-tree reorganization intentionally narrowed some exposure without rem
 | `daemon-reload` | `daemonReload` | `crontick daemon reload` | `crontick_daemon_reload` |
 | `doctor` | `doctor` | `crontick doctor` | `crontick_doctor` |
 | `info` | `info` | `crontick info` | `crontick_info` |
+| `autostart-enable` | `autostartEnable` | `crontick autostart enable` | none (`mcpExemption`) |
+| `autostart-disable` | `autostartDisable` | `crontick autostart disable` | none (`mcpExemption`) |
+| `autostart-status` | `autostartStatus` | `crontick autostart status` | `crontick_autostart_status` |
 
 Removed parity rows (including `logs` and `run-output`, folded into `get-run`; `getOutput` stays a library-only method) from the previous 37-capability surface include raw schedule validate/preview, dashboard data, dashboard start/status/stop, config get/set/unset/init/validate/engine management, `delete-run`, `config-path`, and the `daemon-start`/`daemon-status`/`daemon-restart` tools (the CLI keeps `crontick daemon start|status|restart` as CLI-only conveniences over the library-only client methods). The dashboard is always served by the daemon; `crontick info` (and `crontick_info`) surface `configPath`, daemon state, and `dashboardUrl`.
 

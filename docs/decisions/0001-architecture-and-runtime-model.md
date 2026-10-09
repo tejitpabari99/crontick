@@ -47,20 +47,23 @@ user-supplied id positional, and most read/admin operations (`doctor`, daemon
 stop/reload, storage paths, dashboard URL) are folded under `crontick info` rather than
 kept as separate top-level commands.
 
-### Demand-started daemon, no reboot autostart
+### Demand-started daemon, opt-in autostart
 
 The daemon is not an OS service. The first CLI command, MCP call, or library method that
 needs it starts it transparently (`ensureDaemon()`), guarded by a PID file and an
 exclusive startup lock, with health polling before control returns to the caller. There
-is no systemd unit, launchd agent, Windows service, or login-item/registry autostart
-mechanism -- an earlier, native-dependency-based autostart feature was removed and is
-guarded against reintroduction by `tests/unit/autostart-removal.test.ts`
-(see `AGENTS.md` rule 8). That guard test intentionally scans only product and
+is no default systemd unit, launchd agent, Windows service, or login-item/registry
+autostart: nothing registers with the OS unless the user runs the explicit, opt-in
+`crontick autostart enable` (see "OS autostart (ADR 0034)" below). An earlier,
+native-dependency-based autostart feature was removed; the replacement is guarded by
+`tests/unit/autostart-removal.test.ts` (see `AGENTS.md` rule 8), which still bans
+`registry-js`, `reg.exe`, Run-key and `.vbs` shim mechanisms. That guard test intentionally scans only product and
 packaging paths (`src/`, `plugin/`, `scripts/`, `README.md`, `package.json`,
 `package-lock.json`, `tsup.config.ts`) and not `docs/`/`CHANGELOG.md`, so that this ADR
 and the changelog can keep discussing the removed feature by name without tripping CI --
 every real reappearance vector still lives in a scanned path. The trade-off is explicit:
-if nothing invokes crontick, scheduled jobs simply do not fire until something does.
+unless the user opts in to autostart, if nothing invokes crontick, scheduled jobs simply do
+not fire until something does.
 
 ### Loopback HTTP as the only IPC transport
 
@@ -161,6 +164,27 @@ daemon start, `avgDurationMs`) was deleted. Trade-off: output of a run that is s
 not visible until it finishes, and the output of a run adopted after a daemon restart is not
 captured.
 
+### OS autostart (ADR 0034, 2026-10-09)
+
+**Status:** accepted. Rule 8 reintroduction signed off by the owner; this section is the recorded rationale. SP08 (macOS) and SP09 (Windows) add their own subsections here under the marker below.
+
+**Context.** Demand-start only fires when something calls crontick, so after a reboot schedules do nothing until then. The earlier autostart was removed (PR #16) because of a native `registry-js` dependency, a Windows Run key plus a hidden VBS shim (EDR-flagged persistence), and surprise background processes.
+
+**Decision.** Reintroduce autostart as an explicit opt-in, never a default and never automatic on install or first run: `crontick autostart enable|disable|status` (CLI and library). It registers the daemon with the OS *user-level* service manager so it starts at login. The design:
+
+- *Platform-neutral core, pluggable backends.* `AutostartService` builds the spec (Node path, daemon script, `CRONTICK_SUPERVISED=1`, optional `CRONTICK_HOME`, `PATH` snapshot), checks availability, maps failures to `AUTOSTART_*` errors and computes drift (`stale`) once. Each platform implements the small `AutostartBackend` interface (`available`, `install`, `uninstall`, `inspect`, optional `expectedCommand`); `createAutostartBackend` switches on platform. No new dependencies, no admin rights, no system-wide units.
+- *No daemon API route.* Registration is a local OS side effect that must work with the daemon down; the client calls the core directly and shims stay thin.
+- *MCP exposes status only.* An agent must not create login persistence, so enable/disable are not MCP tools. This is a deliberate surface-parity exception encoded as `mcpExemption` in `SURFACE_CAPABILITIES` and in `tests/unit/surface-drift.test.ts`; the CLI and library keep all three.
+- *Coexists with demand-start.* The registration sets `CRONTICK_SUPERVISED=1`; a supervised daemon that finds another already running exits 0 (unsupervised still exits non-zero), so `Restart=on-failure`-style supervisors do not crash-loop. Alternatives rejected: a dedicated exit code with `SuccessExitStatus` (launchd cannot express it), `Restart=always`, stopping the running daemon before enable.
+- *Transparent.* The Linux backend writes a readable `crontick.service` unit; `status` detects stale registrations (moved Node or package, changed `CRONTICK_HOME`); fix is re-running `enable`.
+- *Guard reversal.* `tests/unit/autostart-removal.test.ts` keeps the `registry-js` dependency check and now also bans `hkcu`, `currentversion\run`, `wscript` and `.vbs` in shipped paths, but no longer bans the word "autostart".
+
+**Linux backend (SP07).** `systemd --user` unit at `${XDG_CONFIG_HOME:-~/.config}/systemd/user/crontick.service` with `Restart=on-failure`, `RestartSec=5` and `KillMode=process` (detached runs are re-adopted after a daemon restart; the default cgroup kill would terminate them). `daemon start --home <dir>` was added so platforms that cannot carry environment variables in the registration (Windows task actions) can still select a data directory.
+
+**Consequences / trade-offs.** Harder: without `loginctl enable-linger`, the user manager stops at last logout and jobs pause while fully logged out (a demand-started daemon survives logout); the `PATH` snapshot goes stale when an engine is installed later; uninstalling the package leaves the unit unless `autostart disable` is run first. Deferred: linger management, multiple data directories per user, `systemd-analyze verify` in CI.
+
+<!-- ADR 0034 platform sections: SP08 adds "macOS (launchd)" and SP09 adds "Windows (Task Scheduler)" immediately below this line, each covering mechanism, registered command, caveats and rejected alternatives. -->
+
 ## Consequences
 
 **Easier:** one place to add a capability (client method, then a drift-test-checked
@@ -170,7 +194,7 @@ scheduled fire actually happened; a daemon restart has one cross-platform answer
 in-flight work; redaction behavior is consistent everywhere and testable as a corpus.
 
 **Harder:** surface-specific affordances need an explicit allowlist entry
-(`NON_PARITY_CLIENT_METHODS`); if nothing triggers the daemon, jobs silently do not fire
+(`NON_PARITY_CLIENT_METHODS`); unless autostart is enabled, if nothing triggers the daemon, jobs silently do not fire
 until something does; a `runs.db`/job file from before 1.0.0 is not supported input;
 diagnosing "why is my run gone" requires knowing about the retention cap; a truly bare,
 context-free AWS secret may not be redacted.
@@ -178,15 +202,15 @@ context-free AWS secret may not be redacted.
 **Impossible (by design):** a surface-only feature without core support; jobs firing
 while the daemon is fully stopped and nothing has triggered it since; automatic
 replay/catch-up of a missed fire; opening a pre-1.0.0 database and having it work;
-reintroducing OS-level autostart or removed legacy/migration code without the explicit
-sign-off `AGENTS.md` rule 8 requires.
+reintroducing the removed mechanisms (native dependencies, Run key / VBS shim) or removed
+legacy/migration code without the explicit sign-off `AGENTS.md` rule 8 requires;
+creating login persistence from an MCP tool.
 
 ## Revisit when
 
 - The number of capabilities exceeds ~80-100 and the monolithic client class becomes
   unwieldy, or a surface needs execution semantics that cannot be request/response.
-- Users report frequent missed ticks from the daemon not running, at which point an
-  opt-in `install-service` command (not a changed default) could be considered.
+- Users want autostart on by default or while logged out (linger), or system-wide units; autostart is deliberately opt-in and user-level today (ADR 0034).
 - crontick ships a schema- or identity-breaking change after it has real 1.x installs --
   at that point, introduce a minimal schema-version marker and a real migration
   mechanism scoped forward from that release, not a resurrection of the pre-1.0 approach.
