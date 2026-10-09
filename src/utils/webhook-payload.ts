@@ -51,9 +51,11 @@ export interface WebhookPayload {
   receivedAt: string;
   /**
    * Present (true) when the relay event's HMAC signature was verified. The signature covers only
-   * `body`, so `headers` and `query` are omitted from such payloads (they are unauthenticated).
+   * `body` (see `verifiedScope`); `headers` and `query` are still delivered but are NOT authenticated.
    */
   verified?: true;
+  /** Set with `verified`: what the signature covers. Always 'body'; never trust headers/query for authorization. */
+  verifiedScope?: 'body';
 }
 
 export interface WebhookTriggerMeta {
@@ -76,10 +78,9 @@ export function buildWebhookPayload(input: {
   body: unknown;
   query?: unknown;
   receivedAt: string;
-  /** HMAC-verified relay event: deliver only the authenticated `body` (no headers, no query). */
+  /** HMAC-verified relay event: marks `verified: true, verifiedScope: 'body'` (headers/query stay unauthenticated). */
   verified?: boolean;
 }): WebhookPayload {
-  if (input.verified) return { headers: {}, body: input.body, receivedAt: input.receivedAt, verified: true };
   const headers: Record<string, string> = {};
   const allowed = new Set<string>(WEBHOOK_HEADER_ALLOWLIST);
   for (const [name, value] of Object.entries(input.headers ?? {})) {
@@ -89,6 +90,10 @@ export function buildWebhookPayload(input: {
   }
   const payload: WebhookPayload = { headers, body: input.body, receivedAt: input.receivedAt };
   if (input.query !== undefined) payload.query = input.query;
+  if (input.verified) {
+    payload.verified = true;
+    payload.verifiedScope = 'body';
+  }
   return payload;
 }
 

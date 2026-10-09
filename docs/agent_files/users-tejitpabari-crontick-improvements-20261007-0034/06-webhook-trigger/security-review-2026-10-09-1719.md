@@ -38,3 +38,4 @@ BLOCK -> do not land. Back to `dev-code` for an immediate fix; re-run `dev-secur
 ## Resolution
 - Alert 1 (HIGH): fixed - Host/Origin guard now covers every `/api` request including GET and `/api/export`; `/health` unguarded. Tests: `tests/unit/request-guard.test.ts` (GET non-loopback Host/Origin -> 403 REQUEST_REJECTED; loopback -> 200). Docs/changeset/spec 004 updated (BREAKING HTTP API note widened).
 - Alert 2 (MEDIUM): fixed - with a secret, dedupe key is `sig:<signature>`; signed jobs get only the HMAC-covered `body` (no headers/query), documented. Tests: `relay-guard.test.ts` (replay with fresh id deduped), `relay.test.ts` (bodyOnly payload).
+- Follow-up (Alert 2): signed jobs get headers/query again (GitHub event type lives only in headers); payload marked `verified: true, verifiedScope: 'body'`; replay still blocked by signature-keyed dedupe; documented as unauthenticated.

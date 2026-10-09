@@ -236,7 +236,7 @@ export class RelayManager {
     const headers = flattenRelayHeaders(obj);
     const receivedAt = new Date(this.now()).toISOString();
     const contexts = new Map<boolean, ReturnType<typeof buildWebhookContext>>();
-    // Signed jobs get only the HMAC-covered body (headers/query are unauthenticated); others get everything.
+    // Signed jobs are marked verified (scope: body only); headers/query are still passed but unauthenticated.
     const contextFor = (bodyOnly: boolean): ReturnType<typeof buildWebhookContext> => {
       let c = contexts.get(bodyOnly);
       if (!c) {

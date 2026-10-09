@@ -63,16 +63,20 @@ describe('RelayManager', () => {
     mgr.stop();
   });
 
-  it('bodyOnly (HMAC-verified) jobs get only the signed body: no headers, no query', async () => {
+  it('signed (HMAC-verified) jobs keep headers/query but are marked verifiedScope body', async () => {
     const { mgr, streams, dispatched } = setup({ bodyOnly: true });
     mgr.subscribe('j1', A);
     await flush();
     streams[0]!.push(msg({ 'x-github-event': 'push', 'x-github-delivery': 'd1', body: { a: 1 }, query: { evil: 'x' } }));
     await flush();
     const ev = JSON.parse(dispatched[0]!.req.env.CRONTICK_EVENT!);
-    expect(ev).toMatchObject({ body: { a: 1 }, headers: {}, verified: true });
-    expect(ev.query).toBeUndefined();
-    expect(dispatched[0]!.req.env.CRONTICK_EVENT_ID).toBeUndefined();
+    expect(ev).toMatchObject({
+      body: { a: 1 },
+      headers: { 'x-github-event': 'push', 'x-github-delivery': 'd1' },
+      query: { evil: 'x' },
+      verified: true,
+      verifiedScope: 'body',
+    });
     mgr.stop();
   });
 

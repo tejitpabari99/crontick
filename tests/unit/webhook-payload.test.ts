@@ -11,6 +11,11 @@ import { buildRunEnv } from '../../src/daemon/run-context.js';
 const T = '2026-10-09T00:00:00.000Z';
 
 describe('buildWebhookPayload', () => {
+  it('verified payloads keep headers/query and set verifiedScope body', () => {
+    const p = buildWebhookPayload({ headers: { 'x-github-event': 'push' }, body: { a: 1 }, query: { q: 1 }, receivedAt: T, verified: true });
+    expect(p).toMatchObject({ headers: { 'x-github-event': 'push' }, query: { q: 1 }, verified: true, verifiedScope: 'body' });
+    expect(buildWebhookPayload({ body: 1, receivedAt: T }).verifiedScope).toBeUndefined();
+  });
   it('keeps only allowlisted headers (case-insensitive), drops signature and proxy noise', () => {
     const p = buildWebhookPayload({
       headers: {
