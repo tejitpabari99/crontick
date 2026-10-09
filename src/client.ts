@@ -369,7 +369,10 @@ export class CrontickClient {
     const { trustFolder, ...normalizeInputOptions } = options;
     const existing = await this.getJob(id);
     const normalized = prepareUpdate(existing, patch, { ...this.normalizeOptions(normalizeInputOptions), trustFolder, resolveJob: noLocalJobLookup });
-    return this.request<Job>('PUT', `/api/jobs/${encodeURIComponent(id)}`, normalized);
+    // The daemon PUT shallow-merges the body onto the stored job, so an absent
+    // `description` would be kept; send an explicit null to remove it.
+    const body = patch.description === null ? { ...normalized, description: null } : normalized;
+    return this.request<Job>('PUT', `/api/jobs/${encodeURIComponent(id)}`, body);
   }
 
   /** `id` accepts either the job's GUID id or its alias. */

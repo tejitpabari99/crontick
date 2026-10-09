@@ -354,6 +354,27 @@ describe('MCP server — full contract', () => {
     expect(data.overlap).toBe('cancel-previous');
   });
 
+  it('crontick_job_update clears timeoutSec, sessionId and description with null', async () => {
+    const created = await callTool(client, 'crontick_job_create', {
+      alias: 'mcp-null-clear-job',
+      description: 'd',
+      schedule: { kind: 'interval', everySec: 120 },
+      action: { kind: 'prompt', prompt: 'x', args: [], reuseSession: false, timeoutSec: 30, sessionId: 'sess-1' },
+    });
+    expect(created.isError).toBe(false);
+    const updated = await callTool(client, 'crontick_job_update', {
+      id: 'mcp-null-clear-job',
+      description: null,
+      action: { kind: 'prompt', timeoutSec: null, sessionId: null },
+    });
+    expect(updated.isError).toBe(false);
+    const data = updated.json as { description?: string; action: Record<string, unknown> };
+    expect(data).not.toHaveProperty('description');
+    expect(data.action).not.toHaveProperty('timeoutSec');
+    expect(data.action).not.toHaveProperty('sessionId');
+    expect(data.action).toMatchObject({ prompt: 'x' });
+  });
+
   // ── Overlap / shell parity with the CLI (see tests/cli.test.ts) ──────────────
   // These mirror the CLI cases above to prove both surfaces resolve the same
   // patch through the shared normalizeJobPatch/mergeActionPatch core.

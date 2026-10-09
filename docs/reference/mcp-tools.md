@@ -135,16 +135,18 @@ Update an existing job by GUID or alias. The patch is merged with the existing d
 |-----------|------|----------|---------|-------------|
 | `id` | `string` | yes | — | Job GUID or alias |
 | `alias` | `string` | no | — | New human-friendly alias |
-| `description` | `string` | no | — | Job description |
+| `description` | `string \| null` | no | — | Job description; `null` removes it |
 | `enabled` | `boolean` | no | — | Enable/disable |
 | `schedule` | `Schedule` | no | — | New schedule |
-| `action` | `ActionInput` | no | — | New or patched prompt action |
+| `action` | `ActionInput` | no | — | New or patched prompt action; `action.timeoutSec` and `action.sessionId` also accept `null` to remove them |
 | `overlap` | `"skip"\|"queue"\|"cancel-previous"` | no | — | Overlap policy |
 | `retry` | `{ max?: number, backoffSec?: number }` | no | — | Retry config |
 | `trustFolder` | `boolean` | no | `false` | See `crontick_job_create`; checked only when `action.cwd` or the engine changes |
 | `verbose` | `boolean` | no | `false` | Include diagnostics |
 
 **Result:** Updated `Job` object.
+
+**Clearing fields:** `null` means "remove" for exactly three fields: `description`, `action.timeoutSec`, `action.sessionId`. Every other field (`cwd`, `engine`, `prompt`, `alias`, `schedule`, ...) rejects `null` with `VALIDATION_ERROR`. Omitting a field still leaves it unchanged.
 
 Changing `action.cwd` of a job that has a session (`sessionId`/`reuseSession`) fails with `CWD_CHANGE_BREAKS_SESSION` unless the patch also sets a new `sessionId` or `reuseSession: true` (fresh session). The merged job must still use `overlap: "skip"` when `action.reuseSession` is `true`; incompatible updates return `VALIDATION_ERROR`.
 

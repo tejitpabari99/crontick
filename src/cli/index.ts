@@ -291,11 +291,16 @@ function collectPatchOptions(engineArgs: string[], passthroughArgs: string[], cl
     overlap: stringOption(opts.overlap),
     retry: numberOption(opts.retry),
     desc: stringOption(opts.desc),
+    unset: Array.isArray(opts.unset) ? (opts.unset as string[]) : undefined,
     // Forward the raw flags; the --enable/--disable mutual-exclusion rule and
     // the resolution to `enabled` live in core (buildJobPatchFromUpdateOptions).
     enable: booleanOption(opts.enable),
     disable: booleanOption(opts.disable),
   };
+}
+
+function collectOption(value: string, previous: string[]): string[] {
+  return [...previous, value];
 }
 
 function parseInteger(value: string): number {
@@ -447,6 +452,7 @@ commonJobOptions(jobs.command('update <id|alias> [engineArgs...]').description('
   .allowUnknownOption()
   .option('--enable', 'Enable the job')
   .option('--disable', 'Disable the job')
+  .option('--unset <field>', 'Remove an optional field: timeout, session-id, desc (repeatable or comma-separated)', collectOption, [] as string[])
   .action(async (id: string, engineArgs: string[], opts, cmd: Command) => {
     const c = client();
     const notices: string[] = [];

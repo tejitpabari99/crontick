@@ -377,6 +377,28 @@ process.stdout.write(JSON.stringify({ alias: created.alias }));
     await expect(client.listJobs()).resolves.toEqual([original]);
   }, 15_000);
 
+  it('updateJob clears timeoutSec, sessionId and description with null', async () => {
+    makeHome();
+    const client = createClient({ daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 15_000 });
+    await client.createJob({
+      alias: 'client-null-clear-job',
+      description: 'd',
+      schedule: { kind: 'cron', cron: '0 0 * * *' },
+      action: { kind: 'prompt', prompt: 'p', args: [], reuseSession: false, timeoutSec: 30, sessionId: 'sess-1' },
+    });
+    const updated = await client.updateJob('client-null-clear-job', {
+      description: null,
+      action: { kind: 'prompt', timeoutSec: null, sessionId: null },
+    });
+    expect(updated).not.toHaveProperty('description');
+    expect(updated.action).not.toHaveProperty('timeoutSec');
+    expect(updated.action).not.toHaveProperty('sessionId');
+    const stored = await client.getJob('client-null-clear-job');
+    expect(stored).not.toHaveProperty('description');
+    expect(stored.action).not.toHaveProperty('timeoutSec');
+    expect(stored.action).not.toHaveProperty('sessionId');
+  }, 15_000);
+
   it('rejects the removed schedule.tz field on createJob and updateJob', async () => {
     makeHome();
     const client = createClient({ daemonScript: DAEMON_SCRIPT, startupTimeoutMs: 15_000 });

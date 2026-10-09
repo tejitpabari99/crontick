@@ -217,7 +217,10 @@ async function handleRequest(
       if (method === 'PUT' && sub === '') {
         if (!job) return sendJobNotFoundError(res, requestedId);
         const body = await readBody(req);
-        const parsed = JobSchema.safeParse({ ...job, ...body, id: job.id });
+        const merged: Record<string, unknown> = { ...job, ...body, id: job.id };
+        // `description: null` removes the stored description (null-clears, see JobPatchInputSchema).
+        if ((body as { description?: unknown }).description === null) delete merged['description'];
+        const parsed = JobSchema.safeParse(merged);
         if (!parsed.success) {
           return sendError(res, 400, 'VALIDATION_ERROR', 'Invalid job', parsed.error.format());
         }

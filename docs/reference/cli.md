@@ -129,6 +129,7 @@ crontick jobs update <id|alias> [engineArgs...]
 |------|------|---------|-------------|
 | `--enable` | boolean | — | Enable the job |
 | `--disable` | boolean | — | Disable the job |
+| `--unset <field>` | `timeout` \| `session-id` \| `desc` | — | Remove an optional field (repeatable and/or comma-separated, e.g. `--unset timeout,desc`). Maps to `null` in the patch. An unknown field, or `--unset X` together with the setter flag for X (`--timeout`, `--session-id`, `--desc`), is a usage error (`VALIDATION_ERROR`) |
 
 Omitted options leave the existing job unchanged. `--enable` and `--disable` are mutually exclusive. A job that failed 3 consecutive runs is auto-disabled (see [execution concepts](../concepts/execution.md#auto-disable-after-consecutive-failures)); `--enable` re-enables it and resets the failure count.
 Unknown long flags use the same argument passthrough as `jobs new`; include `--prompt` or `--prompt-file` when updating the runner or engine arguments.
@@ -137,6 +138,7 @@ Unknown long flags use the same argument passthrough as `jobs new`; include `--p
 crontick jobs update repo-summary --cron "0 9 * * 1-5"
 crontick jobs update repo-summary --dir ~/code/other-repo   # changes only the working directory
 crontick jobs update repo-summary --disable
+crontick jobs update repo-summary --unset timeout --unset desc   # remove the timeout and description
 ```
 
 ---

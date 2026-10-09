@@ -51,7 +51,7 @@ describe('jobs new / jobs update option parity', () => {
     const onlyNew = [...created].filter((flag) => !updated.has(flag)).sort();
     const onlyUpdate = [...updated].filter((flag) => !created.has(flag)).sort();
     expect(onlyNew).toEqual(['--force']);
-    expect(onlyUpdate).toEqual(['--disable', '--enable']);
+    expect(onlyUpdate).toEqual(['--disable', '--enable', '--unset']);
     // Guard against the parser silently matching nothing.
     expect(created.size).toBeGreaterThan(10);
     expect(created.has('-a, --alias')).toBe(true);
@@ -167,4 +167,38 @@ describe('stored schedule.tz', () => {
       store.close();
     }
   });
+});
+
+describe('jobs update --unset', () => {
+  it('clears timeout, session-id and desc; usage errors for unknown field and setter conflicts', () => {
+    const home = newHome();
+    const dir = mkdtempSync(join(tmpdir(), 'crontick-unset-dir-'));
+    homes.push(dir);
+    const made = cli(['jobs', 'new', '-a', 'unset-me', '-p', 'hi', '--every', '1h', '--dir', dir, '--timeout', '30', '--session-id', 'sess-abc', '--desc', 'hello'], home);
+    expect(made.status, made.stderr).toBe(0);
+    const before = cli(['jobs', 'get', 'unset-me'], home).stdout;
+    expect(before).toContain('"timeoutSec":30');
+    expect(before).toContain('"sessionId":"sess-abc"');
+    expect(before).toMatch(/description: hello/);
+
+    const t = cli(['jobs', 'update', 'unset-me', '--unset', 'timeout'], home);
+    expect(t.status, t.stderr).toBe(0);
+    expect(t.stdout).not.toContain('timeoutSec');
+    expect(t.stdout).toContain('"sessionId":"sess-abc"');
+
+    const rest = cli(['jobs', 'update', 'unset-me', '--unset', 'session-id', '--unset', 'desc'], home);
+    expect(rest.status, rest.stderr).toBe(0);
+    expect(rest.stdout).not.toContain('sessionId');
+    expect(rest.stdout).not.toMatch(/description:/);
+    const after = cli(['jobs', 'get', 'unset-me'], home).stdout;
+    expect(after).not.toContain('sessionId');
+    expect(after).not.toMatch(/description:/);
+
+    const bad = cli(['jobs', 'update', 'unset-me', '--unset', 'cwd'], home);
+    expect(bad.status).not.toBe(0);
+    expect(bad.stderr).toMatch(/Unknown --unset field/);
+    const conflict = cli(['jobs', 'update', 'unset-me', '--unset', 'desc', '--desc', 'x'], home);
+    expect(conflict.status).not.toBe(0);
+    expect(conflict.stderr).toMatch(/--unset desc/);
+  }, 60_000);
 });

@@ -53,6 +53,9 @@ const PromptActionPatchSchema = PromptActionInputSchema.extend({
   prompt: z.string().min(1).optional(),
   args: z.array(z.string()).optional(),
   reuseSession: z.boolean().optional(),
+  // `null` means "remove the field" (merge deletes the key). Only these two are clearable.
+  timeoutSec: z.number().positive().nullable().optional(),
+  sessionId: z.string().min(1).nullable().optional(),
 });
 
 const ActionPatchInputSchema = z.discriminatedUnion('kind', [
@@ -94,7 +97,8 @@ export type ExportFile = { schema: 1; exportedAt?: string; crontickVersion?: str
 export const JobPatchInputSchema = z.object({
   /** Alias is user-editable after creation; `id` (the GUID) is never patchable. */
   alias: JobAliasSchema.optional().describe('Unique kebab-case job alias (set via CLI --alias)'),
-  description: z.string().optional(),
+  /** `null` removes the description. */
+  description: z.string().nullable().optional(),
   enabled: z.boolean().optional(),
   schedule: ScheduleSchema.optional(),
   action: ActionPatchInputSchema.optional(),
@@ -151,6 +155,8 @@ export interface JobCreateCliOptions {
   overlap?: string;
   retry?: number;
   desc?: string;
+  /** CLI `--unset <field>` values (update only): `timeout`, `session-id`, `desc`; comma-separated entries allowed. Mapped to `null` in the patch by buildJobPatchFromUpdateOptions. */
+  unset?: string[];
   enabled?: boolean;
   /** CLI `--enable` flag (update only). Mutually exclusive with `disable`; resolved to `enabled` by buildJobPatchFromUpdateOptions. */
   enable?: boolean;
@@ -283,7 +289,9 @@ export function normalizeJobPatch(
   if (patch.retry) {
     normalizedPatch = { ...normalizedPatch, retry: mergeDefinedFields(existing.retry, patch.retry) as Job['retry'] };
   }
-  const parsed = JobSchema.safeParse({ ...existing, ...normalizedPatch, id: existing.id });
+  const candidate: Record<string, unknown> = { ...existing, ...normalizedPatch, id: existing.id };
+  if (normalizedPatch.description === null) delete candidate['description'];
+  const parsed = JobSchema.safeParse(candidate);
   if (!parsed.success) {
     throw new CrontickError('VALIDATION_ERROR', 'Invalid job', parsed.error.format());
   }
@@ -302,7 +310,8 @@ function applyCwdSessionRule(existingAction: unknown, patchAction: unknown, merg
   if (!isRecord(existingAction) || !isRecord(patchAction) || !isRecord(merged)) return merged;
   if (existingAction.kind !== 'prompt' || typeof patchAction.cwd !== 'string') return merged;
   const cwdChanged = patchAction.cwd !== existingAction.cwd;
-  const hasSession = typeof existingAction.sessionId === 'string' || existingAction.reuseSession === true;
+  const sessionCleared = patchAction.sessionId === null;
+  const hasSession = (typeof existingAction.sessionId === 'string' && !sessionCleared) || existingAction.reuseSession === true;
   if (!cwdChanged || !hasSession) return merged;
   const newSession = typeof patchAction.sessionId === 'string';
   const resetSession = patchAction.reuseSession === true;
@@ -331,7 +340,8 @@ function applyCwdSessionRule(existingAction: unknown, patchAction: unknown, merg
 function mergeDefinedFields(existing: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...existing };
   for (const [key, value] of Object.entries(patch)) {
-    if (value !== undefined) merged[key] = value;
+    if (value === null) delete merged[key];
+    else if (value !== undefined) merged[key] = value;
   }
   return merged;
 }
@@ -431,6 +441,32 @@ export function buildJobFromCreateOptions(
   return normalizeJobInput(jobData, options);
 }
 
+const UNSET_FIELDS = {
+  timeout: { flag: '--timeout', isSet: (i: JobPatchCliOptions) => i.timeout !== undefined },
+  'session-id': { flag: '--session-id', isSet: (i: JobPatchCliOptions) => i.sessionId !== undefined },
+  desc: { flag: '--desc', isSet: (i: JobPatchCliOptions) => i.desc !== undefined },
+} as const;
+
+/** Parses `--unset` values (repeatable and/or comma-separated); unknown fields and `--unset X` alongside the setter flag for X are usage errors. */
+function parseUnsetFields(input: JobPatchCliOptions): Set<keyof typeof UNSET_FIELDS> {
+  const fields = new Set<keyof typeof UNSET_FIELDS>();
+  for (const entry of input.unset ?? []) {
+    for (const raw of entry.split(',')) {
+      const name = raw.trim();
+      if (name === '') continue;
+      if (!Object.hasOwn(UNSET_FIELDS, name)) {
+        throw new CrontickError('VALIDATION_ERROR', `Unknown --unset field "${name}". Valid fields: ${Object.keys(UNSET_FIELDS).join(', ')}`);
+      }
+      const key = name as keyof typeof UNSET_FIELDS;
+      if (UNSET_FIELDS[key].isSet(input)) {
+        throw new CrontickError('VALIDATION_ERROR', `--unset ${key} cannot be combined with ${UNSET_FIELDS[key].flag}`);
+      }
+      fields.add(key);
+    }
+  }
+  return fields;
+}
+
 export function buildJobPatchFromUpdateOptions(
   input: JobPatchCliOptions,
   options: NormalizeJobInputOptions = {},
@@ -462,7 +498,16 @@ export function buildJobPatchFromUpdateOptions(
   if (enabled !== undefined) patch.enabled = enabled;
   const schedule = maybeBuildSchedule(input);
   if (schedule !== undefined) patch.schedule = schedule;
-  const action = maybeBuildAction(input, resolvedArgs, true);
+  const unset = parseUnsetFields(input);
+  if (unset.has('desc')) patch.description = null;
+  let action = maybeBuildAction(input, resolvedArgs, true);
+  if (unset.has('timeout') || unset.has('session-id')) {
+    action = {
+      ...(action ?? { kind: 'prompt' as const }),
+      ...(unset.has('timeout') ? { timeoutSec: null } : {}),
+      ...(unset.has('session-id') ? { sessionId: null } : {}),
+    } as ActionInput;
+  }
   if (action !== undefined) patch.action = normalizeActionInput(action, options, false) as ActionInput;
   // Commander no longer supplies a hardcoded default for --overlap (see
   // commonJobOptions in cli/index.ts), so `undefined` unambiguously means
@@ -690,6 +735,7 @@ function assertFileModeExclusive(opts: JobPatchCliOptions, rawArgs: string[]): v
     || opts.overlap !== undefined
     || opts.retry !== undefined
     || opts.desc !== undefined
+    || (opts.unset?.length ?? 0) > 0
     || opts.enabled !== undefined
     || opts.alias !== undefined;
 

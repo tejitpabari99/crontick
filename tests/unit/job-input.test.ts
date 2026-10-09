@@ -790,3 +790,50 @@ describe('generateAlias', () => {
     expect((error as CrontickError).code).toBe('ALIAS_GENERATION_FAILED');
   });
 });
+
+describe('null-clears in the patch schema', () => {
+  const full = () => existingJob({ kind: 'prompt', prompt: 'x', args: ['-v'], timeoutSec: 60, sessionId: 'sess-1', reuseSession: false, cwd: process.cwd() });
+
+  it('accepts null for timeoutSec, sessionId, description only', () => {
+    expect(JobPatchInputSchema.safeParse({ description: null }).success).toBe(true);
+    expect(JobPatchInputSchema.safeParse({ action: { kind: 'prompt', timeoutSec: null, sessionId: null } }).success).toBe(true);
+    for (const field of ['cwd', 'engine', 'prompt']) {
+      expect(JobPatchInputSchema.safeParse({ action: { kind: 'prompt', [field]: null } }).success, field).toBe(false);
+    }
+    expect(JobPatchInputSchema.safeParse({ alias: null }).success).toBe(false);
+    expect(JobPatchInputSchema.safeParse({ schedule: null }).success).toBe(false);
+  });
+
+  it('normalizeJobPatch removes timeoutSec and sessionId and keeps the rest', () => {
+    const job = { ...full(), description: 'd' };
+    const a = normalizeJobPatch(job.id, job, { action: { kind: 'prompt', timeoutSec: null } });
+    expect(a.action).not.toHaveProperty('timeoutSec');
+    expect(a.action).toMatchObject({ sessionId: 'sess-1', args: ['-v'] });
+    const b = normalizeJobPatch(job.id, job, { action: { kind: 'prompt', sessionId: null } });
+    expect(b.action).not.toHaveProperty('sessionId');
+    expect(b.action).toMatchObject({ timeoutSec: 60 });
+  });
+
+  it('normalizeJobPatch removes description', () => {
+    const job = { ...full(), description: 'd' };
+    const out = normalizeJobPatch(job.id, job, { description: null });
+    expect(out).not.toHaveProperty('description');
+  });
+});
+
+describe('buildJobPatchFromUpdateOptions - unset', () => {
+  it('maps each --unset field to null', () => {
+    expect(buildJobPatchFromUpdateOptions(patchOpts({ unset: ['timeout'] })).action).toEqual({ kind: 'prompt', timeoutSec: null });
+    expect(buildJobPatchFromUpdateOptions(patchOpts({ unset: ['session-id'] })).action).toEqual({ kind: 'prompt', sessionId: null });
+    expect(buildJobPatchFromUpdateOptions(patchOpts({ unset: ['desc'] }))).toEqual({ description: null });
+    const all = buildJobPatchFromUpdateOptions(patchOpts({ unset: ['timeout', 'session-id', 'desc'] }));
+    expect(all).toEqual({ description: null, action: { kind: 'prompt', timeoutSec: null, sessionId: null } });
+  });
+
+  it('rejects unknown fields and conflicts with the setter flag', () => {
+    expect(() => buildJobPatchFromUpdateOptions(patchOpts({ unset: ['cwd'] }))).toThrow(/Unknown --unset field "cwd"/);
+    expect(() => buildJobPatchFromUpdateOptions(patchOpts({ unset: ['timeout'], timeout: 5 }))).toThrow(/--unset timeout.*--timeout/);
+    expect(() => buildJobPatchFromUpdateOptions(patchOpts({ unset: ['session-id'], sessionId: 's' }))).toThrow(/--unset session-id.*--session-id/);
+    expect(() => buildJobPatchFromUpdateOptions(patchOpts({ unset: ['desc'], desc: 'x' }))).toThrow(/--unset desc.*--desc/);
+  });
+});
