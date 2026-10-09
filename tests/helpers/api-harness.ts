@@ -36,7 +36,7 @@ export async function startApiHarness(scratchName: string, runner?: Partial<Runn
   const ctx = {
     store,
     scheduler: new Scheduler(),
-    runner: { run: async () => {}, cancelJob: () => false, cancelRun: () => false, ...runner } as unknown as Runner,
+    runner: { run: async () => {}, cancelJob: () => false, cancelRun: () => false, listInFlight: () => [], cancelAllInFlight: async () => {}, waitForIdle: async () => {}, ...runner } as unknown as Runner,
     startedAt: new Date(),
     port: 0,
     reload: async () => {},

@@ -100,6 +100,9 @@ export async function applyConfigWithPolicy(deps: ConfigApplyDeps, req: ConfigAp
     );
   }
 
+  // Validate (revision, daemon guard, schema) before disturbing any run: a bad batch must not cancel work.
+  await apply(req.ops, { ...applyOptions, dryRun: true });
+
   // Hold the scheduler so no new run starts between draining and applying.
   const wasPaused = deps.scheduler.isPaused();
   deps.scheduler.pause();

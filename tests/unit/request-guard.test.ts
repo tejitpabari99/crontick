@@ -43,6 +43,7 @@ const MUTATING_ROUTES: Array<[string, string]> = [
   ['POST', '/api/daemon/pause'],
   ['POST', '/api/daemon/resume'],
   ['POST', '/api/import'],
+  ['PATCH', '/api/config'],
 ];
 
 describe('API request guard', () => {

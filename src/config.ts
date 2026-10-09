@@ -563,6 +563,8 @@ export interface ApplyOpsOptions extends ConfigOptions {
   ifRevision?: string;
   /** Injectable daemon-liveness probe (default: live pid in daemon.pid). The API route passes `() => true`. */
   daemonRunning?: () => boolean;
+  /** Validate everything (revision, key guard, schema) but skip the write; result reflects the would-be state. */
+  dryRun?: boolean;
   /** Lock acquisition timeout in ms (default 2000). */
   lockTimeoutMs?: number;
   /** Age in ms after which an existing lock is broken (default 10000). */
@@ -649,6 +651,16 @@ export async function applyOps(ops: ConfigOp[], options: ApplyOpsOptions = {}): 
     const effective = parseConfig(updated, filePath);
 
     const content = `${JSON.stringify(updated, null, 2)}\n`;
+    if (options.dryRun) {
+      return {
+        path: filePath,
+        config: redactConfigForRead(effective),
+        stored: redactStoredConfigForRead(updated),
+        changed,
+        revision: currentRevision,
+        notice: CONFIG_EDIT_NOTICE,
+      };
+    }
     await writeConfigAtomic(filePath, content, options.env);
     return {
       path: filePath,
@@ -661,6 +673,12 @@ export async function applyOps(ops: ConfigOp[], options: ApplyOpsOptions = {}): 
   } finally {
     release();
   }
+}
+
+/** Raw stored (sparse) config as on disk; `{}` when there is no file. Throws on an invalid file. */
+export function readStoredConfigFile(options: ConfigOptions = {}): PersistedConfig {
+  const filePath = configFilePath(options);
+  return existsSync(filePath) ? readStoredStrict(filePath) : ({} as PersistedConfig);
 }
 
 function readStoredStrict(filePath: string): PersistedConfig {
