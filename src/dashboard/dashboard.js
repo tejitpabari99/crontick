@@ -1180,6 +1180,8 @@ const EDITOR_CLI_PARITY = {
   '--overlap': 'overlap',
   '--retry': 'retryMax',
   '--desc': 'description',
+  '--catch-up': null, // checkbox lands with the dashboard editor catch-up task
+  '--no-catch-up': null,
 };
 
 /** '' -> undefined (blank), numeric text -> number, anything else -> 'invalid'. */

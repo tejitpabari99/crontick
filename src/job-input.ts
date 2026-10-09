@@ -117,6 +117,7 @@ export const JobPatchInputSchema = z.object({
   /** `null` removes the description. */
   description: z.string().nullable().optional(),
   enabled: z.boolean().optional(),
+  catchUp: z.boolean().optional().describe('Run the most recent missed fire once after downtime (cron, interval, one-shot schedules only); omit to leave unchanged'),
   schedule: ScheduleInputSchema.optional(),
   action: ActionPatchInputSchema.optional(),
   overlap: z.enum(['skip', 'queue', 'cancel-previous']).optional(),
@@ -185,6 +186,8 @@ export interface JobCreateCliOptions {
   /** CLI `--unset <field>` values (update only): `timeout`, `session-id`, `desc`; comma-separated entries allowed. Mapped to `null` in the patch by buildJobPatchFromUpdateOptions. */
   unset?: string[];
   enabled?: boolean;
+  /** CLI `--catch-up` (true) / `--no-catch-up` (false); undefined = not specified (unchanged on update). */
+  catchUp?: boolean;
   /** CLI `--enable` flag (update only). Mutually exclusive with `disable`; resolved to `enabled` by buildJobPatchFromUpdateOptions. */
   enable?: boolean;
   /** CLI `--disable` flag (update only). Mutually exclusive with `enable`. */
@@ -460,6 +463,7 @@ export function buildJobFromCreateOptions(
     alias: input.alias,
     description: input.desc,
     enabled: input.enabled,
+    catchUp: input.catchUp,
     schedule: buildSchedule(input),
     action: buildAction(input, resolvedArgs),
     overlap: input.overlap as JobCreateInput['overlap'],
@@ -523,6 +527,7 @@ export function buildJobPatchFromUpdateOptions(
   if (input.alias !== undefined) patch.alias = input.alias;
   if (input.desc !== undefined) patch.description = input.desc;
   if (enabled !== undefined) patch.enabled = enabled;
+  if (input.catchUp !== undefined) patch.catchUp = input.catchUp;
   const schedule = maybeBuildSchedule(input);
   if (schedule !== undefined) patch.schedule = schedule;
   const unset = parseUnsetFields(input);
@@ -789,6 +794,7 @@ function assertFileModeExclusive(opts: JobPatchCliOptions, rawArgs: string[]): v
     || opts.desc !== undefined
     || (opts.unset?.length ?? 0) > 0
     || opts.enabled !== undefined
+    || opts.catchUp !== undefined
     || opts.alias !== undefined;
 
   if (conflicting) {

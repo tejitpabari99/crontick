@@ -20,10 +20,10 @@ export interface SurfaceCapability {
 }
 
 export const SURFACE_CAPABILITIES = [
-  { capability: 'create-job', clientMethod: 'createJob', cliCommand: ['jobs', 'new'], mcpTool: 'crontick_job_create', optionNames: ['force', 'trustFolder', 'webhook', 'relay', 'webhookSecret'] },
+  { capability: 'create-job', clientMethod: 'createJob', cliCommand: ['jobs', 'new'], mcpTool: 'crontick_job_create', optionNames: ['force', 'trustFolder', 'webhook', 'relay', 'webhookSecret', 'catchUp'] },
   { capability: 'list-jobs', clientMethod: 'listJobs', cliCommand: ['jobs', 'list'], mcpTool: 'crontick_job_list' },
   { capability: 'get-job', clientMethod: 'getJob', cliCommand: ['jobs', 'get'], mcpTool: 'crontick_job_get' },
-  { capability: 'update-job', clientMethod: 'updateJob', cliCommand: ['jobs', 'update'], mcpTool: 'crontick_job_update', optionNames: ['trustFolder', 'stopRunning', 'waitRunning', 'webhook', 'relay', 'webhookSecret'] },
+  { capability: 'update-job', clientMethod: 'updateJob', cliCommand: ['jobs', 'update'], mcpTool: 'crontick_job_update', optionNames: ['trustFolder', 'stopRunning', 'waitRunning', 'webhook', 'relay', 'webhookSecret', 'catchUp'] },
   { capability: 'enable-job', clientMethod: 'enableJob', cliCommand: ['jobs', 'update'], mcpTool: 'crontick_job_enable', optionNames: ['enable'] },
   { capability: 'disable-job', clientMethod: 'disableJob', cliCommand: ['jobs', 'update'], mcpTool: 'crontick_job_disable', optionNames: ['disable'] },
   { capability: 'delete-job', clientMethod: 'deleteJob', cliCommand: ['jobs', 'delete'], mcpTool: 'crontick_job_delete', optionNames: ['force'] },

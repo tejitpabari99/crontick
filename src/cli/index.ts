@@ -249,6 +249,8 @@ function commonJobOptions(command: Command): Command {
     .option('--timeout <sec>', 'Per-run timeout in seconds (default: none/unbounded; omit on update to leave unchanged)', parseInteger)
     .option('--overlap <policy>', 'Overlap policy: skip|queue|cancel-previous (default: skip)')
     .option('--retry <max>', 'Retry count on failure (default: 0; omit on update to leave unchanged)', parseInteger)
+    .option('--catch-up', 'Run the most recent missed fire once after downtime (cron, interval, one-shot schedules only)')
+    .option('--no-catch-up', 'Turn off catch-up (omit on update to leave unchanged)')
     .option('--desc <description>', 'Job description');
 }
 
@@ -274,6 +276,7 @@ function collectJobOptions(engineArgs: string[], passthroughArgs: string[], cliA
     engine: stringOption(opts.runner),
     sessionId: stringOption(opts.sessionId),
     reuseSession: booleanOption(opts.reuseSession),
+    catchUp: booleanOption(opts.catchUp),
     timeout: numberOption(opts.timeout),
     overlap: stringOption(opts.overlap),
     retry: numberOption(opts.retry),
@@ -304,6 +307,7 @@ function collectPatchOptions(engineArgs: string[], passthroughArgs: string[], cl
     engine: stringOption(opts.runner),
     sessionId: stringOption(opts.sessionId),
     reuseSession: booleanOption(opts.reuseSession),
+    catchUp: booleanOption(opts.catchUp),
     timeout: numberOption(opts.timeout),
     overlap: stringOption(opts.overlap),
     retry: numberOption(opts.retry),
