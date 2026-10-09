@@ -166,7 +166,7 @@ captured.
 
 ### OS autostart (ADR 0034, 2026-10-09)
 
-**Status:** accepted. Rule 8 reintroduction signed off by the owner; this section is the recorded rationale. SP08 (macOS) and SP09 (Windows) add their own subsections here under the marker below.
+**Status:** accepted. Rule 8 reintroduction signed off by the owner; this section is the recorded rationale. SP08 (macOS) and SP09 (Windows) subsections follow.
 
 **Context.** Demand-start only fires when something calls crontick, so after a reboot schedules do nothing until then. The earlier autostart was removed (PR #16) because of a native `registry-js` dependency, a Windows Run key plus a hidden VBS shim (EDR-flagged persistence), and surprise background processes.
 
@@ -183,7 +183,53 @@ captured.
 
 **Consequences / trade-offs.** Harder: without `loginctl enable-linger`, the user manager stops at last logout and jobs pause while fully logged out (a demand-started daemon survives logout); the `PATH` snapshot goes stale when an engine is installed later; uninstalling the package leaves the unit unless `autostart disable` is run first. Deferred: linger management, multiple data directories per user, `systemd-analyze verify` in CI.
 
-<!-- ADR 0034 platform sections: SP08 adds "macOS (launchd)" and SP09 adds "Windows (Task Scheduler)" immediately below this line, each covering mechanism, registered command, caveats and rejected alternatives. -->
+#### macOS (launchd) (SP08)
+
+**Mechanism.** A user LaunchAgent, label `dev.crontick.daemon`, file `~/Library/LaunchAgents/dev.crontick.daemon.plist`, loaded with `launchctl bootstrap gui/$UID` and removed with `bootout`. Login only (`RunAtLoad`), no admin, no signing, no new dependencies. The plist is rendered by string with XML escaping (`src/autostart/plist.ts`) and holds the `ProgramArguments` (node path, daemon script), the core-built `EnvironmentVariables` (`CRONTICK_SUPERVISED=1`, optional `CRONTICK_HOME`, `PATH` snapshot), `KeepAlive {SuccessfulExit: false}`, `ThrottleInterval 30`, `AbandonProcessGroup true` (analogue of systemd `KillMode=process`), `WorkingDirectory` = data dir, and `StandardOut/ErrorPath` = `<logsDir>/launchd.{out,err}.log`. `ProcessType` is omitted because `Background` would throttle engine runs.
+
+**Idempotency.** `install` never blind-bootstraps: it checks whether the label is loaded, boots it out, bootstraps, then runs `enable`; a failure with a lingering disable record is retried once after `enable`. `uninstall` boots out (ignoring "not loaded") and deletes the plist. `inspect` is read-only and tolerant: `launchctl print` output is documented as not-an-API, so only `pid`/`state` are parsed and unparseable output yields an unknown state plus a note, never a throw.
+
+**Caveats.** macOS 13+ surfaces every third-party plist in Login Items with a "Background Items Added" notification; unsigned items appear as a generic "node" entry from an unidentified developer, and the user can toggle it off. That BTM toggle is separate from launchd's disable database and cannot be read without `sfltool dumpbtm` (undocumented, needs sudo), so status infers it from `print-disabled` and "registered but not loaded" with a note. A launchd-started `node` has no Full Disk Access (TCC), so protected-folder job directories may be denied; and Claude may report "Not logged in" under launchd, in which case `CLAUDE_CODE_OAUTH_TOKEN` is set through the engine env config rather than the plist.
+
+**Rejected.** LaunchDaemon (needs root, boot start, no GUI keychain); legacy `launchctl load/unload/list` (exit 0 on failure); `SMAppService` or a signed/notarized helper bundle (US$99/yr, tracked in `futures.md`); `sfltool` for BTM state; `ProcessType=Background`. There is no macOS CI runner, so correctness rests on injected-exec unit tests (`platform: 'darwin'`) plus the owner checklist below.
+
+**Owner real-Mac checklist (macOS 13+, ideally 15; record results on the PR before release; not verified on Linux).**
+1. `crontick autostart enable` writes the plist, shows the "Background Items Added" notification, and `launchctl print gui/$UID/dev.crontick.daemon` shows running. After logout/login the daemon is up. A second `enable` is a no-op, `status` shows enabled, and `disable` removes the plist and the Login Items entry. Demand-start then `enable` leaves no respawn loop in `launchd.err.log`.
+2. Approve the item in Login Items if asked; toggle it off and confirm `status` reports not running with the note. Record the displayed name/developer. Verify whether a BTM toggle appears in `print-disabled` and the error 5 re-enable behavior.
+3. Run a job with cwd in `~/Documents` and a Claude-engine job under autostart; record the TCC and "Not logged in" outcomes here.
+4. Verify `daemon stop` / `bootout` leaves a detached job alive, and note TCC attribution after restart.
+5. Confirm `launchctl print` parsing on each available macOS version.
+6. Optional: signed+notarized helper or `SMAppService` (out of scope).
+
+**Outcome of items 1-5: pending (owner, real Mac).**
+
+#### Windows (Task Scheduler) (SP09)
+
+**Mechanism.** A per-user logon task `\crontick\daemon` created with `schtasks /create /tn "\crontick\daemon" /xml <file> /f` (XML written UTF-16LE under `<data dir>\autostart\task.xml`, deleted afterwards) and removed with `schtasks /delete ... /f`. XML rather than flags because flags cannot express `ExecutionTimeLimit`, battery settings, `MultipleInstancesPolicy` or a trigger `UserId`; Task Scheduler's defaults (72 h stop, stop on battery) would hurt a daemon. The user is identified by SID (locale and domain-format independent). Inspect reads `/query /xml` (element names) and `/query /fo csv /v /nh` by column index; localized text is never relied on.
+
+**Registered command.** `node.exe <dist>\cli\index.js daemon start` (plus `--home "<dir>"` when `CRONTICK_HOME` was set), a short-lived launcher that spawns the existing detached daemon. This avoids a permanent console window the user could close (killing the daemon) and the already-running exit-code problem, since `daemon start` exits `0` when a daemon is up. Drift compares against `backend.expectedCommand(spec)`.
+
+**Login only, no admin, nothing to sign.** `LogonTrigger` for the current user (30 s delay), `InteractiveToken`, `LeastPrivilege`; no boot start, no "run whether logged on or not". crontick ships JavaScript only, so there is nothing of ours to Authenticode-sign or submit; `node.exe` is signed by the OpenJS Foundation. No Run key, registry, wscript, cmd, PowerShell or conhost.
+
+**Console flash.** The logon task runs a console-subsystem `node.exe`, so a console window may flash for under a second while the launcher runs. Removing it needs a GUI-subsystem binary, which we will not ship. `Hidden` stays `false` on purpose (hiding is what malware does).
+
+**Survival gate.** Whether a detached child outlives the task instance was the make-or-break unknown; a Windows CI test (84a1b9d) proved it before the backend was built [verified: https://github.com/tejitpabari99/crontick/actions/runs/37876631912]. The backend integration test also passes on CI [verified: https://github.com/tejitpabari99/crontick/actions/runs/37879341731], but GitHub-hosted runners are administrators, so the non-admin claim is not proven by CI.
+
+**Security tools.** There is no official pre-clearing program; see `SECURITY.md` (Windows autostart and security tools) for the levers and allowlisting steps.
+
+**Rejected.** `node.exe daemon.js` directly (persistent closable console); `conhost.exe --headless` (still flashes, published detection rule); S4U / password logon (no network or DPAPI access, or needs a password); `schtasks /sc onlogon /tr` flags; PowerShell `Register-ScheduledTask` or COM (LOLBin, dependencies); the removed `registry-js` Run-key + VBS shim; deleting the empty `\crontick` folder (schtasks cannot, harmless, left behind).
+
+**Known risk.** Creating the `\crontick\` folder and task as a standard user is unverified (no source states it either way; CI runners are admin). The pre-approved fallback is a root-level `\crontick-daemon` task; it is **not implemented**. If the owner check fails, implement it.
+
+**Owner real-Windows checklist (record results on the PR before release).**
+1. As a standard (non-admin) user: `enable`, log off/on, `crontick status` shows the daemon up; note the console flash; check `\crontick\daemon` in `taskschd.msc` (author, description); demand-start then `enable` yields no second daemon; `disable` removes it. This also settles the folder-creation risk above.
+2. Repeat on a Defender-for-Endpoint/corporate device if available; record any alert and the allowlist entry used, or a WDSI submission.
+3. Non-English Windows and a profile path with a space and a non-ASCII name: `status` sanity check.
+4. Optionally confirm the `node.exe` Authenticode signature.
+
+**Outcome of items 1-4: pending (owner, real Windows).**
+
+<!-- ADR 0034 platform sections: SP08 added "macOS (launchd)" and SP09 added "Windows (Task Scheduler)" above this line, each covering mechanism, registered command, caveats and rejected alternatives. -->
 
 ## Consequences
 

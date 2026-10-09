@@ -59,7 +59,7 @@ const registered = (over: Partial<NonNullable<BackendInspection['command']>> = {
 
 describe('createAutostartBackend', () => {
   it('returns undefined for platforms without a factory', () => {
-    expect(createAutostartBackend(mkDeps({ platform: 'win32' }))).toBeUndefined();
+    expect(createAutostartBackend(mkDeps({ platform: 'freebsd' }))).toBeUndefined();
   });
   it('uses the factory for the injected platform', () => {
     const b = mkBackend();

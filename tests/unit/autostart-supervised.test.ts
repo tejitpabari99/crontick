@@ -79,7 +79,9 @@ describe('supervised already-running exit code', () => {
 });
 
 describe('graceful stop exit code', () => {
-  it('daemon exits 0 on SIGTERM (so Restart=on-failure does not restart it)', async () => {
+  // Windows has no POSIX signals: child.kill('SIGTERM') force-terminates the process (exit code null),
+  // so the graceful-exit-0 path cannot be exercised there.
+  it.skipIf(process.platform === 'win32')('daemon exits 0 on SIGTERM (so Restart=on-failure does not restart it)', async () => {
     const home = makeHome();
     const d = await startDaemon(home);
     const done = exitOf(d);

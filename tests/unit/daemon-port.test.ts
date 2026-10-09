@@ -58,6 +58,9 @@ async function waitForPort(dir: string): Promise<number> {
   throw new Error('daemon did not write daemon.port');
 }
 
+/** Daemon errors land in a JSON log line, so backslashes (Windows paths) are doubled. */
+const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 describe('daemon port', () => {
   it('binds the preferred port when it is free and records it in daemon.port', async () => {
     const preferred = await freePort();
@@ -90,6 +93,6 @@ describe('daemon port', () => {
     const second = startDaemon(firstPort);
     const code = await new Promise<number | null>((r) => second.proc.once('exit', r));
     expect(code).not.toBe(0);
-    expect(second.stderr()).toMatch(new RegExp(`Port ${firstPort} \\(config daemon\\.port\\) is in use by another crontick daemon \\(pid \\d+, data dir ${first.dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`));
+    expect(second.stderr()).toMatch(new RegExp(`Port ${firstPort} \\(config daemon\\.port\\) is in use by another crontick daemon \\(pid \\d+, data dir ${esc(JSON.stringify(first.dir).slice(1, -1))}\\)`));
   });
 });
