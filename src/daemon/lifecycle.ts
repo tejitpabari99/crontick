@@ -70,7 +70,7 @@ export async function startDaemon(options: DaemonLifecycleOptions = {}): Promise
 
   logger.debug('Ensuring background daemon');
   const info = await ensureDaemon({ ...options, startDaemon: true });
-  const portNote = describeDaemonPort(info.port, { ...process.env, ...(options.env ?? {}) });
+  const portNote = describeDaemonPort(info.port);
   return { ok: true, ...info, ...(portNote ? { portNote } : {}) };
 }
 
@@ -239,7 +239,7 @@ async function tryGracefulHttpStop(env: NodeJS.ProcessEnv, logger: Logger): Prom
 export async function restartDaemon(options: EnsureDaemonOptions = {}): Promise<DaemonRestartResult> {
   const stopped = await stopDaemon({ env: options.env, logger: options.logger });
   const info = await ensureDaemon({ ...options, startDaemon: true });
-  const portNote = describeDaemonPort(info.port, { ...process.env, ...(options.env ?? {}) });
+  const portNote = describeDaemonPort(info.port);
   return { ok: true, ...info, ...(portNote ? { portNote } : {}), stopped: stopped.stopped, previousPid: stopped.pid };
 }
 

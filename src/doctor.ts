@@ -118,10 +118,10 @@ export async function runDoctorChecks(options: DoctorOptions = {}): Promise<Doct
 
 /** "daemon port" check: default vs fallback port, and a foreign listener on the default port when no daemon runs. */
 async function daemonPortCheck(env: NodeJS.ProcessEnv, portFileExists: boolean, daemonReachable: boolean): Promise<DoctorCheck> {
-  const preferred = preferredDaemonPort(env);
+  const preferred = preferredDaemonPort({ daemon: {} }).port;
   const port = readPortFile(env);
   if (port !== undefined) {
-    const note = describeDaemonPort(port, env);
+    const note = describeDaemonPort(port);
     return { name: 'daemon port', ok: true, note: note ? `${port} (${note})` : preferred === 0 ? String(port) : `${port} (default)` };
   }
   if (!portFileExists && !daemonReachable && preferred > 0) {
