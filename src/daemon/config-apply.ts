@@ -141,7 +141,7 @@ async function runInFlightPolicyUnqueued<T>(o: InFlightPolicyOptions<T>): Promis
   try {
     if (o.choice === 'stop') {
       if (o.jobId === undefined) await o.runner.cancelAllInFlight();
-      else await o.runner.cancelAllInFlight(undefined, o.jobId);
+      else await o.runner.cancelAllInFlight('canceled: job update stopped in-flight runs', o.jobId);
     } else {
       o.onWait?.(inFlight);
       if (o.jobId === undefined) await o.runner.waitForIdle();

@@ -41,7 +41,7 @@ Every method below that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `createJobFromCliOptions` | `(input: JobCreateCliOptions): Promise<Job>` | Created `Job` | `CrontickError` |
 | `listJobs` | `(): Promise<Job[]>` | Array of `Job` | `CrontickError` |
 | `getJob` | `(id: string): Promise<Job>` | `Job` | `CrontickError` (`JOB_NOT_FOUND`) |
-| `updateJob` | `(id: string, patch: JobPatchInput, options?: UpdateJobOptions): Promise<Job>` | Updated `Job` | `CrontickError` (`VALIDATION_ERROR`, `INVALID_CWD`, `CWD_CHANGE_BREAKS_SESSION`, `TRUST_REQUIRED`, `ENV_FILE_ERROR`, `JOB_NOT_FOUND`, `RUNS_IN_FLIGHT`, `INVALID_IN_FLIGHT_CHOICE`, `DAEMON_REQUEST_FAILED`) |
+| `updateJob` | `(id: string, patch: JobPatchInput, options?: UpdateJobOptions): Promise<Job>` | Updated `Job` | `CrontickError` (`VALIDATION_ERROR`, `INVALID_CWD`, `CWD_CHANGE_BREAKS_SESSION`, `TRUST_REQUIRED`, `ENV_FILE_ERROR`, `JOB_NOT_FOUND`, `JOB_CHANGED`, `RUNS_IN_FLIGHT`, `INVALID_IN_FLIGHT_CHOICE`, `DAEMON_REQUEST_FAILED`) |
 | `deleteJob` | `(id?: string, options?: { all?: boolean; force?: boolean }): Promise<{ ok: true; canceledRun: boolean; deletedRuns: number } \| { ok: true; deleted: number }>` | `{ ok, canceledRun, deletedRuns }` for a single delete (the job's runs, logs and schedule state are deleted with it), or `{ ok: true, deleted }` when `all` is set (requires `force`) | `CrontickError` (`VALIDATION_ERROR`, `JOB_NOT_FOUND`, `JOB_HAS_DEPENDENTS`: other jobs run `after` it and `force` is unset; with `force` it is deleted and the dependents disabled) |
 | `enableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |
 | `disableJob` | `(id: string): Promise<Job>` | Updated `Job` | `CrontickError` |

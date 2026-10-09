@@ -342,6 +342,12 @@ async function handleRequest(
               jobId: job.id,
               ...(inFlightParam !== null ? { inFlight: inFlightParam as InFlightChoice } : {}),
               apply: () => {
+                // The wait can be long: re-check the job was not deleted or edited meanwhile, else we'd resurrect/overwrite it.
+                const fresh = ctx.store.getJob(job.id);
+                if (!fresh) throw new CrontickError('JOB_NOT_FOUND', `Job ${requestedId} was deleted while waiting to apply the update`);
+                if (JSON.stringify(fresh) !== JSON.stringify(job)) {
+                  throw new CrontickError('JOB_CHANGED', `Job ${requestedId} was modified while waiting to apply the update; re-read it and retry`);
+                }
                 ctx.store.upsertJob(updatedJob);
                 if (updatedJob.enabled && !job.enabled) ctx.store.resetConsecutiveFailures(job.id);
                 const stored = ctx.store.getJob(job.id) ?? updatedJob;
@@ -360,6 +366,8 @@ async function handleRequest(
           if (err instanceof CrontickError && err.code === 'RUNS_IN_FLIGHT') {
             return sendError(res, 409, err.code, err.message, err.details);
           }
+          if (err instanceof CrontickError && err.code === 'JOB_CHANGED') return sendError(res, 409, err.code, err.message);
+          if (err instanceof CrontickError && err.code === 'JOB_NOT_FOUND') return sendError(res, 404, err.code, err.message);
           throw err;
         }
       }

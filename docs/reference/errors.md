@@ -285,6 +285,14 @@ class CrontickError extends Error {
 | **Message shape** | Lists the in-flight runs |
 | **Details** | `{ runs }` |
 
+### JOB_CHANGED
+
+| | |
+|---|---|
+| **When** | A job update with `inFlight=wait` finished waiting, but the job was edited meanwhile (HTTP 409; the update is not applied). If the job was deleted meanwhile, `JOB_NOT_FOUND` (404) |
+| **Message shape** | `Job <idOrAlias> was modified while waiting to apply the update; re-read it and retry` |
+| **Details** | — |
+
 ### REQUEST_REJECTED
 
 | | |

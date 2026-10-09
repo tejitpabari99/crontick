@@ -174,6 +174,11 @@ describe('editor markup + wiring', () => {
     expect(fetches.length).toBeGreaterThan(0);
     for (const m of fetches) expect(body.slice(m.index!, m.index! + 120)).toContain("'Content-Type': 'application/json'");
   });
+  it('openEditor guards against a stale earlier open completing late', () => {
+    expect(js).toContain('const openSeq = ++editorOpenSeq');
+    expect(js.match(/openSeq !== editorOpenSeq/g)!.length).toBeGreaterThanOrEqual(3);
+    expect(js).toMatch(/function closeEditor\(\) \{\n {2}editorOpenSeq\+\+;/);
+  });
   it('exposes hook points for schedule (T6) and server errors/trust/in-flight (T7)', () => {
     expect(js).toContain('editorScheduleHook');
     expect(js).toContain('editorHandleSaveError');

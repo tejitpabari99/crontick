@@ -77,4 +77,53 @@ describe('PUT /api/jobs/:id with runs in flight', () => {
       await h.close();
     }
   });
+
+  async function blockedWait(mutate: (h: Awaited<ReturnType<typeof setup>>['h']) => Promise<void>) {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const { h } = await setup({ waitForIdle: (async () => { await gate; }) as never });
+    const pending = h.call('PUT', '/api/jobs/busy?inFlight=wait&prepare=1', { description: 'late' });
+    await new Promise((r) => setTimeout(r, 50));
+    await mutate(h);
+    release();
+    return { h, res: await pending };
+  }
+
+  it('inFlight=wait: job deleted while waiting -> 404, not resurrected', async () => {
+    const { h, res } = await blockedWait(async (hh) => { await hh.call('DELETE', '/api/jobs/busy'); });
+    try {
+      expect(res.status).toBe(404);
+      expect((await h.call('GET', '/api/jobs')).data).toEqual([]);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it('inFlight=wait: job edited while waiting -> 409 JOB_CHANGED, edit kept', async () => {
+    const { h, res } = await blockedWait(async (hh) => { const cur = hh.store.getJob('busy')!; hh.store.upsertJob({ ...cur, description: 'other' }); });
+    try {
+      expect(res.status).toBe(409);
+      expect(res.data.error.code).toBe('JOB_CHANGED');
+      const now = (await h.call('GET', '/api/jobs/busy')).data;
+      expect(now.description).toBe('other');
+    } finally {
+      await h.close();
+    }
+  });
+
+  it('inFlight=stop uses a job-update cancel reason', async () => {
+    const reasons: Array<string | undefined> = [];
+    let alive = true;
+    const { h } = await setup({
+      listInFlight: (() => (alive ? [{ runId: 'r1', jobId: 'x' }] : [])) as never,
+      cancelAllInFlight: (async (reason?: string) => { reasons.push(reason); alive = false; }) as never,
+    });
+    try {
+      const r = await h.call('PUT', '/api/jobs/busy?inFlight=stop&prepare=1', { description: 'n' });
+      expect(r.status).toBe(200);
+      expect(reasons).toEqual(['canceled: job update stopped in-flight runs']);
+    } finally {
+      await h.close();
+    }
+  });
 });

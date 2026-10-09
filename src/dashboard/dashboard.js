@@ -1757,7 +1757,10 @@ async function loadEditorMeta() {
   editorMeta = body;
 }
 
+let editorOpenSeq = 0;
+
 async function openEditor(jobId) {
+  const openSeq = ++editorOpenSeq;
   editorReturnFocus = document.activeElement;
   editorJobId = jobId || null;
   editorBase = null;
@@ -1774,9 +1777,11 @@ async function openEditor(jobId) {
   jobEditor.querySelector('.modal').focus();
   try {
     await loadEditorMeta();
+    if (openSeq !== editorOpenSeq) return;
     if (jobId) {
       const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { headers: { 'Content-Type': 'application/json' } });
       const body = await res.json().catch(() => null);
+      if (openSeq !== editorOpenSeq) return;
       if (!res.ok) throw new Error(body?.error?.message || `GET /api/jobs/${jobId} failed (${res.status})`);
       editorLoadedJob = body;
       editorBase = jobToEditorValues(body);
@@ -1786,6 +1791,7 @@ async function openEditor(jobId) {
     renderEditorForm(editorBase, !jobId);
     editorForm.querySelector(jobId ? '[data-editor-field="prompt"]' : '[data-editor-field="alias"]')?.focus();
   } catch (err) {
+    if (openSeq !== editorOpenSeq) return;
     editorBase = null;
     editorForm.innerHTML = '';
     showEditorError(err.message);
@@ -1793,6 +1799,7 @@ async function openEditor(jobId) {
 }
 
 function closeEditor() {
+  editorOpenSeq++;
   jobEditor.hidden = true;
   editorBase = null;
   editorJobId = null;
