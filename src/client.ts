@@ -467,8 +467,9 @@ export class CrontickClient {
     return this.request<JobStats>('GET', `/api/stats/jobs/${encodeURIComponent(id)}`);
   }
 
-  async daemonStart(options: { foreground?: boolean } = {}): Promise<DaemonStartResult> {
-    const result = await startDaemon({ ...this.options, env: this.effectiveEnv(), logger: this.logger.child('lifecycle'), startDaemon: true, foreground: options.foreground });
+  async daemonStart(options: { foreground?: boolean; home?: string } = {}): Promise<DaemonStartResult> {
+    const env = options.home ? { ...(this.effectiveEnv() ?? process.env), CRONTICK_HOME: options.home } : this.effectiveEnv();
+    const result = await startDaemon({ ...this.options, env, logger: this.logger.child('lifecycle'), startDaemon: true, foreground: options.foreground });
     if (result.baseUrl) this.cachedBaseUrl = result.baseUrl;
     return result;
   }

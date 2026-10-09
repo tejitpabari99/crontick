@@ -675,9 +675,10 @@ const daemon = groupHelp(program.command('daemon').description('Start, stop, and
 daemon.command('start')
   .description('Start the daemon now (background by default; it also starts automatically on first use)')
   .option('--foreground', 'Run the daemon in this terminal until it exits (Ctrl+C to stop)')
+  .option('--home <dir>', 'Data directory for the started daemon (sets CRONTICK_HOME)')
   .action(async (opts) => {
     try {
-      const result = await client().daemonStart({ foreground: booleanOption(opts.foreground) });
+      const result = await client().daemonStart({ foreground: booleanOption(opts.foreground), home: stringOption(opts.home) });
       if (result.foregroundExitCode !== undefined) {
         stdout(`Daemon exited (code ${String(result.foregroundExitCode)})`);
         return;
