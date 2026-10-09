@@ -59,4 +59,17 @@ describe('explicit daemon.port', () => {
     expect(second.status, second.out).toBe(0);
     expect(second.out).toContain(`127.0.0.1:${port}`);
   });
+
+  it('status and info show a config-says note after daemon.port is edited while running', async () => {
+    cli(['daemon', 'stop']);
+    const port = await freePort();
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ daemon: { port } }));
+    expect(cli(['daemon', 'start']).status).toBe(0);
+    const edited = await freePort();
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ daemon: { port: edited } }));
+    const note = `config says daemon.port ${edited}, running on ${port}`;
+    const status = cli(['daemon', 'status']);
+    expect(status.out).toContain(note);
+    expect(cli(['info']).out).toContain(note);
+  });
 });

@@ -8,6 +8,8 @@ import { ensureDaemon, resolveDaemonBaseUrl, type DaemonInfo, type EnsureDaemonO
 import { nullLogger, type Logger } from '../logger.js';
 import { POLL_MS } from '../constants/daemon.js';
 import { describeDaemonPort } from './bind-port.js';
+import { loadConfig } from '../config.js';
+import type { CrontickConfig } from '../schemas/config.js';
 import { sleep } from '../utils/sleep.js';
 
 export interface DaemonLifecycleOptions extends EnsureDaemonOptions {
@@ -70,7 +72,7 @@ export async function startDaemon(options: DaemonLifecycleOptions = {}): Promise
 
   logger.debug('Ensuring background daemon');
   const info = await ensureDaemon({ ...options, startDaemon: true });
-  const portNote = describeDaemonPort(info.port);
+  const portNote = describeDaemonPort(info.port, configForEnv(options.env));
   return { ok: true, ...info, ...(portNote ? { portNote } : {}) };
 }
 
@@ -239,7 +241,7 @@ async function tryGracefulHttpStop(env: NodeJS.ProcessEnv, logger: Logger): Prom
 export async function restartDaemon(options: EnsureDaemonOptions = {}): Promise<DaemonRestartResult> {
   const stopped = await stopDaemon({ env: options.env, logger: options.logger });
   const info = await ensureDaemon({ ...options, startDaemon: true });
-  const portNote = describeDaemonPort(info.port);
+  const portNote = describeDaemonPort(info.port, configForEnv(options.env));
   return { ok: true, ...info, ...(portNote ? { portNote } : {}), stopped: stopped.stopped, previousPid: stopped.pid };
 }
 
@@ -274,5 +276,13 @@ function isPidAlive(pid: number): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+function configForEnv(env?: NodeJS.ProcessEnv): Pick<CrontickConfig, 'daemon'> {
+  try {
+    return loadConfig({ env: env ? { ...process.env, ...env } : process.env });
+  } catch {
+    return { daemon: {} };
   }
 }

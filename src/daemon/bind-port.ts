@@ -45,7 +45,9 @@ export function preferredDaemonPort(config: Pick<CrontickConfig, 'daemon'>): Pre
 }
 
 /**
- * Note for a daemon bound to a port other than the preferred one (`null` when it is the preferred port).
+ * Note for a daemon bound to a port other than the preferred one. Unset `daemon.port`: fallback note when
+ * not on the default. Explicit non-zero `daemon.port` differing from the running port (stale config):
+ * "config says X, running on Y". Explicit 0 or matching: `null`. Comparison only, no stored state.
  * Shown by `daemon start`/`restart`, `daemon status`, `info`, and `doctor`.
  */
 export function describeDaemonPort(
@@ -53,7 +55,8 @@ export function describeDaemonPort(
   config: Pick<CrontickConfig, 'daemon'> = { daemon: {} },
 ): string | null {
   const pref = preferredDaemonPort(config);
-  if (port === undefined || pref.explicit || port === pref.port) return null;
+  if (port === undefined || port === pref.port) return null;
+  if (pref.explicit) return pref.port === 0 ? null : `config says daemon.port ${pref.port}, running on ${port}`;
   return `started on fallback port ${port}; default ${pref.port} is in use`;
 }
 

@@ -1,6 +1,6 @@
 /** Fallback-port discovery: CLI `daemon start/status`, `info`, `doctor`, and the client all reach a daemon on a fallback port. */
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -38,21 +38,60 @@ afterAll(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+const cfg = (port?: number) => ({ daemon: port === undefined ? {} : { port } }) as never;
+
 describe('describeDaemonPort', () => {
-  it('is null on the preferred port and a fallback note otherwise', () => {
-    expect(describeDaemonPort(47615)).toBeNull();
+  it('unset: null on the default port, fallback note otherwise', () => {
+    expect(describeDaemonPort(47615, cfg())).toBeNull();
+    expect(describeDaemonPort(50000, cfg())).toBe('started on fallback port 50000; default 47615 is in use');
     expect(describeDaemonPort(50000)).toBe('started on fallback port 50000; default 47615 is in use');
+  });
+
+  it('explicit: no fallback note when running on the configured port', () => {
+    expect(describeDaemonPort(5000, cfg(5000))).toBeNull();
+  });
+
+  it('explicit 0: no note for any port', () => {
+    expect(describeDaemonPort(51234, cfg(0))).toBeNull();
+  });
+
+  it('explicit and differing from the running port: config-says note (stale config)', () => {
+    expect(describeDaemonPort(50000, cfg(5000))).toBe('config says daemon.port 5000, running on 50000');
+  });
+});
+
+describe('doctor daemon port check', () => {
+  it('explicit port held by a foreign process while no daemon runs: warns the daemon will fail to start', async () => {
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ daemon: { port: preferred } }));
+    try {
+      const result = await runDoctorChecks({ env, checkMcpHelp: false });
+      const check = result.checks.find((c) => c.name === 'daemon port');
+      expect(check?.ok).toBe(false);
+      expect(check?.note).toContain(`${preferred} (from config)`);
+      expect(check?.note).toContain('daemon will fail to start');
+    } finally {
+      rmSync(join(dir, 'config.json'), { force: true });
+    }
+  });
+
+  it('explicit free port while no daemon runs: reports it as from config', async () => {
+    const free = await new Promise<number>((r) => {
+      const s = net.createServer();
+      s.listen(0, '127.0.0.1', () => { const p = (s.address() as net.AddressInfo).port; s.close(() => r(p)); });
+    });
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ daemon: { port: free } }));
+    try {
+      const check = (await runDoctorChecks({ env, checkMcpHelp: false })).checks.find((c) => c.name === 'daemon port');
+      expect(check?.ok).toBe(true);
+      expect(check?.note).toContain(`${free} (from config)`);
+    } finally {
+      rmSync(join(dir, 'config.json'), { force: true });
+    }
   });
 });
 
 describe('fallback port surfaces', () => {
-  // Skipped until Task 4/5 re-express fallback surfaces without the removed env var.
-  it.skip('doctor flags a foreign listener on the preferred port while no daemon runs', async () => {
-    const result = await runDoctorChecks({ env, checkMcpHelp: false });
-    const check = result.checks.find((c) => c.name === 'daemon port');
-    expect(check?.note).toContain(`default ${preferred} is held by another process`);
-  });
-
+  // Skipped until Task 5: needs the default port occupied, which the removed env var used to redirect.
   it.skip('daemon start reports the fallback port; status, info, doctor and the client reach it', async () => {
     const start = cli(['daemon', 'start']);
     expect(start.status, start.out).toBe(0);

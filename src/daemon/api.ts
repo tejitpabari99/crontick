@@ -25,6 +25,8 @@ import { nullLogger, redactValue, type Logger } from '../logger.js';
 import { readEnvFileForAction } from './env-file.js';
 import { resolveJobLogPath } from './job-log-file.js';
 import { describeDaemonPort } from './bind-port.js';
+import { loadConfig } from '../config.js';
+import type { CrontickConfig } from '../schemas/config.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -377,7 +379,7 @@ async function handleRequest(
         port: ctx.port,
         baseUrl: `http://127.0.0.1:${ctx.port}`,
         dashboardUrl: `http://127.0.0.1:${ctx.port}/dashboard`,
-        portNote: describeDaemonPort(ctx.port),
+        portNote: describeDaemonPort(ctx.port, currentConfigOrEmpty()),
         uptimeSec: Math.floor((Date.now() - ctx.startedAt.getTime()) / 1000),
         jobs: ctx.store.listJobs().length,
         // L2: report-only missed-fire summary computed once at startup.
@@ -646,4 +648,13 @@ function sendError(
   details?: unknown,
 ): void {
   sendJson(res, status, { error: { code, message, details } });
+}
+
+/** Config as it is now on disk (so a post-start edit shows as a mismatch); empty when unreadable. */
+function currentConfigOrEmpty(): Pick<CrontickConfig, 'daemon'> {
+  try {
+    return loadConfig();
+  } catch {
+    return { daemon: {} };
+  }
 }
