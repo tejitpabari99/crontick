@@ -10,12 +10,14 @@ import { Scheduler } from '../../src/daemon/scheduler.js';
 import { Store } from '../../src/daemon/store.js';
 import type { JobCreateInput } from '../../src/job-input.js';
 import { SURFACE_CAPABILITIES } from '../../src/surface.js';
+import { writeTestConfig } from '../helpers/test-home.js';
 
 const SCRATCH_ROOT = resolve('.crontick', 'job-create-duplicate-ctd-005');
 
 function makeHome(prefix: string): string {
   const dir = resolve(SCRATCH_ROOT, `${prefix}-${randomUUID()}`);
   mkdirSync(join(dir, 'jobs'), { recursive: true });
+  writeTestConfig(dir);
   mkdirSync(join(dir, 'logs'), { recursive: true });
   return dir;
 }

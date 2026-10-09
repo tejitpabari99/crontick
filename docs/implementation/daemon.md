@@ -36,8 +36,8 @@ exposes a loopback-only HTTP API and is demand-started by clients when needed.
 
 ## Port selection and discovery
 
-The daemon prefers `DEFAULT_DAEMON_PORT` = `47615` (`src/constants/daemon.ts`; override with env
-`CRONTICK_DAEMON_PORT`, used by tests, `0` = always OS-assigned). `bindPort(preferred, { listen, probe, notify })`
+The daemon prefers `DEFAULT_DAEMON_PORT` = `47615` (`src/constants/daemon.ts`; override with `daemon.port`
+in `config.json`; `0` = always OS-assigned). `bindPort(preferred, { listen, probe, notify })`
 is pure and injectable: it tries `listen(preferred)`; on `EADDRINUSE` it probes `GET /health` on that port
 with the crontick signature check and emits one notice (stderr and the daemon log), then binds `listen(0)`:
 

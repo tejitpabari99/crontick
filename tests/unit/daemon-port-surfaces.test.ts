@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import net from 'node:net';
 import { createClient } from '../../src/client.js';
+import { DEFAULT_DAEMON_PORT } from '../../src/constants/daemon.js';
 import { describeDaemonPort } from '../../src/daemon/bind-port.js';
 import { runDoctorChecks } from '../../src/doctor.js';
 
@@ -35,8 +36,20 @@ afterAll(async () => {
   cli(['daemon', 'stop']);
   sockets.forEach((s) => s.destroy());
   await new Promise<void>((r) => blocker.close(() => r()));
+  if (defaultHolder) await new Promise<void>((r) => defaultHolder!.close(() => r()));
   rmSync(dir, { recursive: true, force: true });
 });
+
+let defaultHolder: net.Server | undefined;
+/** Make sure 47615 is occupied; EADDRINUSE means another process already holds it, which is just as good. */
+async function occupyDefaultPort(): Promise<void> {
+  const server = net.createServer((s) => { sockets.add(s); });
+  const held = await new Promise<boolean>((r) => {
+    server.once('error', () => r(false));
+    server.listen(DEFAULT_DAEMON_PORT, '127.0.0.1', () => r(true));
+  });
+  if (held) defaultHolder = server;
+}
 
 const cfg = (port?: number) => ({ daemon: port === undefined ? {} : { port } }) as never;
 
@@ -91,14 +104,16 @@ describe('doctor daemon port check', () => {
 });
 
 describe('fallback port surfaces', () => {
-  // Skipped until Task 5: needs the default port occupied, which the removed env var used to redirect.
-  it.skip('daemon start reports the fallback port; status, info, doctor and the client reach it', async () => {
+  // Holds the default port 47615 itself (or finds it already held): either way it is occupied, so
+  // the unset-port daemon must fall back. Never depends on 47615 being free.
+  it('daemon start reports the fallback port; status, info, doctor and the client reach it', async () => {
+    await occupyDefaultPort();
     const start = cli(['daemon', 'start']);
     expect(start.status, start.out).toBe(0);
     expect(start.out).toMatch(/Daemon started .*127\.0\.0\.1:(\d+)/);
     const port = Number(/127\.0\.0\.1:(\d+)/.exec(start.out)![1]);
-    expect(port).not.toBe(preferred);
-    expect(start.out).toContain(`started on fallback port ${port}; default ${preferred} is in use`);
+    expect(port).not.toBe(DEFAULT_DAEMON_PORT);
+    expect(start.out).toContain(`started on fallback port ${port}; default ${DEFAULT_DAEMON_PORT} is in use`);
 
     const status = cli(['daemon', 'status']);
     expect(status.out).toContain(`port: ${port}`);
@@ -110,7 +125,7 @@ describe('fallback port surfaces', () => {
     expect(info.out).toContain(`http://127.0.0.1:${port}/dashboard`);
 
     const doctor = cli(['doctor']);
-    expect(doctor.out).toContain(`daemon port (${port} (started on fallback port ${port}; default ${preferred} is in use))`);
+    expect(doctor.out).toContain(`daemon port (${port} (started on fallback port ${port}; default ${DEFAULT_DAEMON_PORT} is in use))`);
     expect(doctor.out).toContain('daemon reachable');
 
     const client = createClient({ env });

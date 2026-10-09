@@ -219,7 +219,7 @@ in the first place, note that `crontick share export` backs up job definitions o
 
 ### Daemon port is occupied
 
-The daemon prefers port `47615` (override with `CRONTICK_DAEMON_PORT`). When that port is held, the daemon
+The daemon prefers port `47615` (override with `daemon.port` in `config.json`). When that port is held, the daemon
 still starts, on a free port, and says why: `Port 47615 is in use by another crontick daemon (pid N, data dir
 <dir>); starting on a free port` (for example a second data dir) or `Port 47615 is in use by another process
 (not crontick); starting on a free port`. `crontick daemon start`/`status`, `crontick info` and `crontick doctor`

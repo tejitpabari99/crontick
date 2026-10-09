@@ -127,6 +127,12 @@ crontick daemon reload
 
 ---
 
+## DaemonConfig
+
+| Field | Type | Required | Default | Constraints | Runtime behavior |
+|-------|------|----------|---------|-------------|------------------|
+| `port` | `integer` | no | unset (prefers `47615`) | `min(0)`, `max(65535)` | Read at daemon startup. Unset: prefer `47615`, falling back to a free port when taken. Set: bind exactly that port; `0` picks a free port. The bound port is recorded in `<dataDir>/daemon.port` |
+
 ## RetentionConfig
 
 | Field | Type | Required | Default | Constraints | Runtime behavior |
@@ -218,7 +224,6 @@ into a permission mode or to set `--max-budget-usd`.
 | Variable | Type | Default | Effect |
 |----------|------|---------|--------|
 | `CRONTICK_HOME` | string (path) | Platform via `env-paths` | Overrides the data directory root |
-| `CRONTICK_DAEMON_PORT` | integer 0-65535 | `47615` | Preferred daemon port. When taken, the daemon falls back to a free port and records it in `daemon.port`. `0` always picks a free port (used by tests so parallel daemons never collide) |
 | `CRONTICK_DAEMON_URL` | string (URL) | Port file discovery | Explicit daemon base URL (for example, `http://127.0.0.1:9876`) |
 | `CRONTICK_DAEMON_BINARY` | string (path) | Resolved from built files | Override path to daemon script |
 | `CRONTICK_MCP_START_DAEMON` | `"0"` to disable | Enabled (any other value) | When `"0"`, MCP server does not demand-start the daemon |

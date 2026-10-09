@@ -34,13 +34,15 @@ export const FAKE_ENGINE_CONFIG = Object.freeze({
  * asserting the built-in default engine name are unaffected). Callers that
  * need the fake engine must reference it explicitly via `engine:
  * FAKE_ENGINE_NAME`. `overrides` is shallow-merged over the top-level config
- * object (e.g. to add `retention`/`logging` overrides).
+ * object (e.g. to add `retention`/`logging` overrides). Also sets `daemon.port` 0 (see test-home.ts).
  */
 export function writeFakeEngineConfig(dir: string, overrides: Record<string, unknown> = {}): void {
   writeFileSync(
     join(dir, 'config.json'),
     `${JSON.stringify(
       {
+        // Real daemons in this home take a free port rather than contending for 47615.
+        daemon: { port: 0 },
         engines: { [FAKE_ENGINE_NAME]: FAKE_ENGINE_CONFIG },
         ...overrides,
       },

@@ -7,6 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { CrontickClient } from '../../src/client.js';
 import { MCP_TOOLS, SURFACE_CAPABILITIES } from '../../src/surface.js';
+import { writeTestConfig } from '../helpers/test-home.js';
 
 const CLI = resolve('dist/cli/index.js');
 const MCP = resolve('dist/mcp/index.js');
@@ -52,6 +53,7 @@ const NON_PARITY_CLIENT_METHODS = new Set([
 function scratchHome(): string {
   const home = resolve('.crontick', 'surface-drift', randomUUID());
   mkdirSync(join(home, 'jobs'), { recursive: true });
+  writeTestConfig(home);
   mkdirSync(join(home, 'logs'), { recursive: true });
   return home;
 }

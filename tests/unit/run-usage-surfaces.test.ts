@@ -50,6 +50,7 @@ async function terminalRun(id: string): Promise<RunRecord> {
 beforeAll(async () => {
   mkdirSync(join(home, 'jobs'));
   writeFileSync(join(home, 'config.json'), JSON.stringify({
+    daemon: { port: 0 },
     defaultEngine: 'test-claude',
     engines: {
       'test-claude': fakeClaudeEngineConfig({ usage: { input_tokens: 10, output_tokens: 5, api_key: 'top-secret' } }),

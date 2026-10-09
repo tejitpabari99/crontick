@@ -32,15 +32,9 @@ describe('daemon port binding', () => {
     expect(preferredDaemonPort(cfg())).toEqual({ port: 47615, explicit: false });
   });
 
-  it('returns the configured port as explicit (including 0) and ignores the env var', () => {
+  it('returns the configured port as explicit (including 0)', () => {
     expect(preferredDaemonPort(cfg(5000))).toEqual({ port: 5000, explicit: true });
     expect(preferredDaemonPort(cfg(0))).toEqual({ port: 0, explicit: true });
-    process.env['CRONTICK_DAEMON_PORT'] = '1234';
-    try {
-      expect(preferredDaemonPort(cfg())).toEqual({ port: 47615, explicit: false });
-    } finally {
-      delete process.env['CRONTICK_DAEMON_PORT'];
-    }
   });
 
   it('unset: binds the default port when free, without notice', async () => {

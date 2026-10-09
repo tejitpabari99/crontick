@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { createClient } from '../../src/client.js';
+import { writeTestConfig } from '../helpers/test-home.js';
 
 const CLI = resolve('dist', 'cli', 'index.js');
 const MCP = resolve('dist', 'mcp', 'index.js');
@@ -106,6 +107,7 @@ function resetHome(): void {
   rmSync(home, { recursive: true, force: true });
   mkdirSync(join(home, 'jobs'), { recursive: true });
   mkdirSync(join(home, 'logs'), { recursive: true });
+  writeTestConfig(home);
 }
 
 function removeHome(): void {

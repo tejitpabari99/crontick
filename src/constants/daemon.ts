@@ -36,7 +36,7 @@ export const EXIT_CLOSE_GRACE_MS = 3_000;
  * so another process may already hold it. That is accepted as normal: the daemon
  * falls back to an OS-assigned free port and clients always discover the real
  * port via `daemon.port`.
- * Override with env `CRONTICK_DAEMON_PORT` (tests).
+ * Override with `daemon.port` in `config.json`.
  */
 export const DEFAULT_DAEMON_PORT = 47615;
 

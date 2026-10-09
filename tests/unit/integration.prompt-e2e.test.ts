@@ -89,6 +89,7 @@ describe('Integration: prompt job session capture through a live daemon', () => 
     writeFileSync(
       join(dir, 'config.json'),
       JSON.stringify({
+        daemon: { port: 0 },
         defaultEngine: 'stub',
         engines: {
           stub: {

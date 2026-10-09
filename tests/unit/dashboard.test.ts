@@ -12,6 +12,7 @@ import { Store } from '../../src/daemon/store.js';
 import { CrontickError } from '../../src/errors.js';
 import { teardownDaemon } from '../helpers/cleanup.js';
 import type { Job } from '../../src/schemas/job.js';
+import { writeTestConfig } from '../helpers/test-home.js';
 
 const DAEMON_SCRIPT = resolve('dist/daemon/index.js');
 const TIMEOUT_MS = 30_000;
@@ -20,6 +21,7 @@ const SCRATCH_ROOT = resolve('.crontick', 'dashboard-tests');
 function makeScratchDir(prefix: string): string {
   const d = join(SCRATCH_ROOT, `${prefix}-${randomUUID()}`);
   mkdirSync(join(d, 'jobs'), { recursive: true });
+  writeTestConfig(d);
   mkdirSync(join(d, 'logs'), { recursive: true });
   return d;
 }

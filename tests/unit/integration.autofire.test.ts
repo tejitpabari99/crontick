@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { teardownDaemon } from '../helpers/cleanup.js';
 import { FAKE_ENGINE_NAME, writeFakeEngineConfig } from '../helpers/fake-engine.js';
+import { writeTestConfig } from '../helpers/test-home.js';
 
 const DAEMON_SCRIPT = join(process.cwd(), 'dist', 'daemon', 'index.js');
 const TIMEOUT_MS = 30_000;
@@ -27,6 +28,7 @@ const node = process.execPath;
 function makeTmpDir(): string {
   const d = mkdtempSync(join(tmpdir(), 'crontick-autofire-'));
   mkdirSync(join(d, 'jobs'), { recursive: true });
+  writeTestConfig(d);
   mkdirSync(join(d, 'logs'), { recursive: true });
   return d;
 }
