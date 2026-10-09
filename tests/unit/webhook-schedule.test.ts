@@ -45,7 +45,7 @@ describe('WebhookScheduleSchema', () => {
 
 describe('describeSchedule webhook', () => {
   it('labels relay and local-only', () => {
-    expect(describeSchedule({ kind: 'webhook', relay: 'https://smee.io/abc' }, () => undefined)).toBe('webhook (relay: https://smee.io/abc)');
+    expect(describeSchedule({ kind: 'webhook', relay: 'https://smee.io/abc' }, () => undefined)).toBe('webhook (relay: https://smee.io/…)');
     expect(describeSchedule({ kind: 'webhook' }, () => undefined)).toBe('webhook (local only)');
   });
 });

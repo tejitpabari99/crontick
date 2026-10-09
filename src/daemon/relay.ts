@@ -5,6 +5,7 @@
  * Status is in memory only. No replay, no Last-Event-ID.
  */
 import type { Logger } from '../logger.js';
+import { redactSmeeUrlsInText } from '../utils/webhook-redact.js';
 import type { Job } from '../schemas/job.js';
 import {
   RELAY_BACKOFF_BASE_MS,
@@ -204,7 +205,7 @@ export class RelayManager {
       const cap = Math.min(RELAY_BACKOFF_MAX_MS, RELAY_BACKOFF_BASE_MS * 2 ** attempt);
       attempt++;
       conn.state = 'backoff';
-      this.logger.debug('Relay disconnected; backing off', { attempt, error: conn.lastError });
+      this.logger.debug('Relay disconnected; backing off', { attempt, error: conn.lastError === null ? null : redactSmeeUrlsInText(conn.lastError) });
       await new Promise<void>((resolve) => {
         const t = setTimeout(() => { conn.wake = null; resolve(); }, this.random() * cap);
         conn.wake = () => { clearTimeout(t); conn.wake = null; resolve(); };

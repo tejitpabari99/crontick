@@ -1,4 +1,5 @@
 import type { Schedule } from '../schemas/job.js';
+import { redactRelayUrl } from './webhook-redact.js';
 
 /** Minimal upstream info needed to label an `after` schedule. */
 export interface ScheduleLabelTarget {
@@ -18,6 +19,6 @@ export function describeSchedule(schedule: Schedule, lookup: ScheduleLabelLookup
     if (!upstream) return `after ${id8} (missing)`;
     return `after ${upstream.alias || id8} (on ${schedule.status})`;
   }
-  if (schedule.kind === 'webhook') return schedule.relay ? `webhook (relay: ${schedule.relay})` : 'webhook (local only)';
+  if (schedule.kind === 'webhook') return schedule.relay ? `webhook (relay: ${redactRelayUrl(schedule.relay)})` : 'webhook (local only)';
   return `once at ${schedule.runAt}`;
 }

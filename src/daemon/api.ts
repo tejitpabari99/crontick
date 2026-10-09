@@ -24,6 +24,7 @@ import {
 } from '../dashboard.js';
 import { buildRunOutput } from '../run-output.js';
 import { nullLogger, redactValue, type Logger } from '../logger.js';
+import { redactWebhookDeep, restoreRedactedWebhook } from '../utils/webhook-redact.js';
 import { readEnvFileForAction } from './env-file.js';
 import { resolveJobLogPath } from './job-log-file.js';
 import { TriggerDispatcher, type TriggerSkipReason } from './trigger.js';
@@ -41,9 +42,19 @@ import {
   readStoredConfigFile,
   type ConfigOp,
 } from '../config.js';
-import { stripExportIds } from '../share.js';
+import { stripExportIds, stripWebhookSecrets } from '../share.js';
 import type { CrontickConfig } from '../schemas/config.js';
 import { applyConfigWithPolicy, applyJobUpdateWithPolicy, type InFlightChoice, type LostPendingConfigApply } from './config-apply.js';
+
+/** Redaction for every API payload: logger redaction plus webhook relay/secret display form. */
+function redactPublic(value: unknown): unknown {
+  return redactWebhookDeep(redactValue(value));
+}
+
+/** Single-job payload that keeps the full webhook relay/secret (only `GET /api/jobs/:id` and create). */
+function redactKeepingWebhook(job: Job): unknown {
+  return { ...(redactValue(job) as Record<string, unknown>), schedule: job.schedule };
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -153,7 +164,7 @@ async function handleRequest(
 
     // ── Jobs ─────────────────────────────────────────────────────────────────
     if (method === 'GET' && path === '/api/jobs') {
-      return sendJson(res, 200, redactValue(ctx.store.listJobs()));
+      return sendJson(res, 200, redactPublic(ctx.store.listJobs()));
     }
 
     // Form metadata for the dashboard editor; registered before /api/jobs/:id so it is not read as a job ref.
@@ -229,7 +240,7 @@ async function handleRequest(
       // L2: seed the missed-fire watermark so a restart computes forward from
       // "job just created/updated", not from some earlier (or absent) state.
       ctx.store.recordTick(stored.id);
-      return sendJson(res, 201, redactValue(stored));
+      return sendJson(res, 201, redactKeepingWebhook(stored));
     }
 
     // Atomic bulk delete: removes every job (and its runs/logs/schedule-state)
@@ -267,12 +278,16 @@ async function handleRequest(
 
       if (method === 'GET' && sub === '') {
         if (!job) return sendJobNotFoundError(res, requestedId);
-        return sendJson(res, 200, redactValue(job));
+        return sendJson(res, 200, redactKeepingWebhook(job));
       }
 
       if (method === 'PUT' && sub === '') {
         if (!job) return sendJobNotFoundError(res, requestedId);
         const body = await readBody(req);
+        // A list payload round-tripped through an editor carries the display form; keep the stored values.
+        if (body && typeof body === 'object' && (body as { schedule?: unknown }).schedule !== undefined) {
+          (body as { schedule: unknown }).schedule = restoreRedactedWebhook((body as { schedule: unknown }).schedule, job.schedule);
+        }
         let updatedJob: Job;
         if (flagParam(url, 'prepare')) {
           // Prepare mode: body is a JobPatchInput; field-wise merge + cwd-session rule + trust on key change.
@@ -326,7 +341,7 @@ async function handleRequest(
               },
             },
           );
-          return sendJson(res, 200, redactValue(result));
+          return sendJson(res, 200, redactPublic(result));
         } catch (err) {
           if (err instanceof CrontickError && err.code === 'RUNS_IN_FLIGHT') {
             return sendError(res, 409, err.code, err.message, err.details);
@@ -380,7 +395,7 @@ async function handleRequest(
         ctx.syncRelays?.();
         // L2: re-enabling starts a fresh watermark, same reasoning as create/update.
         ctx.store.recordTick(job.id);
-        return sendJson(res, 200, redactValue(updated));
+        return sendJson(res, 200, redactPublic(updated));
       }
 
       if (method === 'POST' && sub === '/disable') {
@@ -389,7 +404,7 @@ async function handleRequest(
         ctx.store.upsertJob(updated);
         ctx.scheduler.unschedule(job.id);
         ctx.syncRelays?.();
-        return sendJson(res, 200, redactValue(updated));
+        return sendJson(res, 200, redactPublic(updated));
       }
 
       // Local webhook fire: same TriggerDispatcher path as relay events, minus the relay-only
@@ -452,7 +467,7 @@ async function handleRequest(
       // surfacing as an opaque 500.
       const limit = optionalPositiveInt(url.searchParams.get('limit'), 'limit');
       const since = optionalPositiveInt(url.searchParams.get('since'), 'since');
-      return sendJson(res, 200, redactValue(ctx.store.listRuns({ jobIds, limit, since, statuses, q })));
+      return sendJson(res, 200, redactPublic(ctx.store.listRuns({ jobIds, limit, since, statuses, q })));
     }
 
 
@@ -480,7 +495,7 @@ async function handleRequest(
         if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
         // Per-job (not per-run) mirror file; null when file logging is disabled.
         const logFile = resolveJobLogPath(run.jobId);
-        return sendJson(res, 200, redactValue({
+        return sendJson(res, 200, redactPublic({
           ...run,
           logFile,
           ...(logFile !== null ? { logFileExists: existsSync(logFile) } : {}),
@@ -500,7 +515,7 @@ async function handleRequest(
       if (method === 'GET' && sub === '/output') {
         const run = ctx.store.getRun(id);
         if (!run) return sendError(res, 404, 'NOT_FOUND', `Run ${id} not found`);
-        return sendJson(res, 200, redactValue({ ...buildRunOutput(run, ctx.store.getRunOutput(run.id)), logFile: resolveJobLogPath(run.jobId) }));
+        return sendJson(res, 200, redactPublic({ ...buildRunOutput(run, ctx.store.getRunOutput(run.id)), logFile: resolveJobLogPath(run.jobId) }));
       }
     }
 
@@ -649,8 +664,16 @@ async function handleRequest(
           }
         }
       }
-      const jobs = stripExportIds(selected);
-      return sendJson(res, 200, redactValue({ schema: 1, exportedAt: new Date().toISOString(), crontickVersion: VERSION, jobs }));
+      // Webhook relay (bearer URL) and secret are stripped unless the caller opts in with includeSecrets=1.
+      const includeSecrets = flagParam(url, 'includeSecrets');
+      const rows = stripExportIds(includeSecrets ? selected : stripWebhookSecrets(selected));
+      // With includeSecrets the webhook schedule keeps its full values; everything else still goes through redaction.
+      const jobs = includeSecrets
+        ? rows.map((row) => ({ ...(redactValue(row) as object), schedule: row.schedule }))
+        : rows;
+      return sendJson(res, 200, includeSecrets
+        ? { schema: 1, exportedAt: new Date().toISOString(), crontickVersion: VERSION, jobs }
+        : redactPublic({ schema: 1, exportedAt: new Date().toISOString(), crontickVersion: VERSION, jobs }));
     }
 
     if (method === 'POST' && path === '/api/import') {

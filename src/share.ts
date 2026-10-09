@@ -50,3 +50,13 @@ export function remapAfterUpstreams<T extends { id: string; schedule: { kind: st
     }
   }
 }
+
+/** Removes `relay` and `secret` from webhook schedules (export/import default; `--include-secrets` keeps them). */
+export function stripWebhookSecrets<T extends { schedule: { kind: string } }>(jobs: readonly T[]): T[] {
+  return jobs.map((job) => {
+    if (job.schedule.kind !== 'webhook') return job;
+    const { relay: _relay, secret: _secret, ...schedule } = job.schedule as { kind: string; relay?: string; secret?: string };
+    void _relay; void _secret;
+    return { ...job, schedule };
+  });
+}

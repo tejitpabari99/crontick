@@ -13,6 +13,7 @@ import { VERSION } from '../version.js';
 import { JobCreateInputSchema, JobPatchInputSchema } from '../job-input.js';
 import { createClient, type CrontickClient } from '../client.js';
 import { isVerboseEnv, type LogEvent } from '../logger.js';
+import { redactSmeeUrlsInText, redactWebhookDeep } from '../utils/webhook-redact.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -70,7 +71,25 @@ type ToolResult = {
   isError?: boolean;
 };
 
-function okResult(data: unknown, diagnostics: LogEvent[] = [], verbose = false): ToolResult {
+/**
+ * LLM-facing redaction for tool results (separate from `redactValue`): webhook relay URLs become
+ * `https://smee.io/Uk…Sd`, `secret` becomes `set`, and smee.io URLs in free text (notices) are masked.
+ * Exported for testing.
+ */
+export function redactForLlmValue(value: unknown): unknown {
+  const walk = (v: unknown): unknown => {
+    if (typeof v === 'string') return redactSmeeUrlsInText(v);
+    if (Array.isArray(v)) return v.map(walk);
+    if (typeof v === 'object' && v !== null) {
+      return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, e]) => [k, walk(e)]));
+    }
+    return v;
+  };
+  return walk(redactWebhookDeep(value));
+}
+
+function okResult(data: unknown, diagnostics: LogEvent[] = [], verbose = false, redact = true): ToolResult {
+  if (redact) data = redactForLlmValue(data);
   const payload = verbose && diagnostics.length > 0 ? { result: data, diagnostics } : data;
   return { content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }] };
 }
@@ -117,7 +136,7 @@ export function redactedErrorMessage(err: unknown): string {
 }
 
 /** Core handler pattern: create client, call fn, shape result or redact error. */
-async function toolWrap(args: VerboseArgs | undefined, fn: (client: CrontickClient) => Promise<unknown>, startDaemon = shouldStartDaemon()): Promise<ToolResult> {
+async function toolWrap(args: VerboseArgs | undefined, fn: (client: CrontickClient) => Promise<unknown>, startDaemon = shouldStartDaemon(), redact = true): Promise<ToolResult> {
   const diagnostics: LogEvent[] = [];
   const verbose = mcpVerbose(args);
   const client = mcpClient(startDaemon, { verbose, diagnostics });
@@ -125,7 +144,7 @@ async function toolWrap(args: VerboseArgs | undefined, fn: (client: CrontickClie
     const result = await fn(client);
     const notices = client.drainNotices();
     const data = notices.length > 0 ? { result, notices } : result;
-    return okResult(data, diagnostics, verbose);
+    return okResult(data, diagnostics, verbose, redact);
   } catch (err) {
     return errResult(err, diagnostics, verbose);
   }
@@ -480,10 +499,11 @@ export function createMcpServer(): McpServer {
         'Export job definitions as a crontick export file ({ schema: 1, exportedAt, crontickVersion, jobs }). Jobs only: no run history, and job ids are omitted (importing assigns new ids). Use this to back up or migrate jobs. Set onlyJobs (ids or aliases) to export a subset; an unknown entry fails the whole export with JOB_NOT_FOUND.',
       inputSchema: withVerbose({
         onlyJobs: z.array(z.string()).optional().describe('Ids or aliases of the jobs to export (default: all jobs)'),
+        includeSecrets: z.boolean().optional().describe('Keep webhook relay URLs and secrets in the export (default: stripped). They are bearer secrets and will appear in this tool result.'),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async (args) => toolWrap(args, (client) => client.exportJobs({ onlyJobs: args.onlyJobs })),
+    async (args) => toolWrap(args, (client) => client.exportJobs({ onlyJobs: args.onlyJobs, includeSecrets: args.includeSecrets }), shouldStartDaemon(), args.includeSecrets !== true),
   );
 
   server.registerTool(
@@ -497,13 +517,14 @@ export function createMcpServer(): McpServer {
         exportedAt: z.string().optional(),
         crontickVersion: z.string().optional(),
         trustFolder: TRUST_FOLDER_INPUT,
+        includeSecrets: z.boolean().optional().describe('Keep webhook relay URLs and secrets from the file (default: stripped on import)'),
       }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async (args) => {
-      const { trustFolder, verbose: _verbose, ...file } = args;
+      const { trustFolder, includeSecrets, verbose: _verbose, ...file } = args;
       void _verbose;
-      return toolWrap(args, (client) => client.importJobs(file, { trustFolder }));
+      return toolWrap(args, (client) => client.importJobs(file, { trustFolder, includeSecrets }));
     },
   );
 

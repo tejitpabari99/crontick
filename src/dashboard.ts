@@ -8,6 +8,7 @@ import { extname, join as pathJoin, normalize, resolve as pathResolve, sep as pa
 import { fileURLToPath } from 'node:url';
 import { CrontickError } from './errors.js';
 import { redactValue } from './logger.js';
+import { redactWebhookDeep } from './utils/webhook-redact.js';
 import { VERSION } from './version.js';
 import { dataDir } from './paths.js';
 import type { Job } from './schemas/job.js';
@@ -145,13 +146,14 @@ export function buildDashboardData(ctx: DashboardContext, options: DashboardOpti
   // Snapshot of jobId -> alias for run display convenience (DashboardRun.jobAlias).
   const aliasByJobId = new Map(jobs.map((job) => [job.id, job.alias ?? null] as const));
 
-  return redactValue({
+  // Webhook relay/secret are masked here; the full values come only from GET /api/jobs/:id (copy button).
+  return redactWebhookDeep(redactValue({
     generatedAt: Date.now(),
     health: buildDashboardHealth(ctx, jobs, runs24h),
     stats: buildDashboardStats(jobs, allRuns),
     jobs: jobs.map((job) => buildDashboardJob(ctx, job)),
     runs: recentRuns.map((run) => toDashboardRun(run, aliasByJobId)),
-  }) as DashboardData;
+  })) as DashboardData;
 }
 
 export function buildDashboardHealth(ctx: DashboardContext, jobs: Job[], runs24h: Run[]): DashboardHealth {

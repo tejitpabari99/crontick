@@ -70,7 +70,8 @@ import type { InFlightChoice } from './daemon/config-apply.js';
 import type { InFlightRun } from './daemon/runner.js';
 import { createLogger, isVerboseEnv, type Logger, type LogSink } from './logger.js';
 import { dataDir, jobsDir, logsDir, pidFilePath, portFilePath, runsDbPath } from './paths.js';
-import { remapAfterUpstreams } from './share.js';
+import { remapAfterUpstreams, stripWebhookSecrets } from './share.js';
+import { redactWebhookDeep } from './utils/webhook-redact.js';
 import { describeSchedule } from './utils/schedule-label.js';
 import { createRelayChannel } from './utils/relay-url.js';
 import { VERSION } from './version.js';
@@ -533,9 +534,10 @@ export class CrontickClient {
    * (ids or aliases) limits the export; any unknown entry fails with
    * JOB_NOT_FOUND listing every miss.
    */
-  async exportJobs(options: { onlyJobs?: string[] } = {}): Promise<ExportFile> {
+  async exportJobs(options: { onlyJobs?: string[]; includeSecrets?: boolean } = {}): Promise<ExportFile> {
     const params = new URLSearchParams();
     if (options.onlyJobs && options.onlyJobs.length > 0) params.set('jobs', options.onlyJobs.join(','));
+    if (options.includeSecrets) params.set('includeSecrets', '1');
     const qs = params.toString();
     return this.request<ExportFile>('GET', `/api/export${qs ? `?${qs}` : ''}`);
   }
@@ -547,15 +549,17 @@ export class CrontickClient {
    * A job whose working directory does not exist fails on its own row; Claude
    * folder trust is checked once per distinct folder (see `trustFolder`).
    */
-  async importJobs(file: unknown, options: NormalizeJobInputOptions & { trustFolder?: boolean } = {}): Promise<ImportResult> {
-    const { trustFolder, ...normalizeInputOptions } = options;
+  async importJobs(file: unknown, options: NormalizeJobInputOptions & { trustFolder?: boolean; includeSecrets?: boolean } = {}): Promise<ImportResult> {
+    const { trustFolder, includeSecrets, ...normalizeInputOptions } = options;
     const parsed = ExportFileSchema.safeParse(file);
     if (!parsed.success) throw importFileError(file, parsed.error);
     const normalizeOptions = this.normalizeOptions(normalizeInputOptions);
     const failures: ImportResult['results'] = [];
     const jobs: Job[] = [];
     const oldIds: Array<string | undefined> = [];
-    parsed.data.jobs.forEach((entry, index) => {
+    // relay (bearer URL) and secret in the file are dropped unless includeSecrets is set.
+    const entries = includeSecrets === true ? parsed.data.jobs : stripWebhookSecrets(parsed.data.jobs);
+    entries.forEach((entry, index) => {
       const { id: fileId, ...input } = entry;
       try {
         jobs.push(normalizeJobInput(input as JobCreateInput, normalizeOptions));
@@ -605,9 +609,10 @@ export class CrontickClient {
       const label = describeSchedule(job.schedule, () => upstream);
       const who = upstream ? (upstream.alias || upstreamId.slice(0, 8)) : `${upstreamId.slice(0, 8)} (missing)`;
       const message = `triggered after ${who} on ${job.schedule.status === 'any' ? 'any outcome' : job.schedule.status}; no scheduled fire times`;
-      return { jobId: job.id, alias: job.alias ?? null, enabled: job.enabled, cwd: job.action.cwd ?? null, schedule: job.schedule, scheduleLabel: label, ...(preview as Record<string, unknown>), message };
+      return redactWebhookDeep({ jobId: job.id, alias: job.alias ?? null, enabled: job.enabled, cwd: job.action.cwd ?? null, schedule: job.schedule, scheduleLabel: label, ...(preview as Record<string, unknown>), message });
     }
-    return { jobId: job.id, alias: job.alias ?? null, enabled: job.enabled, cwd: job.action.cwd ?? null, schedule: job.schedule, ...(preview as Record<string, unknown>) };
+    // Relay URL and secret are shown in full only by `getJob`; schedule output is redacted.
+    return redactWebhookDeep({ jobId: job.id, alias: job.alias ?? null, enabled: job.enabled, cwd: job.action.cwd ?? null, schedule: job.schedule, ...(preview as Record<string, unknown>) });
   }
 
   async statsSummary(): Promise<StatsSummary> {

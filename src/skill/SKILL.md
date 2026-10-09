@@ -207,6 +207,7 @@ crontick also ships an MCP server that mirrors these commands one-to-one (tool p
 | `crontick_job_delete` | `jobs delete` (`all: true` + `force: true` = `jobs delete all --force`) |
 | `crontick_job_schedule` | `jobs schedule` |
 | `crontick_job_run_now` | `jobs run-now` |
+| `crontick_job_trigger` | `jobs trigger` (webhook jobs only; optional JSON `payload`) |
 | `crontick_job_cancel_run` | `runs cancel` |
 | `crontick_run_list` | `runs list` |
 | `crontick_run_get` | `runs get` (also returns the cleaned output) |

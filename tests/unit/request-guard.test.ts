@@ -36,6 +36,7 @@ const MUTATING_ROUTES: Array<[string, string]> = [
   ['POST', '/api/jobs/x/disable'],
   ['POST', '/api/jobs/x/run'],
   ['POST', '/api/jobs/x/run-now'], // alias of /run: same source condition
+  ['POST', '/api/jobs/x/trigger'],
   ['DELETE', '/api/runs'],
   ['POST', '/api/runs/x/cancel'],
   ['POST', '/api/schedules/validate'],

@@ -635,10 +635,11 @@ share.command('export')
   .description('Export jobs to a crontick export file (schema 1, jobs only)')
   .option('--out <file>', 'Output file; ".json" is appended unless the name already ends in .json (default: print to stdout)')
   .option('--only-jobs <id|alias,...>', 'Comma-separated ids or aliases of the jobs to export (default: all jobs)')
+  .option('--include-secrets', 'Keep webhook relay URLs and secrets in the export (default: stripped; they are bearer secrets)')
   .action(async (opts) => {
     try {
       const onlyJobs = typeof opts.onlyJobs === 'string' ? opts.onlyJobs.split(',').map((v: string) => v.trim()).filter(Boolean) : undefined;
-      const data = await client().exportJobs({ onlyJobs });
+      const data = await client().exportJobs({ onlyJobs, includeSecrets: booleanOption(opts.includeSecrets) });
       const json = JSON.stringify(data, null, 2);
       if (opts.out) {
         const target = resolveExportPath(opts.out as string, process.cwd());
@@ -653,6 +654,7 @@ share.command('export')
 share.command('import <file>')
   .description('Import jobs from a crontick export file (schema 1). Jobs get new ids.')
   .option('--trust-folder', 'Trust the jobs\' working directories in Claude without asking (when not trusted yet)')
+  .option('--include-secrets', 'Keep webhook relay URLs and secrets from the file (default: stripped on import)')
   .action(async (file: string, opts) => {
     try {
       const filePath = resolve(process.cwd(), file);
@@ -663,7 +665,7 @@ share.command('import <file>')
       });
       const c = client();
       print(await withTrustPrompt(
-        (trustFolder) => c.importJobs(data, { fileBaseDir: dirname(filePath), trustFolder }),
+        (trustFolder) => c.importJobs(data, { fileBaseDir: dirname(filePath), trustFolder, includeSecrets: booleanOption(opts.includeSecrets) }),
         { trustFolder: booleanOption(opts.trustFolder), io: terminalTrustPromptIo() },
       ));
     } catch (err) { handleError(err); }
