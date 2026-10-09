@@ -225,7 +225,7 @@ export class Scheduler extends EventEmitter {
       case 'cron':
         return enumerateCronFires(schedule.cron, fromExclusiveMs, toExclusiveMs, cap);
       case 'interval':
-        return enumerateIntervalFires(schedule.everySec, fromExclusiveMs, toExclusiveMs, cap);
+        return enumerateIntervalFires(schedule.everySec, schedule.startAt, fromExclusiveMs, toExclusiveMs, cap);
       case 'one-shot': {
         const t = new Date(schedule.runAt).getTime();
         if (isNaN(t) || t <= fromExclusiveMs || t >= toExclusiveMs) return { fires: [], capped: false };
@@ -234,6 +234,30 @@ export class Scheduler extends EventEmitter {
       case 'after':
       case 'webhook':
         return { fires: [], capped: false };
+      default:
+        return assertNever(schedule);
+    }
+  }
+
+  /**
+   * Latest fire strictly between `fromExclusiveMs` and `toExclusiveMs`, computed directly
+   * (not from the earliest-`cap` enumeration), so it is correct when enumeration is capped.
+   * Returns null when there is none or the schedule is non-time (after/webhook).
+   */
+  latestFireBefore(schedule: Schedule, fromExclusiveMs: number, toExclusiveMs: number): number | null {
+    if (fromExclusiveMs >= toExclusiveMs) return null;
+    switch (schedule.kind) {
+      case 'cron':
+        return latestCronFire(schedule.cron, fromExclusiveMs, toExclusiveMs);
+      case 'interval':
+        return latestIntervalFire(schedule.everySec, schedule.startAt, fromExclusiveMs, toExclusiveMs);
+      case 'one-shot': {
+        const t = new Date(schedule.runAt).getTime();
+        return isNaN(t) || t <= fromExclusiveMs || t >= toExclusiveMs ? null : t;
+      }
+      case 'after':
+      case 'webhook':
+        return null;
       default:
         return assertNever(schedule);
     }
@@ -390,17 +414,37 @@ function enumerateCronFires(
   }
 }
 
-/** Compute equally-spaced interval fires forward from `fromExclusiveMs`, capped. */
+/** Parse an interval's startAt to epoch-ms; undefined when absent or invalid (live scheduler ignores invalid startAt). */
+function parseStartAt(startAt: string | undefined): number | undefined {
+  if (!startAt) return undefined;
+  const ms = new Date(startAt).getTime();
+  return isNaN(ms) ? undefined : ms;
+}
+
+/**
+ * Compute equally-spaced interval fires in (fromExclusiveMs, toExclusiveMs), capped.
+ * With a valid `startAt`, fires lie on the grid startAt + k*interval (k >= 0), matching the
+ * live scheduler (none before startAt). Without it, the grid is anchored at `fromExclusiveMs`.
+ */
 function enumerateIntervalFires(
   everySec: number,
+  startAt: string | undefined,
   fromExclusiveMs: number,
   toExclusiveMs: number,
   cap: number,
 ): EnumerateFiresResult {
   const intervalMs = everySec * 1000;
   if (intervalMs <= 0) return { fires: [], capped: false };
+  const startMs = parseStartAt(startAt);
+  let t: number;
+  if (startMs === undefined) {
+    t = fromExclusiveMs + intervalMs;
+  } else if (startMs > fromExclusiveMs) {
+    t = startMs;
+  } else {
+    t = startMs + (Math.floor((fromExclusiveMs - startMs) / intervalMs) + 1) * intervalMs;
+  }
   const fires: number[] = [];
-  let t = fromExclusiveMs + intervalMs;
   let capped = false;
   while (t < toExclusiveMs) {
     if (fires.length >= cap) {
@@ -411,6 +455,44 @@ function enumerateIntervalFires(
     t += intervalMs;
   }
   return { fires, capped };
+}
+
+/** Latest interval fire in (from, to) computed directly (no enumeration); null if none. */
+function latestIntervalFire(
+  everySec: number,
+  startAt: string | undefined,
+  fromExclusiveMs: number,
+  toExclusiveMs: number,
+): number | null {
+  const intervalMs = everySec * 1000;
+  if (!(intervalMs > 0)) return null;
+  const startMs = parseStartAt(startAt);
+  let latest: number;
+  if (startMs === undefined) {
+    // Grid anchored at fromExclusiveMs: from + k*interval, k >= 1.
+    const k = Math.ceil((toExclusiveMs - fromExclusiveMs) / intervalMs) - 1;
+    if (k < 1) return null;
+    latest = fromExclusiveMs + k * intervalMs;
+  } else {
+    if (startMs >= toExclusiveMs) return null;
+    const k = Math.ceil((toExclusiveMs - startMs) / intervalMs) - 1;
+    latest = startMs + k * intervalMs;
+  }
+  return latest > fromExclusiveMs && latest < toExclusiveMs ? latest : null;
+}
+
+/** Latest cron fire in (from, to): scan back over doubling windows ending at `to`; first non-empty window holds it. */
+function latestCronFire(pattern: string, fromExclusiveMs: number, toExclusiveMs: number): number | null {
+  let width = 60_000;
+  let windowEnd = toExclusiveMs;
+  for (;;) {
+    const windowStart = Math.max(fromExclusiveMs, toExclusiveMs - width);
+    const { fires } = enumerateCronFires(pattern, windowStart, windowEnd, Number.MAX_SAFE_INTEGER);
+    if (fires.length > 0) return fires[fires.length - 1];
+    if (windowStart <= fromExclusiveMs) return null;
+    windowEnd = windowStart + 1; // windowStart itself is an exclusive bound of the scan; include it as a candidate
+    width *= 2;
+  }
 }
 
 /** Iterate croner's nextRun() N times from now without registering a live timer. */

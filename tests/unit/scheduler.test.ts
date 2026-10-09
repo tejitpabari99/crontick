@@ -346,5 +346,69 @@ describe('Scheduler', () => {
       expect(scheduler.enumerateFiresBetween({ kind: 'interval', everySec: 1 }, 5000, 5000)).toEqual({ fires: [], capped: false });
       expect(scheduler.enumerateFiresBetween({ kind: 'interval', everySec: 1 }, 6000, 5000)).toEqual({ fires: [], capped: false });
     });
+
+    it('interval startAt in the future: zero fires before startAt; startAt itself is a fire', () => {
+      scheduler = new Scheduler();
+      const startAt = new Date(10_000_000).toISOString();
+      const s = { kind: 'interval' as const, everySec: 10, startAt };
+      expect(scheduler.enumerateFiresBetween(s, 0, 9_000_000)).toEqual({ fires: [], capped: false });
+      expect(scheduler.enumerateFiresBetween(s, 0, 10_000_000)).toEqual({ fires: [], capped: false });
+      expect(scheduler.enumerateFiresBetween(s, 0, 10_025_000).fires).toEqual([10_000_000, 10_010_000, 10_020_000]);
+    });
+
+    it('interval startAt in the past: fires are grid-aligned to startAt, not to the window start', () => {
+      scheduler = new Scheduler();
+      const s = { kind: 'interval' as const, everySec: 10, startAt: new Date(1_003_000).toISOString() };
+      const result = scheduler.enumerateFiresBetween(s, 1_000_000, 1_040_000);
+      expect(result.fires).toEqual([1_003_000, 1_013_000, 1_023_000, 1_033_000]);
+      const later = scheduler.enumerateFiresBetween(s, 1_013_000, 1_040_000);
+      expect(later.fires).toEqual([1_023_000, 1_033_000]);
+    });
+  });
+
+  describe('latestFireBefore', () => {
+    it('cron: returns the latest fire strictly inside the window', () => {
+      scheduler = new Scheduler();
+      const from = 60_000 * 1000;
+      const to = from + 5 * 60_000;
+      expect(scheduler.latestFireBefore({ kind: 'cron', cron: '* * * * *' }, from, to)).toBe(from + 240_000);
+      expect(scheduler.latestFireBefore({ kind: 'cron', cron: '* * * * *' }, from, from + 30_000)).toBeNull();
+    });
+
+    it('cron: finds a fire far back in the window', () => {
+      scheduler = new Scheduler();
+      const from = 0;
+      const to = 400 * 86_400_000;
+      const r = scheduler.latestFireBefore({ kind: 'cron', cron: '* * * * *' }, from, to);
+      expect(r).toBe(to - 60_000);
+    });
+
+    it('interval: correct beyond the 500 enumeration cap, no startAt', () => {
+      scheduler = new Scheduler();
+      const from = 1_000_000;
+      const to = from + 10_000 * 1000 + 500;
+      expect(scheduler.latestFireBefore({ kind: 'interval', everySec: 1 }, from, to)).toBe(from + 10_000 * 1000);
+      expect(scheduler.enumerateFiresBetween({ kind: 'interval', everySec: 1 }, from, to).capped).toBe(true);
+    });
+
+    it('interval with startAt: latest grid point; null if startAt is not before to', () => {
+      scheduler = new Scheduler();
+      const s = { kind: 'interval' as const, everySec: 10, startAt: new Date(1_003_000).toISOString() };
+      expect(scheduler.latestFireBefore(s, 0, 2_000_000)).toBe(1_993_000);
+      expect(scheduler.latestFireBefore(s, 0, 1_003_000)).toBeNull();
+      expect(scheduler.latestFireBefore(s, 1_993_000, 2_000_000)).toBeNull();
+    });
+
+    it('one-shot: runAt strictly inside window else null', () => {
+      scheduler = new Scheduler();
+      expect(scheduler.latestFireBefore({ kind: 'one-shot', runAt: new Date(1500).toISOString() }, 1000, 2000)).toBe(1500);
+      expect(scheduler.latestFireBefore({ kind: 'one-shot', runAt: new Date(2000).toISOString() }, 1000, 2000)).toBeNull();
+    });
+
+    it('non-time kinds and empty windows return null', () => {
+      scheduler = new Scheduler();
+      expect(scheduler.latestFireBefore({ kind: 'webhook' } as never, 0, 1e12)).toBeNull();
+      expect(scheduler.latestFireBefore({ kind: 'interval', everySec: 1 }, 5000, 5000)).toBeNull();
+    });
   });
 });
