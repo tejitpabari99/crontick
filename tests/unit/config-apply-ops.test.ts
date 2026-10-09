@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync, chmodSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync, chmodSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { applyOps, getConfigRevision, redactStoredConfigForRead } from '../../src/config.js';
 import { CONFIG_EDIT_NOTICE, CONFIG_REDACTED_MARKER } from '../../src/constants/config.js';
@@ -296,5 +296,51 @@ describe('locking', () => {
     const { env, path } = makeHome();
     await expect(applyOps([{ op: 'set', key: 'retention.maxRunsPerJob', value: 0 }], { env, daemonRunning: noDaemon })).rejects.toThrow();
     expect(existsSync(`${path}.lock`)).toBe(false);
+  });
+});
+
+describe('key path safety (prototype pollution)', () => {
+  const BAD_KEYS = ['__proto__.polluted', 'engines.__proto__.polluted', 'constructor.prototype.polluted', 'a.prototype.b'];
+
+  it('rejects __proto__/constructor/prototype segments on set and unset without touching Object.prototype', async () => {
+    const { env, path } = makeHome();
+    for (const key of BAD_KEYS) {
+      expect(await codeOf(applyOps([{ op: 'set', key, value: true }], { env, daemonRunning: noDaemon })), `set ${key}`).toBe('CONFIG_KEY_ERROR');
+      expect(await codeOf(applyOps([{ op: 'unset', key }], { env, daemonRunning: noDaemon })), `unset ${key}`).toBe('CONFIG_KEY_ERROR');
+    }
+    expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it('unset __proto__.toString does not delete built-ins', async () => {
+    const { env } = makeHome();
+    await codeOf(applyOps([{ op: 'unset', key: '__proto__.toString' }], { env, daemonRunning: noDaemon }));
+    expect(typeof ({}).toString).toBe('function');
+  });
+});
+
+describe('set without a value', () => {
+  it('rejects an undefined value instead of silently unsetting', async () => {
+    const { env, path } = makeHome();
+    await applyOps([{ op: 'set', key: 'maxConsecutiveFailures', value: 4 }], { env, daemonRunning: noDaemon });
+    expect(await codeOf(applyOps([{ op: 'set', key: 'maxConsecutiveFailures', value: undefined }], { env, daemonRunning: noDaemon }))).toBe('CONFIG_VALIDATION_ERROR');
+    expect(JSON.parse(readFileSync(path, 'utf-8'))).toEqual({ maxConsecutiveFailures: 4 });
+  });
+});
+
+describe('stale lock breaking', () => {
+  it('concurrent writers racing over one stale lock both persist and leave no lock or aside files', async () => {
+    const { env, path } = makeHome();
+    writeFileSync(`${path}.lock`, '1');
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(`${path}.lock`, old, old);
+    await Promise.all([
+      applyOps([{ op: 'set', key: 'retention.maxRunsPerJob', value: 7 }], { env, daemonRunning: noDaemon }),
+      applyOps([{ op: 'set', key: 'maxConsecutiveFailures', value: 9 }], { env, daemonRunning: noDaemon }),
+      applyOps([{ op: 'set', key: 'defaults.timeoutSec', value: 10 }], { env, daemonRunning: noDaemon }),
+    ]);
+    expect(JSON.parse(readFileSync(path, 'utf-8'))).toEqual({ retention: { maxRunsPerJob: 7 }, maxConsecutiveFailures: 9, defaults: { timeoutSec: 10 } });
+    expect(existsSync(`${path}.lock`)).toBe(false);
+    expect(readdirSync(dirname(path)).filter((f) => f.includes('.stale.'))).toEqual([]);
   });
 });

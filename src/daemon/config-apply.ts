@@ -101,6 +101,24 @@ interface InFlightPolicyOptions<T> {
  * `stop` cancels them first; `wait` holds the scheduler and waits (no timeout).
  */
 async function runWithInFlightPolicy<T>(o: InFlightPolicyOptions<T>): Promise<T> {
+  // Serialize flows per scope so a second save cannot observe the first one's hold as a user pause.
+  const scope = o.jobId ?? '*';
+  const previous = policyQueue.get(scope) ?? Promise.resolve();
+  let done!: () => void;
+  const mine = new Promise<void>((resolve) => { done = resolve; });
+  policyQueue.set(scope, mine);
+  await previous;
+  try {
+    return await runInFlightPolicyUnqueued(o);
+  } finally {
+    done();
+    if (policyQueue.get(scope) === mine) policyQueue.delete(scope);
+  }
+}
+
+const policyQueue = new Map<string, Promise<void>>();
+
+async function runInFlightPolicyUnqueued<T>(o: InFlightPolicyOptions<T>): Promise<T> {
   if (o.choice !== undefined && !IN_FLIGHT_CHOICES.includes(o.choice)) {
     throw new CrontickError('INVALID_IN_FLIGHT_CHOICE', `inFlight must be one of: ${IN_FLIGHT_CHOICES.join(', ')}`, { inFlight: o.choice });
   }

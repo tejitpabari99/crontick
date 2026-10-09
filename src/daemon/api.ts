@@ -34,15 +34,11 @@ import { buildWebhookContext, buildWebhookPayload } from '../utils/webhook-paylo
 import { checkMutatingRequest, isGuardedRequest } from './request-guard.js';
 import { describeDaemonPort } from './bind-port.js';
 import { dataDir } from '../paths.js';
-import { CONFIG_EDIT_NOTICE, IN_FLIGHT_CHOICES } from '../constants/config.js';
+import { IN_FLIGHT_CHOICES } from '../constants/config.js';
 import {
-  getConfigRevision,
+  buildConfigListing,
   loadConfig,
   loadDaemonConfigOrEmpty,
-  redactConfigForRead,
-  redactStoredConfigForRead,
-  configFilePath,
-  readStoredConfigFile,
   type ConfigOp,
 } from '../config.js';
 import { stripExportIds, stripWebhookSecrets } from '../share.js';
@@ -788,14 +784,7 @@ async function handleRequest(
 
     // ── Config ────────────────────────────────────────────────────────────────
     if (method === 'GET' && path === '/api/config') {
-      return sendJson(res, 200, {
-        path: configFilePath(),
-        revision: getConfigRevision(),
-        config: redactConfigForRead(loadConfig()),
-        stored: redactStoredConfigForRead(readStoredConfigFile()),
-        readOnly: ['daemon'],
-        notice: CONFIG_EDIT_NOTICE,
-      });
+      return sendJson(res, 200, buildConfigListing());
     }
 
     if (method === 'PATCH' && path === '/api/config') {

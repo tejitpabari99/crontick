@@ -152,7 +152,7 @@ export function readConfigFile(options: ConfigOptions = {}): CrontickConfig | nu
 export function writeConfigFile(config: unknown, options: ConfigOptions = {}): CrontickConfig {
   const filePath = configFilePath(options);
   const parsed = parseConfig(config, filePath);
-  writeJsonAtomic(filePath, parsed, options.env);
+  writeConfigAtomic(filePath, `${JSON.stringify(parsed, null, 2)}\n`, options.env);
   (options.logger ?? nullLogger).child('config').debug('Wrote config file', { path: filePath, keys: Object.keys(parsed), engines: Object.keys(parsed.engines) });
   return parsed;
 }
@@ -167,7 +167,7 @@ export function initConfig(options: InitConfigOptions = {}): { path: string; con
     );
   }
   const config = defaultConfigTemplate();
-  writeJsonAtomic(filePath, config, options.env);
+  writeConfigAtomic(filePath, `${JSON.stringify(config, null, 2)}\n`, options.env);
   (options.logger ?? nullLogger).child('config').debug('Initialized config file', { path: filePath, force: options.force === true });
   return { path: filePath, config, created: true };
 }
@@ -235,64 +235,6 @@ export function getConfigValue(path: string | undefined, options: ConfigOptions 
   return keyPath ? readPath(config, keyPath) : config;
 }
 
-export function setConfigValue(path: string, value: unknown, options: ConfigOptions = {}): CrontickConfig {
-  const keyPath = parseKeyPath(path);
-  const updated = cloneRaw(readRawStoredConfig(options));
-  writePath(updated as unknown as Record<string, unknown>, keyPath, value);
-  return redactConfigForRead(persistRawConfig(updated, options));
-}
-
-export function removeConfigValue(path: string, options: ConfigOptions = {}): CrontickConfig {
-  const keyPath = parseKeyPath(path);
-  const updated = cloneRaw(readRawStoredConfig(options));
-  removePath(updated as unknown as Record<string, unknown>, keyPath);
-  return redactConfigForRead(persistRawConfig(updated, options));
-}
-
-export function listEngines(options: ConfigOptions = {}): Record<string, EngineConfig> {
-  return redactConfigForRead(loadConfig(options)).engines;
-}
-
-export function addEngine(name: string, engine: unknown, options: ConfigOptions = {}): CrontickConfig {
-  return setEngine(name, engine, false, options);
-}
-
-export function updateEngine(name: string, engine: unknown, options: ConfigOptions = {}): CrontickConfig {
-  return setEngine(name, engine, true, options);
-}
-
-export function removeEngine(name: string, options: ConfigOptions = {}): CrontickConfig {
-  const key = parseEngineName(name);
-  const effective = loadConfig(options);
-  if (!Object.prototype.hasOwnProperty.call(effective.engines, key)) {
-    throw new CrontickError(
-      'CONFIG_ENGINE_NOT_FOUND',
-      `Engine "${key}" is not defined in ${configFilePath(options)}. Choose an existing engine or add it first.`,
-      { path: configFilePath(options), key: `engines.${key}` },
-    );
-  }
-  if (effective.defaultEngine === key) {
-    throw new CrontickError(
-      'CONFIG_VALIDATION_ERROR',
-      `Cannot remove default engine "${key}" from ${configFilePath(options)}. Set defaultEngine to another engine first, then remove "${key}".`,
-      { path: configFilePath(options), key: 'defaultEngine' },
-    );
-  }
-  if (Object.prototype.hasOwnProperty.call(BUILT_IN_CONFIG.engines, key)) {
-    throw new CrontickError(
-      'CONFIG_BUILTIN_ENGINE',
-      `Engine "${key}" is a built-in fallback engine and cannot be removed from the effective config. Change defaultEngine or update engines.${key}.command/args instead.`,
-      { path: configFilePath(options), key: `engines.${key}` },
-    );
-  }
-  const updated = cloneRaw(readRawStoredConfig(options));
-  const engines = updated.engines;
-  if (isRecord(engines) && Object.prototype.hasOwnProperty.call(engines, key)) {
-    delete engines[key];
-  }
-  return redactConfigForRead(persistRawConfig(updated, options));
-}
-
 /**
  * Builds the full command+args for executing a prompt action via its engine.
  * Merges engine-level args, the prompt text, job-level args, and optional sessionId.
@@ -350,32 +292,6 @@ export function resolvePromptRunCommand(
   return { invocation: result, adapter, engineOptions };
 }
 
-function setEngine(name: string, engine: unknown, mustExist: boolean, options: ConfigOptions): CrontickConfig {
-  const key = parseEngineName(name);
-  const effective = loadConfig(options);
-  const existing = effective.engines[key];
-  if (mustExist && !existing) {
-    throw new CrontickError(
-      'CONFIG_ENGINE_NOT_FOUND',
-      `Engine "${key}" is not defined in ${configFilePath(options)}. Add it first or choose an existing engine.`,
-      { path: configFilePath(options), key: `engines.${key}` },
-    );
-  }
-  if (!mustExist && existing) {
-    throw new CrontickError(
-      'CONFIG_ENGINE_EXISTS',
-      `Engine "${key}" already exists in ${configFilePath(options)}. Use update if you want to change it.`,
-      { path: configFilePath(options), key: `engines.${key}` },
-    );
-  }
-  const parsed = EngineConfigSchema.safeParse({ ...(mustExist ? existing : {}), ...(isRecord(engine) ? engine : {}) });
-  if (!parsed.success) throw configValidationError(configFilePath(options), parsed.error);
-  const updated = cloneRaw(readRawStoredConfig(options));
-  if (!isRecord(updated.engines)) updated.engines = {};
-  (updated.engines as Record<string, unknown>)[key] = parsed.data;
-  return redactConfigForRead(persistRawConfig(updated, options));
-}
-
 /** Deep-merges file config over BUILT_IN_CONFIG then validates via ConfigSchema. */
 function parseConfig(input: unknown, filePath: string): CrontickConfig {
   const merged = deepMerge(cloneConfig(BUILT_IN_CONFIG), input);
@@ -415,49 +331,12 @@ function configValidationError(filePath: string, error: z.ZodError): CrontickErr
   );
 }
 
-/** Atomic write: tmp file with restrictive mode (0o600), then rename into place. */
-function writeJsonAtomic(filePath: string, config: unknown, env?: NodeJS.ProcessEnv): void {
-  ensureDirs(env);
-  mkdirSync(dirname(filePath), { recursive: true });
-  const tmpPath = `${filePath}.${process.pid}.tmp`;
-  writeFileSync(tmpPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600 });
-  renameSync(tmpPath, filePath);
-}
-
-/**
- * Reads exactly what's explicitly stored in config.json — no BUILT_IN_CONFIG
- * merge, no schema `.default(...)` applied. Returns `{}` when the file
- * doesn't exist. This (not `loadConfig`) is the base every write operation
- * (`setConfigValue`, `removeConfigValue`, engine CRUD) must clone and mutate,
- * so that a key which was never explicitly set — or one that's just been
- * removed — stays absent from the file instead of being re-baked in from
- * BUILT_IN_CONFIG/schema defaults on the next write.
- */
-function readRawStoredConfig(options: ConfigOptions): PersistedConfig {
-  const filePath = configFilePath(options);
-  if (!existsSync(filePath)) return {};
-  const parsed = PersistedConfigSchema.safeParse(readConfigJson(filePath));
-  if (!parsed.success) throw configValidationError(filePath, parsed.error);
-  return parsed.data;
-}
-
-/**
- * Validates a raw (possibly partial) config by computing its effective value
- * (merged over BUILT_IN_CONFIG, checked against the full refined
- * `ConfigSchema`) — but persists the raw object as-is, unmerged. Returns the
- * effective config so callers keep returning fully-resolved values.
- */
-function persistRawConfig(raw: PersistedConfig, options: ConfigOptions): CrontickConfig {
-  const filePath = configFilePath(options);
-  const effective = parseConfig(raw, filePath);
-  writeJsonAtomic(filePath, raw, options.env);
-  (options.logger ?? nullLogger).child('config').debug('Wrote config file', { path: filePath, keys: Object.keys(raw) });
-  return effective;
-}
-
 function cloneRaw(raw: PersistedConfig): PersistedConfig {
   return JSON.parse(JSON.stringify(raw)) as PersistedConfig;
 }
+
+/** Path segments that would reach Object.prototype through plain property access. */
+const FORBIDDEN_KEY_SEGMENTS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
 
 function parseKeyPath(path: string): string[] {
   const parsed = ConfigKeySchema.safeParse(path);
@@ -468,19 +347,15 @@ function parseKeyPath(path: string): string[] {
       { key: path },
     );
   }
-  return path.split('.').filter(Boolean);
-}
-
-function parseEngineName(name: string): string {
-  const parsed = ConfigKeySchema.safeParse(name);
-  if (!parsed.success) {
+  const segments = path.split('.').filter(Boolean);
+  if (segments.some((segment) => FORBIDDEN_KEY_SEGMENTS.has(segment))) {
     throw new CrontickError(
       'CONFIG_KEY_ERROR',
-      `Invalid engine name "${name}". Use letters, numbers, underscore, dash, or dot.`,
-      { key: name },
+      `Invalid config key path "${path}". The segments __proto__, constructor and prototype are not allowed.`,
+      { key: path },
     );
   }
-  return name;
+  return segments;
 }
 
 function readPath(config: CrontickConfig, keyPath: string[]): unknown {
@@ -502,7 +377,7 @@ function writePath(target: Record<string, unknown>, keyPath: string[], value: un
   if (keyPath.length === 0) throw new CrontickError('CONFIG_KEY_ERROR', 'Config key path cannot be empty');
   let current = target;
   for (const key of keyPath.slice(0, -1)) {
-    const next = current[key];
+    const next = Object.prototype.hasOwnProperty.call(current, key) ? current[key] : undefined;
     if (!isRecord(next)) {
       current[key] = {};
     }
@@ -515,7 +390,7 @@ function removePath(target: Record<string, unknown>, keyPath: string[]): void {
   if (keyPath.length === 0) throw new CrontickError('CONFIG_KEY_ERROR', 'Config key path cannot be empty');
   let current: unknown = target;
   for (const key of keyPath.slice(0, -1)) {
-    if (!isRecord(current) || !(key in current)) {
+    if (!isRecord(current) || !Object.prototype.hasOwnProperty.call(current, key)) {
       throw new CrontickError(
         'CONFIG_KEY_NOT_FOUND',
         `Config key "${keyPath.join('.')}" was not found. Run "crontick config get" to inspect available keys.`,
@@ -524,7 +399,7 @@ function removePath(target: Record<string, unknown>, keyPath: string[]): void {
     }
     current = current[key];
   }
-  if (!isRecord(current) || !(keyPath[keyPath.length - 1] in current)) {
+  if (!isRecord(current) || !Object.prototype.hasOwnProperty.call(current, keyPath[keyPath.length - 1])) {
     throw new CrontickError(
       'CONFIG_KEY_NOT_FOUND',
       `Config key "${keyPath.join('.')}" was not found. Run "crontick config get" to inspect available keys.`,
@@ -647,6 +522,9 @@ export async function applyOps(ops: ConfigOp[], options: ApplyOpsOptions = {}): 
       }
       const before = JSON.stringify(peekPath(updated, keyPath));
       if (op.op === 'set') {
+        if (op.value === undefined) {
+          throw new CrontickError('CONFIG_VALIDATION_ERROR', `config set ${op.key} needs a value`, { key: op.key });
+        }
         const value = unredact(op.value, peekPath(updated, keyPath), keyPath[keyPath.length - 1], op.key);
         writePath(updated as unknown as Record<string, unknown>, keyPath, value);
       } else {
@@ -670,7 +548,7 @@ export async function applyOps(ops: ConfigOp[], options: ApplyOpsOptions = {}): 
         notice: CONFIG_EDIT_NOTICE,
       };
     }
-    await writeConfigAtomic(filePath, content, options.env);
+    writeConfigAtomic(filePath, content, options.env);
     return {
       path: filePath,
       config: redactConfigForRead(effective),
@@ -682,6 +560,20 @@ export async function applyOps(ops: ConfigOp[], options: ApplyOpsOptions = {}): 
   } finally {
     release();
   }
+}
+
+/** Shared by `CrontickClient.configList()` and `GET /api/config`: path, revision, redacted effective + stored config. */
+export function buildConfigListing(options: ConfigOptions = {}): {
+  path: string; revision: string; config: CrontickConfig; stored: PersistedConfig; readOnly: string[]; notice: string;
+} {
+  return {
+    path: configFilePath(options),
+    revision: getConfigRevision(options),
+    config: redactConfigForRead(loadConfig(options)),
+    stored: redactStoredConfigForRead(readStoredConfigFile(options)),
+    readOnly: ['daemon'],
+    notice: CONFIG_EDIT_NOTICE,
+  };
 }
 
 /** Raw stored (sparse) config as on disk; `{}` when there is no file. Throws on an invalid file. */
@@ -756,7 +648,7 @@ async function acquireConfigLock(filePath: string, options: ApplyOpsOptions): Pr
     }
     try {
       if (Date.now() - statSync(lockPath).mtimeMs > staleMs) {
-        try { unlinkSync(lockPath); } catch { /* raced with another breaker */ }
+        breakStaleLock(lockPath, staleMs);
         continue;
       }
     } catch { continue; /* lock vanished: retry immediately */ }
@@ -771,8 +663,23 @@ async function acquireConfigLock(filePath: string, options: ApplyOpsOptions): Pr
   }
 }
 
-/** tmp + rename, preserving an existing file's mode (new files are 0600) and retrying EPERM/EBUSY. */
-async function writeConfigAtomic(filePath: string, content: string, env?: NodeJS.ProcessEnv): Promise<void> {
+/**
+ * Breaks a stale lock atomically: rename it aside (only one breaker wins the rename), then re-check
+ * the moved file's age. If it turns out to be a fresh lock another waiter just created, put it back.
+ */
+function breakStaleLock(lockPath: string, staleMs: number): void {
+  const aside = `${lockPath}.stale.${process.pid}.${randomUUID()}`;
+  try { renameSync(lockPath, aside); } catch { return; /* another breaker won, or it vanished */ }
+  try {
+    if (Date.now() - statSync(aside).mtimeMs <= staleMs) {
+      try { linkSync(aside, lockPath); } catch { /* someone already re-created it */ }
+    }
+  } catch { /* gone */ }
+  try { unlinkSync(aside); } catch { /* best-effort */ }
+}
+
+/** The single config.json writer: tmp + rename, preserving an existing file's mode (new files are 0600) and retrying EPERM/EBUSY. */
+function writeConfigAtomic(filePath: string, content: string, env?: NodeJS.ProcessEnv): void {
   ensureDirs(env);
   mkdirSync(dirname(filePath), { recursive: true });
   let mode = 0o600;
@@ -788,7 +695,8 @@ async function writeConfigAtomic(filePath: string, content: string, env?: NodeJS
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;
         if ((code !== 'EPERM' && code !== 'EBUSY') || attempt >= CONFIG_RENAME_RETRIES) throw err;
-        await sleep(CONFIG_RENAME_RETRY_MS * (attempt + 1));
+        // Sync backoff keeps writeConfigFile/initConfig synchronous; only reached on a transient EPERM/EBUSY.
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, CONFIG_RENAME_RETRY_MS * (attempt + 1));
       }
     }
   } catch (err) {

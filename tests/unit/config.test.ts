@@ -4,13 +4,11 @@ import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createClient } from '../../src/client.js';
 import {
+  applyOps,
   buildPromptRunCommand,
   getConfigValue,
   initConfig,
-  listEngines,
   loadConfig,
-  removeConfigValue,
-  setConfigValue,
   readConfigFile,
   validateConfigFile,
   writeConfigFile,
@@ -33,6 +31,9 @@ function makeHome(): { home: string; env: NodeJS.ProcessEnv; path: string } {
   cleanupDirs.push(home);
   return { home, env: { ...process.env, CRONTICK_HOME: home }, path: join(home, 'config.json') };
 }
+
+const setConfigValue = (key: string, value: unknown, env: { env: NodeJS.ProcessEnv }) => applyOps([{ op: 'set', key, value }], env);
+const removeConfigValue = (key: string, env: { env: NodeJS.ProcessEnv }) => applyOps([{ op: 'unset', key }], env);
 
 function writeRawConfig(path: string, config: unknown): void {
   writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
@@ -101,15 +102,15 @@ describe('crontick config core', () => {
     expect(validateConfigFile({ env })).toMatchObject({ ok: true, path, problems: [] });
   });
 
-  it('deep-merges job defaults and preserves raw unset semantics', () => {
+  it('deep-merges job defaults and preserves raw unset semantics', async () => {
     const { env, path } = makeHome();
     writeRawConfig(path, { defaults: { overlap: 'queue', retry: { max: 2 } } });
     expect(loadConfig({ env }).defaults).toEqual({ overlap: 'queue', retry: { max: 2, backoffSec: 30 } });
     expect(getConfigValue('defaults.retry.backoffSec', { env })).toBe(30);
 
-    setConfigValue('defaults.retry.backoffSec', 45, { env });
+    await setConfigValue('defaults.retry.backoffSec', 45, { env });
     expect(loadConfig({ env }).defaults.retry).toEqual({ max: 2, backoffSec: 45 });
-    removeConfigValue('defaults.retry.backoffSec', { env });
+    await removeConfigValue('defaults.retry.backoffSec', { env });
     expect(JSON.parse(readFileSync(path, 'utf-8')).defaults.retry).toEqual({ max: 2 });
     expect(loadConfig({ env }).defaults.retry).toEqual({ max: 2, backoffSec: 30 });
   });
@@ -242,7 +243,7 @@ describe('crontick config core', () => {
     });
   });
 
-  it('uses the built-in Claude adapter for a prompt without an explicit engine', () => {
+  it('uses the built-in Claude adapter for a prompt without an explicit engine', async () => {
     const { env } = makeHome();
     const result = buildPromptRunCommand({
       kind: 'prompt',
@@ -291,7 +292,7 @@ describe('crontick config core', () => {
 
     expect(loadConfig({ env }).engines.agency.env.OPENAI_API_KEY).toBe(secret);
     expect(client.getConfig().engines.agency.env.OPENAI_API_KEY).toBe('[REDACTED]');
-    expect(listEngines({ env })).toMatchObject({ agency: { env: { OPENAI_API_KEY: '[REDACTED]' } } });
+    expect(client.getConfig().engines).toMatchObject({ agency: { env: { OPENAI_API_KEY: '[REDACTED]' } } });
     expect(validateConfigFile({ env })).toMatchObject({
       ok: true,
       config: { engines: { agency: { env: { OPENAI_API_KEY: '[REDACTED]' } } } },
@@ -303,7 +304,7 @@ describe('crontick config core', () => {
     expect(readFileSync(path, 'utf-8')).toContain(secret);
   });
 
-  it('retention.maxRunsPerJob defaults to 100 and round-trips through get/set', () => {
+  it('retention.maxRunsPerJob defaults to 100 and round-trips through get/set', async () => {
     const { env, path } = makeHome();
 
     // No config file at all: built-in default applies.
@@ -313,14 +314,14 @@ describe('crontick config core', () => {
     writeRawConfig(path, { defaultEngine: 'copilot', engines: { copilot: { command: 'copilot' } } });
     expect(loadConfig({ env }).retention.maxRunsPerJob).toBe(DEFAULT_RUN_RETENTION_CAP);
 
-    setConfigValue('retention.maxRunsPerJob', 250, { env });
+    await setConfigValue('retention.maxRunsPerJob', 250, { env });
     expect(getConfigValue('retention.maxRunsPerJob', { env })).toBe(250);
 
-    expect(() => setConfigValue('retention.maxRunsPerJob', 0, { env })).toThrow(/CONFIG_VALIDATION_ERROR|retention\.maxRunsPerJob/);
-    expect(() => setConfigValue('retention.maxRunsPerJob', 1.5, { env })).toThrow(/CONFIG_VALIDATION_ERROR|retention\.maxRunsPerJob/);
+    await expect(setConfigValue('retention.maxRunsPerJob', 0, { env })).rejects.toThrow(/CONFIG_VALIDATION_ERROR|retention\.maxRunsPerJob/);
+    await expect(setConfigValue('retention.maxRunsPerJob', 1.5, { env })).rejects.toThrow(/CONFIG_VALIDATION_ERROR|retention\.maxRunsPerJob/);
   });
 
-  it('retention.maxOutputBytesPerRun defaults to 2_000_000 and round-trips through get/set', () => {
+  it('retention.maxOutputBytesPerRun defaults to 2_000_000 and round-trips through get/set', async () => {
     const { env, path } = makeHome();
 
     // No config file at all: built-in default applies.
@@ -330,15 +331,12 @@ describe('crontick config core', () => {
     writeRawConfig(path, { defaultEngine: 'copilot', engines: { copilot: { command: 'copilot' } } });
     expect(loadConfig({ env }).retention.maxOutputBytesPerRun).toBe(DEFAULT_MAX_OUTPUT_BYTES_PER_RUN);
 
-    setConfigValue('retention.maxOutputBytesPerRun', 5_000_000, { env });
+    await setConfigValue('retention.maxOutputBytesPerRun', 5_000_000, { env });
     expect(getConfigValue('retention.maxOutputBytesPerRun', { env })).toBe(5_000_000);
 
-    expect(() => setConfigValue('retention.maxOutputBytesPerRun', 1023, { env }))
-      .toThrow(/CONFIG_VALIDATION_ERROR|retention\.maxOutputBytesPerRun/);
-    expect(() => setConfigValue('retention.maxOutputBytesPerRun', 1_000_000_001, { env }))
-      .toThrow(/CONFIG_VALIDATION_ERROR|retention\.maxOutputBytesPerRun/);
-    expect(() => setConfigValue('retention.maxOutputBytesPerRun', 1.5, { env }))
-      .toThrow(/CONFIG_VALIDATION_ERROR|retention\.maxOutputBytesPerRun/);
+    await expect(setConfigValue('retention.maxOutputBytesPerRun', 1023, { env })).rejects.toThrow(/CONFIG_VALIDATION_ERROR|retention\.maxOutputBytesPerRun/);
+    await expect(setConfigValue('retention.maxOutputBytesPerRun', 1_000_000_001, { env })).rejects.toThrow(/CONFIG_VALIDATION_ERROR|retention\.maxOutputBytesPerRun/);
+    await expect(setConfigValue('retention.maxOutputBytesPerRun', 1.5, { env })).rejects.toThrow(/CONFIG_VALIDATION_ERROR|retention\.maxOutputBytesPerRun/);
   });
 
   it('initializes with force when the file already exists', () => {
@@ -355,12 +353,12 @@ describe('crontick config core', () => {
   // config.json, not just report success while ConfigSchema's `.default(...)`
   // bakes the built-in value straight back into what gets persisted.
   describe('config unset genuinely removes keys from the persisted file (not baked back in)', () => {
-    it('defaultEngine: unset removes the raw key even though the effective value (built-in default) is unchanged', () => {
+    it('defaultEngine: unset removes the raw key even though the effective value (built-in default) is unchanged', async () => {
       const { env, path } = makeHome();
       initConfig({ env }); // writes a full explicit file, including defaultEngine: "claude"
       expect(JSON.parse(readFileSync(path, 'utf-8'))).toHaveProperty('defaultEngine', 'claude');
 
-      removeConfigValue('defaultEngine', { env });
+      await removeConfigValue('defaultEngine', { env });
 
       // The raw file must no longer contain the key at all...
       expect(JSON.parse(readFileSync(path, 'utf-8'))).not.toHaveProperty('defaultEngine');
@@ -369,28 +367,28 @@ describe('crontick config core', () => {
       expect(loadConfig({ env }).defaultEngine).toBe('claude');
     });
 
-    it('defaultEngine: unset after an explicit set truly falls back, and stays removed across repeat writes', () => {
+    it('defaultEngine: unset after an explicit set truly falls back, and stays removed across repeat writes', async () => {
       const { env, path } = makeHome();
       initConfig({ env });
-      setConfigValue('defaultEngine', 'claude', { env }); // re-affirm explicitly (same value, still baked into raw file)
+      await setConfigValue('defaultEngine', 'claude', { env }); // re-affirm explicitly (same value, still baked into raw file)
       expect(JSON.parse(readFileSync(path, 'utf-8'))).toHaveProperty('defaultEngine', 'claude');
 
-      removeConfigValue('defaultEngine', { env });
+      await removeConfigValue('defaultEngine', { env });
       expect(JSON.parse(readFileSync(path, 'utf-8'))).not.toHaveProperty('defaultEngine');
 
       // Writing an unrelated key afterward must not resurrect defaultEngine in the file.
-      setConfigValue('retention.maxRunsPerJob', 42, { env });
+      await setConfigValue('retention.maxRunsPerJob', 42, { env });
       expect(JSON.parse(readFileSync(path, 'utf-8'))).not.toHaveProperty('defaultEngine');
       expect(getConfigValue('defaultEngine', { env })).toBe('claude');
     });
 
-    it('retention.*: unset removes the raw key, falling back to the built-in default effectively', () => {
+    it('retention.*: unset removes the raw key, falling back to the built-in default effectively', async () => {
       const { env, path } = makeHome();
       initConfig({ env });
-      setConfigValue('retention.maxRunsPerJob', 250, { env });
+      await setConfigValue('retention.maxRunsPerJob', 250, { env });
       expect((JSON.parse(readFileSync(path, 'utf-8')) as { retention: { maxRunsPerJob: number } }).retention.maxRunsPerJob).toBe(250);
 
-      removeConfigValue('retention.maxRunsPerJob', { env });
+      await removeConfigValue('retention.maxRunsPerJob', { env });
 
       const raw = JSON.parse(readFileSync(path, 'utf-8')) as { retention?: { maxRunsPerJob?: number } };
       expect(raw.retention?.maxRunsPerJob).toBeUndefined();
@@ -398,25 +396,25 @@ describe('crontick config core', () => {
       expect(loadConfig({ env }).retention.maxRunsPerJob).toBe(DEFAULT_RUN_RETENTION_CAP);
     });
 
-    it('engines map: unsetting a customized built-in Claude field removes it from the file and falls back to the built-in value', () => {
+    it('engines map: unsetting a customized built-in Claude field removes it from the file and falls back to the built-in value', async () => {
       const { env, path } = makeHome();
       initConfig({ env });
-      setConfigValue('engines.claude.command', 'my-custom-claude', { env });
-      expect((JSON.parse(readFileSync(path, 'utf-8')) as { engines: { claude: { command: string } } }).engines.claude.command)
-        .toBe('my-custom-claude');
+      await setConfigValue('engines.claude.args', ['--custom'], { env });
+      expect((JSON.parse(readFileSync(path, 'utf-8')) as { engines: { claude: { args: string[] } } }).engines.claude.args)
+        .toEqual(['--custom']);
 
-      removeConfigValue('engines.claude.command', { env });
+      await removeConfigValue('engines.claude.args', { env });
 
       const raw = JSON.parse(readFileSync(path, 'utf-8')) as { engines: { claude: Record<string, unknown> } };
-      expect(raw.engines.claude).not.toHaveProperty('command');
-      expect(getConfigValue('engines.claude.command', { env })).toBe('claude');
+      expect(raw.engines.claude).not.toHaveProperty('args');
+      expect(getConfigValue('engines.claude.args', { env })).toEqual([]);
     });
 
-    it('config get with no path still reports full effective values (including inherited defaults) after unsetting', () => {
+    it('config get with no path still reports full effective values (including inherited defaults) after unsetting', async () => {
       const { env } = makeHome();
       initConfig({ env });
-      removeConfigValue('defaultEngine', { env });
-      removeConfigValue('retention.maxRunsPerJob', { env });
+      await removeConfigValue('defaultEngine', { env });
+      await removeConfigValue('retention.maxRunsPerJob', { env });
 
       expect(getConfigValue(undefined, { env })).toEqual({
         defaultEngine: 'claude',

@@ -156,6 +156,24 @@ describe('applyConfigWithPolicy', () => {
     expect(existsSync(join(dir, PENDING_CONFIG_APPLY_FILE))).toBe(false);
   }, 15000);
 
+  it('wait: two concurrent saves are serialized and the scheduler ends resumed', async () => {
+    let active = 0;
+    let maxActive = 0;
+    deps.reload = async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await tick(80);
+      active -= 1;
+    };
+    start(job('w3', SLEEP));
+    await tick();
+    const p1 = applyConfigWithPolicy(deps, { ops: OPS, inFlight: 'wait' });
+    const p2 = applyConfigWithPolicy(deps, { ops: [{ op: 'set' as const, key: 'retention.maxLogFiles', value: 9 }], inFlight: 'wait' });
+    await Promise.all([p1, p2]);
+    expect(maxActive).toBe(1);
+    expect(scheduler.isPaused()).toBe(false);
+  }, 15000);
+
   it('wait: resumes and clears the marker even when the apply fails', async () => {
     start(job('w2', SLEEP));
     await tick();

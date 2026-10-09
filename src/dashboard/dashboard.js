@@ -1008,7 +1008,7 @@ function requestLeaveSettings() {
 }
 
 function showInflightChoice(runs) {
-  const list = runs.map((r) => `<code>${escHtml(String(r.id || '').slice(0, 8))}</code>`).join(', ');
+  const list = runs.map((r) => `<code>${escHtml(String(r.runId || r.id || '').slice(0, 8))}</code>`).join(', ');
   settingsInflight.innerHTML = `
     <div>${escHtml(String(runs.length))} run(s) in flight${list ? `: ${list}` : ''}. How should this save proceed?</div>
     <div class="row">
@@ -1837,7 +1837,7 @@ function clearEditorInflight() {
 }
 
 function showEditorInflight(runs) {
-  const list = runs.map((r) => `<code>${escHtml(String(r.id || '').slice(0, 8))}</code>`).join(', ');
+  const list = runs.map((r) => `<code>${escHtml(String(r.runId || r.id || '').slice(0, 8))}</code>`).join(', ');
   editorInflight.innerHTML = `
     <div>${escHtml(String(runs.length))} run(s) in flight${list ? `: ${list}` : ''}. How should this save proceed?</div>
     <div class="row">

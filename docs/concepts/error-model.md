@@ -70,7 +70,7 @@ The client interprets non-2xx responses and constructs a `CrontickError` with co
 |-----------|-------|
 | `DAEMON_NOT_RUNNING` (daemon will be demand-started) | `NOT_BUILT` (requires manual build) |
 | `DAEMON_TIMEOUT` (transient startup race) | `VALIDATION_ERROR` (bad input) |
-| `DAEMON_START_LOCK_TIMEOUT` (another start in progress) | `CONFIG_BUILTIN_ENGINE` (cannot modify built-in) |
+| `DAEMON_START_LOCK_TIMEOUT` (another start in progress) | `CONFIG_KEY_ERROR` (bad config key path) |
 | `DAEMON_REQUEST_FAILED` (transient network) | `FORBIDDEN` (non-loopback access) |
 
 The client's `ensureDaemon` logic already handles the retryable daemon errors internally (probe, lock, retry loop). Consumers generally only see fatal errors or daemon errors that exhausted the retry window.

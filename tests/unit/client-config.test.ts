@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import http from 'node:http';
 import { createClient } from '../../src/client.js';
 import { CONFIG_EDIT_NOTICE } from '../../src/constants/config.js';
 import { stopDaemon } from '../../src/daemon/lifecycle.js';
@@ -104,4 +105,48 @@ describe('client config methods (daemon up)', () => {
     expect(res.warnings.join('\n')).toContain('crontick daemon reload');
     expect(JSON.parse(readFileSync(join(dir, 'config.json'), 'utf-8')).defaults.timeoutSec).toBe(123);
   }, 60_000);
+});
+
+describe('client config write against a slow daemon', () => {
+  async function slowDaemon(delayMs: number): Promise<{ url: string; close: () => Promise<void> }> {
+    const server = http.createServer((req, res) => {
+      setTimeout(() => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ path: 'x', config: {}, stored: {}, changed: ['maxConsecutiveFailures'], revision: 'r', notice: 'n', inFlightPolicy: 'wait', affectedRuns: [] }));
+      }, req.method === 'PATCH' ? delayMs : 0);
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const { port } = server.address() as { port: number };
+    return { url: `http://127.0.0.1:${port}`, close: () => new Promise((r) => { server.closeAllConnections(); server.close(() => r()); }) };
+  }
+
+  it('a PATCH timeout does not fall back to a direct file write', async () => {
+    const { dir, env } = makeHome();
+    const d = await slowDaemon(600);
+    cleanups.push(d.close);
+    const client = createClient({ env, daemonUrl: d.url, startDaemon: false, requestTimeoutMs: 150 });
+    // Without inFlight the request uses the normal timeout: it must fail, never write the file itself.
+    await expect(client.configSet('maxConsecutiveFailures', 4)).rejects.toMatchObject({ code: 'DAEMON_REQUEST_FAILED' });
+    expect(existsSync(join(dir, 'config.json'))).toBe(false);
+  });
+
+  it('inFlight "wait" has no request timeout', async () => {
+    const { dir, env } = makeHome();
+    const d = await slowDaemon(500);
+    cleanups.push(d.close);
+    const client = createClient({ env, daemonUrl: d.url, startDaemon: false, requestTimeoutMs: 150 });
+    const res = await client.configSet('maxConsecutiveFailures', 4, { inFlight: 'wait' });
+    expect(res.reload).toBe('reloaded');
+    expect(res.changed).toEqual(['maxConsecutiveFailures']);
+    expect(existsSync(join(dir, 'config.json'))).toBe(false);
+  });
+
+  it('rejects prototype-polluting keys via the client (daemon down)', async () => {
+    const { env } = makeHome();
+    const client = createClient({ env, startDaemon: false });
+    await expect(client.configSet('__proto__.polluted', true)).rejects.toMatchObject({ code: 'CONFIG_KEY_ERROR' });
+    await expect(client.configUnset('engines.__proto__.polluted')).rejects.toMatchObject({ code: 'CONFIG_KEY_ERROR' });
+    expect(() => client.configGet('constructor.prototype')).toThrow(/Invalid config key/);
+    expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
+  });
 });

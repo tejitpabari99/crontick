@@ -92,6 +92,19 @@ describe('GET/PATCH /api/config', () => {
     const bad = await h.call('PATCH', '/api/config', { ops: [{ op: 'set', key: 'engines.x.env.API_KEY', value: 'a [REDACTED] b' }] });
     expect(bad.data.error.code).toBe('CONFIG_REDACTED_VALUE');
   });
+
+  it('rejects prototype-polluting key paths on set and unset with 400 and leaves the daemon process clean', async () => {
+    const before = readFileSync(cfgPath(), 'utf-8');
+    for (const key of ['__proto__.polluted', 'engines.__proto__.polluted', 'constructor.prototype.polluted']) {
+      for (const op of [{ op: 'set', key, value: true }, { op: 'unset', key }]) {
+        const r = await h.call('PATCH', '/api/config', { ops: [op] });
+        expect(r.status, `${op.op} ${key}`).toBe(400);
+        expect(r.data.error.code).toBe('CONFIG_KEY_ERROR');
+      }
+    }
+    expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
+    expect(readFileSync(cfgPath(), 'utf-8')).toBe(before);
+  });
 });
 
 describe('PATCH /api/config with runs in flight', () => {
@@ -120,4 +133,5 @@ describe('PATCH /api/config with runs in flight', () => {
       await h.close();
     }
   });
+
 });

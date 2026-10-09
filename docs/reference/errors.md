@@ -233,7 +233,7 @@ class CrontickError extends Error {
 
 | | |
 |---|---|
-| **When** | Config key path is syntactically invalid (does not match `^[A-Za-z0-9_.-]+$`) or is empty |
+| **When** | Config key path is syntactically invalid (does not match `^[A-Za-z0-9_.-]+$`), is empty, or contains a `__proto__`, `constructor` or `prototype` segment |
 | **Message shape** | `Invalid config key path "<path>". Use dot-separated keys...` |
 | **Details** | `{ key }` |
 
@@ -299,22 +299,6 @@ class CrontickError extends Error {
 |---|---|
 | **When** | A prompt job references a non-existent engine (resolved per run) |
 | **Message shape** | `Engine "<name>" is not defined in <path>. ...` |
-| **Details** | `{ path, key }` |
-
-### CONFIG_ENGINE_EXISTS
-
-| | |
-|---|---|
-| **When** | Legacy engine-add path with a name that already exists (engines are now added or replaced with `config set engines.<name>`) |
-| **Message shape** | `Engine "<name>" already exists in <path>. Use update if you want to change it.` |
-| **Details** | `{ path, key }` |
-
-### CONFIG_BUILTIN_ENGINE
-
-| | |
-|---|---|
-| **When** | Attempting to remove a built-in engine (currently `claude`) |
-| **Message shape** | `Engine "<name>" is a built-in fallback engine and cannot be removed...` |
 | **Details** | `{ path, key }` |
 
 ### TRUST_REQUIRED

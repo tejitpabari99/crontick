@@ -46,13 +46,6 @@ const NON_PARITY_CLIENT_METHODS = new Set([
   'daemonStatus',
   'daemonRestart',
   'configPath',
-  'getConfigValue',
-  'setConfigValue',
-  'removeConfigValue',
-  'listEngines',
-  'addEngine',
-  'updateEngine',
-  'removeEngine',
   'initConfig',
   'validateConfig',
 ]);

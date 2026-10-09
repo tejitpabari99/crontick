@@ -48,23 +48,21 @@ import {
 } from './dashboard.js';
 import {
   applyOps,
-  getConfigRevision,
   getConfigValue,
   initConfig,
   isDaemonProcessRunning,
   loadConfig,
-  readStoredConfigFile,
   redactConfigForRead,
-  redactStoredConfigForRead,
   validateConfigFile,
   configFilePath,
   ensureConfigFile,
+  buildConfigListing,
   type ApplyOpsResult,
   type ConfigOp,
   type ConfigValidationResult,
   type CrontickConfig,
 } from './config.js';
-import { CONFIG_EDIT_NOTICE, IN_FLIGHT_CHOICES } from './constants/config.js';
+import { IN_FLIGHT_CHOICES } from './constants/config.js';
 import type { PersistedConfig } from './schemas/config.js';
 import type { InFlightChoice } from './daemon/config-apply.js';
 import type { InFlightRun } from './daemon/runner.js';
@@ -774,7 +772,7 @@ export class CrontickClient {
     return {
       path: configFilePath({ env: this.effectiveEnv() }),
       note:
-        'Edit this file to change the config. Engine, logging, and per-run retention settings apply automatically on the next run; the store retention cap (retention.maxRunsPerJob) is read at daemon start, so changing it requires a daemon restart — from the CLI, run `crontick daemon stop` and then any daemon-backed command to start it again.',
+        'Change the config with `crontick config set`/`unset` (or edit this file by hand). Engine, logging, and per-run retention settings apply automatically on the next run; the store retention cap (retention.maxRunsPerJob) is read at daemon start, so changing it requires a daemon restart — from the CLI, run `crontick daemon stop` and then any daemon-backed command to start it again.',
     };
   }
 
@@ -786,14 +784,7 @@ export class CrontickClient {
   /** File-direct config read (works with the daemon down): redacted effective config + redacted stored keys. */
   configList(): ConfigListResult {
     const options = { env: this.effectiveEnv(), logger: this.logger.child('config') };
-    return {
-      path: configFilePath(options),
-      revision: getConfigRevision(options),
-      config: redactConfigForRead(loadConfig(options)),
-      stored: redactStoredConfigForRead(readStoredConfigFile(options)),
-      readOnly: ['daemon'],
-      notice: CONFIG_EDIT_NOTICE,
-    };
+    return buildConfigListing(options);
   }
 
   /** Value at a dotted key of the redacted effective config. Throws `CONFIG_KEY_NOT_FOUND` when absent. */
@@ -840,10 +831,12 @@ export class CrontickClient {
     let reload: ConfigWriteResult['reload'] = 'daemon-not-running';
     if (daemonUp) {
       try {
-        outcome = await this.request('PATCH', '/api/config', { ops, ifRevision: options.ifRevision, inFlight: options.inFlight }, { ensure: false });
+        outcome = await this.request('PATCH', '/api/config', { ops, ifRevision: options.ifRevision, inFlight: options.inFlight }, { ensure: false, noTimeout: options.inFlight !== undefined });
         reload = 'reloaded';
       } catch (err) {
-        if (!(err instanceof CrontickError) || err.code !== 'DAEMON_REQUEST_FAILED') throw err;
+        // A timeout means the daemon may still apply the PATCH: never also write the file directly.
+        const timedOut = err instanceof CrontickError && (err.details as { cause?: string } | undefined)?.cause === 'ETIMEDOUT';
+        if (!(err instanceof CrontickError) || err.code !== 'DAEMON_REQUEST_FAILED' || timedOut) throw err;
         this.logger.debug('Daemon config PATCH unreachable; writing file directly', { error: errorMessage(err) });
       }
     }
@@ -1053,7 +1046,7 @@ export class CrontickClient {
       const timeout = noTimeout
         ? undefined
         : setTimeout(() => {
-          req.destroy(new Error(`Request timed out after ${timeoutMs}ms`));
+          req.destroy(Object.assign(new Error(`Request timed out after ${timeoutMs}ms`), { code: 'ETIMEDOUT' }));
         }, timeoutMs);
       timeout?.unref?.();
 
@@ -1067,7 +1060,7 @@ export class CrontickClient {
     return new CrontickError(
       'DAEMON_REQUEST_FAILED',
       `Failed to reach the crontick daemon at ${baseUrl}${path} while attempting ${method}: ${errorMessage(err)}. crontick attempted a demand-start/reconnect when allowed. Run "crontick daemon start" and inspect the daemon ensure log under the crontick data directory logs folder if this continues.`,
-      { baseUrl, method, path },
+      { baseUrl, method, path, cause: (err as NodeJS.ErrnoException | undefined)?.code },
     );
   }
 }
