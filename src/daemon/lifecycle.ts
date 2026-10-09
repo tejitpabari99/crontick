@@ -8,7 +8,7 @@ import { ensureDaemon, resolveDaemonBaseUrl, type DaemonInfo, type EnsureDaemonO
 import { nullLogger, type Logger } from '../logger.js';
 import { POLL_MS } from '../constants/daemon.js';
 import { describeDaemonPort } from './bind-port.js';
-import { loadConfig } from '../config.js';
+import { loadDaemonConfigOrEmpty } from '../config.js';
 import type { CrontickConfig } from '../schemas/config.js';
 import { sleep } from '../utils/sleep.js';
 
@@ -281,9 +281,5 @@ function isPidAlive(pid: number): boolean {
 }
 
 function configForEnv(env?: NodeJS.ProcessEnv): Pick<CrontickConfig, 'daemon'> {
-  try {
-    return loadConfig({ env: env ? { ...process.env, ...env } : process.env });
-  } catch {
-    return { daemon: {} };
-  }
+  return loadDaemonConfigOrEmpty({ env: env ? { ...process.env, ...env } : process.env });
 }

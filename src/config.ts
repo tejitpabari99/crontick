@@ -129,6 +129,15 @@ export function loadConfig(options: ConfigOptions = {}): CrontickConfig {
   return config;
 }
 
+/** loadConfig, or an empty-daemon config when the file is unreadable/invalid (malformed config is reported elsewhere). */
+export function loadDaemonConfigOrEmpty(options: ConfigOptions = {}): Pick<CrontickConfig, 'daemon'> {
+  try {
+    return loadConfig(options);
+  } catch {
+    return { daemon: {} };
+  }
+}
+
 export function readConfigFile(options: ConfigOptions = {}): CrontickConfig | null {
   const filePath = configFilePath(options);
   const logger = (options.logger ?? nullLogger).child('config');

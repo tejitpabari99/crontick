@@ -38,6 +38,7 @@ import { CONFIG_EDIT_NOTICE, IN_FLIGHT_CHOICES } from '../constants/config.js';
 import {
   getConfigRevision,
   loadConfig,
+  loadDaemonConfigOrEmpty,
   redactConfigForRead,
   redactStoredConfigForRead,
   configFilePath,
@@ -984,9 +985,5 @@ function sendError(
 
 /** Config as it is now on disk (so a post-start edit shows as a mismatch); empty when unreadable. */
 function currentConfigOrEmpty(): Pick<CrontickConfig, 'daemon'> {
-  try {
-    return loadConfig();
-  } catch {
-    return { daemon: {} };
-  }
+  return loadDaemonConfigOrEmpty();
 }

@@ -441,7 +441,7 @@ Check system health.
 crontick doctor
 ```
 
-Exits with code `1` if any check fails. Checks include Node.js version, SQLite availability, data directory (path shown), config file (path shown; reports when it has not been created yet and defaults are in use), daemon connectivity, daemon port (default vs fallback; flags a foreign process on the default port while no daemon runs), dashboard reachability, MCP server availability, and a `relay:` check per webhook relay (state, event count; a WARN, never a failure, when a relay is in persistent error).
+Exits with code `1` if any check fails. Checks include Node.js version, SQLite availability, data directory (path shown), config file (path shown; reports when it has not been created yet and defaults are in use), daemon connectivity, daemon port (default vs fallback; flags a process holding the default port while no daemon runs, and fails when any process holds an explicit `daemon.port`), dashboard reachability, MCP server availability, and a `relay:` check per webhook relay (state, event count; a WARN, never a failure, when a relay is in persistent error).
 
 ### crontick daemon start
 

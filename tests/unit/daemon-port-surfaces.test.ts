@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import net from 'node:net';
+import http from 'node:http';
 import { createClient } from '../../src/client.js';
 import { DEFAULT_DAEMON_PORT } from '../../src/constants/daemon.js';
 import { describeDaemonPort } from '../../src/daemon/bind-port.js';
@@ -82,6 +83,40 @@ describe('doctor daemon port check', () => {
       expect(check?.ok).toBe(false);
       expect(check?.note).toContain(`${preferred} (from config)`);
       expect(check?.note).toContain('daemon will fail to start');
+    } finally {
+      rmSync(join(dir, 'config.json'), { force: true });
+    }
+  });
+
+  it('explicit port held by a crontick daemon of another home: warns the daemon will fail to start', async () => {
+    const other = await new Promise<http.Server>((r) => {
+      const srv = http.createServer((req, res) => {
+        const port = (srv.address() as net.AddressInfo).port;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ ok: true, product: 'crontick', pid: process.pid, port }));
+      });
+      srv.listen(0, '127.0.0.1', () => r(srv));
+    });
+    const heldPort = (other.address() as net.AddressInfo).port;
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ daemon: { port: heldPort } }));
+    try {
+      const check = (await runDoctorChecks({ env, checkMcpHelp: false })).checks.find((c) => c.name === 'daemon port');
+      expect(check?.ok).toBe(false);
+      expect(check?.note).toContain('daemon will fail to start');
+    } finally {
+      rmSync(join(dir, 'config.json'), { force: true });
+      other.closeAllConnections();
+      await new Promise<void>((r) => other.close(() => r()));
+    }
+  });
+
+  it('explicit port 0 while no daemon runs: reports OS-assigned, not unknown', async () => {
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ daemon: { port: 0 } }));
+    try {
+      const check = (await runDoctorChecks({ env, checkMcpHelp: false })).checks.find((c) => c.name === 'daemon port');
+      expect(check?.ok).toBe(true);
+      expect(check?.note).toContain('OS-assigned');
+      expect(check?.note).not.toContain('unknown');
     } finally {
       rmSync(join(dir, 'config.json'), { force: true });
     }

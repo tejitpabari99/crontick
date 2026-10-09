@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { ensureConfigFile, loadConfig } from '../../src/config.js';
+import { ensureConfigFile, loadConfig, loadDaemonConfigOrEmpty } from '../../src/config.js';
 import { PersistedDaemonConfigSchema } from '../../src/schemas/config.js';
 
 const scratchRoot = resolve('.crontick', 'config-daemon-port-tests');
@@ -17,6 +17,16 @@ function makeHome(): { env: NodeJS.ProcessEnv; path: string } {
 
 afterEach(() => {
   for (const dir of cleanupDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+describe('loadDaemonConfigOrEmpty', () => {
+  it('returns the loaded config, or an empty daemon section when the file is invalid', () => {
+    const { env, path } = makeHome();
+    writeFileSync(path, JSON.stringify({ daemon: { port: 5000 } }));
+    expect(loadDaemonConfigOrEmpty({ env }).daemon).toEqual({ port: 5000 });
+    writeFileSync(path, '{ not json');
+    expect(loadDaemonConfigOrEmpty({ env })).toEqual({ daemon: {} });
+  });
 });
 
 describe('daemon.port config', () => {

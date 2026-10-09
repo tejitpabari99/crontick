@@ -5,8 +5,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dataDir, ensureDirs, portFilePath } from './paths.js';
-import { configFilePath, loadConfig } from './config.js';
-import type { CrontickConfig } from './schemas/config.js';
+import { configFilePath, loadDaemonConfigOrEmpty } from './config.js';
 import net from 'node:net';
 import { probeHealth, readPortFile, resolveDaemonBaseUrl } from './daemon/ensure.js';
 import type { RelayStatusView } from './utils/webhook-redact.js';
@@ -131,12 +130,7 @@ export async function runDoctorChecks(options: DoctorOptions = {}): Promise<Doct
 
 /** "daemon port" check: config vs running port, and a foreign listener on the target port when no daemon runs. */
 async function daemonPortCheck(env: NodeJS.ProcessEnv, portFileExists: boolean, daemonReachable: boolean): Promise<DoctorCheck> {
-  let config: Pick<CrontickConfig, 'daemon'> = { daemon: {} };
-  try {
-    config = loadConfig({ env });
-  } catch {
-    // Malformed config is reported elsewhere; fall back to defaults here.
-  }
+  const config = loadDaemonConfigOrEmpty({ env });
   const pref = preferredDaemonPort(config);
   const preferred = pref.port;
   const port = readPortFile(env);
@@ -145,10 +139,14 @@ async function daemonPortCheck(env: NodeJS.ProcessEnv, portFileExists: boolean, 
     if (pref.explicit) return { name: 'daemon port', ok: true, note: `${port} (from config${note ? `; ${note}` : ''})` };
     return { name: 'daemon port', ok: true, note: note ? `${port} (${note})` : preferred === 0 ? String(port) : `${port} (default)` };
   }
+  if (!portFileExists && !daemonReachable && pref.explicit && preferred === 0) {
+    return { name: 'daemon port', ok: true, note: '0 (from config; OS-assigned); no daemon running' };
+  }
   if (!portFileExists && !daemonReachable && preferred > 0) {
-    // No daemon: is something else squatting on the target port?
-    const probe = await probeHealth(`http://127.0.0.1:${preferred}`, 1_000);
-    const held = !probe.ok && (await isPortListening(preferred));
+    // No daemon here: is something else (foreign, or a crontick daemon of another home) on the target port?
+    const listening = await isPortListening(preferred);
+    // For an unset port a healthy crontick listener is not a squatter worth flagging; for an explicit port any listener blocks the bind.
+    const held = pref.explicit ? listening : listening && !(await probeHealth(`http://127.0.0.1:${preferred}`, 1_000)).ok;
     if (pref.explicit) {
       return held
         ? { name: 'daemon port', ok: false, note: `${preferred} (from config) is held by another process; the daemon will fail to start` }
