@@ -114,7 +114,7 @@ tests/
     security.test.ts         API auth/binding/traversal hardening
     perf.test.ts             Advisory perf baselines (not gated)
     smoke.test.ts            Package export sanity
-    autostart-removal.test.ts  Guard: removed autostart-registration strings do not reappear
+    autostart-removal.test.ts  Guard: banned autostart mechanisms (registry-js, reg.exe, Run key, .vbs shim) do not reappear
                                 in shipped product files (src/plugin/scripts/README/package.json)
     claude-adapter / raw-adapter / engine-registry .test.ts   Engine adapter framework
     run-usage-*.test.ts, prompt-session.test.ts, prompt-resolution.test.ts   Run usage fields, session handling
@@ -206,7 +206,7 @@ Expected: `list` shows the job enabled, `runs list` shows at least one `success`
 
 ### MCP server
 
-**Automated coverage:** `tests/unit/mcp.test.ts` (starts real daemon + MCP server, drives all 23 tools via `@modelcontextprotocol/sdk` client over stdio). `tests/unit/surface-drift.test.ts` verifies every tool is registered.
+**Automated coverage:** `tests/unit/mcp.test.ts` (starts real daemon + MCP server, drives all 28 tools via `@modelcontextprotocol/sdk` client over stdio). `tests/unit/surface-drift.test.ts` verifies every tool is registered.
 
 **Launch command:**
 
@@ -234,7 +234,7 @@ npx @modelcontextprotocol/inspector node dist/mcp/index.js
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"crontick_info","arguments":{}}}
 ```
 
-Expected: `tools/list` returns all 27 `crontick_*` tools; `crontick_info` returns a JSON text content block.
+Expected: `tools/list` returns all 28 `crontick_*` tools; `crontick_info` returns a JSON text content block.
 
 **Key tools to smoke-test:** `crontick_job_create`, `crontick_job_list`, `crontick_info`, `crontick_job_schedule`, `crontick_doctor`.
 

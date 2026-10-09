@@ -14,7 +14,7 @@ Agent CLIs are great at *one conversation*. They have no answer for "run this pr
 
 | # | Tenet | What this means in practice | Status |
 |---|-------|------------------------------|--------|
-| 1 | **Session-independent** | Jobs fire whether or not any agent session (or terminal) is open — the daemon does it, not your editor or chat window. The daemon is demand-started (see ADR 0001), not boot-launched: something has to trigger it once, but after that it runs independent of any session. Reboot autostart is intentionally not a goal right now. | Implemented |
+| 1 | **Session-independent** | Jobs fire whether or not any agent session (or terminal) is open — the daemon does it, not your editor or chat window. The daemon is demand-started (see ADR 0001), not boot-launched: something has to trigger it once, but after that it runs independent of any session. Starting at login is an explicit opt-in (`crontick autostart enable`, see ADR 0034), never the default; without it, jobs fire only once something has started the daemon. | Implemented |
 | 2 | **Engine-agnostic** | One core lifecycle, many engine adapters. Starts with Claude Code; Copilot, Codex, and others follow the same adapter contract. Users (and the core) should never have to special-case an engine by name. | Partial |
 | 3 | **Agent-accessible** | An agent (e.g. Claude Code) can set up and manage its own jobs — create, list, inspect, delete — via the CLI or MCP server, no human required to run the commands. | Implemented |
 | 4 | **Session-aware** | crontick creates the engine session itself and knows its identity (session id) and real status — running / finished / failed — not just a process exit code. | Planned / Partial |

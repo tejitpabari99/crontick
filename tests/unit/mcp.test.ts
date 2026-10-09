@@ -148,7 +148,7 @@ describe('MCP server — full contract', () => {
     expect(names.sort()).toEqual([...EXPECTED_TOOLS].sort());
     for (const tool of result.tools) {
       expect(tool.name).toMatch(/^crontick_/);
-      expect(tool.name).not.toContain('auto' + 'start');
+      expect(tool.name).not.toMatch(/autostart_(enable|disable)/);
     }
   });
 
@@ -181,6 +181,7 @@ describe('MCP server — full contract', () => {
       'crontick_stats_summary',
       'crontick_doctor',
       'crontick_info',
+      'crontick_autostart_status',
     ];
     for (const name of readOnlyTools) {
       expect(byName.get(name)?.annotations?.readOnlyHint, `${name} should be readOnlyHint`).toBe(true);

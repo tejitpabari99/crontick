@@ -511,6 +511,18 @@ export function createMcpServer(): McpServer {
     async (args) => toolWrap(args, (client) => client.info(), false),
   );
 
+  // Status only: enable/disable are a deliberate MCP exemption (agents must not create login persistence).
+  server.registerTool(
+    'crontick_autostart_status',
+    {
+      description:
+        'Report whether crontick is registered to start at login (read-only): supported, enabled, mechanism, definition path, registered command, stale flag with reasons, and hints. This tool cannot enable or disable autostart; the user does that with `crontick autostart enable|disable`.',
+      inputSchema: withVerbose({}),
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => toolWrap(args, (client) => client.autostartStatus(), false),
+  );
+
   // ── Resources ─────────────────────────────────────────────────────────────
 
   // crontick://schemas/job — JSON schema for a job

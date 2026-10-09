@@ -39,7 +39,8 @@ describe('src/skill/SKILL.md content', () => {
     expect(content).toContain('crontick_job_schedule');
     expect(content).not.toContain('crontick_run_logs_tail');
     expect(content).not.toContain('crontick_run_output');
-    expect(content).not.toContain('crontick_' + 'auto' + 'start');
+    expect(content).not.toContain('crontick_autostart_enable');
+    expect(content).not.toContain('crontick_autostart_disable');
   });
 
   it('documents first-class prompt actions', () => {
@@ -61,7 +62,8 @@ describe('src/skill/SKILL.md content', () => {
   });
 
   it('does not list removed daemon startup-registration tools', () => {
-    expect(content.toLowerCase()).not.toContain('auto' + 'start');
+    expect(content.toLowerCase()).not.toMatch(/autostart (enable|disable)`? *\|/);
+    expect(content).not.toContain('crontick_autostart_enable');
   });
 
   it('contains confirmation guardrail for delete/disable', () => {

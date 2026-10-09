@@ -58,7 +58,7 @@ Every method below that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `jobSchedule` | `(id: string, options?: { n?: number }): Promise<unknown>` | Upcoming fire times for an existing job (id or alias); returns `{ jobId, alias, enabled, cwd, schedule, next }`; powers `crontick jobs schedule` and `crontick_job_schedule` | `CrontickError` (`JOB_NOT_FOUND`) |
 | `statsSummary` | `(): Promise<StatsSummary>` | `StatsSummary` | `CrontickError` |
 | `statsJob` | `(id: string): Promise<JobStats>` | `JobStats` | `CrontickError` |
-| `daemonStart` | `(options?: { foreground?: boolean }): Promise<DaemonStartResult>` | Start result (library-only after round-2 simplification) | `CrontickError` |
+| `daemonStart` | `(options?: { foreground?: boolean; home?: string }): Promise<DaemonStartResult>` | Start result (library-only after round-2 simplification) | `CrontickError` |
 | `daemonStop` | `(): Promise<DaemonStopResult>` | Stop result — see [DaemonStopResult](#daemonstopresult) | `CrontickError` |
 | `daemonRestart` | `(): Promise<DaemonRestartResult>` | `{ ok: true, baseUrl, port?, pid?, started, stopped, previousPid? }` — library-only after round-2 simplification; the stop phase escalates internally the same way as `daemonStop`, but only `stopped`/`previousPid` are surfaced (no `mode`/`activeRuns`) | `CrontickError` |
 | `daemonReload` | `(): Promise<{ ok: true }>` | `{ ok: true }` | `CrontickError` |
@@ -78,6 +78,9 @@ Every method below that takes an `id` parameter (`getJob`, `updateJob`, `deleteJ
 | `validateConfig` | `(path?: string): ConfigValidationResult` | Validation result | `CrontickError` |
 | `configPath` | `(): ConfigPathInfo` | `{ path, note }` — library-only helper mirrored by `info().configPath` | — |
 | `info` | `(): Promise<CrontickInfo>` | `{ version, node, platform, configPath, configExists, paths: CrontickInfoPaths, daemon: { running, pid?, port?, portNote? }, dashboardUrl }` (`CrontickInfoPaths` = `dataDir`, `jobsDir`, `runsDb`, `logsDir`, `configFile`, `portFile`, `pidFile`; `configExists: false` means built-in defaults are in use) — powers `crontick info` and `crontick_info`; `dashboardUrl` is the daemon-served dashboard URL when running, otherwise `null` | `CrontickError` |
+| `autostartEnable` | `(): Promise<AutostartEnableResult>` (register the daemon to start at login; idempotent; no daemon needed) | `{ enabled: true, mechanism, definitionPath, hints }` | `CrontickError` (`AUTOSTART_UNSUPPORTED`, `AUTOSTART_UNAVAILABLE`, `AUTOSTART_SCRIPT_MISSING`, `AUTOSTART_EPHEMERAL_PATH`, `AUTOSTART_FAILED`) |
+| `autostartDisable` | `(): Promise<AutostartDisableResult>` (idempotent) | `{ removed, mechanism? }`; `removed: false` when nothing was registered | `CrontickError` (`AUTOSTART_UNSUPPORTED`, `AUTOSTART_UNAVAILABLE`, `AUTOSTART_FAILED`) |
+| `autostartStatus` | `(): Promise<AutostartStatus>` (never throws for an unsupported platform) | `{ supported, enabled, mechanism?, definitionPath?, command?, active?, stale, staleReasons, reason?, hints }` | `CrontickError` |
 | `drainNotices` | `(): string[]` | Accumulated notices | — |
 | `isVerbose` | `(): boolean` | Verbose flag | — |
 
@@ -511,6 +514,14 @@ interface SurfaceCapability {
   mcpTool: string;
 }
 ```
+
+### AutostartStatus, AutostartEnableResult, AutostartDisableResult
+
+Exported types for the autostart methods. `AutostartStatus` is `{ supported: boolean; enabled: boolean; mechanism?: string; definitionPath?: string; command?: string; active?: boolean; stale: boolean; staleReasons: string[]; reason?: string; hints: string[] }`. `stale` is true when the registered node path, daemon script path or `CRONTICK_HOME` differs from what `autostartEnable()` would write now. `AutostartEnableResult` is `{ enabled: true; mechanism: string; definitionPath: string; hints: string[] }` and `AutostartDisableResult` is `{ removed: boolean; mechanism?: string }`.
+
+For custom or test backends the module also exports `AutostartBackend`, `AutostartSpec`, `AutostartDeps`, `AutostartFs`, `AutostartExecResult`, `BackendInspection` and `AutostartMechanism`, and `CrontickClientOptions.autostartDeps` injects the OS access (platform, env, home directory, `exec`, fs) so nothing touches the real service manager.
+
+Autostart is opt-in and library/CLI-only for enable/disable; `daemon start` (`daemonStart`) never registers anything. Lifecycle caveat: without systemd linger, jobs pause while the user is fully logged out.
 
 ### Logger
 

@@ -91,8 +91,7 @@ without saying so.
 
 No elevated privileges to install/update/uninstall; identical behavior across OSes without
 platform-specific plumbing; avoids waking a daemon on laptop resume only to find targets stale.
-OS startup registration was removed in favor of pure demand-start; see
-[ADR 0001](../decisions/0001-architecture-and-runtime-model.md).
+The default stays pure demand-start. An earlier native-dependency autostart was removed; login autostart returned as an explicit opt-in without native dependencies (`crontick autostart enable`); see [ADR 0001](../decisions/0001-architecture-and-runtime-model.md) and [Opt-in autostart](#opt-in-autostart-at-login).
 
 ## Further reading
 
@@ -102,4 +101,15 @@ OS startup registration was removed in favor of pure demand-start; see
 
 ## Explicit start
 
-The daemon demand-starts on first use, but `crontick daemon start` starts it explicitly (background by default, `--foreground` to run it in the terminal), `crontick daemon status` reports whether it is running, and `crontick daemon restart` cycles it. This is a manual start only; crontick does not register itself to start at login or boot.
+The daemon demand-starts on first use, but `crontick daemon start` starts it explicitly (background by default, `--foreground` to run it in the terminal), `crontick daemon status` reports whether it is running, and `crontick daemon restart` cycles it. This is a manual start only; `daemon start` never registers anything to start at login or boot. `--home <dir>` sets `CRONTICK_HOME` for the daemon it starts.
+
+## Opt-in autostart at login
+
+`crontick autostart enable` registers the daemon with the OS user-level service manager (Linux: a `systemd --user` unit at `${XDG_CONFIG_HOME:-~/.config}/systemd/user/crontick.service`); `autostart disable` removes it and `autostart status` reports it, including stale registrations after a Node or crontick upgrade. It is a local OS registration that works with the daemon down, so there is no daemon API route, and MCP exposes only `crontick_autostart_status`.
+
+- **Coexists with demand-start.** The registered unit sets `CRONTICK_SUPERVISED=1`. The daemon is single-instance (PID file); with that variable set, finding a daemon already running logs and exits `0` instead of `1`, so a supervisor using `Restart=on-failure` does not crash-loop when something demand-started first. An unsupervised duplicate start still exits non-zero. A SIGTERM from the manager is a graceful stop (exit `0`) and is not restarted.
+- **Runs survive stops.** The unit uses `KillMode=process`, so detached job runs are not killed when the daemon stops and are re-adopted on the next start.
+- **Linger caveat.** Without `loginctl enable-linger`, the user manager stops at the last logout and stops the daemon, so jobs pause while you are fully logged out (a demand-started daemon survives logout). Linger is not managed by crontick; `status` prints the hint.
+- **Stale registrations.** The unit captures the Node path, the daemon script path, `CRONTICK_HOME` (if set) and a `PATH` snapshot at enable time. `status` reports `stale` when these drift; re-run `autostart enable` to fix it (also after installing an engine later).
+- **Uninstalling.** Run `crontick autostart disable` before uninstalling the package; otherwise the unit stays and keeps failing to start (bounded by systemd start limits).
+- A login start is a normal daemon start, so startup behavior such as recording missed fires is unchanged.

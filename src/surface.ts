@@ -12,7 +12,10 @@ export interface SurfaceCapability {
   capability: string;
   clientMethod: string;
   cliCommand: string[];
-  mcpTool: string;
+  /** Omitted only with an explicit `mcpExemption`. */
+  mcpTool?: string;
+  /** Deliberate surface-parity exception: why this capability is not exposed over MCP. */
+  mcpExemption?: string;
   optionNames?: readonly string[];
 }
 
@@ -44,7 +47,11 @@ export const SURFACE_CAPABILITIES = [
   { capability: 'config-unset', clientMethod: 'configUnset', cliCommand: ['config', 'unset'], mcpTool: 'crontick_config_unset', optionNames: ['stopRunning', 'waitRunning'] },
   { capability: 'doctor', clientMethod: 'doctor', cliCommand: ['doctor'], mcpTool: 'crontick_doctor' },
   { capability: 'info', clientMethod: 'info', cliCommand: ['info'], mcpTool: 'crontick_info' },
+  { capability: 'autostart-enable', clientMethod: 'autostartEnable', cliCommand: ['autostart', 'enable'], mcpExemption: 'An agent must not create login persistence (owner decision, ADR 0034).' },
+  { capability: 'autostart-disable', clientMethod: 'autostartDisable', cliCommand: ['autostart', 'disable'], mcpExemption: 'Paired with autostart-enable; registration is managed by the user via the CLI/library only.' },
+  { capability: 'autostart-status', clientMethod: 'autostartStatus', cliCommand: ['autostart', 'status'], mcpTool: 'crontick_autostart_status' },
 ] as const satisfies readonly SurfaceCapability[];
 
 /** All MCP tool names covered by the parity contract. */
-export const MCP_TOOLS = SURFACE_CAPABILITIES.map((capability) => capability.mcpTool);
+export const MCP_TOOLS: string[] = SURFACE_CAPABILITIES.flatMap((capability) =>
+  'mcpTool' in capability ? [capability.mcpTool] : []);

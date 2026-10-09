@@ -10,7 +10,12 @@
  */
 import http from 'node:http';
 import { existsSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { CrontickError } from './errors.js';
+import { AutostartService, createAutostartBackend } from './autostart/index.js';
+import type { AutostartDeps, AutostartDisableResult, AutostartEnableResult, AutostartStatus } from './autostart/types.js';
 import type { RunOutput } from './run-output.js';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -73,6 +78,8 @@ export interface CrontickClientOptions extends Omit<EnsureDaemonOptions, 'startD
   cwd?: string;
   startDaemon?: boolean;
   mcpScript?: string;
+  /** Injectable OS access for autostart (tests); defaults to the real platform. */
+  autostartDeps?: AutostartDeps;
   verbose?: boolean;
   onLog?: LogSink;
   logger?: Logger;
@@ -101,6 +108,29 @@ export interface UpdateJobOptions extends NormalizeJobInputOptions {
 const distDir = dirname(fileURLToPath(import.meta.url));
 function defaultDaemonScript(): string {
   return resolvePath(distDir, 'daemon', 'index.js');
+}
+function defaultCliScript(): string {
+  return resolvePath(distDir, 'cli', 'index.js');
+}
+function realAutostartDeps(env: NodeJS.ProcessEnv): AutostartDeps {
+  return {
+    platform: process.platform,
+    env,
+    homedir: homedir(),
+    exec: (file, args) => new Promise((done) => {
+      execFile(file, args, { encoding: 'utf-8', timeout: 30_000 }, (err, stdout, stderr) => {
+        const code = err ? (typeof (err as { code?: unknown }).code === 'number' ? (err as unknown as { code: number }).code : 1) : 0;
+        done({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? (err ? err.message : '')) });
+      });
+    }),
+    fs: {
+      readFile: (p, enc) => readFile(p, enc),
+      writeFile: (p, d, o) => writeFile(p, d, o),
+      mkdir: (p, o) => mkdir(p, o),
+      rm: (p, o) => rm(p, o),
+      access: (p) => access(p),
+    },
+  };
 }
 function defaultMcpScript(): string {
   return resolvePath(distDir, 'mcp', 'index.js');
@@ -499,8 +529,9 @@ export class CrontickClient {
     return this.request<JobStats>('GET', `/api/stats/jobs/${encodeURIComponent(id)}`);
   }
 
-  async daemonStart(options: { foreground?: boolean } = {}): Promise<DaemonStartResult> {
-    const result = await startDaemon({ ...this.options, env: this.effectiveEnv(), logger: this.logger.child('lifecycle'), startDaemon: true, foreground: options.foreground });
+  async daemonStart(options: { foreground?: boolean; home?: string } = {}): Promise<DaemonStartResult> {
+    const env = options.home ? { ...(this.effectiveEnv() ?? process.env), CRONTICK_HOME: options.home } : this.effectiveEnv();
+    const result = await startDaemon({ ...this.options, env, logger: this.logger.child('lifecycle'), startDaemon: true, foreground: options.foreground });
     if (result.baseUrl) this.cachedBaseUrl = result.baseUrl;
     return result;
   }
@@ -530,6 +561,30 @@ export class CrontickClient {
 
   async daemonStatus(): Promise<DaemonStatus> {
     return this.request<DaemonStatus>('GET', '/api/daemon/status', undefined, { ensure: false });
+  }
+
+  private _autostartService(): AutostartService {
+    const deps = this.options.autostartDeps ?? realAutostartDeps(this.effectiveEnv() ?? process.env);
+    return new AutostartService({
+      deps,
+      backend: createAutostartBackend(deps),
+      nodePath: process.execPath,
+      daemonScript: this.options.daemonScript ?? defaultDaemonScript(),
+      cliScript: defaultCliScript(),
+    });
+  }
+
+  /** Registers the daemon to start at login. Local OS side effect; works with the daemon down. */
+  async autostartEnable(): Promise<AutostartEnableResult> {
+    return this._autostartService().enable();
+  }
+
+  async autostartDisable(): Promise<AutostartDisableResult> {
+    return this._autostartService().disable();
+  }
+
+  async autostartStatus(): Promise<AutostartStatus> {
+    return this._autostartService().status();
   }
 
   async doctor(options: DoctorOptions = {}): Promise<DoctorResult> {

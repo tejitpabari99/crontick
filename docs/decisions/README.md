@@ -95,6 +95,7 @@ files, is the historical record.
 | 0031 | Rename job CLI flags to alias and runner | [0002](0002-prompt-only-jobs-and-engine-adapters.md) |
 | 0032 | Use Claude completion markers only for restart recovery | [0002](0002-prompt-only-jobs-and-engine-adapters.md) |
 | 0033 | Select prompt behavior through engine adapters | [0002](0002-prompt-only-jobs-and-engine-adapters.md) |
+| 0034 | Opt-in login autostart through a platform backend (Linux systemd `--user`; macOS and Windows sections to follow) | [0001](0001-architecture-and-runtime-model.md) (section "OS autostart (ADR 0034)") |
 
 Tooling notes and dependency-specific rejected alternatives from the pre-consolidation
 ADRs (e.g. `cron-parser` vs. `croner`, `ajv` vs. `zod`) live in the new ADRs' own

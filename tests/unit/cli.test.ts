@@ -131,7 +131,6 @@ describe('CLI binary (dist/cli/index.js)', () => {
     expect(help.stdout).toContain('jobs');
     expect(help.stdout).toContain('runs');
     expect(help.stdout).toContain('share');
-    expect(help.stdout.toLowerCase()).not.toContain('auto' + 'start');
     for (const args of [[], ['jobs'], ['runs'], ['share'], ['stats'], ['daemon']]) {
       const result = cli(args);
       expect(result.status, `${args.join(' ')} stderr: ${result.stderr}`).toBe(0);
@@ -152,7 +151,7 @@ describe('CLI binary (dist/cli/index.js)', () => {
   });
 
   it('help reflects new CLI surfaces and removed flags/commands', () => {
-    expect(cli(['auto' + 'start', 'status']).status).not.toBe(0);
+    expect(cli(['autostart', '--help']).status).toBe(0);
     // `runs logs` / `runs output` were folded into `runs get`.
     expect(cli(['runs', 'logs']).stderr).toContain("unknown command 'logs'");
     expect(cli(['runs', 'output']).stderr).toContain("unknown command 'output'");

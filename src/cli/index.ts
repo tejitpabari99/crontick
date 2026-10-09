@@ -735,15 +735,17 @@ program.command('doctor').description('Check system health').action(runDoctor);
 // ── daemon ───────────────────────────────────────────────────────────────────
 // The daemon still demand-starts on first use; `daemon start` is the explicit,
 // manual way to start it (or run it in the foreground). It is NOT login/boot
-// registration (that removed feature is guarded by a regression test).
+// registration; only the opt-in `crontick autostart enable` registers anything
+// (see tests/unit/autostart-removal.test.ts).
 
 const daemon = groupHelp(program.command('daemon').description('Start, stop, and inspect the background daemon'));
 daemon.command('start')
   .description('Start the daemon now (background by default; it also starts automatically on first use)')
   .option('--foreground', 'Run the daemon in this terminal until it exits (Ctrl+C to stop)')
+  .option('--home <dir>', 'Data directory for the started daemon (sets CRONTICK_HOME)')
   .action(async (opts) => {
     try {
-      const result = await client().daemonStart({ foreground: booleanOption(opts.foreground) });
+      const result = await client().daemonStart({ foreground: booleanOption(opts.foreground), home: stringOption(opts.home) });
       if (result.foregroundExitCode !== undefined) {
         stdout(`Daemon exited (code ${String(result.foregroundExitCode)})`);
         return;
@@ -787,6 +789,42 @@ daemon.command('pause').description('Pause scheduling: the daemon stays up but s
 });
 daemon.command('resume').description('Resume scheduling after a pause').action(async () => {
   try { print(await client().daemonResume()); } catch (err) { handleError(err); }
+});
+
+// ── autostart ────────────────────────────────────────────────────────────────
+// Opt-in login registration with the OS user service manager. `daemon start`
+// never registers anything; only `autostart enable` does. No daemon needed.
+
+const autostart = groupHelp(program.command('autostart').description('Start the daemon automatically at login (opt-in)'));
+autostart.command('enable').description('Register the daemon to start at login (idempotent)').action(async () => {
+  try {
+    const r = await client(false).autostartEnable();
+    stdout(`Autostart enabled (${r.mechanism})`);
+    stdout(`definition  ${r.definitionPath}`);
+    for (const hint of r.hints) stdout(`Note: ${hint}`);
+  } catch (err) { handleError(err); }
+});
+autostart.command('disable').description('Remove the login registration (idempotent)').action(async () => {
+  try {
+    const r = await client(false).autostartDisable();
+    stdout(r.removed ? 'Autostart disabled' : 'Autostart was not enabled; nothing to remove');
+  } catch (err) { handleError(err); }
+});
+autostart.command('status').description('Show whether the daemon is registered to start at login').action(async () => {
+  try {
+    const s = await client(false).autostartStatus();
+    stdout(`autostart  ${!s.supported ? 'unsupported' : s.enabled ? 'enabled' : 'disabled'}`);
+    if (s.mechanism) stdout(`mechanism  ${s.mechanism}`);
+    if (s.definitionPath) stdout(`definition ${s.definitionPath}`);
+    if (s.command) stdout(`command    ${s.command}`);
+    if (s.active !== undefined) stdout(`active     ${s.active ? 'yes' : 'no'}`);
+    if (s.reason) stdout(`reason     ${s.reason}`);
+    if (s.stale) {
+      stdout('stale      yes');
+      for (const reason of s.staleReasons) stdout(`  - ${reason}`);
+    }
+    for (const hint of s.hints) stdout(`Note: ${hint}`);
+  } catch (err) { handleError(err); }
 });
 
 // ── dashboard ────────────────────────────────────────────────────────────────

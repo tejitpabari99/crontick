@@ -26,6 +26,7 @@ import type { ApiContext } from './api.js';
 import { createLogger, isVerboseEnv, type LogEvent, type Logger } from '../logger.js';
 import { ensureConfigFile, loadConfig } from '../config.js';
 import { createProcessLivenessCheck } from '../process-liveness.js';
+import { SUPERVISED_ENV } from '../constants/daemon.js';
 
 /** Cap on missed fires recorded per job at startup (see enumerateFiresBetween()). */
 const MISSED_FIRE_CAP_PER_JOB = 500;
@@ -78,6 +79,11 @@ if (needsSqliteShim) {
     env: process.env,
     detached: false,
   });
+  // Forward termination signals so a supervisor's SIGTERM reaches the real
+  // daemon (graceful shutdown, exit 0) instead of killing only this shim.
+  for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+    process.on(sig, () => { child.kill(sig); });
+  }
   child.on('exit', (code) => {
     process.exit(code ?? 0);
   });
@@ -125,6 +131,12 @@ if (needsSqliteShim) {
       if (!isNaN(existingPid)) {
         try {
           process.kill(existingPid, 0);
+          // Under a service manager (Restart=on-failure / KeepAlive SuccessfulExit:false)
+          // a non-zero exit would crash-loop when the user demand-started first.
+          if (process.env[SUPERVISED_ENV] === '1') {
+            logger.info('Daemon already running; exiting 0 (supervised)', { pid: existingPid });
+            process.exit(0);
+          }
           logger.error('Daemon already running', { pid: existingPid });
           process.exit(1);
         } catch {

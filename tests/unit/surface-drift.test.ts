@@ -6,9 +6,10 @@ import { randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { CrontickClient } from '../../src/client.js';
-import { MCP_TOOLS, SURFACE_CAPABILITIES } from '../../src/surface.js';
+import { MCP_TOOLS, SURFACE_CAPABILITIES as RAW_CAPABILITIES, type SurfaceCapability } from '../../src/surface.js';
 import { writeTestConfig } from '../helpers/test-home.js';
 
+const SURFACE_CAPABILITIES: readonly SurfaceCapability[] = RAW_CAPABILITIES;
 const CLI = resolve('dist/cli/index.js');
 const MCP = resolve('dist/mcp/index.js');
 const NON_PARITY_CLIENT_METHODS = new Set([
@@ -53,6 +54,12 @@ const NON_PARITY_CLIENT_METHODS = new Set([
   'validateConfig',
 ]);
 
+/** Deliberate parity exceptions: no MCP tool, but a written reason is mandatory. */
+const EXPECTED_MCP_EXEMPT = ['autostart-enable', 'autostart-disable'];
+function isMcpExempt(capability: { mcpTool?: string; mcpExemption?: string }): boolean {
+  return capability.mcpTool === undefined;
+}
+
 function scratchHome(): string {
   const home = resolve('.crontick', 'surface-drift', randomUUID());
   mkdirSync(join(home, 'jobs'), { recursive: true });
@@ -62,6 +69,19 @@ function scratchHome(): string {
 }
 
 describe('surface capability drift', () => {
+  it('only the documented capabilities are MCP-exempt, each with a reason; every other has an MCP tool', () => {
+    const exempt = SURFACE_CAPABILITIES.filter(isMcpExempt);
+    expect(exempt.map((c) => c.capability).sort()).toEqual([...EXPECTED_MCP_EXEMPT].sort());
+    for (const c of exempt) {
+      expect(c.mcpExemption, `${c.capability} needs mcpExemption`).toBeTruthy();
+    }
+    for (const c of SURFACE_CAPABILITIES.filter((x) => !isMcpExempt(x))) {
+      expect(c.mcpExemption, `${c.capability} has both tool and exemption`).toBeUndefined();
+    }
+    expect(MCP_TOOLS).toContain('crontick_autostart_status');
+    expect(MCP_TOOLS.some((t) => /autostart_(enable|disable)/.test(t))).toBe(false);
+  });
+
   it('client exposes every table capability method', () => {
     for (const capability of SURFACE_CAPABILITIES) {
       expect(
@@ -139,7 +159,11 @@ describe('surface capability drift', () => {
       const names = new Set(listed.tools.map((tool) => tool.name));
       expect([...names].filter((name) => name.startsWith('crontick_')).sort()).toEqual([...MCP_TOOLS].sort());
       for (const capability of SURFACE_CAPABILITIES) {
-        expect(names.has(capability.mcpTool), `${capability.capability} missing MCP tool ${capability.mcpTool}`).toBe(true);
+        if (isMcpExempt(capability)) {
+          expect(names.has(`crontick_${capability.capability.replace(/-/g, '_')}`), `${capability.capability} must not be exposed over MCP`).toBe(false);
+          continue;
+        }
+        expect(names.has(capability.mcpTool!), `${capability.capability} missing MCP tool ${capability.mcpTool}`).toBe(true);
       }
       for (const tool of listed.tools.filter((tool) => tool.name.startsWith('crontick_'))) {
         const properties = (tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};

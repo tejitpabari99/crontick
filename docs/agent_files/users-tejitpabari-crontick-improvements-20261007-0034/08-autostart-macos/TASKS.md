@@ -9,8 +9,8 @@ Source of truth: docs/agent_files/users-tejitpabari-crontick-improvements-202610
 | # | Task | Depends on | Status |
 |---|---|---|---|
 | 1 | Plist renderer and parser | - | done |
-| 2 | launchd backend: available, install, uninstall | 1 | in-progress |
-| 3 | launchd inspect and disabled-by-user detection | 1, 2 | todo |
+| 2 | launchd backend: available, install, uninstall | 1 | done |
+| 3 | launchd inspect and disabled-by-user detection | 1, 2 | in-progress |
 | 4 | Darwin factory case | 2, 3 | todo |
 | 5 | Docs, ADR 0034 macOS section, changeset, validate | 1-4 | todo |
 

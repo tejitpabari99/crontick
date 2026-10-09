@@ -19,12 +19,12 @@ All three are thin adapters over `CrontickClient`, which communicates with the d
 
 ## The `SURFACE_CAPABILITIES` constant
 
-`src/surface.ts` exports a single constant that canonically enumerates the 27 parity capabilities:
+`src/surface.ts` exports a single constant that canonically enumerates the 30 parity capabilities:
 
 ```typescript
 export const SURFACE_CAPABILITIES = [
   { capability: 'create-job', clientMethod: 'createJob', cliCommand: ['jobs', 'new'], mcpTool: 'crontick_job_create', optionNames: ['force', 'trustFolder'] },
-  // ... 26 more entries
+  // ... 29 more entries
 ] as const satisfies readonly SurfaceCapability[];
 ```
 
@@ -40,7 +40,7 @@ Each entry maps:
 
 ## Current capability map
 
-27 capabilities are defined today; see
+30 capabilities are defined today; see
 [specs/005-surface-parity.md](../specs/005-surface-parity.md#current-capability-table) for the
 full table. The CLI may fold multiple capabilities into one command path when the operation is
 an option on a shared command -- `enable-job`/`disable-job` are `crontick jobs update --enable`
@@ -79,6 +79,10 @@ Skipping any of these steps will cause the surface-drift test to fail.
 - **Maintainability** - changes to scheduling, validation, or persistence happen in one place.
 
 If a shim needs to transform input, that transformation must call shared functions such as `src/job-input.ts` or `src/config.ts`, never inline the logic.
+
+## Deliberate MCP exemption: autostart
+
+`autostart-enable` and `autostart-disable` carry an explicit `mcpExemption` string instead of an `mcpTool`: an agent must not be able to create login persistence, so only `autostart-status` (`crontick_autostart_status`, read-only) is an MCP tool. The CLI and library keep all three. `SurfaceCapability.mcpTool` is therefore optional, but only when `mcpExemption` explains why; `tests/unit/surface-drift.test.ts` encodes this and still fails on any other missing surface.
 
 ## Non-parity methods
 
