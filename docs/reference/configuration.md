@@ -13,7 +13,7 @@ The data directory is resolved by (in order):
 1. `CRONTICK_HOME` environment variable (if set)
 2. `env-paths('crontick', { suffix: '' }).data` (platform default)
 
-`crontick info` prints the resolved config path (`configPath`) and daemon state. There are no config get/set/unset/init/validate or engine-management CLI/MCP commands; edit `config.json` by hand. The daemon (and the first daemon-backed command) creates the file automatically with the full explicit built-in config (`defaultEngine`, `engines.claude`, `retention`, `logging.fileEnabled`, `defaults.overlap/retry`; `timeoutSec` is omitted because it is unset), mode 0600, using an exclusive create so an existing file is never touched. `crontick info` stays read-only and reports `not created yet` until then. Trade-off: because the file lists every default explicitly, a default that changes in a later crontick version does not reach users who already have the file; delete a key (or the file) to follow the new built-in default.
+`crontick info` prints the resolved config path (`configPath`) and daemon state. Edit the file with `crontick config list|get|set|unset` (see [Editing config](#editing-config)), the dashboard Settings modal, or by hand. The daemon (and the first daemon-backed command) creates the file automatically with the full explicit built-in config (`defaultEngine`, `engines.claude`, `retention`, `logging.fileEnabled`, `defaults.overlap/retry`; `timeoutSec` is omitted because it is unset), mode 0600, using an exclusive create so an existing file is never touched. `crontick info` stays read-only and reports `not created yet` until then. Trade-off: because the file lists every default explicitly, a default that changes in a later crontick version does not reach users who already have the file; delete a key (or the file) to follow the new built-in default.
 
 ### Resolved Config File Paths by OS
 
@@ -102,6 +102,22 @@ On creation, each omitted job field takes its value from `config.json` `defaults
 
 ---
 
+## Editing config
+
+`crontick config list|get|set|unset` (CLI), `crontick_config_*` (MCP), `configList/configGet/configSet/configUnset` (library) and `GET`/`PATCH /api/config` (dashboard Settings) share one write core, so validation and behavior are identical. Normative contract: [specs/008-config-editing.md](../specs/008-config-editing.md). Design rationale: [ADR 0004](../decisions/0004-config-writes-file-direct-and-pause.md).
+
+- **File-direct.** CLI, MCP and library write `config.json` directly. They work with the daemon down or broken and never demand-start it. Afterwards a running daemon is reloaded best-effort (`reload`: `reloaded`, `daemon-not-running` or `failed`; a failed reload never fails the save, run `crontick daemon reload`). The dashboard goes through the daemon API.
+- **Atomic and sparse.** The change is validated against the full schema first; on any error nothing is written. Only the keys you set are stored, so untouched defaults are never baked into the file. A file that is already invalid or unparsable is refused: fix it by hand.
+- **Keys.** Dotted paths per the schema (`defaults.timeoutSec`, `engines.claude.command`). Engines are added or replaced with `set engines.<name> '<json object>'` and removed with `unset engines.<name>`; removing `defaultEngine`'s engine or the last engine is rejected. A key inside a map that itself contains `.` (an env var named `A.B`) cannot be addressed by dotted path: set the parent `env` object.
+- **`daemon.*` is read-only while a daemon runs.** `set`/`unset` of `daemon` or anything under it fails with `CONFIG_KEY_READ_ONLY` if a daemon process is up (stop it first: `crontick daemon stop`, then `crontick config set daemon.port <n>`). The API and dashboard always treat it as read-only. `config get daemon.port` always works.
+- **Secrets.** Every read redacts secret-like values (`env` values, secret-looking args) as `[REDACTED]`. A write that echoes a redacted value back at the same path keeps the stored secret; any other string containing `[REDACTED]` is rejected (`CONFIG_REDACTED_VALUE`); typing a real value replaces the secret.
+- **Concurrency.** Writes take `config.json.lock` (retry up to 2 s, a lock older than 10 s is broken, else `CONFIG_LOCKED`), re-read, apply, then rename a temp file over the config (retried on Windows `EPERM`/`EBUSY`). An existing file keeps its mode; a new file is 0600. `GET /api/config` and `configList` return a `revision` (sha256 of the file bytes, or `absent`); pass it back as `ifRevision` and a changed file fails with `CONFIG_CONFLICT` (HTTP 409).
+- **In-flight runs.** If the daemon is up and runs are executing or queued, a save fails with `RUNS_IN_FLIGHT` (HTTP 409, lists the runs) unless you choose: `--stop-running` / `inFlight: 'stop'` cancels them (status `canceled`, no retry, no `--after` dependents, queued runs dropped) then applies; `--wait-running` / `inFlight: 'wait'` pauses the daemon, waits with no timeout for all runs to finish, applies, then resumes. On a TTY the CLI prompts. The wait is held in the daemon; if the daemon restarts during it, the pending apply is lost and reported as `lostPendingConfigApply` in `daemon status`. See [Daemon pause](../concepts/daemon-lifecycle.md#pause-and-resume).
+- **Notice.** Every successful write returns: "Saved. Running runs are not affected. Default changes apply to new jobs only. Engine changes apply on the next run. `daemon.port` needs a restart." (CLI prints it on stderr, the dashboard shows a toast.)
+- **Unknown keys** are rejected (strict schema), including in hand-edited files: one typo makes the file invalid until fixed.
+
+---
+
 ## When Config Edits Take Effect
 
 Most config is read fresh for each run and applies automatically on the **next run** without `crontick daemon reload` or a restart:
@@ -117,7 +133,7 @@ Most config is read fresh for each run and applies automatically on the **next r
 `defaults.retry` are read when a job is created. Existing jobs keep the
 engine and default values saved in their job files after a config edit.
 
-The exception is `retention.maxRunsPerJob`. The daemon's Store caches that value, reading it at daemon startup and again on `crontick daemon reload`. After changing it, run:
+The exception is `retention.maxRunsPerJob`. The daemon's Store caches that value, reading it at daemon startup and again on `crontick daemon reload`. `crontick config set|unset` (and the dashboard) reload a running daemon for you after saving. After a hand edit, run:
 
 ```bash
 crontick daemon reload

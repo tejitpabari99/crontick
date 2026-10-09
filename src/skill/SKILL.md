@@ -146,7 +146,7 @@ crontick jobs new --cron "0 * * * *" --prompt "Continue triaging the incident qu
 - Run statuses: `queued`, `running`, `success`, `failed`, `canceled`, `skipped` (overlap `skip` found another run active; never started), `timeout`, `missed`.
 - crontick stores only its own logs: lifecycle events go to one per-job log file (its path is shown by `runs get`); the engine keeps its own transcript. `runs get` also shows the cleaned output and the Runner Session ID.
 - Confirm before `jobs delete`, `jobs update --disable`, or any `jobs delete all --force` clear.
-- `info` prints the config path — there are no `config get/set/engines` subcommands; edit `config.json` by hand.
+- Config: `config list|get|set|unset <dotted.key> [value]` (value parsed as JSON, else string; `--string` forces string; negative numbers need `--`). Engines: `config set engines.<name> '{"command":"...","type":"raw"}'`. With runs in flight add `--stop-running` or `--wait-running`. `daemon pause`/`resume` stop/restart scheduling without stopping the daemon.
 - crontick is prompt-only: every job's action is `kind: "prompt"`. There is no shell-script or raw-executable action kind.
 
 ## Prompt action shape / session continuity

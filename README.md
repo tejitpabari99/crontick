@@ -116,7 +116,7 @@ The Claude adapter invokes `claude -p "<your prompt>" --output-format stream-jso
 
 ### The config file
 
-`crontick info` prints the path to `config.json` (under the data dir). **Edit that file directly.** Engine, logging, and per-run retention changes apply on the next run; `retention.maxRunsPerJob` is cached by the daemon, so after changing it run `crontick daemon reload`.
+`crontick info` prints the path to `config.json` (under the data dir). Edit it with `crontick config list|get|set|unset` (e.g. `crontick config set defaults.timeoutSec 600`; engines: `crontick config set engines.<name> '{"command":"...","type":"raw"}'`), the dashboard Settings (gear icon), or by hand. Engine, logging, and per-run retention changes apply on the next run; `config set`/`unset` reload a running daemon for you (after a hand edit of `retention.maxRunsPerJob`, run `crontick daemon reload`). With runs in flight, add `--stop-running` or `--wait-running`.
 
 ```jsonc
 {

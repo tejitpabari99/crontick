@@ -92,6 +92,12 @@ a fallback only) are described in
 **HTTP API**: Loopback REST; request/response is JSON.
 **`ensureDaemon` output**: `DaemonInfo { baseUrl, port, pid, started }`.
 
+## API request guard
+
+Every mutating route (POST/PUT/PATCH/DELETE under `/api`, including unknown paths) passes `src/daemon/request-guard.ts` before any handler runs. A request is rejected with `REQUEST_REJECTED` (HTTP 403 for Host/Origin, 415 for Content-Type) and executes nothing unless: `Host` is `127.0.0.1`, `localhost` or `[::1]` with the daemon's bound port (blocks DNS rebinding); `Content-Type` is `application/json` (strict, required on bodyless requests too: `DELETE /api/jobs/:id`, `POST .../run-now`, `.../enable`); and `Origin`, if present, equals the daemon's own origin (blocks cross-site requests). There are no tokens. The client, CLI, MCP server and dashboard always send the JSON header. **Breaking for direct API callers**: scripts calling the HTTP API with `curl -X POST` must add `-H 'Content-Type: application/json'` and a correct Host. A test enumerates the mutating routes in `api.ts` so a new route cannot ship unguarded (`tests/unit/request-guard.test.ts`). The guard wording and design are pending owner review.
+
+Pause: `POST /api/daemon/pause|resume` toggle the in-memory scheduler pause (see [daemon lifecycle](../concepts/daemon-lifecycle.md#pause-and-resume) and [spec 008](008-config-editing.md)).
+
 ## Edge cases and failure modes
 
 - Port file exists but daemon is dead: health probe fails; demand-start proceeds.
@@ -118,6 +124,8 @@ a fallback only) are described in
 - [x] Missed fires across a crash/restart are recorded as `missed` runs and surfaced in `info`'s `missedFires` summary (test files: `tests/unit/integration.daemon-lifecycle.test.ts`, `tests/unit/api.test.ts`, `tests/unit/daemon-status-fields.test.ts`)
 - [x] Reload reschedules all jobs from disk, aborting cleanly on invalid config (test file: `tests/unit/integration.daemon-lifecycle.test.ts`)
 - [x] `crontick daemon stop`/`reload` use human-readable CLI output (test file: `tests/unit/cli-daemon-json.test.ts`)
+
+- [x] Mutating `/api` requests with a wrong Host, non-JSON Content-Type or foreign Origin are rejected with `REQUEST_REJECTED` and execute nothing (test file: `tests/unit/request-guard.test.ts`)
 
 ## Out of scope
 

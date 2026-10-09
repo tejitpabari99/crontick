@@ -193,15 +193,63 @@ class CrontickError extends Error {
 
 | | |
 |---|---|
-| **When** | Library config helpers read or remove a path that does not exist in the config |
-| **Message shape** | `Config key "<path>" was not found. Inspect config.json directly or use library config helpers to inspect available keys.` |
+| **When** | `config get` / `config unset` (CLI, MCP, library) on a path that does not exist in the config |
+| **Message shape** | `Config key "<path>" was not found. ...` |
 | **Details** | `{ key }` |
+
+### CONFIG_CONFLICT
+
+| | |
+|---|---|
+| **When** | A config write passed `ifRevision` and `config.json` changed since that revision was read (HTTP 409) |
+| **Message shape** | Names the file; re-read and retry |
+| **Details** | `{ path, expected, actual }` |
+
+### CONFIG_KEY_READ_ONLY
+
+| | |
+|---|---|
+| **When** | `set`/`unset` of `daemon` or a key under it while a daemon process is running, or any `PATCH /api/config` op touching `daemon` |
+| **Message shape** | `daemon.port can only be changed while the daemon is stopped: run "crontick daemon stop" first` |
+| **Details** | `{ key }` |
+
+### CONFIG_REDACTED_VALUE
+
+| | |
+|---|---|
+| **When** | A config write submits a string containing the `[REDACTED]` marker that does not match the stored redacted value at the same path |
+| **Message shape** | Names the key; submit the real value or leave the field untouched |
+| **Details** | `{ key }` |
+
+### CONFIG_LOCKED
+
+| | |
+|---|---|
+| **When** | `config.json.lock` stayed held by another writer for 2 s (locks older than 10 s are broken automatically) |
+| **Message shape** | `Config file <path> is locked by another writer (...)` |
+| **Details** | `{ path, lock }` |
+
+### RUNS_IN_FLIGHT
+
+| | |
+|---|---|
+| **When** | A config save found runs executing or queued and no `inFlight` choice (`stop`/`wait`; CLI `--stop-running`/`--wait-running`) was given (HTTP 409) |
+| **Message shape** | Lists the in-flight runs |
+| **Details** | `{ runs }` |
+
+### REQUEST_REJECTED
+
+| | |
+|---|---|
+| **When** | A mutating `/api` request (POST/PUT/PATCH/DELETE) has a non-loopback `Host`, a `Content-Type` other than `application/json` (required even when bodyless), or a mismatching `Origin`. Nothing is executed. HTTP 403 (Host/Origin) or 415 (Content-Type) |
+| **Message shape** | `Rejected: ...` |
+| **Details** | — |
 
 ### CONFIG_ENGINE_NOT_FOUND
 
 | | |
 |---|---|
-| **When** | Library config engine helpers or a prompt job references a non-existent engine |
+| **When** | A prompt job references a non-existent engine (resolved per run) |
 | **Message shape** | `Engine "<name>" is not defined in <path>. ...` |
 | **Details** | `{ path, key }` |
 
@@ -209,7 +257,7 @@ class CrontickError extends Error {
 
 | | |
 |---|---|
-| **When** | Library config engine add helper with a name that already exists |
+| **When** | Legacy engine-add path with a name that already exists (engines are now added or replaced with `config set engines.<name>`) |
 | **Message shape** | `Engine "<name>" already exists in <path>. Use update if you want to change it.` |
 | **Details** | `{ path, key }` |
 

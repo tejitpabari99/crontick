@@ -59,6 +59,8 @@ and `port` before trusting an existing daemon. `describeDaemonPort(port)` yields
 
 ## HTTP API routes
 
+Every mutating route (POST/PUT/PATCH/DELETE under `/api`) first passes `src/daemon/request-guard.ts`, applied centrally by method so a new route cannot skip it: loopback `Host` with the daemon port, `Content-Type: application/json` (even bodyless), `Origin` (if sent) equal to the daemon origin; otherwise `REQUEST_REJECTED`. See [spec 004](../specs/004-daemon.md#api-request-guard).
+
 All routes enforce localhost-only via a `LOOPBACK` set check on `req.socket.remoteAddress`;
 non-loopback gets 403 `FORBIDDEN`.
 
@@ -76,6 +78,9 @@ non-loopback gets 403 `FORBIDDEN`.
 | GET | `/api/stats/summary\|jobs/:id` | Aggregate / per-job stats | 200/404 |
 | GET | `/api/daemon/status` | PID, `port`/`baseUrl`/`dashboardUrl`, `portNote` (set when on a fallback port), version, uptime, job count, `missedFires` | 200 |
 | POST | `/api/daemon/reload` | Reload jobs from disk (see [Reload](#reload)) | 200 |
+| POST | `/api/daemon/pause\|resume` | Pause/resume the scheduler (in memory, not persisted). `200 { ok, paused }`; `GET /api/daemon/status` reports `paused` and `lostPendingConfigApply` | 200 |
+| GET | `/api/config` | `{ path, revision, config (redacted effective), stored (redacted), readOnly: ['daemon'], notice }` | 200 |
+| PATCH | `/api/config` | Body `{ ops: [{op:'set'\|'unset', key, value?}], ifRevision?, inFlight? }`: one locked write, then in-process reload. `409 CONFIG_CONFLICT` / `RUNS_IN_FLIGHT`; `daemon` ops always `CONFIG_KEY_READ_ONLY` | 200/400/409 |
 | POST | `/api/daemon/stop` | Graceful in-process shutdown (see [Shutdown](#shutdown)) | 200/501 |
 | GET/POST | `/api/export`, `/api/import` | Export/import jobs (schema 1, jobs only; never run history) | 200 |
 | GET | `/api/dashboard[/status]` | Dashboard data / connection info; `/api/dashboard` accepts `runsLimit`, `jobId`/`status` (comma-separated) and `q` for the runs list | 200 |
@@ -85,7 +90,7 @@ Error responses are JSON: `{ error: { code, message, details? } }`.
 
 ## Config apply with in-flight policy (`src/daemon/config-apply.ts`)
 
-`applyConfigWithPolicy` is the daemon-side save flow (routes land in a later SP03 task). With nothing in flight it applies and reloads. With runs in flight (`Runner.listInFlight`: executing, queued, adopted) and no choice it throws `RUNS_IN_FLIGHT` listing them. `inFlight: 'stop'` pauses the scheduler, drops queued runs and aborts active ones (all `canceled`, no retry), applies, reloads. `inFlight: 'wait'` pauses, waits with no timeout for all runs to finish, applies, reloads. Either way the scheduler is resumed afterward unless the user had paused it already. While waiting, `pending-config-apply.json` sits in the data dir; if found at startup the wait was lost with the restart, is logged, and is reported as `lostPendingConfigApply` in `GET /api/daemon/status`.
+`applyConfigWithPolicy` is the daemon-side save flow (`PATCH /api/config`). With nothing in flight it applies and reloads. With runs in flight (`Runner.listInFlight`: executing, queued, adopted) and no choice it throws `RUNS_IN_FLIGHT` listing them. `inFlight: 'stop'` pauses the scheduler, drops queued runs and aborts active ones (all `canceled`, no retry), applies, reloads. `inFlight: 'wait'` pauses, waits with no timeout for all runs to finish, applies, reloads. Either way the scheduler is resumed afterward unless the user had paused it already. While waiting, `pending-config-apply.json` sits in the data dir; if found at startup the wait was lost with the restart, is logged, and is reported as `lostPendingConfigApply` in `GET /api/daemon/status`.
 
 ## Reload
 
