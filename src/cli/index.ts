@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { SCHEDULE_FLAGS, scheduleFooter, type ScheduleFlag } from '../constants/cli-schedule.js';
 import { VERSION } from '../version.js';
 import { CrontickError } from '../errors.js';
 import { createClient, type CrontickClient } from '../client.js';
@@ -208,14 +209,20 @@ function groupHelp(command: Command): Command {
   return command;
 }
 
+function scheduleFlag(flag: string): ScheduleFlag {
+  const found = SCHEDULE_FLAGS.find((f) => f.flag === flag);
+  if (!found) throw new Error(`Unknown schedule flag: ${flag}`);
+  return found;
+}
+
 function commonJobOptions(command: Command): Command {
   return command
     .option('-a, --alias <alias>', 'Unique kebab-case job alias (auto-generated when omitted)')
     .option('-p, --prompt <text>', 'Prompt text for a prompt action')
     .option('--prompt-file <path>', 'UTF-8 .txt file to read into the prompt')
-    .option('--cron <expr>', 'Schedule (exactly one of --cron/--every/--at): cron expression, e.g. "0 9 * * *"')
-    .option('--every <interval>', 'Schedule (exactly one of --cron/--every/--at): repeat every N seconds, or use an s/m/h/d suffix (e.g. 30m)', parseEveryInterval)
-    .option('--at <datetime>', 'Schedule (exactly one of --cron/--every/--at): one-shot run time, ISO-8601 (e.g. 2026-10-01T09:00)')
+    .option(`${scheduleFlag('--cron').flag} ${scheduleFlag('--cron').arg}`, scheduleFlag('--cron').description)
+    .option(`${scheduleFlag('--every').flag} ${scheduleFlag('--every').arg}`, scheduleFlag('--every').description, parseEveryInterval)
+    .option(`${scheduleFlag('--at').flag} ${scheduleFlag('--at').arg}`, scheduleFlag('--at').description)
     .option('-C, --cwd <dir>', 'Working directory the job runs in (default: the current directory)')
     .option('--trust-folder', 'Trust the working directory in Claude without asking (when it is not trusted yet)')
     .option('--runner <runner>', 'Configured prompt engine name (default: config defaultEngine)')
@@ -411,6 +418,7 @@ const jobs = groupHelp(program.command('jobs').description('Create, inspect, and
 
 commonJobOptions(jobs.command('new [engineArgs...]').description('Create a new job (alias auto-generated when --alias is omitted)'))
   .allowUnknownOption()
+  .addHelpText('after', scheduleFooter())
   .option('--force', 'Replace an existing job when the same alias already exists')
   .action(async (engineArgs: string[], opts, cmd: Command) => {
     const c = client();
