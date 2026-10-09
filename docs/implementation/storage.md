@@ -49,13 +49,18 @@ defense-in-depth backstop behind the app-level alias check in `api.ts`).
 Imported run rows never restore `claude_result_completed` -- a Claude transcript has no crontick
 job provenance; import clears unverified stored Claude session IDs so those jobs start fresh.
 
+## Job reference resolution
+
+`src/utils/job-ref.ts` holds the only id-or-alias lookup: `resolveJobRef(ref, { byId, byAlias })` (id first, then alias). `Store.getJob`, the `runs list` job filter, `share export --only-jobs` and `runs delete --job` all call it. `RESERVED_JOB_REFS` (`['all']`) lists aliases rejected by job validation because `jobs delete all` uses that keyword.
+
 ## Store class (abridged)
 
 ```ts
 class Store {
   constructor(dbPath?: string, jobsPath?: string, logger?: Logger, runRetentionCap?: number);
   open(): void; close(): void;
-  upsertJob(job: Job): void; getJob(id): Job | undefined; deleteJob(id): boolean;
+  upsertJob(job: Job): void; getJob(ref): Job | undefined /* id or alias via resolveJobRef */; deleteJob(id): boolean;
+  deleteRuns({ runIds | jobId, dryRun }): { deleted; skipped; notFound; jobLogRemoved };  // skips queued/running; run_outputs then runs in one txn
   deleteJobAndRuns(id): { jobId; deletedRuns } | undefined;  // one transaction: run_outputs, runs, schedule state, job
   loadJobsFromDisk(): void; tryCapturePromptSession(jobId, expectedAction, sessionId): boolean;
   insertRun(jobId, startedAt?): Run;        // also prunes the job's history to the cap

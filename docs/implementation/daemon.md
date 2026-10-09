@@ -65,6 +65,7 @@ non-loopback gets 403 `FORBIDDEN`.
 | GET | `/api/runs/:id/output` | Cleaned output view (`RunOutput`): final result, error, full stderr, plus `logFile` (path of the per-job crontick log file) | 200/404 |
 | POST | `/api/jobs/:id/run-now` (alias `/run`) | Run a job once now, even if disabled, without changing `enabled` or the schedule; overlap policy applies. `202 { runId }` | 202/404 |
 | GET/POST | `/api/runs[/:id][/cancel]` | List/get/cancel runs. The list accepts `jobId`/`status` (comma-separated for several), `limit`, `since`, and `q` (substring search over run fields, job alias and stored run output) | 200/404 |
+| DELETE | `/api/runs?runId=a,b` or `?jobId=<id\|alias\|raw id>` | Delete runs (exactly one selector; optional `dryRun=1`). Active runs are skipped, unknown ids go to `notFound`; `jobId` resolves via `resolveJobRef` and falls back to the raw id (orphans). `200 { deleted, skipped, notFound, jobLogRemoved }` | 200/400 |
 | POST | `/api/schedules/validate\|preview` | Validate a schedule / preview next N fires | 200 |
 | GET | `/api/stats/summary\|jobs/:id` | Aggregate / per-job stats | 200/404 |
 | GET | `/api/daemon/status` | PID, `port`/`baseUrl`/`dashboardUrl`, `portNote` (set when on a fallback port), version, uptime, job count, `missedFires` | 200 |

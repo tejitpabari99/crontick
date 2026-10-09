@@ -72,6 +72,7 @@ unresolved identifier fails with `JOB_NOT_FOUND`.
 
 ### Non-functional requirements
 
+- **R-001-16a**: Every job-reference input (CLI positional, MCP `id`, HTTP path segment, `runs list --job`, `share export --only-jobs`, `runs delete --job`) MUST resolve through the single shared `resolveJobRef` (`src/utils/job-ref.ts`): GUID `id` first, then `alias`. The alias `all` is reserved (it is the `jobs delete all` keyword) and MUST be rejected on create, update and import.
 - **R-001-17**: Validation SHOULD produce actionable Zod error messages surfaced to the user.
 - **R-001-18**: The schema SHOULD be expressible as a JSON Schema for external tool consumption.
 

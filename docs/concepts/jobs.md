@@ -17,7 +17,7 @@ Every job has an immutable `id`: a GUID (`node:crypto` `randomUUID()`) assigned 
 
 Every job also has an optional, user-editable **alias** (the one user-facing name; the CLI flag is `--alias`/`-a`): a kebab-case (`/^[a-z0-9]+(?:-[a-z0-9]+)*$/`) name, unique among all currently-defined (non-deleted) jobs. When you don't supply one on create, crontick auto-generates `<word>-<1-1000>` from a small built-in word list, retrying on collision (after many collisions a short random suffix is used, and a create race that trips the alias UNIQUE index is retried with a fresh alias). You can rename a job by editing its `alias` later via `update` -- no delete/recreate required.
 
-Anywhere a job identifier is accepted (CLI positional `<id|alias>`, MCP `id` params, HTTP path segments), you may pass EITHER the GUID `id` OR the `alias`; crontick resolves an exact GUID match first, then falls back to an alias lookup, and returns `JOB_NOT_FOUND` ("Job X not found (id or alias)") if neither matches.
+Anywhere a job identifier is accepted (CLI positional `<id|alias>`, MCP `id` params, HTTP path segments), you may pass EITHER the GUID `id` OR the `alias`; crontick resolves an exact GUID match first, then falls back to an alias lookup, and returns `JOB_NOT_FOUND` ("Job X not found (id or alias)") if neither matches. All lookups share one resolver. The alias `all` is reserved (it is the `jobs delete all` keyword) and is rejected on create, update and import.
 
 ## The job's action: `prompt`
 
